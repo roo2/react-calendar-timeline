@@ -408,3 +408,48 @@ Silent edits	Versioning
 Overloaded paper forms	Purpose-driven sections
 Operator notes overwrite history	Suggestions workflow
 Re-run confusion months later	Version-linked orders
+
+14. Derived Operation Routing Rules (MVP)
+Purpose
+
+Derive required operation order from Product Spec to guide scheduling and enforce run preconditions.
+
+Derived Behavior
+
+First operation must be Extrusion for all products.
+
+Inline features (Printing Method = Inline, Perforation flags) are executed as part of the Extrusion run.
+
+Uteco printing is a separate Printing operation and requires prior Extrusion.
+
+Conversion (bagging) is required when Finish Mode = Cartons (loose bags).
+
+If Printing Method = Uteco and Finish Mode = Cartons, the required order is:
+
+Extrusion → Uteco Printing → Conversion (Bagging).
+
+If Printing Method = None and Finish Mode = Cartons, the required order is:
+
+Extrusion → Conversion (Bagging).
+
+If Finish Mode = Rolls, Conversion is typically not required; Printing may be Inline or Uteco depending on Printing Method.
+
+Validation Rules
+
+Disallow starting a job with Uteco Printing or Conversion.
+
+Disallow Uteco Printing unless at least one Extrusion run exists for the job.
+
+Disallow Conversion unless:
+
+Printing Method = None AND at least one Extrusion run exists; OR
+
+Printing Method = Uteco AND at least one Uteco Printing run exists.
+
+Inline printing/perforation must not create separate operations; they are attributes of the Extrusion run.
+
+Downstream Consumers
+
+Scheduling: advisory warnings when queues contradict required order.
+
+Production Execution: hard precondition checks at run start.

@@ -432,6 +432,14 @@ HTML machines grid + queues
 
 SchedulingService.get_overview()
 
+GET /schedule/gantt
+
+Production Manager
+
+HTML page: Gantt lanes (machines) + timeline
+
+SchedulingService.get_gantt_overview(operating_calendar)
+
 POST /schedule/queue/add
 
 Production Manager
@@ -457,6 +465,26 @@ Production Manager
 Removes job from queue
 
 SchedulingService.remove(machine_id, job_id)
+
+POST /schedule/gantt/move (HTMX)
+
+Production Manager
+
+Drag-and-drop move/resize:
+
+within-lane reorder or cross-lane move (validated)
+
+Returns updated lane/row partial
+
+SchedulingService.move_bar(job_id, operation_type, target_machine_id, target_position, proposed_start?)
+
+GET /schedule/gantt/estimate (HTMX)
+
+Production Manager
+
+Returns estimated durations for a job’s operations
+
+SchedulingService.estimate_job_operations(job_id)
 
 4.7 Production Execution
 
@@ -781,6 +809,14 @@ remove(machine_id, job_id)
 
 get_overview()
 
+get_gantt_overview(operating_calendar)
+
+move_bar(job_id, operation_type, target_machine_id, target_position, proposed_start=None)
+
+estimate_job_operations(job_id) -> dict[operation_type, EstimatedDuration]
+
+validate_move(job_id, operation_type, target_machine_id) -> None | raises InvariantViolation
+
 6.7 ProductionService
 
 start_run(job_id, machine_id, operation_type) -> OperationRun
@@ -830,6 +866,8 @@ user CRUD
 settings
 
 backups
+
+operating_calendar CRUD (week template, start anchor, exceptions) (optional MVP in settings)
 
 7. Invariants Enforcement (Where and How)
 Key invariants to enforce transactionally

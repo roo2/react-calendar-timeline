@@ -535,6 +535,85 @@ Inventory state is derived, never stored
 
 All stock changes are append-only
 
+4.12 Site Machine Catalog (MVP)
+Purpose
+
+Declare installed machinery and capabilities so scheduling and execution can validate reality.
+
+Machine Types (recap)
+
+Extruder (may have inline 1‑colour printing and/or perforation)
+
+Printer — Uteco (out‑of‑line, up to 6 colours, duplex)
+
+Converter — Bagging machines
+
+Canonical Capability Fields
+
+machine_id
+
+machine_code
+
+type: extruder | printer_uteco | converter_bagger
+
+capabilities (type-specific):
+
+extruder:
+
+supports_inline_1c_print: boolean
+
+supports_inline_perforation: boolean
+
+width_range_mm: [min, max]
+
+gauge_range_um: [min, max]
+
+printer_uteco:
+
+max_colours_per_side: 6
+
+duplex_supported: true
+
+max_web_width_mm
+
+converter_bagger:
+
+supported_finish_modes: [Cartons]
+
+min_max_width_mm: [min, max]
+
+active: boolean
+
+notes
+
+Installed Machines (to be confirmed)
+
+Extruders (8 units): EX01 … EX08
+
+For each EX0x: set supports_inline_1c_print, supports_inline_perforation, width_range_mm, gauge_range_um, notes.
+
+Uteco Printer (1 unit):
+
+machine_code: UTECO01
+
+max_colours_per_side: 6
+
+duplex_supported: true
+
+max_web_width_mm: [TBC]
+
+notes: out‑of‑line flexo; requires prior extrusion.
+
+Bagging Machines (3 units): BGR01 … BGR03
+
+For each BGR0x: set supported_finish_modes = [Cartons], min_max_width_mm, notes.
+
+Invariants
+
+Machine type is immutable after creation (changes require a new machine record).
+
+Capabilities reflect physical reality; scheduling/production must not assign runs violating capability ranges.
+
 5. Cross-Cutting Invariants (Must Never Be Broken)
 
 Specs are immutable

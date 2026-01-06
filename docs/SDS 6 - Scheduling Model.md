@@ -40,7 +40,6 @@ A capacity planner
 
 A constraint solver
 
-A Gantt chart (yet)
 
 3. Core Concepts
 3.1 Machine
@@ -298,3 +297,134 @@ Supports interruptions naturally
 Is trivial to reason about and debug
 
 Keeps humans in control
+
+14. Routing Constraints & Enforcement (MVP)
+
+Scheduling-Level Behavior
+
+The scheduler remains human-led and does not auto-enforce cross-machine dependencies.
+
+It must display advisories when a job is queued on a downstream machine before required upstream runs are completed:
+
+Uteco queued before any Extrusion run exists.
+
+Conversion queued before required Printing (if Uteco) or before Extrusion (if no printing).
+
+Run Start Hard-Stops (enforced by Production Execution)
+
+A job’s first started run must be Extrusion.
+
+Uteco Printing may start only if the job has at least one completed Extrusion run.
+
+Conversion (Bagging) may start only if:
+
+Printing Method = None AND at least one completed Extrusion run exists; OR
+
+Printing Method = Uteco AND at least one completed Uteco Printing run exists.
+
+UI Expectations
+
+Disable “Start” on Uteco if no Extrusion run exists for the job.
+
+Disable “Start” on Conversion if its prerequisites (per above) are not satisfied.
+
+Allow reordering and out-of-order queuing, but keep warnings visible until prerequisites are met.
+
+Notes
+
+These constraints reflect site reality: 8 extruders (with possible inline 1‑colour printing and perforation), one out‑of‑line Uteco printer (up to 6 colours front/back), and 3 bagging machines.
+
+15. Gantt Scheduling UI (MVP+)
+Purpose
+
+Provide a visual, drag‑and‑drop timeline for planning jobs across all machines, with duration estimates per operation and clear visual emphasis for colour/printing work.
+
+Lanes (Machine Lines)
+
+One lane per installed machine, auto‑generated from the Machine catalog:
+
+Extrusion: EX01 … EX08
+
+Printing: UTECO01
+
+Conversion: BGR01 … BGR03
+
+Adding a new machine automatically creates a new lane.
+
+Timeline & Operating Calendar
+
+Default operating window: 24 hours/day, 4 days/week, starting Monday 04:30 through Friday 04:30.
+
+Configurable to up to 24/7 operation.
+
+Calendar exceptions (future): public holidays, maintenance windows (advisory for MVP).
+
+Bars (Job Operations)
+
+Each required operation appears as a separate bar in its machine lane:
+
+Extrusion → Uteco Printing (if applicable) → Conversion/Bagging (if applicable).
+
+A single Job can therefore appear up to 3 times on the Gantt.
+
+Bars show: job_code, customer, product, planned quantity, estimated duration, and readiness (blocked/ready/running/completed).
+
+Visual Emphasis & Highlighting
+
+Jobs requiring printing (Inline or Uteco) and/or colour are visually highlighted:
+
+Uteco printing required: distinctive colour fill + printer icon.
+
+Inline print/perforation on extrusion: badge/icon on the extrusion bar.
+
+Colour jobs: hue accent based on Number of Colours; non‑colour jobs remain neutral.
+
+This aids grouping like‑for‑like jobs to reduce changeover waste.
+
+Duration Estimates (Displayed on Bars)
+
+Extrusion: estimated_time = estimated_kg / extruder_rate_kg_per_hour (from rate cards), adjusted by width/thickness yields.
+
+Uteco printing: estimated_time = web_length_m / printer_speed_m_per_min + setup_allowance; colour count influences setup.
+
+Conversion: estimated_time = units / bagger_rate_units_per_hour + setup_allowance; geometry may adjust rate.
+
+All estimates are previews; actuals come from OperationRuns.
+
+Drag‑and‑Drop (DnD) Behavior
+
+Allowed:
+
+Reorder bars within a lane to reprioritise queue positions.
+
+Move extrusion bars between extruder lanes if machine capabilities match (width/gauge), subject to role and configuration.
+
+Disallowed:
+
+Dragging an extrusion bar to UTECO or bagger lanes.
+
+Dragging a UTECO bar onto a bagger lane unless extrusion is completed.
+
+Dragging a bagger bar onto UTECO lane.
+
+Cross‑type moves are only permitted when they represent valid operation steps and prerequisites are satisfied.
+
+Interactions & Constraints
+
+DnD produces a server‑validated operation (no client‑side trust).
+
+On drop, the server enforces Routing Constraints & Run Start Hard‑Stops (section 14) and capability checks.
+
+Invalid drops snap back with an explanation inline.
+
+Status Integration
+
+Running operations render as active bars; completed operations show completed styling; queued operations show estimated start based on lane order and operating calendar.
+
+System auto‑computes tentative start/finish projections per lane from queue order and calendar; these are advisory, not promises.
+
+Printing & Export (Future)
+
+Printable weekly view for production meetings.
+
+CSV snapshot export (deferred).

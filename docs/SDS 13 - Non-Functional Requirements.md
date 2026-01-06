@@ -76,6 +76,8 @@ Page load	< 500 ms
 HTMX action	< 200 ms
 Quote calculation	< 1 s
 Run start/stop	Instantaneous feel
+Gantt drag-and-drop	validate + update lane in < 200 ms
+Gantt initial render	< 1 s for one-week view with 12 lanes
 4.2 Concurrency
 
 Expected concurrent users: 5–20
@@ -226,6 +228,8 @@ No hard-coded secrets
 
 Rate cards editable in UI, not code
 
+Operating calendar configurable (week template, site start anchor time, optional 24/7 mode)
+
 10.3 Testability
 
 Unit tests for:
@@ -256,6 +260,10 @@ active users
 active runs
 
 queue lengths
+
+gantt bars rendered
+
+gantt dnd operations/min
 
 Advanced monitoring deferred.
 
