@@ -428,3 +428,149 @@ Printing & Export (Future)
 Printable weekly view for production meetings.
 
 CSV snapshot export (deferred).
+
+15.1 Tooling Constraints & Visualisation (MVP+)
+
+Visuals
+
+Each operation bar shows badges for required tools (icons from Tool.icon_ref).
+
+Hover shows tool name and availability.
+
+Optional “Tool availability strip” per day showing remaining counts by tool_type (future).
+
+Planning & Reservation
+
+When a job operation is placed on a lane, the system attempts to create planned ToolReservation(s) for the same time window.
+
+If not enough tools of a type are available, the bar shows a conflict badge and the drop is allowed but marked “conflict” until resolved.
+
+Run Start Hard-Stop
+
+OperationRun start is blocked unless all required tools:
+
+are reserved (status planned) for the bar’s time window,
+
+are mounted on the target machine (ToolMount present),
+
+Drag-and-Drop Validation
+
+Within-lane reorder: update planned ToolReservations; keep icons updated.
+
+Cross-lane move: only allowed if:
+
+machine capabilities are met, and
+
+required tool reservations can be reallocated to the new time/machine.
+
+Invalid drops snap back with explanation (e.g., “No inline_printer_1c available 10:00–12:00”).
+
+Changeovers (Advisory MVP)
+
+Moving a Tool between machines incurs setup time; initially tracked as advisory metadata (display “tool move” indicator).
+
+Future: explicit ToolMove operations with durations that constrain schedule.
+
+Failure Modes to Prevent
+
+Two bars overlapping that require the same unique tool (e.g., electra_punch) without sufficient units.
+
+Starting a run when ToolReservation is missing or mounted on the wrong machine.
+15.2 Tooling Entities (Schema, MVP+)
+
+Purpose
+
+Provide minimal entities to represent limited-count tools, their availability by time, and their mounting on machines so scheduling and run start validation can enforce constraints.
+
+Entities
+
+ToolType
+
+tool_type_id
+
+code (e.g., inline_printer_1c, electra_punch)
+
+name
+
+icon_ref (optional)
+
+unique_per_machine (boolean)  // if true, at most one can be mounted on a machine at a time
+
+Tool
+
+tool_id
+
+tool_type_id (FK)
+
+serial_code
+
+active (boolean)
+
+notes
+
+ToolMount (append-only history)
+
+tool_mount_id
+
+tool_id (FK)
+
+machine_id (FK)
+
+mounted_from
+
+mounted_to (nullable when currently mounted)
+
+ToolReservation (planning, not history of mount)
+
+tool_reservation_id
+
+tool_type_id (FK)  // reserve by type
+
+optional tool_id (FK)  // may be assigned later
+
+machine_id (FK)
+
+planned_from
+
+planned_to
+
+status (planned | conflicted | cancelled | fulfilled)
+
+Links to Schedule
+
+ToolReservations are created/updated when bars are added/moved in the Gantt (advisory if conflicts).
+
+Run start requires: for each required tool_type of the operation, a non-conflicted reservation matching the run window AND a ToolMount on the target machine.
+
+15.3 Tooling Invariants & Validation (Authoritative)
+
+Reservation window overlaps for the same tool_id are disallowed.
+
+For each (tool_type_id, machine_id, time window), the number of planned reservations must not exceed the count of active tools of that type unless marked conflicted.
+
+A ToolMount cannot overlap for the same tool_id on different machines.
+
+OperationRun.start hard-stop: required tool_types must have (reservation.status in {planned} AND active ToolMount on machine).
+
+UI may allow conflicted reservations (advisory), but server blocks run start until resolved.
+16. Dashboard Signals (Advisory)
+
+Purpose
+
+Expose near‑real‑time, read‑only signals to the Operational Dashboard without automating scheduling decisions.
+
+Per machine lane (UI)
+
+running_job
+
+next_job
+
+last_24h outputs (kg/units)
+
+current WIP bucket for its stage (derived; see SDS 1, SDS 8)
+
+Notes
+
+No scheduling decisions are automated from dashboard signals.
+
+Signals are computed from OperationRuns and InventoryTransactions.

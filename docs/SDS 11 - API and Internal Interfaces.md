@@ -87,6 +87,10 @@ app/
     routes.py
     service.py
     schemas.py
+  branding/
+    routes.py
+    service.py
+    schemas.py
   integrations/           # stubs for future
     crm/
     accounting/
@@ -712,6 +716,157 @@ Export/backup operations
 
 SystemAdminService.*
 
+4.12 Telemetry (Ingestion & Registry)
+
+POST /integrations/telemetry/ingest
+
+Capability: Ingestion Gateway (signed HMAC or mTLS)
+
+Body: TelemetryEvent payload
+
+Service: TelemetryService.ingest(payload)  // validates sensor, dedupes, persists
+
+GET /machines/{machine_id}/sensors
+
+POST /machines/{machine_id}/sensors
+
+Capability: System Admin, Production Manager (read)
+
+Service: TelemetryService.list_sensors(machine_id), .register_sensor(machine_id, payload)
+
+GET/POST /qc-mappings
+
+Capability: Production Manager
+
+Map check_type ↔ sensor(s) with acceptance criteria override (optional)
+
+Service: TelemetryService.upsert_qc_mapping(payload)
+
+4.13 Quality Control — Job Summary
+
+GET /jobs/{job_id}/qc-summary
+
+Production Manager, Operator (read)
+
+Returns aggregates and current final_checklist state
+
+POST /jobs/{job_id}/qc-summary/aggregate
+
+Production Manager
+
+Computes aggregates from QCChecks/QCReadings and saves draft summary
+
+POST /jobs/{job_id}/qc-summary/finalize
+
+Production Manager
+
+Body: final_checklist items with pass/fail, notes, signatures
+
+Sets status: final_pass | final_pass_with_deviation | final_fail
+
+4.14 QC Reporting
+
+GET /reports/qc/annual?year=YYYY
+
+Production Manager
+
+Returns CSV/PDF: per job aggregates, compliance rates, worst-case deviations, deviations+approvals, final status, signatures
+4.15 Tools (Registry & Availability)
+
+GET /tools
+
+Production Manager, System Admin
+
+List tools with type, icon, stage compatibility, current mount
+
+POST /tools
+
+System Admin
+
+Create tool (icon upload handled in multipart)
+
+GET /tools/availability?from=...&to=...&tool_type=...
+
+Production Manager
+
+Returns planned/active reservations and free capacity
+
+POST /tools/{tool_id}/mount
+
+Production Manager
+
+Body: machine_id
+
+Records ToolMount (closes prior mount if any)
+
+4.16 Scheduling — Tool Reservations
+
+POST /schedule/tool/reserve
+
+Production Manager
+
+Creates planned ToolReservation(s) for a job operation window
+
+POST /schedule/tool/release
+
+Production Manager
+
+Cancels planned reservation(s)
+
+(Amend) POST /schedule/gantt/move (HTMX)
+
+Validates machine + tool availability, rebooks ToolReservations atomically with position change
+
+4.17 Dashboard & KPIs
+
+GET /dashboard
+
+Production Manager; HTML page
+
+DashboardService.get_overview(window)
+
+GET /dashboard/partial/{card} (HTMX)
+
+Returns HTML fragment per card
+
+DashboardService.get_card(card, window)
+
+GET /reports/kpi/weekly?start=YYYY-Www&weeks=N
+
+Production Manager; CSV/JSON
+
+KPIs: throughput, utilization, flow percentiles, inventory turns, FPY, deviations, fulfilment accuracy
+
+4.18 Branding
+GET /admin/branding
+
+System Admin
+
+HTML page: current theme with live preview
+
+POST /admin/branding
+
+System Admin
+
+Save tokens/typography/shape; version and activate theme
+
+POST /admin/branding/upload-logo
+
+System Admin
+
+Upload logo (SVG/PNG); sanitize and store; return URL
+
+POST /admin/branding/upload-font
+
+System Admin
+
+Upload font (WOFF/WOFF2) with family/weight/style metadata; return URL
+
+GET /static/theme.css?v={hash}
+
+Public
+
+Serve generated CSS for active theme (cache‑busted)
 5. Request/Response Contracts (Pydantic Schemas)
 Principles
 
@@ -748,6 +903,31 @@ ReceiveInventoryRequest
 AdjustInventoryRequest
 
 DispatchConfirmRequest
+
+CreateToolRequest
+
+ToolMountRequest
+
+ToolReserveRequest {job_id, stage, tool_type or tool_id, machine_id, from, to}
+
+ToolAvailabilityQuery
+Additional schemas (for dashboard/KPI)
+
+DashboardWindow {start_date, end_date}
+
+InventorySnapshot {raw_kg, wip_extrusion_kg, wip_printing_kg, fg_units}
+
+ThroughputWeekly {kg_extruded, m_printed, units_converted, jobs_completed}
+
+UtilizationWeekly {machine_id, runtime_hours, utilization_pct}
+
+FlowWeekly {p50_days, p95_days}
+
+InventoryTurnsWeekly {turns}
+
+QualityWeekly {fpy_pct, deviations_count}
+
+FulfilmentAccuracyWeekly {jobs_off_target, total_under_units, total_over_units, rows:[{job_id, order_id, allocated, dispatched, delta}]}
 
 6. Internal Service Interfaces (Normative)
 
@@ -869,6 +1049,75 @@ backups
 
 operating_calendar CRUD (week template, start anchor, exceptions) (optional MVP in settings)
 
+6.12 TelemetryService
+
+ingest(payload) -> TelemetryEvent
+
+list_sensors(machine_id) -> list[Sensor]
+
+register_sensor(machine_id, payload) -> Sensor
+
+upsert_qc_mapping(payload)
+
+derive_qc_reading(event) -> QCReading?  // evaluates and attaches to active OperationRun
+
+find_active_run(machine_id, timestamp) -> OperationRun?
+
+dedupe(idempotency_key) -> bool
+
+6.13 QCService
+
+aggregate_job_qc(job_id) -> JobQCSummary
+
+finalize_job_qc(job_id, checklist, deviations?) -> JobQCSummary
+
+get_job_qc(job_id) -> JobQCSummary
+6.14 DashboardService
+
+get_overview(window)
+
+get_card(card, window)
+
+6.15 KPIService
+
+get_weekly_throughput(window)
+
+get_weekly_utilization(window)
+
+get_weekly_flow(window)
+
+get_weekly_inventory_turns(window)
+
+get_weekly_quality(window)
+
+get_weekly_fulfilment_accuracy(window)
+
+6.16 ToolService
+
+list_tools()
+
+create_tool(payload) -> Tool
+
+set_mount(tool_id, machine_id)
+
+get_availability(tool_type, from, to)
+
+reserve(tool_spec, job_id, machine_id, window) -> ToolReservation
+
+release(reservation_id)
+
+6.17 BrandingService
+
+get_active_theme() -> BrandTheme
+
+update_theme(payload) -> BrandTheme  // version a new record, activate it
+
+upload_logo(file) -> url             // sanitize SVG/PNG, validate MIME/size
+
+upload_font(file, meta) -> url       // allow WOFF2/WOFF, store and return URL
+
+render_theme_css(theme) -> str       // render variables; write versioned theme.css
+
 7. Invariants Enforcement (Where and How)
 Key invariants to enforce transactionally
 
@@ -883,6 +1132,8 @@ Quote overrides only by Production Manager
 Dispatch irreversibility
 
 Inventory transactions append-only
+
+Exactly one active BrandTheme
 
 Enforcement layers
 

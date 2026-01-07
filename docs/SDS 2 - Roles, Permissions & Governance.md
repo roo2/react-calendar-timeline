@@ -186,6 +186,25 @@ Modify production data without holding Production Manager role
 Rationale:
 Separation of system power from business authority prevents accidental damage.
 
+3.5 Branding Management (Capability)
+Primary responsibility
+
+Manage site‑wide branding and theme configuration.
+
+Allowed to:
+
+Create/update BrandTheme
+Upload logo assets (SVG/PNG) and font files (WOFF/WOFF2)
+Activate a theme (exactly one active at a time)
+
+Explicitly not allowed to:
+
+Change production data without Production Manager role
+Approve quotes or override pricing
+
+Rationale:
+Branding changes are system configuration and must be controlled by System Admin.
+
 4. Permission Matrix (Authoritative)
 Action	Sales	Operator	Prod Manager	System Admin
 Create customer	✅	❌	✅	✅
@@ -204,6 +223,8 @@ Record QC	❌	✅	✅	❌
 Adjust inventory	❌	❌	✅	❌
 Manage users	❌	❌	❌	✅
 System settings	❌	❌	❌	✅
+Manage branding (BrandTheme)	❌	❌	❌	✅
+Upload logo/font assets	❌	❌	❌	✅
 
 This table is normative.
 UI and API must enforce it.

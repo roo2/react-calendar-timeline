@@ -47,6 +47,10 @@ Produced quantities are recorded
 
 Packaging requirements are known (from Product Spec)
 
+Job-level QC summary exists and is finalised
+
+JobQCSummary.status ∈ {final_pass, final_pass_with_deviation}; if final_pass_with_deviation, all deviations must show approver and timestamp
+
 The system must prevent dispatch if these are not met.
 
 4. DispatchRecord Entity
@@ -180,6 +184,24 @@ No quantities may be edited
 
 Job becomes read-only
 
+6.2 Timing Fields (derived on confirm)
+
+On Confirm Dispatch, persist timing fields for KPI calculations:
+
+job.first_run_started_at
+
+job.last_run_completed_at
+
+dispatch_record.dispatched_at
+
+Derived (read-only):
+
+job_flow_time_minutes = dispatched_at − first_run_started_at
+
+run_to_dispatch_minutes = dispatched_at − last_run_completed_at
+
+These fields feed flow/turns KPIs (see SDS 8).
+
 7. Order Close-out Logic
 7.1 When an Order Can Close
 
@@ -251,7 +273,11 @@ barcode generation
 
 printer routing
 
-No schema changes required later.
+ No schema changes required later.
+9.3 Branding Usage
+
+PDFs/printables and on-screen dispatch views use the active BrandTheme for logo, colors, and fonts.
+If assets are unavailable, fall back to default theme; record the theme hash used for generated documents (traceability).
 
 10. Accounting & CRM Integration Hooks (Future)
 

@@ -614,6 +614,250 @@ Machine type is immutable after creation (changes require a new machine record).
 
 Capabilities reflect physical reality; scheduling/production must not assign runs violating capability ranges.
 
+4.13 Telemetry & QC Sensor Entities (MVP+)
+Purpose
+
+Enable future automatic QC evidence capture from machine sensors while preserving immutability and append-only rules.
+
+New Entities
+
+Sensor
+
+sensor_id
+
+machine_id (FK Machine)
+
+type (enum: thickness_gauge, seal_strength, print_registration, temperature, speed, other)
+
+protocol (enum: mqtt, opcua, modbus_tcp, http_gateway)
+
+unit (text)
+
+active (boolean)
+
+metadata (json)  // topic/address, scaling, calibration info reference
+
+SensorAssignment
+
+sensor_id
+
+machine_id
+
+effective_from / effective_to  // history of assignments
+
+TelemetryEvent (append-only)
+
+event_id (uuid)
+
+sensor_id
+
+machine_id
+
+recorded_at (UTC)
+
+value (numeric/text)
+
+quality_flag (ok/warn/error)
+
+raw (json)  // optional payload
+
+idempotency_key (string)  // dedupe across retries
+
+QCReading (derived evidence from telemetry)
+
+qc_reading_id
+
+operation_run_id (FK)
+
+sensor_id
+
+check_type (enum aligns with QCCheck.check type)
+
+value
+
+result (pass/fail/na)
+
+recorded_at
+
+source = "sensor"
+
+(Existing) QCCheck — add:
+
+source (manual | sensor)
+
+reading_ref (optional FK to QCReading)
+
+Invariants
+
+TelemetryEvents are append-only.
+
+Sensors map to machines; events without a valid Sensor → rejected.
+
+QCReadings derived from telemetry cannot edit past QCChecks; they create evidence entries that satisfy required checks when criteria met.
+
+Time correlation:
+
+A QCReading can attach to an OperationRun only if recorded_at ∈ [run.started_at, run.ended_at].
+
+Calibration changes are versioned; interpretation uses calibration effective at recorded_at.
+
+4.14 Tooling & Shared Equipment (MVP+)
+Purpose
+
+Model movable equipment (“tools”) that can be mounted to multiple machines over time, but used by only one job at a time.
+
+New Entities
+
+Tool
+
+tool_id
+
+tool_code (human-visible)
+
+type (enum): inline_printer_1c | inline_printer_4c | inline_printer_silver | perforation_seal_vicro | perforation_seal_orion | perforation_only_orion | winder | electra_punch | v_folder | conversion_punch
+
+stages_supported (array enum): extrusion | conversion
+
+compatible_machine_types (array): [extruder], [converter], or both
+
+icon_ref (static asset name)
+
+active (boolean)
+
+notes
+
+ToolMount (current placement)
+
+tool_id
+
+machine_id (nullable)
+
+mounted_at (timestamp)
+
+unmounted_at (nullable)
+
+notes
+
+ToolReservation (append-only)
+
+reservation_id
+
+tool_id
+
+operation_run_id (nullable until run starts)
+
+job_id
+
+machine_id (intended mount)
+
+stage (extrusion | conversion)
+
+reserved_from (planned)
+
+reserved_to (planned)
+
+status: planned | active | released | cancelled
+
+created_by, created_at
+
+Invariants
+
+A Tool may be active in at most one reservation with status ∈ {planned, active} overlapping in time.
+
+A Tool cannot be used by two OperationRuns concurrently.
+
+ToolMount updates are append-only; the latest open mount represents current placement.
+
+ToolReservation becomes active when the OperationRun starts; planned reservations can be cancelled/moved by the PM.
+
+Installed Tools (site catalog)
+
+Extrusion only:
+
+inline_printer_1c: 2 units
+
+inline_printer_4c: 1 unit
+
+inline_printer_silver: 1 unit
+
+perforation_seal_vicro: 1 unit
+
+perforation_seal_orion: 1 unit
+
+perforation_only_orion: 1 unit
+
+winder: 4 units
+
+Extrusion & Conversion:
+
+electra_punch: 1 unit
+
+Conversion only:
+
+v_folder: 1 unit
+
+conversion_punch: 1 unit
+
+4.14.1 Tool Icon Registry
+
+Each Tool.type has an icon asset name (SVG/PNG). UI renders the icon on Gantt bars.
+
+Icons are stored under static assets and referenced by Tool.icon_ref.
+
+4.15 BrandTheme (Site‑Level Settings)
+Purpose
+
+Define site‑wide branding (logo, colors, typography, shape tokens) independently of functional modules to enable future rebranding without code changes.
+
+Owns
+
+Logo assets (SVG/PNG)
+Color tokens (semantic)
+Typography (font families/weights and uploaded font files)
+UI shape tokens (radius), density (optional)
+
+Fields
+
+theme_id
+name
+is_active (boolean)
+palette:
+  primary
+  primary_contrast
+  secondary
+  accent
+  success
+  warning
+  danger
+  surface
+  surface_alt
+  text_primary
+  text_secondary
+  border
+typography:
+  heading_font_family
+  body_font_family
+  monospace_font_family
+  heading_weight
+  body_weight
+  font_files: [ { family, weight, style, url, format } ]
+shape:
+  radius_sm
+  radius_md
+  radius_lg
+assets:
+  logo_svg_url
+  logo_png_url
+effective_from (optional)
+updated_by
+updated_at
+
+Invariants
+
+Exactly one active theme at any time.
+SVG uploads are sanitized; fonts limited to WOFF2/WOFF; MIME type and size validated.
+Theme changes are versioned; previous versions remain available for rollback.
+
 5. Cross-Cutting Invariants (Must Never Be Broken)
 
 Specs are immutable
@@ -643,3 +887,78 @@ Barcode tracking (Job/Run/Inventory)
 Machine telemetry (OperationRun auto-updates)
 
 Predictive scheduling (without rewriting core entities)
+7. Derived Operational Metrics (Authoritative)
+
+Purpose
+
+Define canonical, derived metrics for inventory, work‑in‑progress (WIP), and fulfilment that power the Operational Dashboard and weekly KPIs. These metrics are computed from immutable sources (InventoryTransaction, OperationRun outputs, DispatchRecord) and never edited in place.
+
+7.1 Inventory Categories (Normative)
+
+Categories used by the ledger and derivations:
+
+raw_material
+
+wip_extruded_roll
+
+wip_printed_roll
+
+finished_goods
+
+packaging_material
+
+scrap
+
+7.2 OutputEntry (Append‑Only, per OperationRun)
+
+Fields
+
+run_id
+
+timestamp
+
+quantity
+
+uom
+
+good_or_scrap (enum)
+
+note (optional)
+
+UOM rules
+
+Extrusion: kg, metres
+
+Printing: kg, metres
+
+Conversion: units (bags), cartons
+
+Conversion outputs are flagged as finished_goods when Finish Mode = Cartons; otherwise finished rolls.
+
+7.3 Stage WIP Buckets (Derived)
+
+WIP_extrusion_kg = Σ Extrusion OutputEntry.good(kg) − Σ Printing input(kg) − Σ Extrusion scrap(kg)
+
+WIP_printing_kg = Σ Printing OutputEntry.good(kg) − Σ Conversion input(kg) − Σ Printing scrap(kg)
+
+FG_on_hand_units = Σ Conversion OutputEntry.good(units finished_goods=true) − Σ Dispatched_units − Σ Conversion scrap(units)
+
+Notes
+
+Inputs are inferred from the consuming stage’s InventoryTransactions.
+
+Balances are point‑in‑time, derived from the ledger.
+
+7.4 Job Fulfilment Delta (Per Job)
+
+allocated_order_units (Job‑level allocation from the parent Order)
+
+produced_finished_units (from Conversion OutputEntry.good where finished_goods=true; or rolls/metres when Finish Mode = Rolls)
+
+fulfilment_delta = produced_finished_units − allocated_order_units
+
+7.5 Invariants
+
+All metrics are derived; no stored totals.
+
+Inventory state remains ledger‑based and append‑only.

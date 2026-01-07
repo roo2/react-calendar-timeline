@@ -90,6 +90,27 @@ manager reordering schedule
 
 System must handle this without locking UI.
 
+4.3 Telemetry Throughput & Latency (MVP+)
+
+Sustained ingest: ≥ 10 events/sec, burst ≥ 50/sec.
+
+Ingest → QC evaluation p95 < 200 ms.
+
+No UI degradation during bursts.
+4.5 Gantt Tooling Performance
+
+Tool icon rendering and availability checks must not add > 50 ms to HTMX DnD actions (target remains < 200 ms total).
+4.4 Dashboard Performance Targets
+
+Dashboard initial load < 700 ms; card refresh < 250 ms.
+
+KPI queries use weekly rollups (materialized or cached) with 60s TTL.
+4.6 Branding Assets
+
+theme.css ≤ 5 KB gzipped (variables only; fonts separate).
+Logo SVG/PNG cached with far‑future headers; cache‑bust via content hash.
+Theme CSS served with cache‑busting query (v/hash) and HTTP caching.
+
 5. Data Integrity & Consistency
 5.1 Transactionality
 
@@ -112,6 +133,12 @@ System must:
 detect duplicates
 
 prevent double execution
+
+5.3 Idempotency & Ordering
+
+All TelemetryEvents carry idempotency_key; duplicates must not create multiple QCReadings.
+
+Out-of-order events tolerated within 2 minutes skew; beyond skew → mark time_invalid and do not auto-satisfy required QC.
 
 6. Security Requirements
 6.1 Authentication
@@ -140,6 +167,19 @@ Reverse proxy (nginx / caddy)
 
 Firewall restricts DB access to app only
 
+6.4 Ingestion Security
+
+HMAC-signed HTTP or mTLS between gateway and app.
+
+IP allowlist for gateway.
+
+No direct sensor access to app DB.
+6.5 Branding Asset Security
+
+Sanitize SVG uploads (strip scripts/external refs).
+Validate MIME and max sizes (images ≤ 512 KB; fonts ≤ 2 MB).
+Only System Admin can upload/change BrandTheme and assets.
+
 7. Auditability & Logging
 7.1 Required Logs
 
@@ -167,6 +207,30 @@ Logs retained for minimum 12 months
 
 Rotated automatically
 
+7.4 Telemetry Logging
+
+Telemetry ingest failures (auth, schema, unknown sensor)
+
+QCReadingCreated events (info-level)
+
+Sensor stale/heartbeat warnings
+
+7.5 QC Summary Logging
+
+QC summary aggregation started/completed
+
+QC summary finalize actions (user, timestamp, final status)
+
+Deviation approvals (approver, timestamp)
+
+7.6 Tooling Logging
+
+Tool reservation create/update/cancel
+
+Tool mount/unmount events
+
+Tool-related run start denials (missing/mis-mounted)
+
 8. Backup & Recovery
 8.1 Backup Strategy (MVP)
 
@@ -193,6 +257,13 @@ config files
 8.3 Test Restores
 
 Manual restore test at least quarterly
+8.5 Branding Theme & Assets
+
+Backups include BrandTheme records and uploaded logo/font assets.
+Restore must reinstate the active theme and asset URLs.
+8.4 KPI Snapshotting (MVP)
+
+Nightly job generates weekly aggregates for last 8 weeks; on-demand recomputes allowed for “this week”.
 
 9. Data Longevity
 9.1 Retention Rules
@@ -211,6 +282,21 @@ Soft delete only
 
 Hard delete not exposed in UI
 
+9.4 Retention
+
+TelemetryEvents retained ≥ 3 years (aligned with production runs & QC).
+
+Calibration records retained ≥ 7 years.
+
+9.5 QC Evidence Retention
+
+JobQCSummary and final_checklist retained ≥ 7 years.
+
+Signatures (user, timestamp) are mandatory for finalization and retained with the summary.
+
+9.6 Tooling Retention
+
+ToolReservation and ToolMount histories retained ≥ 3 years.
 10. Maintainability
 10.1 Codebase
 
@@ -244,6 +330,11 @@ run lifecycle
 
 inventory adjustments
 
+10.4 Configurability
+
+Operating calendar unchanged; telemetry is continuous by default.
+
+Toggle per-check “sensor mandatory” vs “optional”.
 11. Observability (Minimal but Sufficient)
 11.1 Health Checks
 
@@ -266,6 +357,18 @@ gantt bars rendered
 gantt dnd operations/min
 
 Advanced monitoring deferred.
+11.3 Dashboard Metrics
+
+Expose minimal counters:
+
+kpi_card_render_ms
+
+kpi_query_ms
+
+cache_hit_ratio
+11.4 Branding Changes
+
+Log theme updates and asset uploads (user, timestamp, filenames, sizes). Keep previous versions for rollback.
 
 12. Accessibility & Usability
 12.1 Accessibility
@@ -283,6 +386,9 @@ No long forms for operators
 Progressive disclosure for managers
 
 Defaults everywhere possible
+12.3 Branding Accessibility
+
+Block or warn on palettes that fail WCAG AA contrast for primary/surface/text combinations.
 
 13. Localization & Units
 

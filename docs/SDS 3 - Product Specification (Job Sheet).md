@@ -453,3 +453,92 @@ Downstream Consumers
 Scheduling: advisory warnings when queues contradict required order.
 
 Production Execution: hard precondition checks at run start.
+
+15. Sensor-Assisted QC Configuration (MVP+)
+Purpose
+
+Declare which QC checks may be satisfied by sensors and how readings translate to pass/fail.
+
+User-entered fields (per ProductVersion → Quality Expectations)
+
+Sensor-Eligible Checks (multi-select of check types)
+
+Sampling Plan (e.g., continuous, every N minutes, per roll, per carton)
+
+Acceptance Criteria (thresholds, ranges, tolerances by check type)
+
+Aggregation Window (e.g., median over 60s, max deviation over 10m)
+
+Out-of-Control Actions (advisory: stop, alert operator)
+
+Validation rules
+
+Acceptance criteria required for any Sensor-Eligible check.
+
+Units must match configured sensor unit.
+
+Downstream usage
+
+Telemetry pipeline evaluates readings against Acceptance Criteria to create QCReadings and auto-satisfy required QC checks when met.
+
+16. QC WI Mapping (Per ProductVersion)
+
+For each required job-level check, record reference WI code(s):
+
+raw_material_spec_wi (default: WI-01)
+
+dimensional_spec_wi (default: WI-01)
+
+film_quality_leak_seal_wi (default: WI-09/10)
+
+colour_film_ink_wi (default: WI-01/41)
+
+venting_spec_wi (default: WI-39)
+
+Notes
+
+WI mappings drive the JobQCSummary final_checklist labels and references.
+
+17. Tool Requirements (Per ProductVersion)
+
+Purpose
+
+Declare which movable tools are required per operation stage so scheduling can reserve them and the Gantt can display icons.
+
+Structure (per ProductVersion)
+
+tool_requirements: list of items
+
+stage: extrusion | conversion
+
+tool_type: enum (see SDS 1 Tool.type)
+
+quantity: default 1
+
+preferred_machine_ids (optional): list
+
+notes (optional)
+
+Rules
+
+Inline printing / perforation flags map to Tool Requirements:
+
+Printing Method = Inline → tool_type = inline_printer_1c (or 4c/silver as specified)
+
+Inline Perforation / Sealing → tool_type = perforation_* (as applicable)
+
+If multiple alternative tools can satisfy a need (e.g., perforation via Vicro or Orion), list multiple requirements with “one-of” semantics:
+
+one_of: [tool_type_a, tool_type_b] (MVP: represented as separate alternatives; scheduler picks one)
+
+Validation
+
+tool_type must be compatible with stage and machine type.
+
+quantity ≥ 1.
+
+Downstream
+
+Scheduling reserves tools for the operation window.
+
+Gantt displays tool icons on the operation bar.
