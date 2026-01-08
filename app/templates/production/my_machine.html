@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>My Machine</h1>
+
+<form method="get" action="/production/my-machine" style="margin-bottom:12px;">
+  <label for="machine_id">Machine</label>
+  <select name="machine_id" id="machine_id" onchange="this.form.submit()">
+    {% for m in machines %}
+      <option value="{{ m.id }}" {% if machine and m.id == machine.id %}selected{% endif %}>{{ m.code }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% if machine %}
+  <div style="border:1px solid #ddd;padding:12px;border-radius:6px;margin-bottom:12px;">
+    <h3 style="margin-top:0;">Machine {{ machine.code }}</h3>
+
+    {% if current_run %}
+      <div style="margin:8px 0;">
+        <span class="badge" style="background:#16a34a;color:#fff;padding:2px 6px;border-radius:4px;">Running</span>
+        <span style="margin-left:8px;">Run {{ current_run.id }} • {{ current_run.operation_type.value }} • Started {{ current_run.started_at }}</span>
+      </div>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <form hx-post="/production/runs/{{ current_run.id }}/pause" hx-headers='{"X-CSRF-Token":"{{ csrf }}"}'>
+          <button type="submit">Pause</button>
+        </form>
+        <form hx-post="/production/runs/{{ current_run.id }}/resume" hx-headers='{"X-CSRF-Token":"{{ csrf }}"}'>
+          <button type="submit">Resume</button>
+        </form>
+        <form hx-post="/production/runs/{{ current_run.id }}/complete" hx-headers='{"X-CSRF-Token":"{{ csrf }}"}' hx-target="#machine-view" hx-swap="outerHTML">
+          <button type="submit">Complete</button>
+        </form>
+      </div>
+
+      <div id="machine-view" style="margin-top:12px;">
+        <div style="display:flex;gap:24px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:280px;">
+            <h4>Record Output</h4>
+            {% include "production/_output_form.html" %}
+          </div>
+          <div style="flex:1;min-width:280px;">
+            <h4>Totals</h4>
+            <div id="totals-slot"
+                 hx-post="/production/runs/{{ current_run.id }}/record_output"
+                 hx-headers='{"X-CSRF-Token":"{{ csrf }}"}'
+                 hx-vals='{"quantity":"0","uom":"kg","good_or_scrap":"good"}'
+                 hx-trigger="load"
+                 hx-swap="outerHTML">
+              <em>Loading totals…</em>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <h4>QC Checklist</h4>
+          <div id="qc-slot"
+               hx-get="/production/runs/{{ current_run.id }}/qc_required"
+               hx-trigger="load"
+               hx-swap="outerHTML">
+            <em>Loading QC…</em>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <div style="margin:8px 0;">
+        <span class="badge" style="background:#6b7280;color:#fff;padding:2px 6px;border-radius:4px;">Idle</span>
+      </div>
+      <div>
+        <h4>Start Run</h4>
+        <form hx-post="/production/runs/start" hx-headers='{"X-CSRF-Token":"{{ csrf }}"}' hx-target="body" hx-swap="outerHTML">
+          <input type="hidden" name="_csrf" value="{{ csrf }}">
+          <input type="hidden" name="machine_id" value="{{ machine.id }}">
+          <input type="hidden" name="operation_type" value="{{ op_type }}">
+          <label for="job_id">Job</label>
+          <select name="job_id" id="job_id" required>
+            {% for itm in queued_items %}
+              <option value="{{ itm.job_id }}">Job {{ itm.job_code }} (pos {{ itm.position }})</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Start</button>
+        </form>
+      </div>
+    {% endif %}
+
+    <div style="margin-top:16px;">
+      <h4>Next in Queue</h4>
+      <ul style="margin:0;padding-left:16px;">
+        {% for itm in queued_items %}
+          <li>Job {{ itm.job_code }} (pos {{ itm.position }})</li>
+        {% else %}
+          <li><em>No queued jobs</em></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+{% else %}
+  <p>No machines found.</p>
+{% endif %}
+{% endblock %}
+
+

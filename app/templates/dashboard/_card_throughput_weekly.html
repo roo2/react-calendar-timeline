@@ -1,0 +1,23 @@
+<div class="card-body" id="card-throughput">
+  <form hx-get="/dashboard/partial/throughput_weekly" hx-target="#card-throughput" hx-swap="outerHTML">
+    <label for="start">Week:</label>
+    <select name="start" id="start" onchange="this.form.requestSubmit()">
+      {% set iso_year = window.start_date.isocalendar()[0] %}
+      {% set iso_week = "%02d"|format(window.start_date.isocalendar()[1]) %}
+      {% set this_week = iso_year ~ "-W" ~ iso_week %}
+      {% set last_week_dt = window.start_date - (window.end_date - window.start_date) %}
+      {% set last_week = last_week_dt.isocalendar()[0] ~ "-W" ~ ("%02d"|format(last_week_dt.isocalendar()[1])) %}
+      <option value="{{ this_week }}" {% if this_week %}selected{% endif %}>This week ({{ this_week }})</option>
+      <option value="{{ last_week }}">Last week ({{ last_week }})</option>
+    </select>
+  </form>
+  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:8px;">
+    <div><strong>Kg extruded</strong><div>{{ throughput.kg_extruded }}</div></div>
+    <div><strong>m printed</strong><div>{{ throughput.m_printed }}</div></div>
+    <div><strong>Units converted</strong><div>{{ throughput.units_converted }}</div></div>
+    <div><strong>Jobs completed</strong><div>{{ throughput.jobs_completed }}</div></div>
+  </div>
+  <small>Window {{ window.start_date }} → {{ window.end_date }} • Refreshed at {{ refreshed_at }}</small>
+</div>
+
+

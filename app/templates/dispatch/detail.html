@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Dispatch Job {{ dto.job_code }} (Order {{ dto.order_code }})</h1>
+<p><strong>Customer:</strong> {{ dto.customer_name }}</p>
+<p><strong>QC Status:</strong>
+	{% if dto.qc_status == 'final_pass' %}
+	<span style="background:#c7f5d9; color:#0f5132; padding:2px 8px; border-radius:10px;">final_pass</span>
+	{% elif dto.qc_status == 'final_pass_with_deviation' %}
+	<span style="background:#ffe08a; color:#5a4a00; padding:2px 8px; border-radius:10px;">pass w/ deviation</span>
+	{% else %}
+	<span style="background:#e0e0e0; color:#333; padding:2px 8px; border-radius:10px;">missing</span>
+	{% endif %}
+</p>
+
+<h3>Final Checklist</h3>
+<pre style="background:#f7f7f7; padding:8px;">{{ dto.final_checklist | tojson(indent=2) }}</pre>
+
+<h3>Produced Summary</h3>
+<ul>
+	{% for k, v in dto.produced_summary.items() %}
+	<li>{{ k }}: {{ v }}</li>
+	{% endfor %}
+	{% if dto.produced_summary|length == 0 %}
+	<li>No outputs recorded.</li>
+	{% endif %}
+	</ul>
+
+<h3>Packaging Requirements</h3>
+{% set p = dto.packaging_req %}
+<ul>
+	<li>Pack Mode: {{ p.pack_mode or "-" }}</li>
+	<li>Pallet Type: {{ p.pallet_type or "-" }}</li>
+	<li>Wrapping Required: {{ p.wrapping_required }}</li>
+	<li>Bags/Carton: {{ p.bags_per_carton or "-" }}</li>
+	</ul>
+
+<h3>Status</h3>
+{% if dto.dispatch_status == 'dispatched' %}
+	<p><span style="background:#c7f5d9; color:#0f5132; padding:2px 8px; border-radius:10px;">dispatched</span></p>
+	<h4>Dispatch Info</h4>
+	<ul>
+		<li>Dispatch Date: {{ dto.dispatched_at or dto.dispatch_metadata.dispatch_date }}</li>
+		<li>Carrier: {{ dto.dispatch_metadata.carrier or "-" }}</li>
+		<li>Delivery Ref: {{ dto.dispatch_metadata.delivery_ref or "-" }}</li>
+	</ul>
+{% elif dto.dispatch_status == 'ready' %}
+	<p><span style="background:#ffe08a; color:#5a4a00; padding:2px 8px; border-radius:10px;">ready</span></p>
+{% else %}
+	<p><span style="background:#e0e0e0; color:#333; padding:2px 8px; border-radius:10px;">pending</span></p>
+{% endif %}
+
+<h3>Preconditions</h3>
+<ul>
+	<li>All required runs completed: {{ '✅' if dto.preconditions.runs_completed else '❌' }}</li>
+	<li>QC summary finalised: {{ '✅' if dto.preconditions.qc_finalized else '❌' }}</li>
+	<li>Produced quantities recorded: {{ '✅' if dto.preconditions.has_outputs else '❌' }}</li>
+	<li>Packaging requirements known: {{ '✅' if dto.preconditions.packaging_known else '❌' }}</li>
+</ul>
+{% if not (dto.preconditions.runs_completed and dto.preconditions.qc_finalized and dto.preconditions.has_outputs and dto.preconditions.packaging_known) %}
+	<p style="color:#a00;">Cannot mark ready until all preconditions are met.</p>
+{% endif %}
+
+{% if dto.can_mark_ready %}
+<h3>Mark Ready</h3>
+<form id="mark-ready" hx-post="/dispatch/{{ dto.job_id }}/mark_ready" hx-headers='{"X-CSRF-Token":"{{ csrf_token }}"}' hx-trigger="submit" hx-swap="none">
+	<label>Cartons: <input type="number" name="cartons_count" min="0" value="{{ dto.packaging_confirmation.cartons_count or 0 }}"/></label>
+	<label>Pallets: <input type="number" name="pallets_count" min="0" value="{{ dto.packaging_confirmation.pallets_count or 0 }}"/></label>
+	<label>Pallet Type: <input type="text" name="pallet_type" value="{{ dto.packaging_confirmation.pallet_type or p.pallet_type or '' }}"/></label>
+	<label>Wrapped: <input type="checkbox" name="wrapped" {% if dto.packaging_confirmation.wrapped or p.wrapping_required %}checked{% endif %}/></label>
+	<label>Notes: <textarea name="notes">{{ dto.packaging_confirmation.notes or '' }}</textarea></label>
+	<button type="submit">Mark Ready</button>
+	</form>
+{% endif %}
+
+{% if dto.can_confirm %}
+<h3>Confirm Dispatch</h3>
+<p style="color:#a00; font-weight:bold;">This action is irreversible. Once dispatched, this job cannot be modified.</p>
+<form id="confirm" hx-post="/dispatch/{{ dto.job_id }}/confirm" hx-headers='{"X-CSRF-Token":"{{ csrf_token }}"}' hx-trigger="submit" hx-swap="none">
+	<label>Dispatch Date: <input type="datetime-local" name="dispatch_date"/></label>
+	<label>Carrier: <input type="text" name="carrier"/></label>
+	<label>Delivery Ref: <input type="text" name="delivery_ref"/></label>
+	<label><input type="checkbox" name="confirm_checkbox"> I confirm this job has physically left the factory</label>
+	<button type="submit">Confirm Dispatch</button>
+	</form>
+{% endif %}
+
+{% if dto.dispatched_at %}
+<h3>KPI Timing</h3>
+<ul>
+	<li>First Run Started At: {{ dto.first_run_started_at or '-' }}</li>
+	<li>Last Run Completed At: {{ dto.last_run_completed_at or '-' }}</li>
+	<li>Dispatched At: {{ dto.dispatched_at or '-' }}</li>
+	<li>Job Flow Time: {{ dto.kpi_durations.job_flow_time }}</li>
+	<li>Run to Dispatch: {{ dto.kpi_durations.run_to_dispatch }}</li>
+</ul>
+{% endif %}
+{% endblock %}
+
+

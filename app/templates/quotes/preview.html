@@ -1,0 +1,27 @@
+{% set p = preview %}
+<div class="quote-preview">
+  <h3>Quote Preview</h3>
+  <div class="totals">
+    <div>Total cost: {{ "%.2f"|format(p.total_cost) }} {{ p.currency }}</div>
+    <div>Final price (with margin {{ "%.0f"|format(p.margin*100) }}%): <strong>{{ "%.2f"|format(p.final_price) }} {{ p.currency }}</strong></div>
+    {% if p.unit_price %}
+    <div>Unit price: {{ "%.4f"|format(p.unit_price) }} {{ p.currency }}</div>
+    {% endif %}
+  </div>
+  <hr/>
+  <h4>Breakdown</h4>
+  <table>
+    <thead>
+      <tr><th>Stage</th><th>Cost ({{ p.currency }})</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Material</td><td>{{ "%.2f"|format(p.cost_breakdown.material_cost) }}</td></tr>
+      <tr><td>Printing</td><td>{{ "%.2f"|format(p.cost_breakdown.printing_cost) }}</td></tr>
+      <tr><td>Conversion</td><td>{{ "%.2f"|format(p.cost_breakdown.conversion_cost) }}</td></tr>
+      <tr><td>Core</td><td>{{ "%.2f"|format(p.cost_breakdown.core_cost) }}</td></tr>
+      <tr><td>Waste</td><td>{{ "%.2f"|format(p.cost_breakdown.waste_cost) }}</td></tr>
+    </tbody>
+  </table>
+</div>
+
+

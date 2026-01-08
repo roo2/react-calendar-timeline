@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>New Order</h1>
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/orders">
+    <input type="hidden" name="_csrf" value="{{ identity.csrf or '' }}"/>
+    <div>
+      <label>Customer</label>
+      <select name="customer_id" required>
+        <option value="" disabled selected>Select customer</option>
+        {% for c in customers or [] %}
+          <option value="{{ c.id }}">{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Product Version</label>
+      <select name="product_version_id" required>
+        <option value="" disabled selected>Select product version</option>
+        {% for v in versions or [] %}
+          <option value="{{ v.id }}">{{ v.product_code }} v{{ v.version_number }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Currency</label>
+      <input type="text" name="currency" value="AUD" maxlength="3"/>
+    </div>
+    <div>
+      <label>Status</label>
+      <select name="status">
+        <option value="confirmed" selected>confirmed</option>
+        <option value="draft">draft</option>
+      </select>
+    </div>
+    <div>
+      <label>Quote ID (optional)</label>
+      <input type="text" name="quote_id" />
+    </div>
+    <div class="mt-3">
+      <button type="submit">Create</button>
+      <a href="/orders">Cancel</a>
+    </div>
+  </form>
+{% endblock %}
+
+
+

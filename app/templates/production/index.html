@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Production Overview</h1>
+<div>
+  {% for item in overview %}
+    <div style="border:1px solid #ddd;padding:12px;margin-bottom:10px;border-radius:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">Machine {{ item.machine.code }}</h3>
+        <a href="/production/my-machine?machine_id={{ item.machine.id }}">My Machine</a>
+      </div>
+      {% if item.current %}
+        <div style="margin-top:8px;">
+          <span class="badge" style="background:#16a34a;color:#fff;padding:2px 6px;border-radius:4px;">Running</span>
+          <span style="margin-left:8px;">Job {{ item.current.job_code }} • {{ item.current.operation_type }} • Started {{ item.current.started_at }}</span>
+        </div>
+      {% else %}
+        <div style="margin-top:8px;">
+          <span class="badge" style="background:#6b7280;color:#fff;padding:2px 6px;border-radius:4px;">Idle</span>
+        </div>
+      {% endif %}
+      {% if item.next_job %}
+        <div style="margin-top:8px;">
+          Next: Job {{ item.next_job.job_code }} (pos {{ item.next_job.position }})
+        </div>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endblock %}
+
+

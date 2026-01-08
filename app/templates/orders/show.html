@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Order {{ order.code }}</h1>
+  <p>
+    <strong>Status:</strong>
+    <span class="badge {{ order.status.value }}">{{ order.status.value }}</span>
+  </p>
+  <p><strong>Customer:</strong> {{ order.customer.name if order.customer else "-" }}</p>
+  <p><strong>Product:</strong> {{ product_code }} v{{ version_number }}</p>
+  <p><strong>Currency:</strong> {{ order.currency }}</p>
+  <p><strong>Created:</strong> {{ order.created_at }}</p>
+
+  <h3>Jobs</h3>
+  <div class="mb-2">
+    {% if identity and identity.roles and ('PROD_MANAGER' in identity.roles) %}
+      <a href="/orders/{{ order.id }}/jobs/new" class="button">Add Job</a>
+    {% endif %}
+    <a href="/orders">Back to Orders</a>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Job Code</th>
+        <th>Planned Qty</th>
+        <th>Produced Qty</th>
+        <th>Allocated Units</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for j in order.jobs or [] %}
+        <tr>
+          <td>{{ j.job_code }}</td>
+          <td>{{ j.planned_qty }}</td>
+          <td>{{ j.produced_qty }}</td>
+          <td>{{ j.allocated_order_units or "-" }}</td>
+          <td><span class="badge {{ j.status.value }}">{{ j.status.value }}</span></td>
+        </tr>
+      {% endfor %}
+      {% if (order.jobs or [])|length == 0 %}
+        <tr><td colspan="5">No jobs yet.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+{% endblock %}
+
+
+

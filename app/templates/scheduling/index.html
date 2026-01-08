@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Scheduling Overview</h1>
+
+{% if extruders and extruders|length > 0 %}
+<section>
+	<h2>Extruders</h2>
+	<div class="machine-grid">
+		{% for item in extruders %}
+		<div class="machine-card">
+			<h3>{{ item.machine.code }}</h3>
+			{% set lane = item.lane %}{% include "scheduling/lane.html" %}
+		</div>
+		{% endfor %}
+	</div>
+	{% if extruders|length == 0 %}
+	<p><em>No extruder machines configured.</em></p>
+	{% endif %}
+</section>
+{% endif %}
+
+{% if printers and printers|length > 0 %}
+<section>
+	<h2>Printing</h2>
+	<div class="machine-grid">
+		{% for item in printers %}
+		<div class="machine-card">
+			<h3>{{ item.machine.code }}</h3>
+			{% set lane = item.lane %}{% include "scheduling/lane.html" %}
+		</div>
+		{% endfor %}
+	</div>
+	{% if printers|length == 0 %}
+	<p><em>No printing machines configured.</em></p>
+	{% endif %}
+</section>
+{% endif %}
+
+{% if converters and converters|length > 0 %}
+<section>
+	<h2>Conversion</h2>
+	<div class="machine-grid">
+		{% for item in converters %}
+		<div class="machine-card">
+			<h3>{{ item.machine.code }}</h3>
+			{% set lane = item.lane %}{% include "scheduling/lane.html" %}
+		</div>
+		{% endfor %}
+	</div>
+	{% if converters|length == 0 %}
+	<p><em>No conversion machines configured.</em></p>
+	{% endif %}
+</section>
+{% endif %}
+
+{% endblock %}
+
+

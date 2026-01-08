@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="error-container">
+  <div class="error-content">
+    <div class="error-icon">🔒</div>
+    <h1>403 - Access Forbidden</h1>
+    <p class="error-message">
+      You don't have permission to access this resource.
+    </p>
+    <div class="error-actions">
+      <a href="/" class="btn btn-primary">Go to Home</a>
+      {% if not identity or not identity.user %}
+      <a href="/auth/login" class="btn">Log In</a>
+      {% endif %}
+    </div>
+    <div class="error-help">
+      <p><small>If you believe you should have access, please contact your system administrator.</small></p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,9 @@
+<div class="card">
+  <div>Layflat (mm): <strong>{{ derived.layflat_mm }}</strong></div>
+  <div>Decision Width (mm): <strong>{{ derived.decision_width_mm }}</strong></div>
+  {% if derived.area_per_unit_mm2 %}
+  <div>Area per unit (mm²): <strong>{{ derived.area_per_unit_mm2 }}</strong></div>
+  {% endif %}
+</div>
+
+

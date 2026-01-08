@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Products</h1>
+  <form method="get" action="/products" class="mb-3">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search by code" />
+    <button type="submit">Search</button>
+    {% if identity and identity.roles and ('SALES' in identity.roles or 'PROD_MANAGER' in identity.roles) %}
+      <a href="/products/new" class="button">New Product</a>
+    {% endif %}
+  </form>
+  <table>
+    <thead>
+      <tr>
+        <th>Code</th>
+        <th>Customer</th>
+        <th>Active Version</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for p in products or [] %}
+      <tr>
+        <td><a href="/products/{{ p.id }}">{{ p.code }}</a></td>
+        <td>{{ p.customer.name if p.customer else "-" }}</td>
+        <td>{{ p.active_version_id or "-" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
+
+

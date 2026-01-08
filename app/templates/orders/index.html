@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Orders</h1>
+  <div class="mb-3">
+    {% if identity and identity.roles and ('SALES' in identity.roles or 'PROD_MANAGER' in identity.roles) %}
+      <a href="/orders/new" class="button">New Order</a>
+    {% endif %}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Code</th>
+        <th>Customer</th>
+        <th>Product</th>
+        <th>Status</th>
+        <th>Currency</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for o in orders or [] %}
+      {% set vm = version_meta.get(o.product_version_id) or {} %}
+      <tr>
+        <td><a href="/orders/{{ o.id }}">{{ o.code }}</a></td>
+        <td>{{ o.customer.name if o.customer else "-" }}</td>
+        <td>{{ (vm.product_code ~ " v" ~ vm.version_number) if vm else "-" }}</td>
+        <td>
+          <span class="badge {{ o.status.value if o.status else '' }}">{{ o.status.value if o.status else o.status }}</span>
+        </td>
+        <td>{{ o.currency }}</td>
+        <td>{{ o.created_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
+
+
+

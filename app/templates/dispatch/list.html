@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Dispatch — Ready/Pending Jobs</h1>
+<style>
+.badge { padding: 2px 8px; border-radius: 10px; font-size: 0.85em; }
+.badge.gray { background: #e0e0e0; color: #333; }
+.badge.yellow { background: #ffe08a; color: #5a4a00; }
+.badge.green { background: #c7f5d9; color: #0f5132; }
+</style>
+<table>
+	<thead>
+	<tr>
+		<th>Order</th>
+		<th>Job</th>
+		<th>Customer</th>
+		<th>Dispatch</th>
+		<th>QC</th>
+		<th>Produced</th>
+		<th>Packaging (req)</th>
+		<th>Action</th>
+	</tr>
+	</thead>
+	<tbody>
+	{% for it in items %}
+	<tr>
+		<td>{{ it.order_code }}</td>
+		<td><a href="/dispatch/{{ it.job_id }}">{{ it.job_code }}</a></td>
+		<td>{{ it.customer_name }}</td>
+		<td>
+			{% set d = it.status %}
+			{% if d == 'dispatched' %}
+			<span class="badge green">dispatched</span>
+			{% elif d == 'ready' %}
+			<span class="badge yellow">ready</span>
+			{% else %}
+			<span class="badge gray">pending</span>
+			{% endif %}
+		</td>
+		<td>
+			{% if it.qc_status == 'final_pass' %}
+			<span class="badge green">final_pass</span>
+			{% elif it.qc_status == 'final_pass_with_deviation' %}
+			<span class="badge yellow">pass w/ deviation</span>
+			{% else %}
+			<span class="badge gray">missing</span>
+			{% endif %}
+		</td>
+		<td>
+			{% for k, v in it.produced_summary.items() %}
+				<span>{{ k }}: {{ v }}</span>{% if not loop.last %}, {% endif %}
+			{% endfor %}
+		</td>
+		<td>
+			{% set p = it.packaging_req %}
+			{{ p.pack_mode or "-" }} / {{ p.pallet_type or "-" }} / wrap: {{ p.wrapping_required }}
+		</td>
+		<td><a href="/dispatch/{{ it.job_id }}">Open</a></td>
+	</tr>
+	{% endfor %}
+	</tbody>
+	</table>
+{% endblock %}
+
+

@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>New Product</h1>
+  {% if errors %}
+    <div class="alert alert-danger">{{ errors }}</div>
+  {% endif %}
+  <form method="post" action="/products" onsubmit="buildSpecJSON()" id="productForm">
+    <input type="hidden" name="_csrf" value="{{ request.state.csrf or (identity.csrf if identity else '') }}"/>
+    <input type="hidden" name="spec_json" id="spec_json" value="{{ prefill_spec_json if prefill_spec_json else '{}' }}"/>
+
+    <fieldset>
+      <legend>Section 1: Product Identity</legend>
+      <div>
+        <label>Customer</label>
+        <select name="customer_id" id="customer_id" required>
+          <option value="">Select customer</option>
+          {% for c in customers or [] %}
+          <option value="{{ c.id }}" {% if customer_id and customer_id == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Product Code</label>
+        <input type="text" name="code" id="code" value="{{ code or '' }}" required />
+      </div>
+      <div>
+        <label>Product Type</label>
+        <select id="identity_product_type" required>
+          <option value="Bag">Bag</option>
+          <option value="BagOnRoll">BagOnRoll</option>
+          <option value="Tube">Tube</option>
+          <option value="Sheet">Sheet</option>
+          <option value="CentreFold">CentreFold</option>
+          <option value="U‑Film">U‑Film</option>
+        </select>
+      </div>
+      <div>
+        <label>Finish Mode</label>
+        <select id="identity_finish_mode" required>
+          <option value="Rolls">Rolls</option>
+          <option value="Cartons">Cartons</option>
+        </select>
+      </div>
+      <div>
+        <label>Notes</label>
+        <textarea id="identity_notes"></textarea>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section 2: Dimensions & Geometry</legend>
+      <div>
+        <label>Base Width (mm)</label>
+        <input type="number" id="dim_base_width" min="1" required />
+      </div>
+      <div>
+        <label>Base Length (mm)</label>
+        <input type="number" id="dim_base_length" min="1" />
+        <small>Required if Finish Mode = Cartons</small>
+      </div>
+      <div>
+        <label>Thickness (µm)</label>
+        <input type="number" id="dim_thickness" min="1" required />
+      </div>
+      <div>
+        <label>Geometry</label>
+        <select id="dim_geometry" required>
+          <option value="Flat">Flat</option>
+          <option value="Gusset">Gusset</option>
+          <option value="BottomGusset">BottomGusset</option>
+          <option value="CentreFold">CentreFold</option>
+        </select>
+      </div>
+      <div>
+        <label>Gusset Size (mm)</label>
+        <input type="number" id="dim_gusset" min="1" />
+      </div>
+      <div id="derived_preview" class="mt-2"
+           hx-post="/products/preview/dimensions"
+           hx-trigger="change from:#spec_json"
+           hx-target="#derived_preview"
+           hx-include="#spec_json">
+        <small>Use Preview to compute derived dimensions</small>
+      </div>
+      <button type="button" onclick="buildSpecJSON(); htmx.trigger(document.getElementById('spec_json'), 'change')">Preview Dimensions</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section 3: Materials & Formulation</legend>
+      <div>
+        <label>Resin Blend</label>
+        <div id="blend_rows">
+          <div class="blend_row">
+            <input type="text" placeholder="resin_code" class="blend_code"/>
+            <input type="number" placeholder="pct" class="blend_pct" min="0" step="0.01"/>
+          </div>
+        </div>
+        <button type="button" onclick="addBlendRow()">Add Component</button>
+      </div>
+      <div>
+        <label>Colour</label>
+        <input type="text" id="colour_code" placeholder="colour_code"/>
+        <input type="number" id="colour_strength" placeholder="strength_pct" min="0" step="0.01"/>
+        <label><input type="checkbox" id="colour_opaque"/> Opaque</label>
+        <input type="number" id="opaque_strength" placeholder="opaque_strength_pct" min="0" step="0.01"/>
+      </div>
+      <div>
+        <label>Additives</label>
+        <div id="additive_rows">
+          <div class="additive_row">
+            <input type="text" placeholder="additive_code" class="add_code"/>
+            <input type="number" placeholder="pct" class="add_pct" min="0" step="0.01"/>
+          </div>
+        </div>
+        <button type="button" onclick="addAdditiveRow()">Add Additive</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section 4: Printing & Artwork</legend>
+      <div>
+        <label>Printing Method</label>
+        <select id="print_method">
+          <option value="None">None</option>
+          <option value="Inline">Inline</option>
+          <option value="Uteco">Uteco</option>
+        </select>
+      </div>
+      <div>
+        <label>Number of Colours</label>
+        <input type="number" id="print_num_colours" min="0"/>
+      </div>
+      <div>
+        <label>Ink Codes (comma-separated)</label>
+        <input type="text" id="print_ink_codes"/>
+      </div>
+      <div>
+        <label>Plate Codes (comma-separated)</label>
+        <input type="text" id="print_plate_codes"/>
+      </div>
+      <div>
+        <label>Print Side</label>
+        <select id="print_side">
+          <option value="">-</option>
+          <option value="front">front</option>
+          <option value="back">back</option>
+          <option value="both">both</option>
+        </select>
+      </div>
+      <div>
+        <label>Artwork Refs (comma-separated)</label>
+        <input type="text" id="print_artwork_refs"/>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section 5: Quality Expectations</legend>
+      <div>
+        <label><input type="checkbox" class="q_flag" value="tight_gauge"/> Tight gauge tolerance</label>
+        <label><input type="checkbox" class="q_flag" value="seal_integrity"/> Seal integrity critical</label>
+        <label><input type="checkbox" class="q_flag" value="cosmetic"/> Cosmetic critical</label>
+        <label><input type="checkbox" class="q_flag" value="colour"/> Colour critical</label>
+      </div>
+      <div>
+        <label>Known Issues</label>
+        <textarea id="q_known_issues"></textarea>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section 6: Run Requirements</legend>
+      <div>
+        <label>Preferred Extruders (comma-separated)</label>
+        <input type="text" id="run_pref_extruders"/>
+      </div>
+      <div>
+        <label>Preferred Printer</label>
+        <input type="text" id="run_pref_printer"/>
+      </div>
+      <div>
+        <label>Preferred Converter</label>
+        <input type="text" id="run_pref_converter"/>
+      </div>
+      <div>
+        <label>Treat Inside/Outside</label>
+        <select id="run_treat">
+          <option value="none">none</option>
+          <option value="inside">inside</option>
+          <option value="outside">outside</option>
+        </select>
+      </div>
+      <div>
+        <label><input type="checkbox" id="run_inline_perforation"/> Inline Perforation</label>
+        <label><input type="checkbox" id="run_inline_seal"/> Inline Seal</label>
+      </div>
+      <div>
+        <label>Notes</label>
+        <textarea id="run_notes"></textarea>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section 7: Packaging & Logistics</legend>
+      <div>
+        <label>Pack Mode</label>
+        <select id="pack_mode">
+          <option value="Rolls">Rolls</option>
+          <option value="Cartons">Cartons</option>
+        </select>
+      </div>
+      <div>
+        <label>Core Type</label>
+        <select id="core_type">
+          <option value="7mm">7mm</option>
+          <option value="13mm">13mm</option>
+          <option value="PVC">PVC</option>
+          <option value="None">None</option>
+        </select>
+      </div>
+      <div>
+        <label>Core Policy</label>
+        <select id="core_policy">
+          <option value="Include">Include</option>
+          <option value="Half">Half</option>
+          <option value="Exclude">Exclude</option>
+        </select>
+      </div>
+      <div>
+        <label>Bags per Carton</label>
+        <input type="number" id="bags_per_carton" min="1"/>
+      </div>
+      <div>
+        <label>Pallet Type</label>
+        <select id="pallet_type">
+          <option value="Chep">Chep</option>
+          <option value="Plain">Plain</option>
+          <option value="Resin">Resin</option>
+          <option value="None">None</option>
+        </select>
+      </div>
+      <div>
+        <label><input type="checkbox" id="wrapped"/> Wrapped</label>
+      </div>
+    </fieldset>
+
+    <div class="mt-3">
+      <button type="submit">Create</button>
+      <a href="/products">Cancel</a>
+    </div>
+  </form>
+
+  <script>
+    function addBlendRow() {
+      const c = document.getElementById('blend_rows');
+      const row = document.createElement('div');
+      row.className = 'blend_row';
+      row.innerHTML = '<input type="text" placeholder="resin_code" class="blend_code"/>' +
+                      '<input type="number" placeholder="pct" class="blend_pct" min="0" step="0.01"/>';
+      c.appendChild(row);
+    }
+    function addAdditiveRow() {
+      const c = document.getElementById('additive_rows');
+      const row = document.createElement('div');
+      row.className = 'additive_row';
+      row.innerHTML = '<input type="text" placeholder="additive_code" class="add_code"/>' +
+                      '<input type="number" placeholder="pct" class="add_pct" min="0" step="0.01"/>';
+      c.appendChild(row);
+    }
+    function parseCSV(inputId) {
+      const val = document.getElementById(inputId).value || '';
+      return val.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    function collectBlend() {
+      const rows = Array.from(document.querySelectorAll('#blend_rows .blend_row'));
+      return rows.map(r => ({
+        resin_code: (r.querySelector('.blend_code').value || '').trim(),
+        pct: parseFloat(r.querySelector('.blend_pct').value || '0')
+      })).filter(x => x.resin_code);
+    }
+    function collectAdditives() {
+      const rows = Array.from(document.querySelectorAll('#additive_rows .additive_row'));
+      return rows.map(r => ({
+        additive_code: (r.querySelector('.add_code').value || '').trim(),
+        pct: parseFloat(r.querySelector('.add_pct').value || '0')
+      })).filter(x => x.additive_code);
+    }
+    function buildSpecJSON() {
+      const identity = {
+        product_type: document.getElementById('identity_product_type').value,
+        finish_mode: document.getElementById('identity_finish_mode').value,
+        notes: document.getElementById('identity_notes').value || null
+      };
+      const dimensions = {
+        base_width_mm: parseInt(document.getElementById('dim_base_width').value || '0'),
+        base_length_mm: document.getElementById('dim_base_length').value ? parseInt(document.getElementById('dim_base_length').value) : null,
+        thickness_um: parseInt(document.getElementById('dim_thickness').value || '0'),
+        geometry: document.getElementById('dim_geometry').value,
+        gusset_mm: document.getElementById('dim_gusset').value ? parseInt(document.getElementById('dim_gusset').value) : null
+      };
+      const colour = (document.getElementById('colour_code').value ||
+                      document.getElementById('colour_strength').value ||
+                      document.getElementById('colour_opaque').checked ||
+                      document.getElementById('opaque_strength').value) ? {
+        colour_code: document.getElementById('colour_code').value || null,
+        strength_pct: document.getElementById('colour_strength').value ? parseFloat(document.getElementById('colour_strength').value) : null,
+        opaque: document.getElementById('colour_opaque').checked,
+        opaque_strength_pct: document.getElementById('opaque_strength').value ? parseFloat(document.getElementById('opaque_strength').value) : null
+      } : null;
+      const formulation = {
+        blend: collectBlend(),
+        colour: colour,
+        additives: collectAdditives()
+      };
+      const printing = {
+        method: document.getElementById('print_method').value,
+        num_colours: document.getElementById('print_num_colours').value ? parseInt(document.getElementById('print_num_colours').value) : 0,
+        ink_codes: parseCSV('print_ink_codes'),
+        plate_codes: parseCSV('print_plate_codes'),
+        side: document.getElementById('print_side').value || null,
+        artwork_refs: parseCSV('print_artwork_refs')
+      };
+      const flags = Array.from(document.querySelectorAll('.q_flag:checked')).map(x => x.value);
+      const quality_expectations = {
+        flags: flags,
+        known_issues: document.getElementById('q_known_issues').value || null
+      };
+      const run_requirements = {
+        preferred_extruders: parseCSV('run_pref_extruders'),
+        preferred_printer: document.getElementById('run_pref_printer').value || null,
+        preferred_converter: document.getElementById('run_pref_converter').value || null,
+        treat_inside_outside: document.getElementById('run_treat').value,
+        inline_perforation: document.getElementById('run_inline_perforation').checked,
+        inline_seal: document.getElementById('run_inline_seal').checked,
+        notes: document.getElementById('run_notes').value || null
+      };
+      const packaging = {
+        pack_mode: document.getElementById('pack_mode').value,
+        core_type: document.getElementById('core_type').value,
+        core_policy: document.getElementById('core_policy').value,
+        bags_per_carton: document.getElementById('bags_per_carton').value ? parseInt(document.getElementById('bags_per_carton').value) : null,
+        pallet_type: document.getElementById('pallet_type').value,
+        wrapped: document.getElementById('wrapped').checked
+      };
+      const spec = {
+        identity, dimensions, formulation, printing, quality_expectations, run_requirements, packaging
+      };
+      document.getElementById('spec_json').value = JSON.stringify(spec);
+    }
+
+    // If prefill JSON is provided (validation error round-trip), try to populate some top-level fields
+    (function prefill() {
+      try {
+        const txt = document.getElementById('spec_json').value;
+        if (!txt || txt === '{}') return;
+        const s = JSON.parse(txt);
+        if (s.identity) {
+          document.getElementById('identity_product_type').value = s.identity.product_type || 'Bag';
+          document.getElementById('identity_finish_mode').value = s.identity.finish_mode || 'Rolls';
+          document.getElementById('identity_notes').value = s.identity.notes || '';
+        }
+        if (s.dimensions) {
+          document.getElementById('dim_base_width').value = s.dimensions.base_width_mm || '';
+          document.getElementById('dim_base_length').value = s.dimensions.base_length_mm || '';
+          document.getElementById('dim_thickness').value = s.dimensions.thickness_um || '';
+          document.getElementById('dim_geometry').value = s.dimensions.geometry || 'Flat';
+          document.getElementById('dim_gusset').value = s.dimensions.gusset_mm || '';
+        }
+        if (s.formulation && Array.isArray(s.formulation.blend)) {
+          const c = document.getElementById('blend_rows');
+          c.innerHTML = '';
+          s.formulation.blend.forEach((comp) => {
+            addBlendRow();
+            const rows = document.querySelectorAll('#blend_rows .blend_row');
+            const r = rows[rows.length - 1];
+            r.querySelector('.blend_code').value = comp.resin_code || '';
+            r.querySelector('.blend_pct').value = comp.pct || '';
+          });
+        }
+        if (s.formulation && Array.isArray(s.formulation.additives)) {
+          const c = document.getElementById('additive_rows');
+          c.innerHTML = '';
+          s.formulation.additives.forEach((comp) => {
+            addAdditiveRow();
+            const rows = document.querySelectorAll('#additive_rows .additive_row');
+            const r = rows[rows.length - 1];
+            r.querySelector('.add_code').value = comp.additive_code || '';
+            r.querySelector('.add_pct').value = comp.pct || '';
+          });
+        }
+        if (s.formulation && s.formulation.colour) {
+          document.getElementById('colour_code').value = s.formulation.colour.colour_code || '';
+          document.getElementById('colour_strength').value = s.formulation.colour.strength_pct || '';
+          document.getElementById('colour_opaque').checked = !!s.formulation.colour.opaque;
+          document.getElementById('opaque_strength').value = s.formulation.colour.opaque_strength_pct || '';
+        }
+        if (s.printing) {
+          document.getElementById('print_method').value = s.printing.method || 'None';
+          document.getElementById('print_num_colours').value = s.printing.num_colours || '';
+          document.getElementById('print_ink_codes').value = (s.printing.ink_codes || []).join(', ');
+          document.getElementById('print_plate_codes').value = (s.printing.plate_codes || []).join(', ');
+          document.getElementById('print_side').value = s.printing.side || '';
+          document.getElementById('print_artwork_refs').value = (s.printing.artwork_refs || []).join(', ');
+        }
+        if (s.quality_expectations) {
+          const flags = new Set(s.quality_expectations.flags || []);
+          document.querySelectorAll('.q_flag').forEach(cb => cb.checked = flags.has(cb.value));
+          document.getElementById('q_known_issues').value = s.quality_expectations.known_issues || '';
+        }
+        if (s.run_requirements) {
+          document.getElementById('run_pref_extruders').value = (s.run_requirements.preferred_extruders || []).join(', ');
+          document.getElementById('run_pref_printer').value = s.run_requirements.preferred_printer || '';
+          document.getElementById('run_pref_converter').value = s.run_requirements.preferred_converter || '';
+          document.getElementById('run_treat').value = s.run_requirements.treat_inside_outside || 'none';
+          document.getElementById('run_inline_perforation').checked = !!s.run_requirements.inline_perforation;
+          document.getElementById('run_inline_seal').checked = !!s.run_requirements.inline_seal;
+          document.getElementById('run_notes').value = s.run_requirements.notes || '';
+        }
+        if (s.packaging) {
+          document.getElementById('pack_mode').value = s.packaging.pack_mode || 'Rolls';
+          document.getElementById('core_type').value = s.packaging.core_type || '7mm';
+          document.getElementById('core_policy').value = s.packaging.core_policy || 'Include';
+          document.getElementById('bags_per_carton').value = s.packaging.bags_per_carton || '';
+          document.getElementById('pallet_type').value = s.packaging.pallet_type || 'Chep';
+          document.getElementById('wrapped').checked = !!s.packaging.wrapped;
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  </script>
+{% endblock %}
+
+

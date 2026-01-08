@@ -1,0 +1,3 @@
+# Placeholder for printing adapters
+
+

@@ -1,0 +1,35 @@
+<div id="lane-{{ lane.machine_id }}" hx-swap-oob="true">
+  <div class="lane-header">
+    <strong>Machine</strong>: {{ lane.machine_id }}
+    {% if lane.warnings and lane.warnings|length > 0 %}
+    <span class="badges">
+      {% for w in lane.warnings %}
+      <span class="badge badge-warning">{{ w }}</span>
+      {% endfor %}
+    </span>
+    {% endif %}
+    {% if lane.conflicts and lane.conflicts|length > 0 %}
+    <span class="badges">
+      {% for c in lane.conflicts %}
+      <span class="badge badge-danger">
+        {{ c.tool_type_code }}{% if c.from and c.to %} ({{ c.from }}–{{ c.to }}){% endif %}: {{ c.reason }}
+      </span>
+      {% endfor %}
+    </span>
+    {% endif %}
+  </div>
+  <ol class="lane-items">
+    {% for item in lane.items %}
+    <li data-job-id="{{ item.job_id }}">
+      <span class="pos">#{{ item.position }}</span>
+      <span class="job">Job {{ item.job_id }}</span>
+      <span class="status">{{ item.status }}</span>
+    </li>
+    {% endfor %}
+    {% if lane.items|length == 0 %}
+    <li><em>Empty</em></li>
+    {% endif %}
+  </ol>
+</div>
+
+

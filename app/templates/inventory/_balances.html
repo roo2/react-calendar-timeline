@@ -1,0 +1,32 @@
+<style>
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; background: #fff; }
+  .card h3 { margin: 0 0 8px; font-size: 14px; color: #444; }
+  .val { font-size: 24px; font-weight: 700; }
+  .pos { color: #1b5e20; } /* green */
+  .neg { color: #b71c1c; } /* red */
+</style>
+<div id="inv-balances" class="cards">
+  {% set raw = snapshot.raw_kg %}
+  {% set wex = snapshot.wip_extrusion_kg %}
+  {% set wpr = snapshot.wip_printing_kg %}
+  {% set fgu = snapshot.fg_units %}
+  <div class="card">
+    <h3>Raw Material (kg)</h3>
+    <div class="val {{ 'neg' if raw < 0 else 'pos' }}">{{ raw }}</div>
+  </div>
+  <div class="card">
+    <h3>WIP Extrusion (kg)</h3>
+    <div class="val {{ 'neg' if wex < 0 else 'pos' }}">{{ wex }}</div>
+  </div>
+  <div class="card">
+    <h3>WIP Printing (kg)</h3>
+    <div class="val {{ 'neg' if wpr < 0 else 'pos' }}">{{ wpr }}</div>
+  </div>
+  <div class="card">
+    <h3>Finished Goods (units)</h3>
+    <div class="val {{ 'neg' if fgu < 0 else 'pos' }}">{{ fgu }}</div>
+  </div>
+</div>
+
+

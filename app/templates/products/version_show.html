@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Product {{ product.code }} — Version {{ version.version_number }}</h1>
+  <p>Created by {{ version.created_by }} at {{ version.created_at }}</p>
+
+  <div id="derived_preview"
+       hx-post="/products/preview/dimensions"
+       hx-trigger="load"
+       hx-target="#derived_preview"
+       hx-include="#spec_json">
+    <input type="hidden" id="spec_json" name="spec_json" value='{{ version.spec_payload | tojson }}'/>
+  </div>
+
+  <pre style="background:#f6f8fa; padding:12px;">{{ version.spec_payload | tojson(indent=2) }}</pre>
+  <p><a href="/products/{{ product.id }}">Back to product</a></p>
+{% endblock %}
+
+

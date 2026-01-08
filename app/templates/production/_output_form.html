@@ -1,0 +1,35 @@
+<form hx-post="/production/runs/{{ current_run.id }}/record_output"
+      hx-target="#totals-slot"
+      hx-swap="outerHTML"
+      hx-headers='{"X-CSRF-Token":"{{ csrf }}"}'>
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <div style="margin-bottom:8px;">
+    <label>Quantity</label>
+    <input type="number" step="0.001" min="0" name="quantity" required>
+  </div>
+  <div style="margin-bottom:8px;">
+    <label>UOM</label>
+    <select name="uom">
+      <option value="kg">kg</option>
+      <option value="m">m</option>
+      <option value="units">units</option>
+      <option value="rolls">rolls</option>
+      <option value="cartons">cartons</option>
+    </select>
+  </div>
+  <div style="margin-bottom:8px;">
+    <label>Result</label>
+    <label style="margin-left:8px;"><input type="radio" name="good_or_scrap" value="good" checked> Good</label>
+    <label style="margin-left:8px;"><input type="radio" name="good_or_scrap" value="scrap"> Scrap</label>
+  </div>
+  <div style="margin-bottom:8px;">
+    <label><input type="checkbox" name="finished_goods"> Finished Goods (Conversion only)</label>
+  </div>
+  <div style="margin-bottom:8px;">
+    <label>Note</label>
+    <textarea name="note" rows="2" style="width:100%;"></textarea>
+  </div>
+  <button type="submit">Add Output</button>
+</form>
+
+

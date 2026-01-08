@@ -1,0 +1,157 @@
+{% set s = summary %}
+<div>
+  {% set status = s.status.value if s.status else s.status %}
+  {% set badge_color = "gray" %}
+  {% if status == 'final_pass' %}{% set badge_color = "green" %}{% endif %}
+  {% if status == 'final_pass_with_deviation' %}{% set badge_color = "orange" %}{% endif %}
+  {% if status == 'final_fail' %}{% set badge_color = "red" %}{% endif %}
+  <h3>Status: <span style="color: {{ badge_color }};">{{ status or 'draft' }}</span></h3>
+
+  <h4>Totals</h4>
+  {% if s.totals %}
+  <ul>
+    {% for k, v in s.totals.items() %}
+    <li>{{ k }}: {{ v }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <em>No totals</em>
+  {% endif %}
+
+  <h4>Aggregates</h4>
+  {% if s.aggregates %}
+  <div style="overflow-x:auto;">
+    <table>
+      <thead>
+        <tr><th>Check</th><th>min</th><th>avg</th><th>max</th><th>pass</th><th>fail</th><th>compliance</th><th>worst deviation</th></tr>
+      </thead>
+      <tbody>
+        {% for ct, a in s.aggregates.items() %}
+        {% set cr = a.get('compliance_rate') %}
+        {% set cr_color = 'gray' %}
+        {% if cr is not none %}
+          {% if cr >= 0.95 %}{% set cr_color = 'green' %}{% elif cr >= 0.80 %}{% set cr_color = 'orange' %}{% else %}{% set cr_color = 'red' %}{% endif %}
+        {% endif %}
+        {% set wd = a.get('worst_deviation') %}
+        <tr>
+          <td>{{ ct }}</td>
+          <td>{{ a.get('min') }}</td>
+          <td>{{ a.get('avg') }}</td>
+          <td>{{ a.get('max') }}</td>
+          <td>{{ a.get('pass_count') }}</td>
+          <td>{{ a.get('fail_count') }}</td>
+          <td style="color: {{ cr_color }};">
+            {% if cr is not none %}{{ '{:.0%}'.format(cr) }}{% else %}-{% endif %}
+          </td>
+          <td style="color: {% if wd and wd > 0 %}red{% else %}inherit{% endif %};">
+            {% if wd is not none %}{{ wd }}{% else %}-{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <em>No aggregates</em>
+  {% endif %}
+
+  <h4>Final Checklist</h4>
+  {% if s.final_checklist %}
+    {% if status == 'draft' %}
+    <form id="finalize-form"
+          hx-post="/production/jobs/{{ s.job_id }}/qc-summary/finalize"
+          hx-target="#qc-summary-panel"
+          hx-swap="innerHTML"
+          hx-headers='{"X-CSRF-Token":"{{ csrf }}"}'
+          onsubmit="buildFinalizePayload(event)">
+      <input type="hidden" name="checklist_json" id="checklist_json" value="{}"/>
+      <input type="hidden" name="deviations_json" id="deviations_json" value="[]"/>
+      <table>
+        <thead>
+          <tr><th>Item</th><th>WI</th><th>Required</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for key, item in s.final_checklist.items() %}
+          <tr>
+            <td><strong>{{ key }}</strong></td>
+            <td>{{ item.wi }}</td>
+            <td>{{ '✓' if item.required else '✗' }}</td>
+            <td>
+              {% set st = item.get('status') or 'not_set' %}
+              <label><input type="radio" name="cl_{{ key }}" value="pass" {% if st=='pass' %}checked{% endif %}/> Pass</label>
+              <label><input type="radio" name="cl_{{ key }}" value="fail" {% if st=='fail' %}checked{% endif %}/> Fail</label>
+              <label><input type="radio" name="cl_{{ key }}" value="not_set" {% if st not in ['pass','fail'] %}checked{% endif %}/> Not set</label>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h4>Deviations</h4>
+      <div>
+        <textarea id="deviations_text" placeholder='[{"check_type":"width_mm","observed":100,"reason":"...", "disposition":"accept-as-is","approved_by":"", "approved_at":""}]' style="width:100%;min-height:80px;"></textarea>
+      </div>
+      <div style="margin-top:8px;">
+        <button type="submit">Finalize QC</button>
+      </div>
+    </form>
+    <script>
+      function buildFinalizePayload(e) {
+        try {
+          const data = {};
+          document.querySelectorAll('input[type=radio][name^="cl_"]:checked').forEach(r => {
+            const key = r.name.substring(3);
+            data[key] = { status: r.value === 'not_set' ? null : r.value };
+          });
+          document.getElementById('checklist_json').value = JSON.stringify(data);
+        } catch (_) {}
+        try {
+          const txt = document.getElementById('deviations_text').value || "[]";
+          document.getElementById('deviations_json').value = txt;
+        } catch (_) {}
+      }
+    </script>
+    {% else %}
+    <table>
+      <thead>
+        <tr><th>Item</th><th>WI</th><th>Required</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for key, item in s.final_checklist.items() %}
+        <tr>
+          <td><strong>{{ key }}</strong></td>
+          <td>{{ item.wi }}</td>
+          <td>{{ '✓' if item.required else '✗' }}</td>
+          {% set st = item.get('status') %}
+          <td>
+            {% if st == 'pass' %}<span style="color: green;">PASS</span>
+            {% elif st == 'fail' %}<span style="color: red;">FAIL</span>
+            {% else %}<span>not set</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  {% else %}
+  <em>No checklist</em>
+  {% endif %}
+
+  <h4>Deviations</h4>
+  {% set devs = s.deviations if s.deviations else [] %}
+  {% if devs %}
+  <ul>
+    {% for d in (devs if devs is iterable and devs is not string else []) %}
+    <li>
+      <strong>{{ d.check_type }}</strong> — observed: {{ d.observed }} — {{ d.disposition }}
+      {% if d.approved_by %} | approved by {{ d.approved_by }} at {{ d.approved_at }}{% endif %}
+      <div>{{ d.reason }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <em>No deviations</em>
+  {% endif %}
+</div>
+
+

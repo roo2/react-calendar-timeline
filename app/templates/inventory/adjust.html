@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Adjust Inventory</h2>
+<style>
+  form .row { margin: .5rem 0; display: flex; gap: .75rem; align-items: center; }
+  label { min-width: 140px; font-weight: 600; }
+  input, select, textarea { padding: .4rem .5rem; border: 1px solid #ccc; border-radius: 6px; }
+  .btn { padding: .5rem .8rem; border: 1px solid #ccc; border-radius: 6px; text-decoration: none; color: #111; background: #f8f8f8; }
+  .btn:hover { background: #efefef; }
+  .help { color: #666; font-size: .9em; }
+  #form-messages { color: #b71c1c; margin: .5rem 0; }
+</style>
+<div id="form-messages"></div>
+<form hx-post="/inventory/adjust"
+      hx-target="#inv-balances"
+      hx-swap="outerHTML"
+      hx-headers='{"X-CSRF-Token": "{{ request.state.csrf or "" }}"}'
+      hx-on::after-request="if (event.detail.xhr.status >= 400) { document.getElementById('form-messages').innerText = event.detail.xhr.response || 'Validation error'; } else { document.getElementById('form-messages').innerText = 'Adjustment saved.' }">
+  <div>
+    <label>Category</label>
+    <select name="category">
+      <option value="raw_material">raw_material</option>
+      <option value="wip_extruded_roll">wip_extruded_roll</option>
+      <option value="wip_printed_roll">wip_printed_roll</option>
+      <option value="finished_goods">finished_goods</option>
+      <option value="scrap">scrap</option>
+    </select>
+  </div>
+  <div>
+    <label>Item ID (optional)</label>
+    <input name="item_id" placeholder="UUID" />
+    <span class="help">Optional; leave blank if not applicable.</span>
+  </div>
+  <div>
+    <label>Quantity (signed)</label>
+    <input name="quantity" type="number" step="0.001" required />
+    <span class="help">Use negative for decrease (e.g., -5).</span>
+  </div>
+  <div>
+    <label>UOM</label>
+    <input name="uom" value="kg" required />
+  </div>
+  <div>
+    <label>Reason (optional)</label>
+    <textarea name="note" rows="2" placeholder="Reason for adjustment"></textarea>
+  </div>
+  <div>
+    <button class="btn" type="submit">Adjust</button>
+    <a class="btn" href="/inventory">Cancel</a>
+  </div>
+{% endblock %}
+
+

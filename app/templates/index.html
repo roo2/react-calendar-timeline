@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+<!-- Hero Section -->
+<div class="hero-section">
+  <h1>Production Software</h1>
+  {% if identity and identity.user %}
+    <p class="welcome-text">Welcome back, <strong>{{ identity.user.username }}</strong>.</p>
+    <p class="subtitle">Manage your production operations from one place.</p>
+  {% else %}
+    <p class="welcome-text">Skeleton is running.</p>
+    <p class="subtitle">Please <a href="/auth/login">log in</a> to access the system.</p>
+  {% endif %}
+</div>
+
+<!-- Health Status Card -->
+<section class="status-card">
+  <h2>System Health</h2>
+  <div id="ping-slot"
+       hx-get="/partials/ping"
+       hx-trigger="load, every 30s"
+       hx-swap="outerHTML">
+    <div class="health-loading">
+      <span class="spinner"></span>
+      <em>Loading health status…</em>
+    </div>
+  </div>
+</section>
+
+<!-- Quick Links Section -->
+{% if identity and identity.roles %}
+<section class="quick-links-section">
+  <h2>Quick Links</h2>
+  <div class="links-grid">
+    <a href="/" class="link-card">
+      <div class="link-icon">🏠</div>
+      <div class="link-content">
+        <h3>Home</h3>
+        <p>Return to dashboard</p>
+      </div>
+    </a>
+
+    {% if 'SALES' in identity.roles or 'PROD_MANAGER' in identity.roles %}
+    <a href="/dashboard" class="link-card">
+      <div class="link-icon">📊</div>
+      <div class="link-content">
+        <h3>Dashboard</h3>
+        <p>View KPIs and metrics</p>
+      </div>
+    </a>
+
+    <a href="/products" class="link-card">
+      <div class="link-icon">📦</div>
+      <div class="link-content">
+        <h3>Products</h3>
+        <p>Manage product specifications</p>
+      </div>
+    </a>
+
+    <a href="/orders" class="link-card">
+      <div class="link-icon">📋</div>
+      <div class="link-content">
+        <h3>Orders</h3>
+        <p>View and manage orders</p>
+      </div>
+    </a>
+    {% endif %}
+
+    {% if 'PROD_MANAGER' in identity.roles %}
+    <a href="/schedule" class="link-card">
+      <div class="link-icon">📅</div>
+      <div class="link-content">
+        <h3>Schedule</h3>
+        <p>Manage machine schedules</p>
+      </div>
+    </a>
+
+    <a href="/inventory" class="link-card">
+      <div class="link-icon">📦</div>
+      <div class="link-content">
+        <h3>Inventory</h3>
+        <p>Track stock levels</p>
+      </div>
+    </a>
+
+    <a href="/dispatch" class="link-card">
+      <div class="link-icon">🚚</div>
+      <div class="link-content">
+        <h3>Dispatch</h3>
+        <p>Manage dispatches</p>
+      </div>
+    </a>
+
+    <a href="/production" class="link-card">
+      <div class="link-icon">⚙️</div>
+      <div class="link-content">
+        <h3>Production</h3>
+        <p>Monitor production runs</p>
+      </div>
+    </a>
+    {% endif %}
+
+    {% if 'OPERATOR' in identity.roles %}
+    <a href="/production/my-machine" class="link-card">
+      <div class="link-icon">🖥️</div>
+      <div class="link-content">
+        <h3>My Machine</h3>
+        <p>View your assigned machine</p>
+      </div>
+    </a>
+    {% endif %}
+
+    {% if 'SYS_ADMIN' in identity.roles %}
+    <a href="/sys/users" class="link-card">
+      <div class="link-icon">⚙️</div>
+      <div class="link-content">
+        <h3>Admin</h3>
+        <p>System administration</p>
+      </div>
+    </a>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
