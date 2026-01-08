@@ -196,7 +196,7 @@ HTML form
 
 POST /customers
 
-Sales, Production Manager
+Sales, Production Manager (CSRF)
 
 Create customer
 
@@ -218,7 +218,7 @@ HTML form
 
 POST /customers/{customer_id}
 
-Sales, Production Manager
+Sales, Production Manager (CSRF)
 
 Update
 
