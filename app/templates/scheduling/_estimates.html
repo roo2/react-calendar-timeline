@@ -1,0 +1,61 @@
+<div class="estimates-container">
+	<h3>Duration Estimates</h3>
+	<ul class="estimates-list">
+		{% for op in estimates.operations %}
+		<li class="estimate-item">
+			<strong>{{ op.operation_type }}</strong>
+			<span class="duration">{{ op.estimated_duration_hours|round(2) }} hours</span>
+			{% if op.estimated_kg %}
+			<span class="detail">({{ op.estimated_kg|round(1) }} kg)</span>
+			{% endif %}
+			{% if op.estimated_metres %}
+			<span class="detail">({{ op.estimated_metres|round(1) }} m)</span>
+			{% endif %}
+			{% if op.estimated_units %}
+			<span class="detail">({{ op.estimated_units|int }} units)</span>
+			{% endif %}
+		</li>
+		{% endfor %}
+	</ul>
+</div>
+
+<style>
+.estimates-container {
+	padding: 12px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+
+.estimates-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+}
+
+.estimate-item {
+	padding: 8px 0;
+	border-bottom: 1px solid var(--border);
+	display: flex;
+	gap: 12px;
+	align-items: center;
+}
+
+.estimate-item:last-child {
+	border-bottom: none;
+}
+
+.estimate-item strong {
+	min-width: 150px;
+}
+
+.duration {
+	color: var(--primary);
+	font-weight: 600;
+}
+
+.detail {
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+</style>

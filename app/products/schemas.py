@@ -8,11 +8,11 @@ from pydantic import BaseModel, Field, root_validator, validator
 
 class ProductType(str, Enum):
     BAG = "Bag"
-    BAG_ON_ROLL = "BagOnRoll"
     TUBE = "Tube"
+    SLEEVE = "Sleeve"
     SHEET = "Sheet"
-    CENTRE_FOLD = "CentreFold"
-    U_FILM = "U‑Film"
+    CENTERFOLD = "Centerfold"
+    U_FILM = "U-Film"
 
 
 class FinishMode(str, Enum):
@@ -48,6 +48,7 @@ class TreatIO(str, Enum):
 class IdentitySpec(BaseModel):
     product_type: ProductType
     finish_mode: FinishMode
+    industry_flags: List[Literal["food_contact", "non_food", "medical", "chemical_industrial"]] = []
     notes: Optional[str] = None
 
 
@@ -58,7 +59,7 @@ class DimensionsSpec(BaseModel):
     geometry: Geometry
     gusset_mm: Optional[int] = Field(None, gt=0)
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_gusset_and_length(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         geometry = values.get("geometry")
         gusset_mm = values.get("gusset_mm")
@@ -86,7 +87,14 @@ class AdditiveComponent(BaseModel):
     pct: float = Field(..., ge=0)
 
 
+class BlendType(str, Enum):
+    LD = "LD"
+    MD = "MD"
+    CUSTOM = "Custom"
+
+
 class FormulationSpec(BaseModel):
+    blend_type: BlendType = BlendType.CUSTOM
     blend: List[ResinComponent]
     colour: Optional[ColourSpec] = None
     additives: List[AdditiveComponent] = []
@@ -98,6 +106,14 @@ class FormulationSpec(BaseModel):
             raise ValueError("Resin blend percentages must sum to 100%")
         return blend
 
+    @root_validator(skip_on_failure=True)
+    def validate_blend_type(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        blend_type = values.get("blend_type")
+        blend = values.get("blend", [])
+        if blend_type == BlendType.CUSTOM and len(blend) < 1:
+            raise ValueError("Custom blend requires at least one component")
+        return values
+
 
 class PrintingSpec(BaseModel):
     method: PrintMethod
@@ -107,7 +123,7 @@ class PrintingSpec(BaseModel):
     side: Optional[PrintSide] = None
     artwork_refs: List[str] = []
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_printing(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         method: PrintMethod = values.get("method")
         num_colours = values.get("num_colours") or 0
@@ -143,7 +159,7 @@ class PackagingSpec(BaseModel):
     pallet_type: Literal["Chep", "Plain", "Resin", "None"]
     wrapped: Optional[bool] = False
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_packaging(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         pack_mode = values.get("pack_mode")
         bags_per_carton = values.get("bags_per_carton")
@@ -167,6 +183,14 @@ class WIMappingsSpec(BaseModel):
     venting_spec_wi: Optional[str] = "WI-39"
 
 
+class ToolRequirementSpec(BaseModel):
+    stage: Literal["extrusion", "conversion"]
+    tool_type: str
+    quantity: int = Field(1, ge=1)
+    preferred_machine_ids: List[str] = []
+    notes: Optional[str] = None
+
+
 class SpecPayload(BaseModel):
     identity: IdentitySpec
     dimensions: DimensionsSpec
@@ -175,10 +199,11 @@ class SpecPayload(BaseModel):
     quality_expectations: QualityExpectationsSpec
     run_requirements: RunRequirementsSpec
     packaging: PackagingSpec
+    tool_requirements: List[ToolRequirementSpec] = []
     sensor_qc_config: Optional[SensorQCConfigSpec] = None
     wi_mappings: Optional[WIMappingsSpec] = None
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_dimensions_vs_finish_mode(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         identity: IdentitySpec = values.get("identity")
         dimensions: DimensionsSpec = values.get("dimensions")

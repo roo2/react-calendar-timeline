@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Customers</h1>
+
+<div style="margin-bottom: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+  <form method="get" action="/customers" style="display: flex; gap: 10px; flex: 1; min-width: 200px;">
+    <input 
+      type="text" 
+      name="q" 
+      value="{{ q }}" 
+      placeholder="Search by name or code..." 
+      style="flex: 1; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px;"
+    />
+    <button type="submit" class="btn btn-primary">Search</button>
+  </form>
+  {% if identity and identity.roles and ('SALES' in identity.roles or 'PROD_MANAGER' in identity.roles) %}
+    <a href="/customers/new" class="btn btn-primary">New Customer</a>
+  {% endif %}
+</div>
+
+{% if customers and customers|length > 0 %}
+  <table style="width: 100%; border-collapse: collapse;">
+    <thead>
+      <tr style="background: #f9fafb; border-bottom: 2px solid #e5e7eb;">
+        <th style="padding: 12px; text-align: left;">Code</th>
+        <th style="padding: 12px; text-align: left;">Name</th>
+        <th style="padding: 12px; text-align: left;">Status</th>
+        <th style="padding: 12px; text-align: left;">Primary Contact</th>
+        <th style="padding: 12px; text-align: left;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for customer in customers %}
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+          <td style="padding: 12px;">
+            <a href="/customers/{{ customer.id }}" style="color: #2563eb; text-decoration: none;">
+              {{ customer.code }}
+            </a>
+          </td>
+          <td style="padding: 12px;">
+            <a href="/customers/{{ customer.id }}" style="color: #2563eb; text-decoration: none; font-weight: 500;">
+              {{ customer.name }}
+            </a>
+          </td>
+          <td style="padding: 12px;">
+            <span style="
+              padding: 4px 8px; 
+              border-radius: 4px; 
+              font-size: 0.875rem;
+              {% if customer.status == 'Active' %}background: #d1fae5; color: #065f46;
+              {% elif customer.status == 'Inactive' %}background: #fee2e2; color: #991b1b;
+              {% else %}background: #f3f4f6; color: #374151;
+              {% endif %}
+            ">
+              {{ customer.status }}
+            </span>
+          </td>
+          <td style="padding: 12px;">
+            {% set contacts = customer.contacts.get('items', []) if customer.contacts else [] %}
+            {% if contacts|length > 0 %}
+              {% set primary = contacts[0] %}
+              {{ primary.name }}{% if primary.email %} - {{ primary.email }}{% endif %}
+            {% else %}
+              <span style="color: #9ca3af;">No contacts</span>
+            {% endif %}
+          </td>
+          <td style="padding: 12px;">
+            <a href="/customers/{{ customer.id }}" class="btn" style="padding: 6px 12px; font-size: 0.875rem;">View</a>
+            {% if identity and identity.roles and ('SALES' in identity.roles or 'PROD_MANAGER' in identity.roles) %}
+              <a href="/customers/{{ customer.id }}/edit" class="btn" style="padding: 6px 12px; font-size: 0.875rem; margin-left: 8px;">Edit</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <div style="padding: 40px; text-align: center; color: #6b7280;">
+    <p>No customers found{% if q %}. Try a different search term.{% else %}. <a href="/customers/new">Create your first customer</a>{% endif %}</p>
+  </div>
+{% endif %}
+{% endblock %}

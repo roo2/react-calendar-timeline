@@ -4,6 +4,9 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 import os
 
+# Set environment variable to disable auto-create during migrations
+os.environ["ALEMBIC_RUNNING"] = "1"
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

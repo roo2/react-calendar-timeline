@@ -31,15 +31,8 @@
 <section class="quick-links-section">
   <h2>Quick Links</h2>
   <div class="links-grid">
-    <a href="/" class="link-card">
-      <div class="link-icon">🏠</div>
-      <div class="link-content">
-        <h3>Home</h3>
-        <p>Return to dashboard</p>
-      </div>
-    </a>
-
     {% if 'SALES' in identity.roles or 'PROD_MANAGER' in identity.roles %}
+    <!-- 1. Dashboard -->
     <a href="/dashboard" class="link-card">
       <div class="link-icon">📊</div>
       <div class="link-content">
@@ -48,14 +41,25 @@
       </div>
     </a>
 
+    <!-- 2. Customers -->
+    <a href="/customers" class="link-card">
+      <div class="link-icon">👥</div>
+      <div class="link-content">
+        <h3>Customers</h3>
+        <p>Manage customer information</p>
+      </div>
+    </a>
+
+    <!-- 3. Job Sheet -->
     <a href="/products" class="link-card">
       <div class="link-icon">📦</div>
       <div class="link-content">
-        <h3>Products</h3>
+        <h3>Job Sheet</h3>
         <p>Manage product specifications</p>
       </div>
     </a>
 
+    <!-- 4. Orders -->
     <a href="/orders" class="link-card">
       <div class="link-icon">📋</div>
       <div class="link-content">
@@ -63,9 +67,19 @@
         <p>View and manage orders</p>
       </div>
     </a>
+
+    <!-- 5. Quote Calculator -->
+    <a href="/quotes/new" class="link-card">
+      <div class="link-icon">💰</div>
+      <div class="link-content">
+        <h3>Quote Calculator</h3>
+        <p>Create and calculate quotes</p>
+      </div>
+    </a>
     {% endif %}
 
     {% if 'PROD_MANAGER' in identity.roles %}
+    <!-- 6. Schedule -->
     <a href="/schedule" class="link-card">
       <div class="link-icon">📅</div>
       <div class="link-content">
@@ -74,6 +88,7 @@
       </div>
     </a>
 
+    <!-- 7. Inventory -->
     <a href="/inventory" class="link-card">
       <div class="link-icon">📦</div>
       <div class="link-content">
@@ -82,14 +97,7 @@
       </div>
     </a>
 
-    <a href="/dispatch" class="link-card">
-      <div class="link-icon">🚚</div>
-      <div class="link-content">
-        <h3>Dispatch</h3>
-        <p>Manage dispatches</p>
-      </div>
-    </a>
-
+    <!-- 8. Production -->
     <a href="/production" class="link-card">
       <div class="link-icon">⚙️</div>
       <div class="link-content">
@@ -97,9 +105,19 @@
         <p>Monitor production runs</p>
       </div>
     </a>
+
+    <!-- 9. Dispatch -->
+    <a href="/dispatch" class="link-card">
+      <div class="link-icon">🚚</div>
+      <div class="link-content">
+        <h3>Dispatch</h3>
+        <p>Manage dispatches</p>
+      </div>
+    </a>
     {% endif %}
 
     {% if 'OPERATOR' in identity.roles %}
+    <!-- My Machine (Operator only) -->
     <a href="/production/my-machine" class="link-card">
       <div class="link-icon">🖥️</div>
       <div class="link-content">
@@ -110,6 +128,7 @@
     {% endif %}
 
     {% if 'SYS_ADMIN' in identity.roles %}
+    <!-- 10. Admin -->
     <a href="/sys/users" class="link-card">
       <div class="link-icon">⚙️</div>
       <div class="link-content">

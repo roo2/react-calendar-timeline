@@ -42,6 +42,15 @@
         </select>
       </div>
       <div>
+        <label>Industry / Compliance Intent</label>
+        <div>
+          <label><input type="checkbox" id="industry_food" value="food_contact"/> Food Contact</label>
+          <label><input type="checkbox" id="industry_non_food" value="non_food"/> Non-Food</label>
+          <label><input type="checkbox" id="industry_medical" value="medical"/> Medical</label>
+          <label><input type="checkbox" id="industry_chemical" value="chemical_industrial"/> Chemical / Industrial</label>
+        </div>
+      </div>
+      <div>
         <label>Notes</label>
         <textarea id="identity_notes"></textarea>
       </div>
@@ -87,6 +96,15 @@
 
     <fieldset>
       <legend>Section 3: Materials & Formulation</legend>
+      <div>
+        <label>Blend Type</label>
+        <select id="formulation_blend_type">
+          <option value="LD">LD</option>
+          <option value="MD">MD</option>
+          <option value="Custom" selected>Custom</option>
+        </select>
+        <small>Select LD or MD for standard blends, or Custom to specify components</small>
+      </div>
       <div>
         <label>Resin Blend</label>
         <div id="blend_rows">
@@ -243,6 +261,13 @@
       </div>
     </fieldset>
 
+    <fieldset>
+      <legend>Section 8: Tool Requirements</legend>
+      <div id="tool_requirements_rows"></div>
+      <button type="button" onclick="addToolRequirementRow()">Add Tool Requirement</button>
+      <small>Specify tools needed for extrusion or conversion operations</small>
+    </fieldset>
+
     <div class="mt-3">
       <button type="submit">Create</button>
       <a href="/products">Cancel</a>
@@ -284,10 +309,38 @@
         pct: parseFloat(r.querySelector('.add_pct').value || '0')
       })).filter(x => x.additive_code);
     }
+    function collectIndustryFlags() {
+      const ids = ['industry_food','industry_non_food','industry_medical','industry_chemical'];
+      const vals = [];
+      ids.forEach(id => { const el = document.getElementById(id); if (el && el.checked) vals.push(el.value); });
+      return vals;
+    }
+    function addToolRequirementRow() {
+      const c = document.getElementById('tool_requirements_rows');
+      const row = document.createElement('div');
+      row.className = 'tool_req_row';
+      row.innerHTML = '<select class="tool_stage"><option value="extrusion">extrusion</option><option value="conversion">conversion</option></select> ' +
+                      '<input type="text" class="tool_type" placeholder="tool_type (e.g., inline_printer_1c)" /> ' +
+                      '<input type="number" class="tool_qty" value="1" min="1" style="width:80px" /> ' +
+                      '<input type="text" class="tool_pref_machines" placeholder="preferred_machine_ids (comma-separated)"/> ' +
+                      '<input type="text" class="tool_notes" placeholder="notes" />';
+      c.appendChild(row);
+    }
+    function collectToolRequirements() {
+      const rows = Array.from(document.querySelectorAll('#tool_requirements_rows .tool_req_row'));
+      return rows.map(r => ({
+        stage: (r.querySelector('.tool_stage').value || 'extrusion'),
+        tool_type: (r.querySelector('.tool_type').value || '').trim(),
+        quantity: parseInt(r.querySelector('.tool_qty').value || '1'),
+        preferred_machine_ids: (r.querySelector('.tool_pref_machines').value || '').split(',').map(s => s.trim()).filter(Boolean),
+        notes: (r.querySelector('.tool_notes').value || '').trim() || null
+      })).filter(x => x.tool_type);
+    }
     function buildSpecJSON() {
       const identity = {
         product_type: document.getElementById('identity_product_type').value,
         finish_mode: document.getElementById('identity_finish_mode').value,
+        industry_flags: collectIndustryFlags(),
         notes: document.getElementById('identity_notes').value || null
       };
       const dimensions = {
@@ -307,6 +360,7 @@
         opaque_strength_pct: document.getElementById('opaque_strength').value ? parseFloat(document.getElementById('opaque_strength').value) : null
       } : null;
       const formulation = {
+        blend_type: document.getElementById('formulation_blend_type').value,
         blend: collectBlend(),
         colour: colour,
         additives: collectAdditives()
@@ -342,7 +396,8 @@
         wrapped: document.getElementById('wrapped').checked
       };
       const spec = {
-        identity, dimensions, formulation, printing, quality_expectations, run_requirements, packaging
+        identity, dimensions, formulation, printing, quality_expectations, run_requirements, packaging,
+        tool_requirements: collectToolRequirements()
       };
       document.getElementById('spec_json').value = JSON.stringify(spec);
     }
@@ -356,6 +411,13 @@
         if (s.identity) {
           document.getElementById('identity_product_type').value = s.identity.product_type || 'Bag';
           document.getElementById('identity_finish_mode').value = s.identity.finish_mode || 'Rolls';
+          if (Array.isArray(s.identity.industry_flags)) {
+            const set = new Set(s.identity.industry_flags);
+            ['industry_food','industry_non_food','industry_medical','industry_chemical'].forEach(id => {
+              const el = document.getElementById(id);
+              if (el) el.checked = set.has(el.value);
+            });
+          }
           document.getElementById('identity_notes').value = s.identity.notes || '';
         }
         if (s.dimensions) {
@@ -366,6 +428,9 @@
           document.getElementById('dim_gusset').value = s.dimensions.gusset_mm || '';
         }
         if (s.formulation && Array.isArray(s.formulation.blend)) {
+          if (s.formulation.blend_type) {
+            document.getElementById('formulation_blend_type').value = s.formulation.blend_type;
+          }
           const c = document.getElementById('blend_rows');
           c.innerHTML = '';
           s.formulation.blend.forEach((comp) => {
@@ -422,6 +487,20 @@
           document.getElementById('bags_per_carton').value = s.packaging.bags_per_carton || '';
           document.getElementById('pallet_type').value = s.packaging.pallet_type || 'Chep';
           document.getElementById('wrapped').checked = !!s.packaging.wrapped;
+        }
+        if (Array.isArray(s.tool_requirements)) {
+          const c = document.getElementById('tool_requirements_rows');
+          c.innerHTML = '';
+          s.tool_requirements.forEach(tr => {
+            addToolRequirementRow();
+            const rows = document.querySelectorAll('#tool_requirements_rows .tool_req_row');
+            const r = rows[rows.length - 1];
+            r.querySelector('.tool_stage').value = tr.stage || 'extrusion';
+            r.querySelector('.tool_type').value = tr.tool_type || '';
+            r.querySelector('.tool_qty').value = tr.quantity || 1;
+            r.querySelector('.tool_pref_machines').value = (tr.preferred_machine_ids || []).join(', ');
+            r.querySelector('.tool_notes').value = tr.notes || '';
+          });
         }
       } catch (e) {
         // ignore

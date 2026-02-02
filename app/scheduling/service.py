@@ -34,6 +34,11 @@ from app.scheduling.schemas import (
 	MachineQueueItemDTO,
 	MoveResult,
 	ToolConflictDTO,
+	GanttOverviewDTO,
+	GanttLaneDTO,
+	GanttBarDTO,
+	JobEstimatesDTO,
+	OperationEstimateDTO,
 )
 
 
@@ -486,3 +491,220 @@ def get_overview() -> dict:
 
 		# Already sorted by machine code due to query order
 		return {"extruders": extruders, "printers": printers, "converters": converters}
+
+
+def estimate_job_operations(job_id: uuid.UUID | str) -> JobEstimatesDTO:
+	"""
+	Calculate estimated durations for a job's operations.
+	Uses placeholder rates if rate cards are not available.
+	"""
+	with SessionLocal() as session:
+		job_id_str = str(job_id)
+		job, order, product_version = _get_job_with_context(session, uuid.UUID(job_id_str))
+		spec = (product_version.spec_payload if product_version else {}) or {}
+		
+		operations: List[OperationEstimateDTO] = []
+		
+		# Determine required operations
+		printing_method = _get_printing_method_from_spec(product_version)
+		requires_extrusion = True  # Always required
+		requires_uteco = printing_method == PrintingMethod.UTECO
+		requires_conversion = True  # Assume conversion is always needed
+		
+		# Extract quantities from spec or job
+		planned_qty = float(job.planned_qty)
+		
+		# Extrusion estimate
+		if requires_extrusion:
+			# Placeholder: 100 kg/hour default rate
+			# In reality, this would come from rate cards and be adjusted by width/thickness yields
+			estimated_kg = planned_qty * 0.5  # Placeholder: assume 0.5 kg per unit
+			extruder_rate_kg_per_hour = 100.0  # Placeholder default
+			duration_hours = estimated_kg / extruder_rate_kg_per_hour if extruder_rate_kg_per_hour > 0 else 1.0
+			operations.append(OperationEstimateDTO(
+				operation_type="EXTRUSION",
+				estimated_duration_hours=max(0.5, duration_hours),  # Minimum 0.5 hours
+				estimated_kg=estimated_kg,
+			))
+		
+		# Uteco printing estimate
+		if requires_uteco:
+			# Placeholder: 50 m/min default speed, 30 min setup
+			web_length_m = planned_qty * 0.1  # Placeholder: assume 0.1 m per unit
+			printer_speed_m_per_min = 50.0  # Placeholder default
+			num_colours = (spec.get("printing") or {}).get("num_colours", 1) or 1
+			setup_allowance_hours = 0.5 + (num_colours * 0.1)  # 30 min base + 6 min per colour
+			runtime_hours = (web_length_m / printer_speed_m_per_min) / 60.0
+			duration_hours = setup_allowance_hours + runtime_hours
+			operations.append(OperationEstimateDTO(
+				operation_type="PRINTING_UTECO",
+				estimated_duration_hours=max(0.5, duration_hours),
+				estimated_metres=web_length_m,
+			))
+		
+		# Conversion estimate
+		if requires_conversion:
+			# Placeholder: 1000 units/hour default rate, 15 min setup
+			bagger_rate_units_per_hour = 1000.0  # Placeholder default
+			setup_allowance_hours = 0.25  # 15 minutes
+			runtime_hours = planned_qty / bagger_rate_units_per_hour if bagger_rate_units_per_hour > 0 else 1.0
+			duration_hours = setup_allowance_hours + runtime_hours
+			operations.append(OperationEstimateDTO(
+				operation_type="CONVERSION",
+				estimated_duration_hours=max(0.25, duration_hours),
+				estimated_units=planned_qty,
+			))
+		
+		return JobEstimatesDTO(job_id=uuid.UUID(job_id_str), operations=operations)
+
+
+def _get_default_operating_calendar() -> dict:
+	"""
+	Returns default operating calendar: Monday 04:30 → Friday 04:30 (96 hours total).
+	24 hours/day operation, 4 days/week.
+	"""
+	# Get next Monday (or current Monday if today is Monday before 04:30)
+	today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+	days_until_monday = (7 - today.weekday()) % 7
+	if days_until_monday == 0:
+		# Today is Monday, check if we're before 04:30
+		now = datetime.now()
+		if now.hour < 4 or (now.hour == 4 and now.minute < 30):
+			days_until_monday = 0
+		else:
+			days_until_monday = 7
+	
+	start = today + timedelta(days=days_until_monday)
+	start = start.replace(hour=4, minute=30, second=0, microsecond=0)
+	end = start + timedelta(days=4)  # Friday 04:30
+	
+	return {
+		"start": start,
+		"end": end,
+		"days": 4,
+		"hours_per_day": 24,
+	}
+
+
+def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOverviewDTO:
+	"""
+	Build Gantt chart overview with lanes, bars, and tentative start/finish times.
+	"""
+	from app.db.models.domain import Product, Customer
+	
+	if operating_calendar is None:
+		operating_calendar = _get_default_operating_calendar()
+	
+	calendar_start = operating_calendar["start"]
+	
+	with SessionLocal() as session:
+		# Load all active machines, sorted by type then code
+		machines = session.execute(
+			select(Machine)
+			.where(Machine.active.is_(True))
+			.order_by(Machine.type.asc(), Machine.code.asc())
+		).scalars().all()
+		
+		lanes: List[GanttLaneDTO] = []
+		
+		for machine in machines:
+			# Load queue items for this machine
+			queue_items = session.execute(
+				select(MachineQueueItem)
+				.where(
+					MachineQueueItem.machine_id == machine.id,
+					MachineQueueItem.status.in_([QueueStatus.QUEUED, QueueStatus.RUNNING]),
+				)
+				.order_by(MachineQueueItem.position.asc())
+			).scalars().all()
+			
+			bars: List[GanttBarDTO] = []
+			cumulative_hours = 0.0
+			
+			for queue_item in queue_items:
+				# Load job context
+				job, order, product_version = _get_job_with_context(session, uuid.UUID(str(queue_item.job_id)))
+				
+				# Load customer
+				customer = session.get(Customer, order.customer_id)
+				customer_name = customer.name if customer else "Unknown"
+				
+				# Load product
+				product = session.get(Product, product_version.product_id) if product_version else None
+				product_code = product.code if product else "Unknown"
+				
+				# Format job code
+				job_code = f"{order.code}-{job.job_code}"
+				
+				# Determine operation type
+				operation_type = _operation_type_for_machine(machine)
+				operation_type_str = operation_type.value if hasattr(operation_type, "value") else str(operation_type)
+				
+				# Get duration estimates
+				estimates = estimate_job_operations(uuid.UUID(str(job.id)))
+				operation_estimate = next(
+					(e for e in estimates.operations if e.operation_type == operation_type_str),
+					None
+				)
+				duration_hours = operation_estimate.estimated_duration_hours if operation_estimate else 1.0
+				
+				# Calculate tentative start/finish
+				tentative_start = calendar_start + timedelta(hours=cumulative_hours)
+				tentative_finish = tentative_start + timedelta(hours=duration_hours)
+				cumulative_hours += duration_hours
+				
+				# Determine status
+				status_str = queue_item.status.value if hasattr(queue_item.status, "value") else str(queue_item.status)
+				
+				# Determine readiness
+				readiness = "running" if status_str == "running" else "ready"
+				spec = (product_version.spec_payload if product_version else {}) or {}
+				printing_method = _get_printing_method_from_spec(product_version)
+				
+				# Check routing warnings
+				warnings = _routing_warnings_for_enqueue(session, machine, job, product_version)
+				if warnings:
+					readiness = "blocked"
+				
+				# Check for tool conflicts
+				operation_type_enum = _operation_type_for_machine(machine)
+				required_codes = _required_tool_type_codes(job, operation_type_enum, product_version)
+				tool_conflicts: List[ToolConflictDTO] = []
+				# Note: Full conflict checking would require time window, simplified for MVP
+				
+				# Determine visual properties
+				requires_uteco = printing_method == PrintingMethod.UTECO
+				requires_inline_print = printing_method == PrintingMethod.INLINE
+				num_colours = (spec.get("printing") or {}).get("num_colours", 0) or 0
+				
+				bars.append(GanttBarDTO(
+					job_id=uuid.UUID(str(job.id)),
+					job_code=job_code,
+					operation_type=operation_type_str,
+					customer=customer_name,
+					product_code=product_code,
+					planned_qty=float(job.planned_qty),
+					estimated_duration_hours=duration_hours,
+					tentative_start=tentative_start,
+					tentative_finish=tentative_finish,
+					status=status_str,
+					readiness=readiness,
+					requires_uteco=requires_uteco,
+					requires_inline_print=requires_inline_print,
+					num_colours=num_colours,
+					warnings=warnings,
+					tool_conflicts=tool_conflicts,
+				))
+			
+			machine_type_str = machine.type.value if hasattr(machine.type, "value") else str(machine.type)
+			lanes.append(GanttLaneDTO(
+				machine_id=machine.id,
+				machine_code=machine.code,
+				machine_type=machine_type_str,
+				bars=bars,
+			))
+		
+		return GanttOverviewDTO(
+			lanes=lanes,
+			calendar=operating_calendar,
+		)

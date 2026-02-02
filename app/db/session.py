@@ -28,24 +28,35 @@ def _ensure_schema_and_seed() -> None:
     """
     Create tables if they don't exist (SQLite only) and seed initial data once.
     MVP simplification: avoid alembic requirement for local setups.
+    SKIPS auto-create if Alembic is managing schema (detected by checking call stack or env).
     """
     try:
+        # Check if Alembic is running (via environment variable set in env.py)
+        import os
+        is_alembic_running = os.environ.get("ALEMBIC_RUNNING") == "1"
+        
         if str(engine.url).startswith("sqlite+pysqlite://"):
-            # Ensure mapped models are imported so metadata is populated
-            try:
-                import app.auth.models  # noqa: F401
-                import app.db.models.domain  # noqa: F401
-                import app.db.models.rate_cards  # noqa: F401
-            except Exception as _imp_err:  # pragma: no cover
-                import sys as _sys
-                print(f"WARNING: Failed to import some models: {_imp_err}", file=_sys.stderr)
-
             from sqlalchemy import inspect, text as _text
 
             inspector = inspect(engine)
             existing_tables = set(inspector.get_table_names())
 
+            # Check if Alembic is being used (version table exists OR Alembic is running)
+            if "alembic_version" in existing_tables or is_alembic_running:
+                # Alembic is managing schema - skip auto-create completely
+                return
+
+            # No Alembic - use auto-create for MVP
             if not existing_tables:
+                # Ensure mapped models are imported so metadata is populated
+                try:
+                    import app.auth.models  # noqa: F401
+                    import app.db.models.domain  # noqa: F401
+                    import app.db.models.rate_cards  # noqa: F401
+                except Exception as _imp_err:  # pragma: no cover
+                    import sys as _sys
+                    print(f"WARNING: Failed to import some models: {_imp_err}", file=_sys.stderr)
+
                 Base.metadata.create_all(engine)
                 print("✓ Database schema created")
                 # Attempt to seed initial data

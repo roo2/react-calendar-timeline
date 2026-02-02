@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, joinedload
@@ -14,6 +14,8 @@ from app.products.schemas import (
     CreateProductVersionRequest,
     OperatorSuggestionRequest,
     SpecPayload,
+    PrintMethod,
+    FinishMode,
 )
 
 
@@ -189,6 +191,59 @@ def list_suggestions(product_id: Optional[str] = None, status: Optional[str] = "
             stmt = stmt.where(OperatorSuggestion.status == status)
         stmt = stmt.order_by(OperatorSuggestion.created_at.desc())
         return list(db.scalars(stmt).all())
+
+
+def derive_operation_routing(spec: SpecPayload) -> Dict[str, Any]:
+    operations: List[Dict[str, str]] = []
+    warnings: List[str] = []
+    operations.append(
+        {"operation_type": "EXTRUSION", "description": "Extrusion (required first operation)"}
+    )
+    if spec.run_requirements.inline_perforation:
+        operations[-1]["description"] += " with inline perforation"
+    if spec.run_requirements.inline_seal:
+        operations[-1]["description"] += " with inline sealing"
+    if spec.printing.method == PrintMethod.INLINE:
+        operations[-1]["description"] += f" with inline printing ({spec.printing.num_colours or 0} colours)"
+    if spec.printing.method == PrintMethod.UTECO:
+        operations.append(
+            {
+                "operation_type": "PRINTING_UTECO",
+                "description": f"Uteco Printing ({spec.printing.num_colours or 0} colours) - requires completed Extrusion",
+            }
+        )
+    if spec.identity.finish_mode == FinishMode.CARTONS:
+        if spec.printing.method == PrintMethod.UTECO:
+            operations.append(
+                {"operation_type": "CONVERSION", "description": "Conversion (Bagging) - requires completed Uteco Printing"}
+            )
+        else:
+            operations.append(
+                {"operation_type": "CONVERSION", "description": "Conversion (Bagging) - requires completed Extrusion"}
+            )
+    return {"operations": operations, "warnings": warnings}
+
+
+def extract_tool_requirements(spec: SpecPayload) -> List[Dict[str, Any]]:
+    tools: List[Dict[str, Any]] = []
+    if spec.printing.method == PrintMethod.INLINE:
+        if (spec.printing.num_colours or 0) == 1:
+            tools.append({"stage": "extrusion", "tool_type": "inline_printer_1c", "quantity": 1})
+        # Placeholder for other mappings
+    if spec.run_requirements.inline_perforation:
+        tools.append({"stage": "extrusion", "tool_type": "perforation_vicro", "quantity": 1})
+    if spec.tool_requirements:
+        for t in spec.tool_requirements:
+            tools.append(
+                {
+                    "stage": t.stage,
+                    "tool_type": t.tool_type,
+                    "quantity": t.quantity,
+                    "preferred_machine_ids": t.preferred_machine_ids,
+                    "notes": t.notes,
+                }
+            )
+    return tools
 
 
 

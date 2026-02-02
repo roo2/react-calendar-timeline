@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.db.models.enums import OperationType
 from app.scheduling import service as SchedulingService
 from app.scheduling.schemas import LaneDTO, MoveResult
+from app.auth.deps import current_identity
 
 router = APIRouter(prefix="/schedule", tags=["schedule"])
 templates = Jinja2Templates(directory="app/templates")
@@ -50,6 +51,35 @@ async def queue_remove(request: Request, payload: dict):
 	job_id = uuid.UUID(payload["job_id"])
 	lane: LaneDTO = SchedulingService.remove(machine_id=machine_id, job_id=job_id)
 	return templates.TemplateResponse("scheduling/lane.html", {"request": request, "lane": lane})
+
+
+@router.get("/gantt", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
+async def gantt_view(request: Request, identity=Depends(current_identity)):
+	"""
+	Render Gantt chart page with timeline and machine lanes.
+	"""
+	gantt_data = SchedulingService.get_gantt_overview(operating_calendar=None)  # Use default calendar
+	return templates.TemplateResponse(
+		"scheduling/gantt.html",
+		{
+			"request": request,
+			"identity": identity,
+			"gantt_data": gantt_data,
+		},
+	)
+
+
+@router.get("/gantt/estimate", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
+async def estimate_durations(request: Request, job_id: str):
+	"""
+	Returns estimated durations for a job's operations (HTMX endpoint).
+	Returns HTML partial with duration estimates.
+	"""
+	estimates = SchedulingService.estimate_job_operations(job_id)
+	return templates.TemplateResponse(
+		"scheduling/_estimates.html",
+		{"request": request, "estimates": estimates},
+	)
 
 
 @router.post("/gantt/move", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])

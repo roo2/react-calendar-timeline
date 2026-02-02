@@ -2,6 +2,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from app.main import app
 from app.quotes.routes import get_product_service, get_ratecard_service
+from app.auth.deps import current_identity
 
 
 class _ProductStub:
@@ -37,6 +38,8 @@ class _RatecardStub:
 def test_quotes_calculate_htmx_partial():
     app.dependency_overrides[get_product_service] = lambda: _ProductStub()
     app.dependency_overrides[get_ratecard_service] = lambda: _RatecardStub()
+    # Satisfy role and CSRF dependencies
+    app.dependency_overrides[current_identity] = lambda request=None: {"user": "tester", "roles": ["SALES"], "csrf": "t"}
     client = TestClient(app)
     payload = {
         "product_version_id": 1,
@@ -44,7 +47,7 @@ def test_quotes_calculate_htmx_partial():
         "quantity": {"units": 1000},
         "requested_margin": "0.2",
     }
-    resp = client.post("/quotes/calculate", json=payload)
+    resp = client.post("/quotes/calculate", json=payload, headers={"x-csrf-token": "t"})
     assert resp.status_code == 200
     html = resp.text
     assert "Quote Preview" in html

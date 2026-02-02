@@ -1,0 +1,133 @@
+<form
+  id="product-quote-form"
+  hx-post="/quotes/calculate"
+  hx-target="#product-preview-container"
+  hx-swap="innerHTML"
+  hx-indicator="#product-loading-indicator"
+>
+  <input type="hidden" name="_csrf" value="{{ identity.csrf or '' }}">
+
+  <div class="form-section">
+    <h2>Product Selection</h2>
+    <div class="form-group">
+      <label for="product_version_id">Product Version <span class="required">*</span></label>
+      <select
+        id="product_version_id"
+        name="product_version_id"
+        required
+        class="form-control"
+      >
+        <option value="">-- Select Product Version --</option>
+        {% for pv in product_versions %}
+        <option value="{{ pv.version_id }}">{{ pv.display_name }}</option>
+        {% endfor %}
+      </select>
+      <small class="form-help">Select the product version to quote</small>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h2>Quantity</h2>
+    <p class="form-help">Enter quantity in one of the following ways:</p>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="quantity_units">Units (bags/cartons)</label>
+        <input
+          type="number"
+          id="quantity_units"
+          name="quantity.units"
+          min="1"
+          step="1"
+          class="form-control"
+          placeholder="e.g. 1000"
+        >
+      </div>
+      <div class="form-group">
+        <label for="quantity_total_kg">Total Weight (kg)</label>
+        <input
+          type="number"
+          id="quantity_total_kg"
+          name="quantity.total_kg"
+          min="0.01"
+          step="0.01"
+          class="form-control"
+          placeholder="e.g. 500.5"
+        >
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="quantity_total_m">Total Length (meters)</label>
+        <input
+          type="number"
+          id="quantity_total_m"
+          name="quantity.total_m"
+          min="0.01"
+          step="0.01"
+          class="form-control"
+          placeholder="e.g. 1000.5"
+        >
+      </div>
+      <div class="form-group">
+        <label for="quantity_rolls">Number of Rolls</label>
+        <input
+          type="number"
+          id="quantity_rolls"
+          name="quantity.rolls"
+          min="1"
+          step="1"
+          class="form-control"
+          placeholder="e.g. 50"
+        >
+      </div>
+    </div>
+
+    <small class="form-help">Note: Only one quantity field should be filled. If multiple are filled, units takes priority, then total_kg, then total_m, then rolls.</small>
+  </div>
+
+  <div class="form-section">
+    <h2>Pricing Options</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="currency">Currency <span class="required">*</span></label>
+        <select
+          id="currency"
+          name="currency"
+          required
+          class="form-control"
+        >
+          <option value="AUD" selected>AUD - Australian Dollar</option>
+          <option value="USD">USD - US Dollar</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="requested_margin">Margin (%)</label>
+        <input
+          type="number"
+          id="requested_margin"
+          name="requested_margin"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.20"
+          class="form-control"
+          placeholder="0.20"
+        >
+        <small class="form-help">Default: 20% (0.20). Enter as decimal (e.g., 0.25 = 25%)</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">
+      <span id="product-loading-indicator" class="htmx-indicator">
+        <span class="spinner"></span> Calculating...
+      </span>
+      <span class="btn-text">Calculate Quote</span>
+    </button>
+    <a href="/quotes" class="btn btn-secondary">Cancel</a>
+  </div>
+</form>
+

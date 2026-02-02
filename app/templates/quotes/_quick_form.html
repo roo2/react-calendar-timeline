@@ -1,0 +1,243 @@
+<form
+  id="quick-quote-form"
+  hx-post="/quotes/quick/calculate"
+  hx-target="#quick-preview-container"
+  hx-swap="innerHTML"
+  hx-indicator="#quick-loading-indicator"
+>
+  <input type="hidden" name="_csrf" value="{{ identity.csrf or '' }}">
+
+  <div class="form-section">
+    <h2>Dimensions (Required)</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="product_type">Product Type <span class="required">*</span></label>
+        <select id="product_type" name="product_type" required class="form-control">
+          {% for pt in product_types %}
+          <option value="{{ pt }}">{{ pt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="geometry">Geometry <span class="required">*</span></label>
+        <select id="geometry" name="geometry" required class="form-control" onchange="toggleGusset()">
+          {% for g in geometries %}
+          <option value="{{ g }}" {% if g == 'Flat' %}selected{% endif %}>{{ g }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="base_width_mm">Base Width (mm) <span class="required">*</span></label>
+        <input type="number" id="base_width_mm" name="base_width_mm" min="1" step="1" required class="form-control" placeholder="e.g. 300">
+      </div>
+      <div class="form-group">
+        <label for="thickness_um">Thickness (µm) <span class="required">*</span></label>
+        <input type="number" id="thickness_um" name="thickness_um" min="1" step="1" required class="form-control" placeholder="e.g. 50">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Product Format <span class="required">*</span></label>
+        <div>
+          <label><input type="radio" name="continuous_roll" value="false" checked onchange="toggleLength()"> Bag</label>
+          <label style="margin-left:16px;"><input type="radio" name="continuous_roll" value="true" onchange="toggleLength()"> Roll</label>
+        </div>
+      </div>
+      <div class="form-group" id="length-group">
+        <label for="base_length_mm">Base Length (mm) <span class="required">*</span></label>
+        <input type="number" id="base_length_mm" name="base_length_mm" min="1" step="1" class="form-control" placeholder="e.g. 450">
+        <small class="form-help">Required for Bag; not used for Roll</small>
+      </div>
+    </div>
+    <div class="form-row" id="gusset-row" style="display:none;">
+      <div class="form-group">
+        <label for="gusset_mm">Gusset Size (mm)</label>
+        <input type="number" id="gusset_mm" name="gusset_mm" min="1" step="1" class="form-control" placeholder="e.g. 75">
+        <small class="form-help">Required for Gusset/BottomGusset</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h2>Materials & Formulation (Optional)</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="resin_code">Resin</label>
+        <select id="resin_code" name="resin_code" class="form-control">
+          <option value="">-- Default (standard LDPE) --</option>
+          {% for r in resins %}
+          <option value="{{ r.code }}">{{ r.code }} - {{ r.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="colour_code">Colour</label>
+        <select id="colour_code" name="colour_code" class="form-control" onchange="toggleColourFields()">
+          <option value="">None (Natural)</option>
+          {% for c in colours %}
+          <option value="{{ c.code }}">{{ c.code }} - {{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row" id="colour-fields" style="display:none;">
+      <div class="form-group">
+        <label for="colour_strength_pct">Colour Strength (%)</label>
+        <input type="number" id="colour_strength_pct" name="colour_strength_pct" min="0" max="100" step="0.1" value="2.0" class="form-control">
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="opaque" name="opaque"> Opaque</label>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="additive_code">Additive</label>
+        <select id="additive_code" name="additive_code" class="form-control">
+          <option value="">None</option>
+          {% for a in additives %}
+          <option value="{{ a.code }}">{{ a.code }} - {{ a.name }}{% if a.category %} ({{ a.category }}){% endif %}</option>
+          {% endfor %}
+        </select>
+        <small class="form-help">MVP: single additive selection</small>
+      </div>
+      <div class="form-group">
+        <label for="additive_pct">Additive Strength (%)</label>
+        <input type="number" id="additive_pct" name="additive_pct" min="0" step="0.1" class="form-control" placeholder="e.g. 1.0">
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h2>Printing (Optional)</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="print_method">Printing Method</label>
+        <select id="print_method" name="print_method" class="form-control" onchange="togglePrintingFields()">
+          {% for pm in print_methods %}
+          <option value="{{ pm }}">{{ pm }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" id="num_colours_group" style="display:none;">
+        <label for="num_colours">Number of Colours</label>
+        <input type="number" id="num_colours" name="num_colours" min="1" max="6" step="1" class="form-control" placeholder="e.g. 3">
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h2>Packaging (Optional)</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="finish_mode">Finish Mode</label>
+        <select id="finish_mode" name="finish_mode" class="form-control">
+          {% for fm in finish_modes %}
+          <option value="{{ fm }}">{{ fm }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="core_type">Core Type</label>
+        <select id="core_type" name="core_type" class="form-control">
+          <option value="">None</option>
+          {% for core in cores %}
+          <option value="{{ core.type }}">{{ core.type }}{% if core.description %} - {{ core.description }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h2>Quantity & Pricing</h2>
+    <div class="form-group">
+      <label>Quantity Type <span class="required">*</span></label>
+      <div>
+        <label><input type="radio" name="qty_type" value="units" checked onclick="toggleQty()"> Units</label>
+        <label style="margin-left:12px;"><input type="radio" name="qty_type" value="kg" onclick="toggleQty()"> Total Weight (kg)</label>
+        <label style="margin-left:12px;"><input type="radio" name="qty_type" value="m" onclick="toggleQty()"> Total Length (m)</label>
+        <label style="margin-left:12px;"><input type="radio" name="qty_type" value="rolls" onclick="toggleQty()"> Rolls</label>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group qty-input" id="qty-units">
+        <label for="quantity_units">Units</label>
+        <input type="number" id="quantity_units" name="quantity.units" min="1" step="1" class="form-control" placeholder="e.g. 1000">
+      </div>
+      <div class="form-group qty-input" id="qty-kg" style="display:none;">
+        <label for="quantity_total_kg">Total Weight (kg)</label>
+        <input type="number" id="quantity_total_kg" name="quantity.total_kg" min="0.01" step="0.01" class="form-control" placeholder="e.g. 500.5">
+      </div>
+      <div class="form-group qty-input" id="qty-m" style="display:none;">
+        <label for="quantity_total_m">Total Length (meters)</label>
+        <input type="number" id="quantity_total_m" name="quantity.total_m" min="0.01" step="0.01" class="form-control" placeholder="e.g. 1200.0">
+      </div>
+      <div class="form-group qty-input" id="qty-rolls" style="display:none;">
+        <label for="quantity_rolls">Number of Rolls</label>
+        <input type="number" id="quantity_rolls" name="quantity.rolls" min="1" step="1" class="form-control" placeholder="e.g. 50">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="currency">Currency <span class="required">*</span></label>
+        <select id="currency" name="currency" required class="form-control">
+          <option value="AUD" selected>AUD - Australian Dollar</option>
+          <option value="USD">USD - US Dollar</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="requested_margin">Margin (decimal)</label>
+        <input type="number" id="requested_margin" name="requested_margin" min="0" max="1" step="0.01" value="0.20" class="form-control" placeholder="0.20">
+        <small class="form-help">Enter as decimal (e.g., 0.25 = 25%)</small>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">
+        <span id="quick-loading-indicator" class="htmx-indicator">
+          <span class="spinner"></span> Calculating...
+        </span>
+        <span class="btn-text">Calculate Quote</span>
+      </button>
+      <a href="/quotes" class="btn btn-secondary">Cancel</a>
+    </div>
+  </div>
+</form>
+
+<script>
+  function toggleLength() {
+    const radios = document.querySelectorAll('input[name="continuous_roll"]');
+    let isRoll = false;
+    radios.forEach(r => { if (r.checked && r.value === 'true') isRoll = true; });
+    const el = document.getElementById('length-group');
+    if (el) el.style.display = isRoll ? 'none' : 'block';
+  }
+  function toggleGusset() {
+    const g = document.getElementById('geometry')?.value;
+    const show = (g === 'Gusset' || g === 'BottomGusset');
+    const row = document.getElementById('gusset-row');
+    if (row) row.style.display = show ? 'block' : 'none';
+  }
+  function togglePrintingFields() {
+    const pm = document.getElementById('print_method')?.value;
+    const grp = document.getElementById('num_colours_group');
+    if (grp) grp.style.display = (pm && pm !== 'None') ? 'block' : 'none';
+  }
+  function toggleColourFields() {
+    const cc = document.getElementById('colour_code')?.value;
+    const row = document.getElementById('colour-fields');
+    if (row) row.style.display = cc ? 'block' : 'none';
+  }
+  function toggleQty() {
+    const type = document.querySelector('input[name="qty_type"]:checked')?.value || 'units';
+    const ids = ['qty-units','qty-kg','qty-m','qty-rolls'];
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const map = { 'units':'qty-units', 'kg':'qty-kg', 'm':'qty-m', 'rolls':'qty-rolls' };
+    const target = document.getElementById(map[type]);
+    if (target) target.style.display = 'block';
+  }
+  // initialize
+  toggleLength(); toggleGusset(); togglePrintingFields(); toggleQty(); toggleColourFields();
+</script>
+

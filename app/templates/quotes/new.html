@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Quote Calculator</h1>
+  <p class="subtitle">Create a quote from an existing product, or try a quick quote below.</p>
+</div>
+
+{% if error %}
+<div class="error-message"><strong>Error:</strong> {{ error }}</div>
+{% endif %}
+
+<div class="quote-form-container">
+  <section id="product-quote">
+    <h2>Quote from Product</h2>
+    {% include "quotes/_product_form.html" %}
+    <div id="product-preview-container" class="quote-preview-container">
+      <p class="text-muted">Select a product version and calculate to see pricing.</p>
+    </div>
+  </section>
+
+  <hr style="margin:32px 0;" />
+
+  <section id="quick-quote">
+    <h2>Quick Quote (No Product Yet)</h2>
+    {% include "quotes/_quick_form.html" %}
+    <div id="quick-preview-container" class="quote-preview-container">
+      <p class="text-muted">Fill in the quick form and calculate to see pricing.</p>
+    </div>
+  </section>
+</div>
+
+<style>
+  .quote-form-container { max-width: 900px; margin: 0 auto; }
+  .page-header { margin-bottom: 32px; }
+  .page-header h1 { margin: 0 0 8px; font-size: 2rem; }
+  .subtitle { color: var(--muted, #6b7280); margin: 0; }
+  .form-section { background: var(--surface, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: 24px; margin-bottom: 24px; }
+  .form-section h2 { margin: 0 0 20px; font-size: 1.25rem; color: var(--text, #111827); }
+  .form-group { margin-bottom: 20px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: var(--text, #111827); font-size: 0.9rem; }
+  .required { color: #ef4444; }
+  .form-control { width: 100%; padding: 10px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; font-size: 1rem; transition: border-color 0.2s; box-sizing: border-box; }
+  .form-control:focus { outline: none; border-color: var(--primary, #2563eb); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+  .form-help { display: block; margin-top: 6px; font-size: 0.85rem; color: var(--muted, #6b7280); }
+  .error-message { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 12px 16px; border-radius: 6px; margin-bottom: 24px; font-size: 0.9rem; }
+  .form-actions { display: flex; gap: 12px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border, #e5e7eb); }
+  .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 500; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; transition: all 0.2s; }
+  .btn-primary { background: var(--primary, #2563eb); color: #fff; }
+  .btn-primary:hover { filter: brightness(0.95); }
+  .btn-secondary { background: var(--bg, #f9fafb); color: var(--text, #111827); border: 1px solid var(--border, #e5e7eb); }
+  .btn-secondary:hover { background: var(--surface, #fff); }
+  .quote-preview-container { margin-top: 32px; padding-top: 32px; border-top: 2px solid var(--border, #e5e7eb); }
+  .text-muted { color: var(--muted, #6b7280); font-style: italic; }
+  .htmx-indicator { display: none; }
+  .htmx-request .htmx-indicator { display: inline-block; }
+  .htmx-request .btn-text { display: none; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+

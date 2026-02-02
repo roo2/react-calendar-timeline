@@ -1,0 +1,11 @@
+# Environment and local DB
+.env
+production.db
+production.db-journal
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+
