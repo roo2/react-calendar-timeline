@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
