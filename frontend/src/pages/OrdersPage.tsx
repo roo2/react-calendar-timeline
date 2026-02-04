@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { can } from '../auth/permissions'
 import {
   Alert,
   Box,
@@ -29,7 +30,7 @@ type OrderRow = {
 
 export function OrdersPage() {
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const canCreate = roles.includes('SALES') || roles.includes('PROD_MANAGER')
+  const canCreate = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [items, setItems] = useState<OrderRow[]>([])
   const [err, setErr] = useState<string | null>(null)

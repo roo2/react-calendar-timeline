@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { can } from '../auth/permissions'
 import { Alert, Box, Button, Paper, Typography } from '@mui/material'
 
 function fmtList(x: unknown): string {
@@ -12,7 +13,7 @@ export function ProductVersionShowPage() {
   const { productId, versionId } = useParams()
   const csrfToken = useAppSelector((s) => s.auth.csrfToken)
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const isPm = roles.includes('PROD_MANAGER')
+  const isPm = can(roles, 'PROD_MANAGER')
 
   const [productData, setProductData] = useState<any>(null)
   const [versionData, setVersionData] = useState<any>(null)

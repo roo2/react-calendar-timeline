@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { can } from '../auth/permissions'
 import {
   Alert,
   Box,
@@ -15,92 +16,30 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  TextField,
   Typography,
 } from '@mui/material'
 
 export function ProductShowPage() {
   const { productId } = useParams()
 
-  const csrfToken = useAppSelector((s) => s.auth.csrfToken)
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const isPm = roles.includes('PROD_MANAGER')
-  const canSuggest = roles.includes('OPERATOR') || isPm
+  const isPm = can(roles, 'PROD_MANAGER')
 
   const [data, setData] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [suggestions, setSuggestions] = useState<any[]>([])
-  const [suggestCategory, setSuggestCategory] = useState('')
-  const [suggestText, setSuggestText] = useState('')
-  const [busySuggestion, setBusySuggestion] = useState(false)
 
   useEffect(() => {
     if (!productId) return
     void (async () => {
       try {
         setErr(null)
-        const [res, sugg] = await Promise.all([
-          apiFetch<any>(`/api/products/${productId}`),
-          apiFetch<{ items: any[] }>(`/api/suggestions?status=open&product_id=${encodeURIComponent(productId)}`),
-        ])
+        const res = await apiFetch<any>(`/api/products/${productId}`)
         setData(res)
-        setSuggestions(sugg.items || [])
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Failed to load product')
       }
     })()
   }, [productId])
-
-  async function reloadSuggestions() {
-    if (!productId) return
-    const res = await apiFetch<{ items: any[] }>(`/api/suggestions?status=open&product_id=${encodeURIComponent(productId)}`)
-    setSuggestions(res.items || [])
-  }
-
-  async function onSubmitSuggestion(e: FormEvent) {
-    e.preventDefault()
-    if (!productId || !canSuggest || !suggestText.trim()) return
-    try {
-      setBusySuggestion(true)
-      setErr(null)
-      await apiFetch<any>(`/api/products/${productId}/suggestions`, {
-        method: 'POST',
-        body: JSON.stringify({
-          category: suggestCategory.trim() || null,
-          suggestion_text: suggestText.trim(),
-        }),
-        csrfToken: csrfToken || undefined,
-      })
-      setSuggestCategory('')
-      setSuggestText('')
-      await reloadSuggestions()
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : 'Failed to submit suggestion')
-    } finally {
-      setBusySuggestion(false)
-    }
-  }
-
-  async function resolveSuggestion(suggestionId: string, decision: 'accept' | 'reject') {
-    if (!csrfToken) {
-      setErr('Missing CSRF token. Please re-login.')
-      return
-    }
-    try {
-      setBusySuggestion(true)
-      setErr(null)
-      await apiFetch<any>(`/api/suggestions/${suggestionId}/resolve?decision=${decision}`, {
-        method: 'POST',
-        csrfToken,
-      })
-      if (productId) setData(await apiFetch<any>(`/api/products/${productId}`))
-      await reloadSuggestions()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to resolve suggestion')
-    } finally {
-      setBusySuggestion(false)
-    }
-  }
 
   if (err) {
     return (
@@ -162,85 +101,6 @@ export function ProductShowPage() {
           </TableBody>
         </Table>
       </Paper>
-
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack spacing={2}>
-          <Typography variant="h6">Suggest an Improvement</Typography>
-          {!canSuggest ? (
-            <Typography color="text.secondary">You don’t have permission to submit suggestions.</Typography>
-          ) : (
-            <form onSubmit={onSubmitSuggestion}>
-              <Stack spacing={2}>
-                <TextField
-                  label="Category (optional)"
-                  value={suggestCategory}
-                  onChange={(e) => setSuggestCategory(e.currentTarget.value)}
-                />
-                <TextField
-                  label="Suggestion"
-                  value={suggestText}
-                  onChange={(e) => setSuggestText(e.currentTarget.value)}
-                  multiline
-                  minRows={4}
-                  required
-                />
-                <Button type="submit" variant="contained" disabled={busySuggestion}>
-                  Submit Suggestion
-                </Button>
-              </Stack>
-            </form>
-          )}
-        </Stack>
-      </Paper>
-
-      {suggestions.length > 0 && (
-        <Paper variant="outlined">
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Category</TableCell>
-                <TableCell>Text</TableCell>
-                <TableCell>Created By</TableCell>
-                <TableCell>Created At</TableCell>
-                <TableCell></TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {suggestions.map((s) => (
-                <TableRow key={s.id} hover>
-                  <TableCell>{s.category || '-'}</TableCell>
-                  <TableCell>{s.text}</TableCell>
-                  <TableCell>{s.created_by}</TableCell>
-                  <TableCell>{s.created_at}</TableCell>
-                  <TableCell>
-                    {isPm && (
-                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => resolveSuggestion(s.id, 'accept')}
-                          disabled={busySuggestion}
-                        >
-                          Accept
-                        </Button>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          color="error"
-                          onClick={() => resolveSuggestion(s.id, 'reject')}
-                          disabled={busySuggestion}
-                        >
-                          Reject
-                        </Button>
-                      </Box>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Paper>
-      )}
 
       <Box sx={{ display: 'flex', gap: 2 }}>
         <Button component={Link} to="/products" variant="outlined">

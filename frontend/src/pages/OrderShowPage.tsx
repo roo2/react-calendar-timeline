@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { can } from '../auth/permissions'
 import {
   Alert,
   Box,
@@ -18,7 +19,7 @@ import {
 export function OrderShowPage() {
   const { orderId } = useParams()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const canAddJob = roles.includes('PROD_MANAGER')
+  const canAddJob = can(roles, 'PROD_MANAGER')
 
   const [order, setOrder] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)

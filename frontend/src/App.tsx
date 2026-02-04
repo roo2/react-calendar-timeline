@@ -2,6 +2,7 @@ import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } fr
 import { useEffect } from 'react'
 import { useAppDispatch, useAppSelector } from './store/hooks'
 import { fetchMe, logout } from './store/slices/authSlice'
+import { can, isSysAdmin as isSysAdminRole } from './auth/permissions'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { OrdersPage } from './pages/OrdersPage'
@@ -61,9 +62,10 @@ function App() {
   const nav = useNavigate()
   const auth = useAppSelector((s) => s.auth)
   const roles = auth.identity?.roles || []
-  const isSalesOrPm = roles.includes('SALES') || roles.includes('PROD_MANAGER')  || roles.includes('SYS_ADMIN')
-  const isPm = roles.includes('PROD_MANAGER') || roles.includes('SYS_ADMIN')
-  const isSysAdmin = roles.includes('SYS_ADMIN')
+  const isSalesOrPm = can(roles, 'SALES', 'PROD_MANAGER')
+  const isPm = can(roles, 'PROD_MANAGER')
+  // Note: used to control Admin nav visibility (and can be reused elsewhere).
+  const isSysAdmin = isSysAdminRole(roles)
 
   useEffect(() => {
     void dispatch(fetchMe())

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { can } from '../auth/permissions'
 import { Alert, Box, Button, Paper, Typography, Link as MuiLink } from '@mui/material'
 
 type CustomerDetail = {
@@ -26,7 +27,7 @@ type CustomerDetail = {
 export function CustomerShowPage() {
   const { customerId } = useParams()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const canEdit = roles.includes('SALES') || roles.includes('PROD_MANAGER')
+  const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)

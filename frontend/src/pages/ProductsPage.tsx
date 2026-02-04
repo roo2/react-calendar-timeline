@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { can } from '../auth/permissions'
 import {
   Alert,
   Box,
@@ -28,7 +29,7 @@ type ProductSummary = {
 
 export function ProductsPage() {
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const canEdit = roles.includes('SALES') || roles.includes('PROD_MANAGER')
+  const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [q, setQ] = useState('')
   const [items, setItems] = useState<ProductSummary[]>([])
