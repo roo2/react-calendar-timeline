@@ -11,14 +11,16 @@ export function LoginPage() {
   const location = useLocation()
   const auth = useAppSelector((s) => s.auth)
 
-  const from = (location.state as any)?.from?.pathname || '/'
+  const qs = new URLSearchParams(location.search)
+  const nextParam = qs.get('next')
+  const next = nextParam && nextParam.startsWith('/') ? nextParam : '/'
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
 
   if (auth.identity?.user) {
-    return <Navigate to={from} replace />
+    return <Navigate to={next} replace />
   }
 
   async function onSubmit(e: FormEvent) {
@@ -26,7 +28,7 @@ export function LoginPage() {
     setLocalError(null)
     try {
       await dispatch(login({ username, password })).unwrap()
-      nav(from, { replace: true })
+      nav(next, { replace: true })
     } catch (err) {
       const msg =
         err instanceof Error

@@ -52,7 +52,8 @@ function RequireAuth() {
   }
 
   if (!auth.identity?.user) {
-    return <Navigate to="/login" replace state={{ from: location }} />
+    const next = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />
   }
 
   return <Outlet />

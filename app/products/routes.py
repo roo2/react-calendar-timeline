@@ -62,7 +62,8 @@ async def list_products(q: Optional[str] = Query(default=None)):
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_product(payload: CreateProductRequest, identity=Depends(current_identity)):
     try:
-        created_by = getattr(identity.get("user"), "username", identity.get("user")) or "system"
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
         product, version = service.create_product_with_version(payload, created_by=created_by)
         return {"ok": True, "product": _product_summary(product), "version": _version_summary(version)}
     except DomainError as e:
@@ -90,7 +91,8 @@ async def get_version(product_id: str, version_id: str):
 @router.post("/{product_id}/versions", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
 async def create_product_version(product_id: str, payload: CreateProductVersionRequest, identity=Depends(current_identity)):
     try:
-        created_by = getattr(identity.get("user"), "username", identity.get("user")) or "system"
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
         v = service.create_new_version(product_id, payload, created_by=created_by)
         return {"ok": True, "version": _version_summary(v)}
     except DomainError as e:
@@ -100,7 +102,8 @@ async def create_product_version(product_id: str, payload: CreateProductVersionR
 @router.post("/{product_id}/suggestions", dependencies=[Depends(allow_roles_any("OPERATOR", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_suggestion(product_id: str, payload: OperatorSuggestionRequest, identity=Depends(current_identity)):
     try:
-        created_by = getattr(identity.get("user"), "username", identity.get("user")) or "operator"
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "operator"
         payload.product_id = product_id
         s = service.create_suggestion(payload, created_by=created_by)
         return {"ok": True, "suggestion": _suggestion_summary(s)}
@@ -129,7 +132,8 @@ async def list_suggestions(
 @suggestions_router.post("/{suggestion_id}/resolve", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
 async def resolve_suggestion(suggestion_id: str, decision: str, identity=Depends(current_identity)):
     try:
-        resolver = getattr(identity.get("user"), "username", identity.get("user")) or "prod_manager"
+        u = identity.get("user")
+        resolver = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "prod_manager"
         s = service.resolve_suggestion(suggestion_id, decision, resolver=resolver)
         return {"ok": True, "suggestion": _suggestion_summary(s)}
     except DomainError as e:

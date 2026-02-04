@@ -24,7 +24,8 @@ async def dispatch_detail(job_id: str):
 
 @router.post("/{job_id}/mark_ready", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
 async def mark_ready(job_id: str, payload: MarkReadyRequest, identity=Depends(current_identity)):
-    actor = getattr(identity.get("user"), "username", identity.get("user")) or "api"
+    u = identity.get("user")
+    actor = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "api"
     try:
         dto = DispatchService.mark_ready(uuid.UUID(job_id), payload, actor=str(actor))
         return {"ok": True, "dispatch_record": dto}
@@ -35,7 +36,11 @@ async def mark_ready(job_id: str, payload: MarkReadyRequest, identity=Depends(cu
 @router.post("/{job_id}/confirm", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
 async def confirm_dispatch(job_id: str, payload: ConfirmDispatchRequest, identity=Depends(current_identity)):
     user = identity.get("user")
-    user_id = getattr(user, "id", None) or (getattr(user, "username", None) if user else None)
+    user_id = (
+        (user.get("id") if isinstance(user, dict) else None)
+        or getattr(user, "id", None)
+        or (user.get("username") if isinstance(user, dict) else getattr(user, "username", None) if user else None)
+    )
     try:
         dto = DispatchService.confirm_dispatch(uuid.UUID(job_id), payload, actor_user_id=str(user_id) if user_id else None)
         return {"ok": True, "dispatch_record": dto}

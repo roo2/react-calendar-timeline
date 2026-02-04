@@ -6,8 +6,24 @@ from app.config import settings
 from app.db.models import Base
 
 
+def _normalize_database_url(url: str) -> str:
+    """
+    Normalize DATABASE_URL for SQLAlchemy.
+
+    Heroku commonly provides `postgres://...` which SQLAlchemy will not parse.
+    We also force the psycopg (v3) driver when using Postgres.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://") :]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://") :]
+    return url
+
+
 def _create_engine():
-    db_url = settings.DATABASE_URL
+    explicit_env_url = os.getenv("DATABASE_URL")
+    db_url = explicit_env_url or settings.DATABASE_URL
+    db_url = _normalize_database_url(db_url)
     # Prefer local SQLite if the default Postgres URL is in use and a local DB file exists
     if (not os.getenv("DATABASE_URL")) and db_url.startswith("postgresql") and os.path.exists("production.db"):
         db_url = "sqlite+pysqlite:///./production.db"
@@ -15,6 +31,9 @@ def _create_engine():
     try:
         return create_engine(db_url, pool_pre_ping=True, future=True)
     except Exception:
+        # If DATABASE_URL is explicitly set (e.g. on Heroku), do NOT fall back silently.
+        if explicit_env_url:
+            raise
         # Test/CI fallback: avoid requiring a PostgreSQL driver for import-time engine creation
         # Use file-based SQLite to persist schema across connections within a test run
         return create_engine("sqlite+pysqlite:///./dev.db", future=True)

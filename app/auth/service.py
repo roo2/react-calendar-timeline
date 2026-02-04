@@ -4,7 +4,7 @@ import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
@@ -88,12 +88,12 @@ class AuthService:
         self._db.commit()
         self._logger.info("logout session_id=%s", session_id)
 
-    def get_current_user(self, sid: Optional[str]) -> Tuple[Optional[User], List[str], Optional[str]]:
+    def get_current_user(self, sid: Optional[str]) -> Tuple[Optional[Dict[str, Any]], List[str], Optional[str]]:
         if not sid:
             return None, [], None
         now = datetime.now(timezone.utc)
 
-        def _load() -> Tuple[Optional[User], List[str], Optional[str]]:
+        def _load() -> Tuple[Optional[Dict[str, Any]], List[str], Optional[str]]:
             sess: Optional[UserSession] = self._db.get(UserSession, str(sid))
             if not sess:
                 return None, [], None
@@ -105,7 +105,8 @@ class AuthService:
                 return None, [], None
             user = self._db.get(User, sess.user_id)
             roles = [r.code for r in (user.roles if user else [])]
-            return user, roles, str(sess.csrf_token)
+            user_public = {"id": str(user.id), "username": user.username} if user else None
+            return user_public, roles, str(sess.csrf_token)
 
         # SQLAlchemy 2.x sessions auto-begin transactions. Avoid starting a new
         # explicit transaction if one is already active.

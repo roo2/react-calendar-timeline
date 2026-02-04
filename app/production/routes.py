@@ -62,7 +62,8 @@ async def resume_run(run_id: str):
 
 @router.post("/runs/{run_id}/record_output", dependencies=[Depends(allow_roles_any("OPERATOR", "PROD_MANAGER")), Depends(csrf_protect())])
 async def record_output(run_id: str, payload: dict, identity=Depends(current_identity)):
-    created_by = getattr(identity.get("user"), "username", identity.get("user")) or "api"
+    u = identity.get("user")
+    created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "api"
     try:
         totals = ProductionService.record_output(
             run_id=uuid.UUID(run_id),
@@ -82,7 +83,8 @@ async def record_output(run_id: str, payload: dict, identity=Depends(current_ide
 
 @router.post("/runs/{run_id}/qc_check", dependencies=[Depends(allow_roles_any("OPERATOR", "PROD_MANAGER")), Depends(csrf_protect())])
 async def record_qc(run_id: str, payload: QCEntryRequest, identity=Depends(current_identity)):
-    measured_by = getattr(identity.get("user"), "username", identity.get("user")) or "api"
+    u = identity.get("user")
+    measured_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "api"
     try:
         checklist = ProductionService.record_qc(
             run_id=uuid.UUID(run_id),
@@ -120,7 +122,8 @@ async def complete_run(run_id: str):
 
 @router.post("/jobs/{job_id}/qc-summary/aggregate", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
 async def aggregate_job_qc(job_id: str, identity=Depends(current_identity)):
-    created_by = getattr(identity.get("user"), "username", identity.get("user")) or "api"
+    u = identity.get("user")
+    created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "api"
     try:
         summary = QCService.aggregate_job_qc(uuid.UUID(job_id), created_by=str(created_by))
         return {"ok": True, "summary": summary}
@@ -130,7 +133,8 @@ async def aggregate_job_qc(job_id: str, identity=Depends(current_identity)):
 
 @router.post("/jobs/{job_id}/qc-summary/finalize", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
 async def finalize_job_qc(job_id: str, payload: dict, identity=Depends(current_identity)):
-    finalized_by = getattr(identity.get("user"), "username", identity.get("user")) or "api"
+    u = identity.get("user")
+    finalized_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "api"
     checklist_updates: Dict[str, Any] = payload.get("checklist") or {}
     deviations: Optional[Dict[str, Any]] = payload.get("deviations")
     try:

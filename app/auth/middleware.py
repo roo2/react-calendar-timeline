@@ -33,7 +33,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                 logger.debug(
                     "identity_mw sid=%s user=%s roles=%s found=%s",
                     sid[:8] + "..." if len(sid) > 8 else sid,
-                    getattr(user, "username", None) if user else None,
+                    (user or {}).get("username") if isinstance(user, dict) else None,
                     roles,
                     user is not None,
                 )
@@ -58,7 +58,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         # Also set identity dict for templates that might access it directly
         # This ensures compatibility with both dependency injection and direct access
         request.state.identity = {
-            "user": user,  # User object (or None)
+            "user": user,  # {id, username} dict (or None)
             "roles": roles,  # List of role code strings
             "csrf": csrf,  # CSRF token string (or None)
         }

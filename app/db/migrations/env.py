@@ -18,6 +18,11 @@ if config.config_file_name is not None:
 # Override DB URL from environment if provided
 db_url = os.getenv("DATABASE_URL")
 if db_url:
+    # Normalize Heroku-style URLs for SQLAlchemy
+    if db_url.startswith("postgres://"):
+        db_url = "postgresql+psycopg://" + db_url[len("postgres://") :]
+    elif db_url.startswith("postgresql://"):
+        db_url = "postgresql+psycopg://" + db_url[len("postgresql://") :]
     config.set_main_option("sqlalchemy.url", db_url)
 
 target_metadata = None  # models metadata will be added by domain agent

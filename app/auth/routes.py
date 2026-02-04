@@ -24,7 +24,7 @@ class LoginRequest(BaseModel):
 def _public_identity(identity: dict) -> dict:
     u = (identity or {}).get("user")
     return {
-        "user": getattr(u, "username", None) if u else None,
+        "user": (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None),
         "roles": (identity or {}).get("roles", []) or [],
         "csrf": (identity or {}).get("csrf", None),
     }
@@ -51,7 +51,7 @@ async def login(
             status_code=200,
             content={
                 "ok": True,
-                "identity": {"user": getattr(user, "username", None) if user else None, "roles": roles, "csrf": csrf},
+                "identity": {"user": (user or {}).get("username") if isinstance(user, dict) else None, "roles": roles, "csrf": csrf},
             },
         )
         resp.set_cookie(
