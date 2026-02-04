@@ -23,6 +23,9 @@ def require_roles(*roles_required: str) -> Callable[..., Any]:
     """
     def dep(identity: Dict[str, Any] = Depends(current_identity)) -> Dict[str, Any]:
         have: List[str] = identity.get("roles", []) or []
+        # SYS_ADMIN bypasses all role checks
+        if "SYS_ADMIN" in have:
+            return identity
         if not set(roles_required).issubset(set(have)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return identity
@@ -36,6 +39,9 @@ def allow_roles_any(*roles_allowed: str) -> Callable[..., Any]:
     """
     def dep(identity: Dict[str, Any] = Depends(current_identity)) -> Dict[str, Any]:
         have: List[str] = identity.get("roles", []) or []
+        # SYS_ADMIN bypasses all role checks
+        if "SYS_ADMIN" in have:
+            return identity
         if not set(roles_allowed).intersection(set(have)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return identity
@@ -49,9 +55,15 @@ def require_capability(capability: str) -> Callable[..., Any]:
     """
     def dep(identity: Dict[str, Any] = Depends(current_identity)) -> Dict[str, Any]:
         roles: List[str] = identity.get("roles", []) or []
-        if capability == "system_admin" and "SYS_ADMIN" not in roles:
+        # SYS_ADMIN is a superuser: allow all capabilities
+        if "SYS_ADMIN" in roles:
+            return identity
+
+        if capability == "system_admin":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-        return identity
+
+        # Default deny for unknown capabilities (keeps behavior safe if new capabilities are added)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
     return dep
 

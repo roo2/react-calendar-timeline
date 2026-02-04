@@ -13,7 +13,6 @@ import logging
 from app.db.session import SessionLocal
 from app.auth.models import User, Role, UserSession
 from app.auth.security import hash_password, verify_password, ROLES
-from app.auth.security import _HAVE_ARGON2  # type: ignore
 from typing import NoReturn
 
 
@@ -53,7 +52,7 @@ class AuthService:
 
     # --- Auth flows ---
     def login(self, username: str, password: str) -> UserSession:
-        self._logger.info("login_attempt username=%s argon2=%s", username, _HAVE_ARGON2)
+        self._logger.info("login_attempt username=%s", username)
         user: Optional[User] = self._db.scalar(select(User).where(User.username == username))
         if not user:
             self._logger.warning("login_user_not_found username=%s", username)
@@ -117,15 +116,20 @@ class AuthService:
 
     # --- Authorization helpers ---
     def require_roles(self, have: List[str], needed: Tuple[str, ...]) -> None:
+        # SYS_ADMIN is superuser
+        if "SYS_ADMIN" in have:
+            return
         wanted = set(needed)
         have_set = set(have)
         if not wanted.issubset(have_set):
             raise PermissionError("forbidden")
 
     def require_capability(self, have: List[str], capability: str) -> None:
+        # SYS_ADMIN is superuser
+        if "SYS_ADMIN" in have:
+            return
         if capability == "system_admin":
-            if "SYS_ADMIN" not in have:
-                raise PermissionError("forbidden")
+            raise PermissionError("forbidden")
         else:
             raise PermissionError("unknown capability")
 

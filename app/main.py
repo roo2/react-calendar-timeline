@@ -86,21 +86,16 @@ try:
         raise
     # Import routers
     from app.products.routes import router as products_router  # type: ignore
-    from app.products.routes import suggestions_router as product_suggestions_router  # type: ignore
     print(f"✓ products_router imported successfully")
     print(f"  - Router prefix: {products_router.prefix}")
     print(f"  - Router routes count: {len(products_router.routes)}")
     print(f"  - Router type: {type(products_router)}")
-    print(f"✓ product_suggestions_router imported successfully")
-    print(f"  - Suggestions router prefix: {product_suggestions_router.prefix}")
-    print(f"  - Suggestions router routes count: {len(product_suggestions_router.routes)}")
 except Exception as e:  # pragma: no cover - allow tests without product deps
     import sys
     import traceback
     print(f"✗ ERROR: Failed to import products router: {e}", file=sys.stderr)
     traceback.print_exc()
     products_router = None
-    product_suggestions_router = None
 try:
     from app.orders.routes import router as orders_router  # type: ignore
 except Exception:
@@ -210,23 +205,7 @@ if products_router is not None:
 else:
     import sys
     print("✗ ERROR: Products router is None - routes will not be available!", file=sys.stderr)
-if product_suggestions_router is not None:
-    app.include_router(product_suggestions_router)
-    try:
-        print(f"✓ Product suggestions router registered with {len(product_suggestions_router.routes)} routes")
-        for route in getattr(product_suggestions_router, "routes", []):
-            if hasattr(route, "path") and hasattr(route, "methods"):
-                methods = ", ".join(sorted(route.methods))
-                print(f"  - {methods} {route.path}")
-        print(f"  - Suggestions router prefix: {product_suggestions_router.prefix}")
-    except Exception as _e:  # pragma: no cover
-        import sys
-        import traceback
-        print(f"⚠ WARN: Failed to enumerate product suggestions routes: {_e}", file=sys.stderr)
-        traceback.print_exc()
-else:
-    import sys
-    print("✗ ERROR: Product suggestions router is None - routes will not be available!", file=sys.stderr)
+
 app.include_router(quotes_router)
 if orders_router is not None:
     app.include_router(orders_router)

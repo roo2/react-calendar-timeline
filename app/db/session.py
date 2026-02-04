@@ -24,19 +24,26 @@ def _create_engine():
     explicit_env_url = os.getenv("DATABASE_URL")
     db_url = explicit_env_url or settings.DATABASE_URL
     db_url = _normalize_database_url(db_url)
-    # Prefer local SQLite if the default Postgres URL is in use and a local DB file exists
-    if (not os.getenv("DATABASE_URL")) and db_url.startswith("postgresql") and os.path.exists("production.db"):
-        db_url = "sqlite+pysqlite:///./production.db"
-        logging.getLogger("auth").info("Using local SQLite database at ./production.db (env DATABASE_URL not set)")
     try:
         return create_engine(db_url, pool_pre_ping=True, future=True)
     except Exception:
         # If DATABASE_URL is explicitly set (e.g. on Heroku), do NOT fall back silently.
         if explicit_env_url:
             raise
-        # Test/CI fallback: avoid requiring a PostgreSQL driver for import-time engine creation
-        # Use file-based SQLite to persist schema across connections within a test run
-        return create_engine("sqlite+pysqlite:///./dev.db", future=True)
+        # If DATABASE_URL came from settings (e.g. .env) and points at Postgres, failing over to a
+        # different SQLite file is surprising in real dev/prod. Only do that in test/CI contexts.
+        is_testish = (
+            os.getenv("CI") == "true"
+            or os.getenv("PYTEST_CURRENT_TEST") is not None
+            or settings.ENV.lower() in {"test", "ci"}
+        )
+        if is_testish:
+            logging.getLogger("auth").warning(
+                "DB engine creation failed for %s; falling back to sqlite ./dev.db (test/CI mode)",
+                db_url,
+            )
+            return create_engine("sqlite+pysqlite:///./dev.db", future=True)
+        raise
 
 
 engine = _create_engine()

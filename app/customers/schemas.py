@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 from typing import List, Optional
-from pydantic import BaseModel, EmailStr, Field, field_validator
+import re
+
+try:
+    import email_validator  # noqa: F401
+    from pydantic import EmailStr as _EmailType
+except Exception:  # pragma: no cover
+    _EmailType = str  # type: ignore[assignment]
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class ContactInput(BaseModel):
     type: str = Field(..., description="Contact type: Primary Contact, Accounts, Purchasing, Operations, Other")
     name: str = Field(..., min_length=1, description="Full name")
     title: Optional[str] = Field(None, description="Job title/position")
-    email: EmailStr = Field(..., description="Email address")
+    email: _EmailType = Field(..., description="Email address")
     phone: str = Field(..., min_length=1, description="Phone number")
     phone_alt: Optional[str] = Field(None, description="Alternate phone number")
     preferred_method: str = Field("Email", description="Preferred contact method: Email or Phone")
@@ -19,6 +27,16 @@ class ContactInput(BaseModel):
     def validate_preferred_method(cls, v: str) -> str:
         if v not in ["Email", "Phone"]:
             raise ValueError("Preferred method must be 'Email' or 'Phone'")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        # If email-validator is installed, Pydantic's EmailStr already validated it.
+        # Otherwise fall back to a lightweight sanity check so the app can run.
+        if isinstance(v, str):
+            if not re.match(r"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", v):
+                raise ValueError("Invalid email address")
         return v
 
 

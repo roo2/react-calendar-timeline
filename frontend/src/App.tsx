@@ -61,8 +61,8 @@ function App() {
   const nav = useNavigate()
   const auth = useAppSelector((s) => s.auth)
   const roles = auth.identity?.roles || []
-  const isSalesOrPm = roles.includes('SALES') || roles.includes('PROD_MANAGER')
-  const isPm = roles.includes('PROD_MANAGER')
+  const isSalesOrPm = roles.includes('SALES') || roles.includes('PROD_MANAGER')  || roles.includes('SYS_ADMIN')
+  const isPm = roles.includes('PROD_MANAGER') || roles.includes('SYS_ADMIN')
   const isSysAdmin = roles.includes('SYS_ADMIN')
 
   useEffect(() => {
@@ -88,9 +88,6 @@ function App() {
           <Container maxWidth="lg" disableGutters>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexGrow: 1 }}>
-                <Typography variant="h6" component="div">
-                  Production Software
-                </Typography>
                 <Typography variant="body2" color="text.secondary">
                   CrownPack
                 </Typography>
@@ -191,7 +188,7 @@ function App() {
               © CrownPack — Built for manufacturing excellence
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              v0.1 • Reliability • Traceability • Performance
+              v0.1
             </Typography>
           </Box>
         </Container>

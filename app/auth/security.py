@@ -2,36 +2,27 @@ from __future__ import annotations
 
 from typing import Set
 
-try:
-    from argon2 import PasswordHasher  # type: ignore
-    from argon2.exceptions import VerifyMismatchError  # type: ignore
-    _HAVE_ARGON2 = True
-except Exception:  # pragma: no cover - test fallback
-    import hashlib
-
-    _HAVE_ARGON2 = False
-
-    class PasswordHasher:  # minimal shim
-        def hash(self, password: str) -> str:
-            return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-        def verify(self, password_hash: str, password: str) -> bool:
-            return password_hash == hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-    class VerifyMismatchError(Exception):
-        ...
-
+from argon2 import PasswordHasher  # type: ignore
+from argon2.exceptions import VerifyMismatchError  # type: ignore
 
 _ph = PasswordHasher()  # Argon2id default
 
+def _is_argon2_hash(password_hash: str) -> bool:
+    # argon2-cffi emits hashes like: "$argon2id$v=19$m=...$..."
+    return password_hash.startswith("$argon2")
+
 
 def hash_password(password: str) -> str:
-    return _ph.hash(password)
+    return _ph.hash(password)  # type: ignore[union-attr]
 
 
 def verify_password(password: str, password_hash: str) -> bool:
+    # Enforce Argon2 hashes only. If a user was created with a legacy/weak hash,
+    # they must reset their password.
+    if not _is_argon2_hash(password_hash):
+        return False
     try:
-        return _ph.verify(password_hash, password)  # type: ignore[arg-type]
+        return _ph.verify(password_hash, password)  # type: ignore[union-attr,arg-type]
     except VerifyMismatchError:
         return False
     except Exception:
