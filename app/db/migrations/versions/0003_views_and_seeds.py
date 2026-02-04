@@ -256,11 +256,11 @@ def upgrade() -> None:
             ),
             {
                 "id": str(uuid.uuid4()),
-                "method": method,
-                "min_meters": min_meters,
-                "cost_per_1000m": cost_per_1000m,
-                "setup_minutes": setup_minutes,
-                "duplex_supported": duplex_supported,
+                "method": str(method),
+                "min_meters": str(min_meters),
+                "cost_per_1000m": str(cost_per_1000m),
+                "setup_minutes": str(setup_minutes),
+                "duplex_supported": str(duplex_supported),
             },
         )
 
