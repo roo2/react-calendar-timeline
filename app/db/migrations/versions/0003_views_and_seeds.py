@@ -246,11 +246,11 @@ def upgrade() -> None:
                 SELECT :id, :method, :min_meters, :cost_per_1000m, :setup_minutes, :duplex_supported
                 WHERE NOT EXISTS (
                   SELECT 1 FROM printing_rates
-                  WHERE method = :method::varchar
-                    AND min_meters = :min_meters::numeric
-                    AND cost_per_1000m = :cost_per_1000m::numeric
-                    AND setup_minutes = :setup_minutes::integer
-                    AND duplex_supported = :duplex_supported::boolean
+                  WHERE method = :method
+                    AND min_meters = :min_meters
+                    AND cost_per_1000m = :cost_per_1000m
+                    AND setup_minutes = :setup_minutes
+                    AND duplex_supported = :duplex_supported
                 )
                 """
             ),
