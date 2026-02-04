@@ -1,8 +1,12 @@
 {
   "name": "crownpack-production-software",
   "private": true,
+  "engines": {
+    "node": "22.x",
+    "npm": "11.x"
+  },
   "scripts": {
-    "heroku-postbuild": "npm --prefix frontend ci && npm --prefix frontend run build"
+    "heroku-postbuild": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
   }
 }
 
