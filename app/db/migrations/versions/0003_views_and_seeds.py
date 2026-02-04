@@ -242,8 +242,8 @@ def upgrade() -> None:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO printing_rates (id, method, min_meters, cost_per_1000m, setup_minutes, duplex_supported)
-                SELECT :id, :method, :min_meters, :cost_per_1000m, :setup_minutes, :duplex_supported
+                INSERT INTO printing_rates (id, %(method)s::varchar, min_meters, cost_per_1000m, setup_minutes, duplex_supported)
+                SELECT :id, %(method)s::varchar, :min_meters, :cost_per_1000m, :setup_minutes, :duplex_supported
                 WHERE NOT EXISTS (
                   SELECT 1 FROM printing_rates
                   WHERE method = :method
