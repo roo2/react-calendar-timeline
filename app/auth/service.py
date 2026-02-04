@@ -92,7 +92,8 @@ class AuthService:
         if not sid:
             return None, [], None
         now = datetime.now(timezone.utc)
-        with self._db.begin():
+
+        def _load() -> Tuple[Optional[User], List[str], Optional[str]]:
             sess: Optional[UserSession] = self._db.get(UserSession, str(sid))
             if not sess:
                 return None, [], None
@@ -105,6 +106,13 @@ class AuthService:
             user = self._db.get(User, sess.user_id)
             roles = [r.code for r in (user.roles if user else [])]
             return user, roles, str(sess.csrf_token)
+
+        # SQLAlchemy 2.x sessions auto-begin transactions. Avoid starting a new
+        # explicit transaction if one is already active.
+        if self._db.in_transaction():
+            return _load()
+        with self._db.begin():
+            return _load()
 
     # --- Authorization helpers ---
     def require_roles(self, have: List[str], needed: Tuple[str, ...]) -> None:

@@ -36,6 +36,10 @@ class OrderListItemDTO(BaseModel):
     customer_id: uuid.UUID
     product_version_id: uuid.UUID
     currency: str
+    customer_name: Optional[str] = None
+    product_code: Optional[str] = None
+    version_number: Optional[int] = None
+    created_at: Optional[str] = None
 
 
 class OrderDetailDTO(OrderListItemDTO):

@@ -90,13 +90,9 @@ manager reordering schedule
 
 System must handle this without locking UI.
 
-4.3 Telemetry Throughput & Latency (MVP+)
+4.3 High-Frequency Writes (Optional)
 
-Sustained ingest: ≥ 10 events/sec, burst ≥ 50/sec.
-
-Ingest → QC evaluation p95 < 200 ms.
-
-No UI degradation during bursts.
+Sustained write activity during peak usage must not degrade UI responsiveness.
 4.5 Gantt Tooling Performance
 
 Tool icon rendering and availability checks must not add > 50 ms to HTMX DnD actions (target remains < 200 ms total).
@@ -136,7 +132,7 @@ prevent double execution
 
 5.3 Idempotency & Ordering
 
-All TelemetryEvents carry idempotency_key; duplicates must not create multiple QCReadings.
+Inbound integration requests (if enabled) carry idempotency_key; duplicates must not create duplicate records.
 
 Out-of-order events tolerated within 2 minutes skew; beyond skew → mark time_invalid and do not auto-satisfy required QC.
 
@@ -167,13 +163,13 @@ Reverse proxy (nginx / caddy)
 
 Firewall restricts DB access to app only
 
-6.4 Ingestion Security
+6.4 Integration Security (Optional)
 
 HMAC-signed HTTP or mTLS between gateway and app.
 
 IP allowlist for gateway.
 
-No direct sensor access to app DB.
+No direct integration client access to app DB.
 6.5 Branding Asset Security
 
 Sanitize SVG uploads (strip scripts/external refs).
@@ -207,13 +203,9 @@ Logs retained for minimum 12 months
 
 Rotated automatically
 
-7.4 Telemetry Logging
+7.4 Integration Logging (Optional)
 
-Telemetry ingest failures (auth, schema, unknown sensor)
-
-QCReadingCreated events (info-level)
-
-Sensor stale/heartbeat warnings
+Integration request failures (auth, schema, validation)
 
 7.5 QC Summary Logging
 
@@ -284,8 +276,6 @@ Hard delete not exposed in UI
 
 9.4 Retention
 
-TelemetryEvents retained ≥ 3 years (aligned with production runs & QC).
-
 Calibration records retained ≥ 7 years.
 
 9.5 QC Evidence Retention
@@ -332,9 +322,7 @@ inventory adjustments
 
 10.4 Configurability
 
-Operating calendar unchanged; telemetry is continuous by default.
-
-Toggle per-check “sensor mandatory” vs “optional”.
+QC check requirements and sampling plans are configurable per ProductVersion.
 11. Observability (Minimal but Sufficient)
 11.1 Health Checks
 

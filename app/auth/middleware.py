@@ -23,8 +23,9 @@ class IdentityMiddleware(BaseHTTPMiddleware):
 
         if sid:
             try:
-                svc = AuthService(SessionLocal())
-                user, roles, csrf = svc.get_current_user(sid)
+                with SessionLocal() as db:
+                    svc = AuthService(db)
+                    user, roles, csrf = svc.get_current_user(sid)
 
                 # Debug logging (can be removed in production)
                 import logging

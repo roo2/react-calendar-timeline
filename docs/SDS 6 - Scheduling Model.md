@@ -52,6 +52,10 @@ Extruder (multiple)
 
 Printer (Uteco / Inline)
 
+Punch/Perforation (hole punch / perforation machine)
+
+
+
 Converter (Bagging machines)
 
 Each machine has:
@@ -78,8 +82,21 @@ extrusion queue
 
 printing queue
 
+perforation queue
+
 conversion queue
-…at different times in its lifecycle.
+
+at different times in its lifecycle.
+
+3.3 Rolls (Execution Reality)
+
+Jobs are produced as multiple rolls (often dozens). Operations are executed per roll (or per batch of rolls), and downstream work may begin as soon as the first roll is available.
+
+Example:
+
+Roll 1 is extruded and moved to printing while Roll 2 is being extruded.
+
+Scheduling remains job-level (priority/order), while execution records multiple OperationRuns per job across time.
 
 4. Scheduling Data Model
 4.1 MachineQueueItem
@@ -120,11 +137,11 @@ Order status ≥ confirmed
 
 Job status = planned
 
-Production Manager actions:
+Production actions:
 
 assign job to machine queue
 
-choose machine (extruder/printer/converter)
+choose machine (extruder/printer/punch/converter)
 
 5.2 Scheduling to Execution
 
@@ -132,7 +149,7 @@ Scheduling does not start production.
 
 Production begins only when:
 
-an Operator starts an OperationRun
+Production starts an OperationRun
 
 the job becomes running
 
@@ -150,16 +167,6 @@ Move job up/down in queue
 Remove job from queue
 
 Insert job at any position
-
-Disallowed actions
-
-Reorder while job is running
-
-Insert a job into a machine queue if:
-
-machine is inactive
-
-job is cancelled
 
 Side effects
 
@@ -190,9 +197,9 @@ unique constraint on (machine_id, status = running)
 State transitions
 Action	Job State Change
 Added to queue	planned → scheduled
-Operator starts run	scheduled → running
-Operator pauses run	running → paused
-Operator resumes	paused → running
+Production starts run	scheduled → running
+Production pauses run	running → paused
+Production resumes	paused → running
 Run finishes	running → completed
 
 Scheduling never:
@@ -218,6 +225,8 @@ wait unscheduled for printing
 
 be scheduled for conversion later
 
+In practice, a job may be in-progress on multiple machines at once because rolls can flow forward before the entire job is finished upstream (pipelined execution).
+
 The scheduler does not enforce cross-machine dependencies in v1.
 
 10. Failure Modes & Safeguards
@@ -240,7 +249,7 @@ Out-of-order execution
 Human judgement overrides
 
 11. UI Expectations (MVP)
-Production Manager View
+Production View
 
 List of machines
 
@@ -262,7 +271,7 @@ move up/down
 
 remove
 
-Operator View
+Production (On-Machine) View
 
 “My Machine”
 
@@ -314,13 +323,17 @@ Run Start Hard-Stops (enforced by Production Execution)
 
 A job’s first started run must be Extrusion.
 
-Uteco Printing may start only if the job has at least one completed Extrusion run.
+Uteco Printing may start only if the job has at least one completed Extrusion run (i.e., at least one roll is available).
 
 Conversion (Bagging) may start only if:
 
 Printing Method = None AND at least one completed Extrusion run exists; OR
 
 Printing Method = Uteco AND at least one completed Uteco Printing run exists.
+
+Punch/Perforation may start only if:
+
+At least one completed upstream run exists that produces the required input roll type (extruded roll if no printing; printed roll if printing required by the ProductVersion).
 
 UI Expectations
 
@@ -347,6 +360,8 @@ Extrusion: EX01 … EX08
 
 Printing: UTECO01
 
+Punch/Perforation: PUNCH01 (if installed)
+
 Conversion: BGR01 … BGR03
 
 Adding a new machine automatically creates a new lane.
@@ -363,9 +378,13 @@ Bars (Job Operations)
 
 Each required operation appears as a separate bar in its machine lane:
 
-Extrusion → Uteco Printing (if applicable) → Conversion/Bagging (if applicable).
+Extrusion → Uteco Printing (if applicable) → Punch/Perforation (if applicable) → Conversion/Bagging (if applicable).
 
-A single Job can therefore appear up to 3 times on the Gantt.
+A single Job can therefore appear multiple times on the Gantt (one bar per required operation).
+
+Note on rolls and overlap:
+
+Because jobs are executed as multiple rolls, downstream operations may start before upstream operations fully complete. The Gantt may therefore show overlapping bars for the same job across lanes; this represents pipelined execution (rolls flowing forward), not a violation of machine exclusivity.
 
 Bars show: job_code, customer, product, planned quantity, estimated duration, and readiness (blocked/ready/running/completed).
 

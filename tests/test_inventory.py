@@ -55,10 +55,10 @@ def setup_module(module):
 
 def login_get_csrf(username: str, password: str):
     c = TestClient(app)
-    r = c.post("/auth/login", json={"username": username, "password": password})
+    r = c.post("/api/auth/login", json={"username": username, "password": password})
     assert r.status_code == 200
     sid = r.cookies.get("sid")
-    rcsrf = c.get("/auth/csrf", cookies={"sid": sid})
+    rcsrf = c.get("/api/auth/csrf", cookies={"sid": sid})
     assert rcsrf.status_code == 200
     return c, sid, rcsrf.json()["csrf_token"]
 
@@ -67,31 +67,35 @@ def test_inventory_receive_and_adjust_updates_ledger():
     c, sid, csrf = login_get_csrf("manager", "Manager123!")
     # Receive 10 kg raw
     r1 = c.post(
-        "/inventory/receive",
+        "/api/inventory/receive",
         json={"category": "raw_material", "quantity": "10", "uom": "kg"},
         headers={"x-csrf-token": csrf},
         cookies={"sid": sid},
     )
-    assert r1.status_code in (200, 204)
+    assert r1.status_code == 200
+    assert r1.json()["ok"] is True
     # Adjust -5 kg raw
     r2 = c.post(
-        "/inventory/adjust",
+        "/api/inventory/adjust",
         json={"category": "raw_material", "quantity": "-5", "uom": "kg"},
         headers={"x-csrf-token": csrf},
         cookies={"sid": sid},
     )
-    assert r2.status_code in (200, 204)
-    # Transactions page loads
-    r3 = c.get("/inventory/transactions", cookies={"sid": sid})
+    assert r2.status_code == 200
+    assert r2.json()["ok"] is True
+    # Transactions API returns JSON
+    r3 = c.get("/api/inventory/transactions", cookies={"sid": sid})
     assert r3.status_code == 200
-    assert "Inventory Transactions" in r3.text
+    body = r3.json()
+    assert "items" in body
+    assert body["total"] >= 2
 
 
 def test_inventory_permissions_block_non_manager_posts():
     c, sid, csrf = login_get_csrf("sales", "Sales123!")
     # POST should be forbidden
     r = c.post(
-        "/inventory/receive",
+        "/api/inventory/receive",
         json={"category": "raw_material", "quantity": "1", "uom": "kg"},
         headers={"x-csrf-token": csrf},
         cookies={"sid": sid},

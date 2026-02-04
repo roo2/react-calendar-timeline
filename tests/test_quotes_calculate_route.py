@@ -47,11 +47,11 @@ def test_quotes_calculate_htmx_partial():
         "quantity": {"units": 1000},
         "requested_margin": "0.2",
     }
-    resp = client.post("/quotes/calculate", json=payload, headers={"x-csrf-token": "t"})
+    resp = client.post("/api/quotes/calculate", json=payload, headers={"x-csrf-token": "t"})
     assert resp.status_code == 200
-    html = resp.text
-    assert "Quote Preview" in html
-    assert "Material" in html
-    assert "Final price" in html
+    data = resp.json()
+    assert data["currency"] == "AUD"
+    assert "cost_breakdown" in data
+    assert "final_price" in data
 
 

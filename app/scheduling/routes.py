@@ -3,87 +3,65 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Depends
 from app.auth.deps import require_roles, csrf_protect
-from pydantic import BaseModel
 
 from app.db.models.enums import OperationType
 from app.scheduling import service as SchedulingService
 from app.scheduling.schemas import LaneDTO, MoveResult
 from app.auth.deps import current_identity
 
-router = APIRouter(prefix="/schedule", tags=["schedule"])
-templates = Jinja2Templates(directory="app/templates")
+router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
 
-@router.get("", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
-async def schedule_overview(request: Request):
+@router.get("", dependencies=[Depends(require_roles("PROD_MANAGER"))])
+async def schedule_overview():
 	overview = SchedulingService.get_overview()
-	ctx = {"request": request, **overview}
-	return templates.TemplateResponse("scheduling/index.html", ctx)
+	return overview
 
 
-@router.post("/queue/add", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
-async def queue_add(request: Request, payload: dict):
+@router.post("/queue/add", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
+async def queue_add(payload: dict):
 	machine_id = uuid.UUID(payload["machine_id"])
 	job_id = uuid.UUID(payload["job_id"])
 	position = payload.get("position")
 	if position is not None:
 		position = int(position)
 	lane: LaneDTO = SchedulingService.add_job(machine_id=machine_id, job_id=job_id, position=position)
-	return templates.TemplateResponse("scheduling/lane.html", {"request": request, "lane": lane})
+	return {"lane": lane}
 
 
-@router.post("/queue/reorder", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
-async def queue_reorder(request: Request, payload: dict):
+@router.post("/queue/reorder", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
+async def queue_reorder(payload: dict):
 	machine_id = uuid.UUID(payload["machine_id"])
 	job_id = uuid.UUID(payload["job_id"])
 	new_position = int(payload["new_position"])
 	lane: LaneDTO = SchedulingService.reorder(machine_id=machine_id, job_id=job_id, new_position=new_position)
-	return templates.TemplateResponse("scheduling/lane.html", {"request": request, "lane": lane})
+	return {"lane": lane}
 
 
-@router.post("/queue/remove", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
-async def queue_remove(request: Request, payload: dict):
+@router.post("/queue/remove", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
+async def queue_remove(payload: dict):
 	machine_id = uuid.UUID(payload["machine_id"])
 	job_id = uuid.UUID(payload["job_id"])
 	lane: LaneDTO = SchedulingService.remove(machine_id=machine_id, job_id=job_id)
-	return templates.TemplateResponse("scheduling/lane.html", {"request": request, "lane": lane})
+	return {"lane": lane}
 
 
-@router.get("/gantt", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
-async def gantt_view(request: Request, identity=Depends(current_identity)):
-	"""
-	Render Gantt chart page with timeline and machine lanes.
-	"""
+@router.get("/gantt", dependencies=[Depends(require_roles("PROD_MANAGER"))])
+async def gantt_view(identity=Depends(current_identity)):
 	gantt_data = SchedulingService.get_gantt_overview(operating_calendar=None)  # Use default calendar
-	return templates.TemplateResponse(
-		"scheduling/gantt.html",
-		{
-			"request": request,
-			"identity": identity,
-			"gantt_data": gantt_data,
-		},
-	)
+	return {"gantt_data": gantt_data}
 
 
-@router.get("/gantt/estimate", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
-async def estimate_durations(request: Request, job_id: str):
-	"""
-	Returns estimated durations for a job's operations (HTMX endpoint).
-	Returns HTML partial with duration estimates.
-	"""
+@router.get("/gantt/estimate", dependencies=[Depends(require_roles("PROD_MANAGER"))])
+async def estimate_durations(job_id: str):
 	estimates = SchedulingService.estimate_job_operations(job_id)
-	return templates.TemplateResponse(
-		"scheduling/_estimates.html",
-		{"request": request, "estimates": estimates},
-	)
+	return {"estimates": estimates}
 
 
-@router.post("/gantt/move", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
-async def gantt_move(request: Request, payload: dict):
+@router.post("/gantt/move", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
+async def gantt_move(payload: dict):
 	job_id = uuid.UUID(payload["job_id"])
 	operation_type = OperationType(payload["operation_type"])
 	target_machine_id = uuid.UUID(payload["target_machine_id"])
@@ -100,9 +78,6 @@ async def gantt_move(request: Request, payload: dict):
 		target_position=target_position,
 		proposed_start=proposed_start,
 	)
-	return templates.TemplateResponse(
-		"scheduling/move_result.html",
-		{"request": request, "source_lane": move.source_lane, "target_lane": move.target_lane},
-	)
+	return {"move": move}
 
 

@@ -95,7 +95,7 @@ app/
     crm/
     accounting/
     printing/
-    telemetry/
+    data_capture/
   templates/
   static/
 
@@ -716,32 +716,6 @@ Export/backup operations
 
 SystemAdminService.*
 
-4.12 Telemetry (Ingestion & Registry)
-
-POST /integrations/telemetry/ingest
-
-Capability: Ingestion Gateway (signed HMAC or mTLS)
-
-Body: TelemetryEvent payload
-
-Service: TelemetryService.ingest(payload)  // validates sensor, dedupes, persists
-
-GET /machines/{machine_id}/sensors
-
-POST /machines/{machine_id}/sensors
-
-Capability: System Admin, Production Manager (read)
-
-Service: TelemetryService.list_sensors(machine_id), .register_sensor(machine_id, payload)
-
-GET/POST /qc-mappings
-
-Capability: Production Manager
-
-Map check_type ↔ sensor(s) with acceptance criteria override (optional)
-
-Service: TelemetryService.upsert_qc_mapping(payload)
-
 4.13 Quality Control — Job Summary
 
 GET /jobs/{job_id}/qc-summary
@@ -754,7 +728,7 @@ POST /jobs/{job_id}/qc-summary/aggregate
 
 Production Manager
 
-Computes aggregates from QCChecks/QCReadings and saves draft summary
+Computes aggregates from QCChecks and saves draft summary
 
 POST /jobs/{job_id}/qc-summary/finalize
 
@@ -1048,22 +1022,6 @@ settings
 backups
 
 operating_calendar CRUD (week template, start anchor, exceptions) (optional MVP in settings)
-
-6.12 TelemetryService
-
-ingest(payload) -> TelemetryEvent
-
-list_sensors(machine_id) -> list[Sensor]
-
-register_sensor(machine_id, payload) -> Sensor
-
-upsert_qc_mapping(payload)
-
-derive_qc_reading(event) -> QCReading?  // evaluates and attaches to active OperationRun
-
-find_active_run(machine_id, timestamp) -> OperationRun?
-
-dedupe(idempotency_key) -> bool
 
 6.13 QCService
 

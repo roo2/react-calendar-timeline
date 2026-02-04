@@ -454,32 +454,26 @@ Scheduling: advisory warnings when queues contradict required order.
 
 Production Execution: hard precondition checks at run start.
 
-15. Sensor-Assisted QC Configuration (MVP+)
+15. QC Configuration (Per ProductVersion)
 Purpose
 
-Declare which QC checks may be satisfied by sensors and how readings translate to pass/fail.
+Declare required QC checks, sampling plans, and acceptance criteria.
 
 User-entered fields (per ProductVersion → Quality Expectations)
-
-Sensor-Eligible Checks (multi-select of check types)
 
 Sampling Plan (e.g., continuous, every N minutes, per roll, per carton)
 
 Acceptance Criteria (thresholds, ranges, tolerances by check type)
 
-Aggregation Window (e.g., median over 60s, max deviation over 10m)
-
 Out-of-Control Actions (advisory: stop, alert operator)
 
 Validation rules
 
-Acceptance criteria required for any Sensor-Eligible check.
-
-Units must match configured sensor unit.
+Acceptance criteria required for any required QC check.
 
 Downstream usage
 
-Telemetry pipeline evaluates readings against Acceptance Criteria to create QCReadings and auto-satisfy required QC checks when met.
+Production execution enforces required QC checks and captures evidence as append-only QCCheck records.
 
 16. QC WI Mapping (Per ProductVersion)
 

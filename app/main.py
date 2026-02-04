@@ -1,6 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import status
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -135,7 +136,6 @@ except Exception:  # pragma: no cover
 
 
 app = FastAPI(title="Production Software")
-templates = Jinja2Templates(directory="app/templates")
 
 # Identity dependency (fallback if auth deps unavailable)
 try:
@@ -149,6 +149,14 @@ app.add_middleware(IdentityMiddleware)
 
 # Static files (CSS/JS/assets)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Frontend (React build artifacts)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_FRONTEND_DIST = _REPO_ROOT / "frontend" / "dist"
+_FRONTEND_INDEX = _FRONTEND_DIST / "index.html"
+_FRONTEND_ASSETS = _FRONTEND_DIST / "assets"
+if _FRONTEND_ASSETS.exists():
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_ASSETS)), name="spa-assets")
 
 # Routers
 if auth_router is not None:
@@ -249,52 +257,26 @@ async def domain_error_handler(_, exc: DomainError):
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    """User-friendly HTML for common HTTP errors; JSON for others."""
+    """JSON for HTTP errors (SPA handles UI rendering)."""
     status_code = exc.status_code
-    # 401: redirect to login
-    if status_code == status.HTTP_401_UNAUTHORIZED:
-        from fastapi.responses import RedirectResponse
-        return RedirectResponse(
-            url="/auth/login?error=Please%20log%20in%20to%20access%20this%20page",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-    # 404: render page
-    if status_code == status.HTTP_404_NOT_FOUND:
-        identity = getattr(request.state, "identity", {"user": None, "roles": [], "csrf": None})
-        return templates.TemplateResponse(
-            "errors/404.html",
-            {"request": request, "title": "Page Not Found", "identity": identity},
-            status_code=status_code,
-        )
-    # 403: render page
-    if status_code == status.HTTP_403_FORBIDDEN:
-        identity = getattr(request.state, "identity", {"user": None, "roles": [], "csrf": None})
-        return templates.TemplateResponse(
-            "errors/403.html",
-            {"request": request, "title": "Access Forbidden", "identity": identity},
-            status_code=status_code,
-        )
-    # Default: return JSON for other HTTP errors
     return JSONResponse(status_code=status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """500 handler with friendly page; dev mode shows details."""
+    """500 handler: JSON in all cases; SPA handles UI."""
     import traceback
     import sys
 
     print(f"Unhandled exception: {exc}", file=sys.stderr)
     traceback.print_exc()
 
-    identity = getattr(request.state, "identity", {"user": None, "roles": [], "csrf": None})
     error_detail = None
     if settings.ENV == "dev":
         error_detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    return templates.TemplateResponse(
-        "errors/500.html",
-        {"request": request, "title": "Internal Server Error", "identity": identity, "error_detail": error_detail, "settings": settings},
+    return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal Server Error", "error_detail": error_detail},
     )
 
 
@@ -318,11 +300,26 @@ async def health_db():
         )
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request, identity=Depends(current_identity)):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "title": "Home", "identity": identity},
+@app.get("/", include_in_schema=False)
+async def spa_index():
+    # Serve built React app in production-like runs.
+    if _FRONTEND_INDEX.exists():
+        return FileResponse(_FRONTEND_INDEX)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Frontend not built. Run `cd frontend && npm install && npm run build` (or `npm run dev` for dev)."
+        },
     )
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    # Let API/static routes behave normally.
+    if full_path.startswith(("api/", "static/", "assets/")):
+        raise StarletteHTTPException(status_code=404, detail="Not Found")
+    if _FRONTEND_INDEX.exists():
+        return FileResponse(_FRONTEND_INDEX)
+    raise StarletteHTTPException(status_code=404, detail="Not Found")
 
 

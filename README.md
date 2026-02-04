@@ -43,33 +43,25 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - App: http://localhost:8000/
 - Health: http://localhost:8000/health
 
-### Operational Dashboard (MVP)
+## Frontend (React + Redux)
 
-- Page: `GET /dashboard` (Production Manager; server-rendered)
-- Cards refresh via HTMX every 60s:
-  - Inventory & WIP snapshot → `GET /dashboard/partial/inventory_snapshot`
-  - Throughput (weekly) → `GET /dashboard/partial/throughput_weekly?start=YYYY-Www`
-- Weekly KPI export (stub for MVP): `GET /reports/kpi/weekly?start=YYYY-Www&weeks=N&format=json|csv`
+The UI is a React SPA in `frontend/` (Redux Toolkit + React Router).
 
-Add a new card (pattern):
-1) Create template `app/templates/dashboard/_card_<name>.html`
-2) Extend `DashboardService.get_card("<name>", window)` to return render context
-3) Map the route in `app/dashboard/routes.py` to render the template
-4) Add a container to `app/templates/dashboard/index.html`:
-   ```html
-   <div hx-get="/dashboard/partial/<name>" hx-trigger="load, every 60s" hx-swap="outerHTML"></div>
-   ```
+### Run in dev (two terminals)
 
-Data sources (MVP):
-- Inventory snapshot prefers views `v_inventory_balances_by_category`, `v_wip_stage_balances`; falls back to ledger aggregation.
-- Throughput aggregates `run_output_entries` by operation type and week.
+Backend:
 
-Performance:
-- 60s in-process TTL cache per card+window; page <700ms, card refresh <250ms (target).
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-Screenshot (placeholder):
+Frontend:
 
-`docs/images/dashboard_mvp_placeholder.png` (add later)
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ## Tests & tooling
 
@@ -160,19 +152,10 @@ pytest                            # unit tests
 make lint || true                 # optional convenience target
 ```
 
-### HTMX partials pattern
+### API
 
-- Route: `GET /partials/ping` implemented in `app/health/routes.py`, renders `app/templates/partials/ping.html` with current time and a green “OK” badge.
-- The home page (`app/templates/index.html`) includes:
-
-```html
-<div id="ping-slot"
-     hx-get="/partials/ping"
-     hx-trigger="load, every 30s"
-     hx-swap="outerHTML"></div>
-```
-
-This demonstrates how dashboard cards and other widgets can be implemented as independently refreshable HTMX partials.
+- All application endpoints are exposed under `/api/*` (cookie auth + CSRF header `x-csrf-token`).
+- The React dev server proxies `/api` to `http://localhost:8000` (see `frontend/vite.config.ts`).
 
 ### Troubleshooting
 
@@ -189,7 +172,7 @@ This demonstrates how dashboard cards and other widgets can be implemented as in
 ## Structure (SDS 11 aligned)
 
 - `app/` modular monolith packages (routes/service/schemas)
-- `app/templates/` Jinja2 pages (server-rendered + HTMX)
+- `frontend/` React + Redux SPA
 - `app/db/` SQLAlchemy session, Alembic migrations
 - `static/` assets
 

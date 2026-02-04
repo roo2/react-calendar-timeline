@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.deps import require_roles, allow_roles_any, csrf_protect, current_identity
+from app.exceptions import DomainError
 from app.products import service
 from app.products.schemas import (
     CreateProductRequest,
@@ -15,190 +14,125 @@ from app.products.schemas import (
     SpecPayload,
     compute_derived_dimensions,
 )
-from app.customers.service import list_customers
-from pydantic import ValidationError
-from app.exceptions import DomainError
-
-templates = Jinja2Templates(directory="app/templates")
-
-router = APIRouter(prefix="/products", tags=["products"])
-suggestions_router = APIRouter(prefix="/suggestions", tags=["suggestions"])
+router = APIRouter(prefix="/api/products", tags=["products"])
+suggestions_router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
 
-@router.get("/", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))], response_class=HTMLResponse)
-async def list_products(request: Request, q: Optional[str] = None, identity=Depends(current_identity)):
-    """List all products with optional search."""
-    try:
-        products = service.search_products(q)
-        return templates.TemplateResponse(
-            "products/index.html", {"request": request, "products": products, "q": q or "", "identity": identity}
-        )
-    except Exception as e:
-        import logging
-        import traceback
-        logging.getLogger("products").error(f"Error in list_products: {e}")
-        logging.getLogger("products").error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error loading products: {str(e)}")
+def _product_summary(p) -> dict:
+    return {
+        "id": p.id,
+        "code": p.code,
+        "customer_id": p.customer_id,
+        "active_version_id": p.active_version_id,
+        "created_at": str(getattr(p, "created_at", "")),
+        "customer_name": getattr(getattr(p, "customer", None), "name", None),
+    }
 
 
-@router.get("/new", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))], response_class=HTMLResponse)
-async def new_product(request: Request, identity=Depends(current_identity)):
-    customers = list_customers()
-    return templates.TemplateResponse(
-        "products/new.html", {"request": request, "identity": identity, "customers": customers, "errors": None}
-    )
+def _version_summary(v) -> dict:
+    return {
+        "id": v.id,
+        "product_id": v.product_id,
+        "version_number": v.version_number,
+        "created_by": v.created_by,
+        "created_at": str(getattr(v, "created_at", "")),
+        "spec_payload": v.spec_payload,
+    }
+
+
+def _suggestion_summary(s) -> dict:
+    return {
+        "id": s.id,
+        "product_id": s.product_id,
+        "product_version_id": s.product_version_id,
+        "text": s.text,
+        "category": s.category,
+        "status": s.status,
+        "created_by": s.created_by,
+        "created_at": str(getattr(s, "created_at", "")),
+    }
+
+
+@router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
+async def list_products(q: Optional[str] = Query(default=None)):
+    products = service.search_products(q)
+    return {"items": [_product_summary(p) for p in products]}
 
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
-async def create_product(
-    request: Request,
-    customer_id: str = Form(...),
-    code: str = Form(...),
-    spec_json: str = Form(...),
-    identity=Depends(current_identity),
-):
+async def create_product(payload: CreateProductRequest, identity=Depends(current_identity)):
     try:
-        spec = SpecPayload.parse_raw(spec_json)
-        payload = CreateProductRequest(customer_id=customer_id, code=code, spec=spec)
-        product, _ = service.create_product_with_version(payload, created_by=(identity.get("user") or "system"))
-        return RedirectResponse(url=f"/products/{product.id}", status_code=303)
-    except (ValidationError, DomainError) as e:
-        customers = list_customers()
-        return templates.TemplateResponse(
-            "products/new.html",
-            {
-                "request": request,
-                "identity": identity,
-                "customers": customers,
-                "errors": str(e),
-                "prefill_spec_json": spec_json,
-                "customer_id": customer_id,
-                "code": code,
-            },
-            status_code=400,
-        )
+        created_by = getattr(identity.get("user"), "username", identity.get("user")) or "system"
+        product, version = service.create_product_with_version(payload, created_by=created_by)
+        return {"ok": True, "product": _product_summary(product), "version": _version_summary(version)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 
-@router.get("/{product_id}", response_class=HTMLResponse, dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
-async def show_product(request: Request, product_id: str, identity=Depends(current_identity)):
-    product = service.get_with_versions(product_id)
-    suggestions = service.list_suggestions(product_id, status="open")
-    return templates.TemplateResponse(
-        "products/show.html",
-        {"request": request, "product": product, "identity": identity, "suggestions": suggestions},
-    )
+@router.get("/{product_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def get_product(product_id: str):
+    p = service.get_with_versions(product_id)
+    if not p:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    return {"product": _product_summary(p), "versions": [_version_summary(v) for v in (p.versions or [])]}
 
 
-@router.get("/{product_id}/versions/{version_id}", response_class=HTMLResponse)
-async def show_version(request: Request, product_id: str, version_id: str, identity=Depends(current_identity)):
-    product = service.get_with_versions(product_id)
-    version = service.get_version(version_id)
-    if not product or not version:
-        raise HTTPException(status_code=404)
-    from app.products.schemas import SpecPayload
-
-    spec = SpecPayload(**version.spec_payload) if version.spec_payload else None
+@router.get("/{product_id}/versions/{version_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def get_version(product_id: str, version_id: str):
+    v = service.get_version(version_id)
+    if not v:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    spec = SpecPayload(**v.spec_payload) if v.spec_payload else None
     routing = service.derive_operation_routing(spec) if spec else {"operations": [], "warnings": []}
-    return templates.TemplateResponse(
-        "products/version_show.html",
-        {"request": request, "product": product, "version": version, "routing": routing, "identity": identity},
-    )
+    return {"version": _version_summary(v), "routing": routing}
 
 
-@router.get(
-    "/{product_id}/versions/new",
-    dependencies=[Depends(require_roles("PROD_MANAGER"))],
-    response_class=HTMLResponse,
-)
-async def new_version(request: Request, product_id: str, identity=Depends(current_identity)):
-    product = service.get_with_versions(product_id)
-    return templates.TemplateResponse(
-        "products/version_form.html",
-        {
-            "request": request,
-            "product": product,
-            "identity": identity,  # pass identity for role UI
-            "initial_spec_json": (product.active_version.spec_payload if product.active_version else {}),
-            "errors": None,
-        },
-    )
-
-
-@router.post(
-    "/{product_id}/versions",
-    dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())],
-)
-async def create_product_version(
-    request: Request,
-    product_id: str,
-    spec_json: str = Form(...),
-    identity=Depends(current_identity),
-):
+@router.post("/{product_id}/versions", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
+async def create_product_version(product_id: str, payload: CreateProductVersionRequest, identity=Depends(current_identity)):
     try:
-        spec = SpecPayload.parse_raw(spec_json)
-        payload = CreateProductVersionRequest(spec=spec)
-        version = service.create_new_version(product_id, payload, created_by=(identity.get("user") or "system"))
-        return RedirectResponse(url=f"/products/{product_id}/versions/{version.id}", status_code=303)
-    except (ValidationError, DomainError) as e:
-        product = service.get_with_versions(product_id)
-        return templates.TemplateResponse(
-            "products/version_form.html",
-            {
-                "request": request,
-                "product": product,
-                "identity": identity,
-                "initial_spec_json": spec_json,
-                "errors": str(e),
-            },
-            status_code=400,
-        )
+        created_by = getattr(identity.get("user"), "username", identity.get("user")) or "system"
+        v = service.create_new_version(product_id, payload, created_by=created_by)
+        return {"ok": True, "version": _version_summary(v)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.post("/{product_id}/suggestions", dependencies=[Depends(allow_roles_any("OPERATOR", "PROD_MANAGER")), Depends(csrf_protect())])
+async def create_suggestion(product_id: str, payload: OperatorSuggestionRequest, identity=Depends(current_identity)):
+    try:
+        created_by = getattr(identity.get("user"), "username", identity.get("user")) or "operator"
+        payload.product_id = product_id
+        s = service.create_suggestion(payload, created_by=created_by)
+        return {"ok": True, "suggestion": _suggestion_summary(s)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 
 @router.post(
-    "/{product_id}/suggestions",
-    dependencies=[Depends(allow_roles_any("OPERATOR", "PROD_MANAGER")), Depends(csrf_protect())],
+    "/preview/dimensions",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR")), Depends(csrf_protect())],
 )
-async def create_suggestion(
-    request: Request, product_id: str, suggestion_text: str = Form(...), category: Optional[str] = Form(None), identity=Depends(current_identity)
+async def preview_dimensions(payload: SpecPayload):
+    derived = compute_derived_dimensions(payload)
+    return {"derived": derived}
+
+
+@suggestions_router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def list_suggestions(
+    status: Optional[str] = Query(default="open"),
+    product_id: Optional[str] = Query(default=None),
 ):
-    req = OperatorSuggestionRequest(product_id=product_id, suggestion_text=suggestion_text, category=category)
-    service.create_suggestion(req, created_by=(identity.get("user") or "operator"))
-    return RedirectResponse(url=f"/products/{product_id}", status_code=303)
+    suggestions = service.list_suggestions(product_id=product_id, status=status)
+    return {"items": [_suggestion_summary(s) for s in suggestions]}
 
 
-@router.post("/preview/dimensions", response_class=HTMLResponse, dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
-async def preview_dimensions(request: Request, spec_json: str = Form(...)):
-    spec = SpecPayload.parse_raw(spec_json)
-    derived = compute_derived_dimensions(spec)
-    return templates.TemplateResponse(
-        "products/_derived_dimensions.html", {"request": request, "derived": derived}
-    )
-
-
-@router.get("/{product_id}/versions/{version_id}/print", response_class=HTMLResponse)
-async def print_job_sheet(request: Request, product_id: str, version_id: str):
-    product = service.get_with_versions(product_id)
-    version = service.get_version(version_id)
-    if not product or not version:
-        raise HTTPException(status_code=404, detail="Product or version not found")
-    return templates.TemplateResponse(
-        "products/job_sheet_print.html", {"request": request, "product": product, "version": version}
-    )
-
-@suggestions_router.get("", dependencies=[Depends(require_roles("PROD_MANAGER"))], response_class=HTMLResponse)
-async def list_suggestions(request: Request, identity=Depends(current_identity)):
-    suggestions = service.list_suggestions(status="open")
-    return templates.TemplateResponse(
-        "suggestions/index.html", {"request": request, "identity": identity, "suggestions": suggestions}
-    )
-
-
-@suggestions_router.post(
-    "/{suggestion_id}/resolve",
-    dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())],
-)
-async def resolve_suggestion(request: Request, suggestion_id: str, decision: str = Form(...), identity=Depends(current_identity)):
-    service.resolve_suggestion(suggestion_id, decision, resolver=(identity.get("user") or "prod_manager"))
-    return RedirectResponse(url="/suggestions", status_code=303)
+@suggestions_router.post("/{suggestion_id}/resolve", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
+async def resolve_suggestion(suggestion_id: str, decision: str, identity=Depends(current_identity)):
+    try:
+        resolver = getattr(identity.get("user"), "username", identity.get("user")) or "prod_manager"
+        s = service.resolve_suggestion(suggestion_id, decision, resolver=resolver)
+        return {"ok": True, "suggestion": _suggestion_summary(s)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 

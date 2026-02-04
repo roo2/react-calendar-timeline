@@ -1,0 +1,8 @@
+{
+  "name": "crownpack-production-software",
+  "private": true,
+  "scripts": {
+    "heroku-postbuild": "npm --prefix frontend ci && npm --prefix frontend run build"
+  }
+}
+

@@ -4,28 +4,25 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.auth.deps import require_roles
 from app.dashboard.service import DashboardService, KPIService
 
 
-router = APIRouter(tags=["dashboard"])
-templates = Jinja2Templates(directory="app/templates")
+router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
-@router.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
+@router.get("/dashboard", response_class=JSONResponse, dependencies=[Depends(require_roles("PROD_MANAGER"))])
 async def dashboard_index(request: Request, start: Optional[str] = Query(default=None, description="ISO week e.g. 2026-W01")):
     window = DashboardService.resolve_window_from_params(start)
     ctx = DashboardService.get_overview(window)
-    ctx |= {"request": request}
-    return templates.TemplateResponse("dashboard/index.html", ctx)
+    return JSONResponse(ctx)
 
 
 @router.get(
     "/dashboard/partial/{card}",
-    response_class=HTMLResponse,
+    response_class=JSONResponse,
     dependencies=[Depends(require_roles("PROD_MANAGER"))],
 )
 async def dashboard_card_partial(
@@ -35,12 +32,9 @@ async def dashboard_card_partial(
 ):
     window = DashboardService.resolve_window_from_params(start)
     ctx = DashboardService.get_card(card, window)
-    ctx |= {"request": request}
-    if card == "inventory_snapshot":
-        return templates.TemplateResponse("dashboard/_card_inventory_snapshot.html", ctx)
-    if card == "throughput_weekly":
-        return templates.TemplateResponse("dashboard/_card_throughput_weekly.html", ctx)
-    return PlainTextResponse("Unknown card", status_code=404)
+    if card not in ("inventory_snapshot", "throughput_weekly"):
+        return PlainTextResponse("Unknown card", status_code=404)
+    return JSONResponse(ctx)
 
 
 @router.get(

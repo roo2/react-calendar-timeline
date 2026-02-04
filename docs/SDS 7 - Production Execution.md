@@ -2,37 +2,32 @@ SDS 7 — Production Execution
 
 1. Purpose
 
-Define how runs are executed and how QC evidence (manual and sensor-derived) gates completion.
+Define how runs are executed and how end-of-job QC evidence is captured.
 
-2. QC Evidence Sources
+2. QC Evidence Capture (Non Food-Grade)
 
-Manual: operator records QCCheck via UI.
+For non food-grade jobs, QC is recorded once at the end of the job as a simple checklist plus a small set of measurements and a notes field.
 
-Sensor: Telemetry-derived QCReading auto-attaches to the active OperationRun.
+Recorded fields (minimum)
 
-3. Run Gating (Required QC)
+- correct_raw_material: pass/fail
+- dimensions_to_spec: width_mm, length_mm, thickness_um (values and/or pass/fail), plus film_quality: pass/fail
+- colour_film_and_ink: pass/fail
+- venting_to_spec: pass/fail
+- leakproof_seals: pass/fail
+- packaging: pass/fail
+- variations_concessions_notes: free text
 
-A run cannot complete unless all required QC checks are satisfied by either manual QCCheck or qualifying QCReading.
+When recorded
 
-UI shows “Required QC” with live status (manual/sensor).
+- QC is recorded at job completion/close-out.
+- Runs may complete without QC being entered; dispatch/close-out requires the end-of-job QC record to be present.
 
-4. Real-time Validation
+3. Production UX
 
-On telemetry ingest:
+End-of-job QC form with the fields above and minimal friction. Default is “pass” unchecked until explicitly set (no implicit approvals).
 
-Map sensor → machine → active OperationRun (if any).
-
-Evaluate against ProductVersion Acceptance Criteria.
-
-Create QCReading (source=sensor) and, when criteria met, mark corresponding required check as satisfied.
-
-5. Operator UX
-
-Live widget with sensor status (stale/healthy), last reading time, and pass/fail state per check.
-
-If sensor stale or out-of-calibration → show warning; manual QC remains available.
-
-6. Failure Modes (must handle)
+4. Failure Modes (must handle)
 
 No active run on machine → buffer or discard with reason (configurable).
 
@@ -40,13 +35,13 @@ Duplicate events (retry) → dedup via idempotency_key.
 
 Clock skew → tolerate ±2 minutes; otherwise mark reading “time_invalid”.
 
-7. Data Model Notes
+5. Data Model Notes
 
-QCCheck.source ∈ {manual, sensor}; reading_ref links to QCReading when sensor-satisfied.
+JobQCSummary (or equivalent job-level QC record) is append-only once finalized (no silent edits).
 
 OperationRun retains immutability; all evidence is append-only.
 
-8. OutputEntry Semantics (KPI-ready)
+6. OutputEntry Semantics (KPI-ready)
 
 For each OperationRun, OutputEntry must carry {quantity, uom, good_or_scrap}.
 
@@ -62,7 +57,7 @@ Conversion good → finished_goods (+), consumes wip_printed_roll (−) or wip_e
 
 scrap at any stage → scrap (+)
 
-9. Tool Readiness (Run Start Gate)
+7. Tool Readiness (Run Start Gate)
 
 On start_run:
 

@@ -2,21 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-
-templates = Jinja2Templates(directory="app/templates")
+from fastapi import APIRouter
 
 router = APIRouter()
 
 
-@router.get("/partials/ping", response_class=HTMLResponse)
-async def ping_partial(request: Request) -> HTMLResponse:
+@router.get("/api/health/ping")
+async def ping():
     now = datetime.now(tz=timezone.utc)
-    return templates.TemplateResponse(
-        "partials/ping.html",
-        {"request": request, "now": now},
-    )
+    return {"ok": True, "now": now.isoformat()}
 
 

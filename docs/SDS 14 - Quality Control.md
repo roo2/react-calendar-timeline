@@ -2,7 +2,7 @@ SDS 14 — Quality Control
 
 1. Purpose & Scope
 
-Ensure every product run meets defined quality criteria and produces ISO-compliant evidence. Covers manual QC, sensor-assisted QC, non-conformance handling, reporting, and job-level release.
+Ensure every product run meets defined quality criteria and produces ISO-compliant evidence. Covers manual QC, non-conformance handling, reporting, and job-level release.
 
 2. Roles & Authority
 
@@ -30,19 +30,15 @@ Default plans by product type; overrides per ProductVersion.
 
 5. Acceptance Criteria & Tolerances
 
-Defined per check type with units and bounds. Tied to ProductVersion “Quality Expectations” and “Sensor-Assisted QC Configuration” (SDS 3).
+Defined per check type with units and bounds. Tied to ProductVersion “Quality Expectations” (SDS 3).
 
 6. Evidence Model
 
 Manual: QCCheck {check_type, required, result, values, measured_by, timestamp, source=manual}.
 
-Sensor: QCReading {sensor_id, operation_run_id, check_type, value, result, recorded_at, source=sensor}.
-
-Linkage: QCCheck.reading_ref when a sensor reading satisfies the required check.
-
 7. Run Gating Rules
 
-A run cannot Complete until all required checks for that operation are satisfied (manual or sensor). Sensor stale/invalid → manual QC path remains available.
+A run cannot Complete until all required checks for that operation are satisfied (manual).
 
 8. Non-Conformance & Exceptions
 
@@ -52,21 +48,21 @@ Optionally place run/job on hold; blocks dispatch until resolved.
 
 9. Calibration & Traceability
 
-CalibrationRecord per sensor/instrument with effective dates and certificate reference. Decisions use calibration effective at reading time. Retain calibration ≥ 7 years.
+CalibrationRecord per instrument with effective dates and certificate reference. Decisions use calibration effective at measurement time. Retain calibration ≥ 7 years.
 
 10. UI Requirements
 
-Operator: live required-checklist with sensor status and latest readings; clear pass/fail; minimal input.
+Operator: live required-checklist; clear pass/fail; minimal input.
 
 Production Manager: QC dashboard; deviations queue; per-job QC summary; ISO evidence export (PDF/CSV).
 
 11. API & Services (Refs SDS 11)
 
-POST /runs/{run_id}/qc_check; telemetry ingest; QCService aggregate/finalize job-level summary; annual QC report.
+POST /runs/{run_id}/qc_check; QCService aggregate/finalize job-level summary; annual QC report.
 
 12. Reporting & KPIs
 
-First-pass yield, defect rate by check type, top defects, sensor uptime (optional), worst-case deviations.
+First-pass yield, defect rate by check type, top defects, worst-case deviations.
 12.1 Weekly Quality Rollups (Authoritative)
 
 First-pass yield (FPY) = count(jobs with JobQCSummary.status = final_pass) / count(jobs completed) within window.

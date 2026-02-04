@@ -1,0 +1,147 @@
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Link } from 'react-router-dom'
+import { apiFetch } from '../api/client'
+import { useAppSelector } from '../store/hooks'
+import {
+  Alert,
+  Box,
+  Button,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+  Link as MuiLink,
+} from '@mui/material'
+
+type CustomerSummary = {
+  id: string
+  code: string
+  name: string
+  status: string
+  currency_preference: string
+}
+
+export function CustomersPage() {
+  const roles = useAppSelector((s) => s.auth.identity?.roles || [])
+  const canEdit = roles.includes('SALES') || roles.includes('PROD_MANAGER')
+
+  const [q, setQ] = useState('')
+  const [items, setItems] = useState<CustomerSummary[]>([])
+  const [err, setErr] = useState<string | null>(null)
+
+  async function load(query: string) {
+    setErr(null)
+    const res = await apiFetch<{ items: CustomerSummary[] }>(`/api/customers${query ? `?q=${encodeURIComponent(query)}` : ''}`)
+    setItems(res.items)
+  }
+
+  useEffect(() => {
+    void load('')
+  }, [])
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    try {
+      await load(q)
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : 'Failed to load customers')
+    }
+  }
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+        <Typography variant="h5">Customers</Typography>
+        {canEdit && (
+          <Button variant="contained" component={Link} to="/customers/new">
+            New Customer
+          </Button>
+        )}
+      </Box>
+
+      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+        <form onSubmit={onSubmit}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <TextField
+              label="Search"
+              placeholder="Search by name or code..."
+              value={q}
+              onChange={(e) => setQ(e.currentTarget.value)}
+              sx={{ minWidth: 240 }}
+            />
+            <Button type="submit" variant="outlined">
+              Search
+            </Button>
+          </Box>
+        </form>
+      </Paper>
+
+      {err && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {err}
+        </Alert>
+      )}
+
+      {items.length > 0 ? (
+        <Paper variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Code</TableCell>
+                <TableCell>Name</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {items.map((c) => (
+                <TableRow key={c.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
+                      {c.code}
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
+                      {c.name}
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>{c.status}</TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Button size="small" variant="outlined" component={Link} to={`/customers/${c.id}`}>
+                        View
+                      </Button>
+                      {canEdit && (
+                        <Button size="small" variant="outlined" component={Link} to={`/customers/${c.id}/edit`}>
+                          Edit
+                        </Button>
+                      )}
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Paper>
+      ) : (
+        <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
+          <Typography color="text.secondary">
+            No customers found{q ? '. Try a different search term.' : '.'}{' '}
+            {canEdit && (
+              <MuiLink component={Link} to="/customers/new" underline="hover">
+                Create your first customer
+              </MuiLink>
+            )}
+          </Typography>
+        </Paper>
+      )}
+    </Box>
+  )
+}
+

@@ -25,21 +25,19 @@ This is a factory system, not a collaboration app.
 
 2. Role Model Overview
 
-There are three operational roles and one system capability role.
+There are two operational roles and one system capability role.
 
 Operational roles
 
 Sales
 
-Operator
-
-Production Manager
+Production
 
 Capability role
 
-System Admin
+Administrator
 
-A single user account may hold multiple roles (e.g. Production Manager + System Admin).
+A single user account may hold multiple roles (e.g. Production + Administrator).
 
 3. Role Definitions (Intent & Scope)
 3.1 Sales
@@ -80,16 +78,14 @@ Modify inventory
 Rationale:
 Sales owns opportunity, not risk.
 
-3.2 Operator
+3.2 Production
 Primary responsibility
 
-Execute production safely and correctly.
-
-Provide feedback from the factory floor.
+Own production execution and production truth.
 
 Allowed to:
 
-View assigned Jobs and Product Specs (read-only)
+View Jobs and Product Specs (read-only)
 
 Start / pause / resume / complete Operation Runs
 
@@ -97,51 +93,17 @@ Record production outputs
 
 Perform and record QC checks
 
-Submit Operator Suggestions
-
 Add execution notes
 
-Explicitly not allowed to:
+Submit Production Suggestions
 
-Edit Product Specs
+Create new Product Versions (as the mechanism for spec changes)
 
-Edit Product Versions
-
-Override pricing or waste
-
-Create or edit Quotes or Orders
-
-Schedule jobs
-
-Modify inventory levels
-
-Approve anything
-
-Rationale:
-Operators are closest to reality but must not change truth silently.
-
-3.3 Production Manager (Operational Admin)
-
-This role is not an IT admin.
-It is a business authority role.
-
-Primary responsibility
-
-Own manufacturing correctness and profitability.
-
-Allowed to:
+Schedule Jobs on Machines and manage production priorities
 
 Approve Quotes
 
 Override final price, margin, and waste assumptions
-
-Create new Product Versions
-
-Accept or reject Operator Suggestions
-
-Schedule Jobs on Machines
-
-Manage production priorities
 
 Receive inventory
 
@@ -151,14 +113,14 @@ Dispatch and close Jobs and Orders
 
 Explicitly not allowed to:
 
-Manage users or credentials (unless also System Admin)
+Manage users or credentials (unless also Administrator)
 
 Change system-level security settings
 
 Rationale:
 This role carries the commercial and production risk and therefore controls truth.
 
-3.4 System Admin (Capability Role)
+3.3 Administrator (Capability Role)
 Primary responsibility
 
 Maintain the system, not the factory.
@@ -181,7 +143,7 @@ Explicitly not allowed to:
 
 Implicitly approve quotes or override pricing
 
-Modify production data without holding Production Manager role
+Modify production data without holding Production role
 
 Rationale:
 Separation of system power from business authority prevents accidental damage.
@@ -199,32 +161,32 @@ Activate a theme (exactly one active at a time)
 
 Explicitly not allowed to:
 
-Change production data without Production Manager role
+Change production data without Production role
 Approve quotes or override pricing
 
 Rationale:
-Branding changes are system configuration and must be controlled by System Admin.
+Branding changes are system configuration and must be controlled by Administrator.
 
 4. Permission Matrix (Authoritative)
-Action	Sales	Operator	Prod Manager	System Admin
-Create customer	✅	❌	✅	✅
-Create product (job sheet)	✅	❌	✅	✅
-Edit product spec	❌	❌	✅	✅
-Create product version	❌	❌	✅	✅
-Submit operator suggestion	❌	✅	✅	✅
-Approve quote	❌	❌	✅	❌
-Override price/margin/waste	❌	❌	✅	❌
-Create quote	✅	❌	✅	❌
-Create order	✅	❌	✅	❌
-Create job	❌	❌	✅	❌
-Schedule job	❌	❌	✅	❌
-Start/stop production	❌	✅	✅	❌
-Record QC	❌	✅	✅	❌
-Adjust inventory	❌	❌	✅	❌
-Manage users	❌	❌	❌	✅
-System settings	❌	❌	❌	✅
-Manage branding (BrandTheme)	❌	❌	❌	✅
-Upload logo/font assets	❌	❌	❌	✅
+Action	Sales	Production	Administrator
+Create customer	✅	✅	✅
+Create product (job sheet)	✅	✅	✅
+Edit product spec	❌	✅	✅
+Create product version	❌	✅	✅
+Submit production suggestion	❌	✅	✅
+Approve quote	❌	✅	❌
+Override price/margin/waste	❌	✅	❌
+Create quote	✅	✅	❌
+Create order	✅	✅	❌
+Create job	❌	✅	❌
+Schedule job	❌	✅	❌
+Start/stop production	❌	✅	❌
+Record QC	❌	✅	❌
+Adjust inventory	❌	✅	❌
+Manage users	❌	❌	✅
+System settings	❌	❌	✅
+Manage branding (BrandTheme)	❌	❌	✅
+Upload logo/font assets	❌	❌	✅
 
 This table is normative.
 UI and API must enforce it.
@@ -236,7 +198,7 @@ Rules
 All quotes must pass through:
 draft → pending approval → approved
 
-Only Production Managers can approve.
+Only Production can approve.
 
 Approval locks:
 
@@ -263,7 +225,7 @@ Waste assumptions
 
 Governance
 
-Only Production Managers
+Only Production
 
 Overrides must:
 
@@ -291,11 +253,11 @@ Old versions remain readable forever
 
 Orders and Jobs always reference a specific version
 
-6.2 Operator Suggestions
+6.2 Production Suggestions
 
-Operators submit suggestions
+Production users submit suggestions
 
-Production Managers decide:
+Production decides:
 
 Accept → new Product Version
 
@@ -379,7 +341,7 @@ Log events that change truth, money, or stock.
 
 The system must hard-stop the following:
 
-Operators editing specs
+Production users editing specs without creating a new version
 
 Sales approving quotes
 

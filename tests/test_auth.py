@@ -25,12 +25,16 @@ def setup_module(module):
 def test_login_logout_flow():
     c = TestClient(app)
     # Login
-    r = c.post("/auth/login", json={"username": "manager", "password": "Manager123!"})
+    r = c.post("/api/auth/login", json={"username": "manager", "password": "Manager123!"})
     assert r.status_code == 200
     assert r.json()["ok"] is True
     assert "sid" in r.cookies
     # Logout
-    r2 = c.post("/auth/logout", cookies={"sid": r.cookies.get("sid")})
+    # fetch csrf then logout
+    rcsrf = c.get("/api/auth/csrf", cookies={"sid": r.cookies.get("sid")})
+    assert rcsrf.status_code == 200
+    token = rcsrf.json()["csrf_token"]
+    r2 = c.post("/api/auth/logout", headers={"x-csrf-token": token}, cookies={"sid": r.cookies.get("sid")})
     assert r2.status_code == 200
     assert r2.json()["data" if False else "ok"] == True
 
@@ -38,25 +42,25 @@ def test_login_logout_flow():
 def test_guard_blocks_without_role():
     c = TestClient(app)
     # login as sales (no PROD_MANAGER)
-    login = c.post("/auth/login", json={"username": "sales", "password": "Sales123!"})
+    login = c.post("/api/auth/login", json={"username": "sales", "password": "Sales123!"})
     assert login.status_code == 200
     sid = login.cookies.get("sid")
     # call approve without csrf -> should be blocked by csrf dependency
-    r = c.post("/quotes/123/approve", cookies={"sid": sid})
+    r = c.post("/api/quotes/123/approve", cookies={"sid": sid})
     assert r.status_code in (403, 401)
 
 
 def test_guard_allows_manager_with_csrf():
     c = TestClient(app)
-    login = c.post("/auth/login", json={"username": "manager", "password": "Manager123!"})
+    login = c.post("/api/auth/login", json={"username": "manager", "password": "Manager123!"})
     assert login.status_code == 200
     sid = login.cookies.get("sid")
     # fetch csrf
-    rcsrf = c.get("/auth/csrf", cookies={"sid": sid})
+    rcsrf = c.get("/api/auth/csrf", cookies={"sid": sid})
     assert rcsrf.status_code == 200
     token = rcsrf.json()["csrf_token"]
     # call approve with csrf header
-    r = c.post(f"/quotes/123/approve", headers={"x-csrf-token": token}, cookies={"sid": sid})
+    r = c.post(f"/api/quotes/123/approve", headers={"x-csrf-token": token}, cookies={"sid": sid})
     assert r.status_code in (200, 204, 202)
 
 

@@ -614,92 +614,13 @@ Machine type is immutable after creation (changes require a new machine record).
 
 Capabilities reflect physical reality; scheduling/production must not assign runs violating capability ranges.
 
-4.13 Telemetry & QC Sensor Entities (MVP+)
-Purpose
+4.13 Automated QC Evidence (Not Included)
 
-Enable future automatic QC evidence capture from machine sensors while preserving immutability and append-only rules.
+The system records QC evidence manually. No automated device data capture entities are defined.
 
-New Entities
+(Existing) QCCheck:
 
-Sensor
-
-sensor_id
-
-machine_id (FK Machine)
-
-type (enum: thickness_gauge, seal_strength, print_registration, temperature, speed, other)
-
-protocol (enum: mqtt, opcua, modbus_tcp, http_gateway)
-
-unit (text)
-
-active (boolean)
-
-metadata (json)  // topic/address, scaling, calibration info reference
-
-SensorAssignment
-
-sensor_id
-
-machine_id
-
-effective_from / effective_to  // history of assignments
-
-TelemetryEvent (append-only)
-
-event_id (uuid)
-
-sensor_id
-
-machine_id
-
-recorded_at (UTC)
-
-value (numeric/text)
-
-quality_flag (ok/warn/error)
-
-raw (json)  // optional payload
-
-idempotency_key (string)  // dedupe across retries
-
-QCReading (derived evidence from telemetry)
-
-qc_reading_id
-
-operation_run_id (FK)
-
-sensor_id
-
-check_type (enum aligns with QCCheck.check type)
-
-value
-
-result (pass/fail/na)
-
-recorded_at
-
-source = "sensor"
-
-(Existing) QCCheck — add:
-
-source (manual | sensor)
-
-reading_ref (optional FK to QCReading)
-
-Invariants
-
-TelemetryEvents are append-only.
-
-Sensors map to machines; events without a valid Sensor → rejected.
-
-QCReadings derived from telemetry cannot edit past QCChecks; they create evidence entries that satisfy required checks when criteria met.
-
-Time correlation:
-
-A QCReading can attach to an OperationRun only if recorded_at ∈ [run.started_at, run.ended_at].
-
-Calibration changes are versioned; interpretation uses calibration effective at recorded_at.
+source = manual
 
 4.14 Tooling & Shared Equipment (MVP+)
 Purpose
@@ -883,8 +804,6 @@ HubSpot CRM sync (Customer + Quote)
 Xero accounting sync (Order + Dispatch)
 
 Barcode tracking (Job/Run/Inventory)
-
-Machine telemetry (OperationRun auto-updates)
 
 Predictive scheduling (without rewriting core entities)
 7. Derived Operational Metrics (Authoritative)
