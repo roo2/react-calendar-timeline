@@ -99,7 +99,7 @@ def upgrade() -> None:
                 sa.text(
                     """
                     INSERT INTO machines (id, code, type, capability, active)
-                    VALUES (:id, :code, 'extruder', :cap::jsonb, TRUE)
+                    VALUES (:id, :code, 'extruder', CAST(:cap AS JSON), TRUE)
                     ON CONFLICT (code) DO NOTHING
                     """
                 ),
@@ -122,7 +122,7 @@ def upgrade() -> None:
             sa.text(
                 """
                 INSERT INTO machines (id, code, type, capability, active)
-                VALUES (:id, 'UTECO01', 'printer_uteco', :cap::jsonb, TRUE)
+                VALUES (:id, 'UTECO01', 'printer_uteco', CAST(:cap AS JSON), TRUE)
                 ON CONFLICT (code) DO NOTHING
                 """
             ),
@@ -147,7 +147,7 @@ def upgrade() -> None:
                 sa.text(
                     """
                     INSERT INTO machines (id, code, type, capability, active)
-                    VALUES (:id, :code, 'converter_bagger', :cap::jsonb, TRUE)
+                    VALUES (:id, :code, 'converter_bagger', CAST(:cap AS JSON), TRUE)
                     ON CONFLICT (code) DO NOTHING
                     """
                 ),
