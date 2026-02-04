@@ -12,9 +12,6 @@ import { CustomersPage } from './pages/CustomersPage'
 import { ProductsPage } from './pages/ProductsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SchedulePage } from './pages/SchedulePage'
-import { DispatchPage } from './pages/DispatchPage'
-import { ProductionPage } from './pages/ProductionPage'
-import { SuggestionsPage } from './pages/SuggestionsPage'
 import { CustomerNewPage } from './pages/CustomerNewPage'
 import { CustomerShowPage } from './pages/CustomerShowPage'
 import { CustomerEditPage } from './pages/CustomerEditPage'
@@ -66,7 +63,6 @@ function App() {
   const roles = auth.identity?.roles || []
   const isSalesOrPm = roles.includes('SALES') || roles.includes('PROD_MANAGER')
   const isPm = roles.includes('PROD_MANAGER')
-  const isOp = roles.includes('OPERATOR')
   const isSysAdmin = roles.includes('SYS_ADMIN')
 
   useEffect(() => {
@@ -82,11 +78,7 @@ function App() {
     { to: '/quotes', label: 'Quotes', visible: isSalesOrPm },
     { to: '/schedule', label: 'Schedule', visible: isPm },
     { to: '/inventory', label: 'Inventory', visible: isPm },
-    { to: '/dispatch', label: 'Dispatch', visible: isPm },
-    { to: '/production', label: 'Production', visible: isPm },
-    { to: '/production/my-machine', label: 'My Machine', visible: isOp },
     { to: '/admin', label: 'Admin', visible: isSysAdmin },
-    { to: '/suggestions', label: 'Suggestions', visible: isPm },
   ].filter((x) => x.visible)
 
   return (
@@ -188,9 +180,6 @@ function App() {
               <Route path="/inventory/transactions" element={<InventoryTransactionsPage />} />
               <Route path="/quotes" element={<QuotesPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
-              <Route path="/dispatch" element={<DispatchPage />} />
-              <Route path="/production/*" element={<ProductionPage />} />
-              <Route path="/suggestions" element={<SuggestionsPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>

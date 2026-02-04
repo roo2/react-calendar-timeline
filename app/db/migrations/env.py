@@ -3,9 +3,17 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 import os
+import sys
+from pathlib import Path
 
 # Set environment variable to disable auto-create during migrations
 os.environ["ALEMBIC_RUNNING"] = "1"
+
+# Ensure the repo root is on sys.path so `import app...` works regardless of
+# how Alembic is invoked (some setups put only the migrations directory on path).
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -25,7 +33,14 @@ if db_url:
         db_url = "postgresql+psycopg://" + db_url[len("postgresql://") :]
     config.set_main_option("sqlalchemy.url", db_url)
 
-target_metadata = None  # models metadata will be added by domain agent
+# Import models so Alembic can (optionally) autogenerate in the future.
+# This does not affect runtime upgrades because our migrations are explicit.
+from app.db.models import Base  # noqa: E402
+import app.db.models.domain  # noqa: F401,E402
+import app.db.models.rate_cards  # noqa: F401,E402
+import app.auth.models  # noqa: F401,E402
+
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:

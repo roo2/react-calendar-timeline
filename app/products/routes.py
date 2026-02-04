@@ -10,12 +10,10 @@ from app.products import service
 from app.products.schemas import (
     CreateProductRequest,
     CreateProductVersionRequest,
-    OperatorSuggestionRequest,
     SpecPayload,
     compute_derived_dimensions,
 )
 router = APIRouter(prefix="/api/products", tags=["products"])
-suggestions_router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
 
 def _product_summary(p) -> dict:
@@ -37,19 +35,6 @@ def _version_summary(v) -> dict:
         "created_by": v.created_by,
         "created_at": str(getattr(v, "created_at", "")),
         "spec_payload": v.spec_payload,
-    }
-
-
-def _suggestion_summary(s) -> dict:
-    return {
-        "id": s.id,
-        "product_id": s.product_id,
-        "product_version_id": s.product_version_id,
-        "text": s.text,
-        "category": s.category,
-        "status": s.status,
-        "created_by": s.created_by,
-        "created_at": str(getattr(s, "created_at", "")),
     }
 
 
@@ -99,18 +84,6 @@ async def create_product_version(product_id: str, payload: CreateProductVersionR
         raise HTTPException(status_code=400, detail=e.message)
 
 
-@router.post("/{product_id}/suggestions", dependencies=[Depends(allow_roles_any("OPERATOR", "PROD_MANAGER")), Depends(csrf_protect())])
-async def create_suggestion(product_id: str, payload: OperatorSuggestionRequest, identity=Depends(current_identity)):
-    try:
-        u = identity.get("user")
-        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "operator"
-        payload.product_id = product_id
-        s = service.create_suggestion(payload, created_by=created_by)
-        return {"ok": True, "suggestion": _suggestion_summary(s)}
-    except DomainError as e:
-        raise HTTPException(status_code=400, detail=e.message)
-
-
 @router.post(
     "/preview/dimensions",
     dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR")), Depends(csrf_protect())],
@@ -118,25 +91,5 @@ async def create_suggestion(product_id: str, payload: OperatorSuggestionRequest,
 async def preview_dimensions(payload: SpecPayload):
     derived = compute_derived_dimensions(payload)
     return {"derived": derived}
-
-
-@suggestions_router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
-async def list_suggestions(
-    status: Optional[str] = Query(default="open"),
-    product_id: Optional[str] = Query(default=None),
-):
-    suggestions = service.list_suggestions(product_id=product_id, status=status)
-    return {"items": [_suggestion_summary(s) for s in suggestions]}
-
-
-@suggestions_router.post("/{suggestion_id}/resolve", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])
-async def resolve_suggestion(suggestion_id: str, decision: str, identity=Depends(current_identity)):
-    try:
-        u = identity.get("user")
-        resolver = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "prod_manager"
-        s = service.resolve_suggestion(suggestion_id, decision, resolver=resolver)
-        return {"ok": True, "suggestion": _suggestion_summary(s)}
-    except DomainError as e:
-        raise HTTPException(status_code=400, detail=e.message)
 
 
