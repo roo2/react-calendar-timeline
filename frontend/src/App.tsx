@@ -3,7 +3,6 @@ import { useEffect } from 'react'
 import { useAppDispatch, useAppSelector } from './store/hooks'
 import { fetchMe, logout } from './store/slices/authSlice'
 import { can, isSysAdmin as isSysAdminRole } from './auth/permissions'
-import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { OrdersPage } from './pages/OrdersPage'
 import { InventoryPage } from './pages/InventoryPage'
@@ -13,6 +12,7 @@ import { CustomersPage } from './pages/CustomersPage'
 import { ProductsPage } from './pages/ProductsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SchedulePage } from './pages/SchedulePage'
+import { AdminPage } from './pages/AdminPage.tsx'
 import { CustomerNewPage } from './pages/CustomerNewPage'
 import { CustomerShowPage } from './pages/CustomerShowPage'
 import { CustomerEditPage } from './pages/CustomerEditPage'
@@ -73,11 +73,10 @@ function App() {
 
   const mainLinks = [
     { to: '/', label: 'Home', visible: true },
-    { to: '/dashboard', label: 'Dashboard', visible: isSalesOrPm },
-    { to: '/products', label: 'Products', visible: isSalesOrPm },
-    { to: '/orders', label: 'Orders', visible: isSalesOrPm },
     { to: '/customers', label: 'Customers', visible: isSalesOrPm },
     { to: '/quotes', label: 'Quotes', visible: isSalesOrPm },
+    { to: '/orders', label: 'Orders', visible: isSalesOrPm },
+    { to: '/products', label: 'Products', visible: isSalesOrPm },
     { to: '/schedule', label: 'Schedule', visible: isPm },
     { to: '/inventory', label: 'Inventory', visible: isPm },
     { to: '/admin', label: 'Admin', visible: isSysAdmin },
@@ -157,8 +156,8 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
 
             <Route element={<RequireAuth />}>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/customers" element={<CustomersPage />} />
               <Route path="/customers/new" element={<CustomerNewPage />} />
               <Route path="/customers/:customerId" element={<CustomerShowPage />} />
@@ -179,6 +178,7 @@ function App() {
               <Route path="/inventory/transactions" element={<InventoryTransactionsPage />} />
               <Route path="/quotes" element={<QuotesPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
+              <Route path="/admin" element={<AdminPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
