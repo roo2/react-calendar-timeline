@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-  <h1>{{ customer.name }} ({{ customer.code }})</h1>
+  <h1>{{ customer.name }}</h1>
   {% if identity and identity.roles and ('SALES' in identity.roles or 'PROD_MANAGER' in identity.roles) %}
     <a href="/customers/{{ customer.id }}/edit" class="btn btn-primary">Edit Customer</a>
   {% endif %}
@@ -40,10 +40,6 @@
 <section style="margin-bottom: 24px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px;">
   <h2 style="margin: 0 0 16px; font-size: 1.25rem; font-weight: 600;">Basic Information</h2>
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-    <div>
-      <strong style="color: #6b7280; font-size: 0.875rem;">Customer Code</strong>
-      <p style="margin: 4px 0 0; font-size: 1rem;">{{ customer.code }}</p>
-    </div>
     <div>
       <strong style="color: #6b7280; font-size: 0.875rem;">Customer Name</strong>
       <p style="margin: 4px 0 0; font-size: 1rem;">{{ customer.name }}</p>

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
+import { useAppDispatch } from '../store/hooks'
 import { can } from '../auth/permissions'
+import { fetchCustomers } from '../store/slices/customersSlice'
 import {
   Alert,
   Box,
@@ -19,39 +20,22 @@ import {
   Link as MuiLink,
 } from '@mui/material'
 
-type CustomerSummary = {
-  id: string
-  code: string
-  name: string
-  status: string
-  currency_preference: string
-}
-
 export function CustomersPage() {
+  const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [q, setQ] = useState('')
-  const [items, setItems] = useState<CustomerSummary[]>([])
-  const [err, setErr] = useState<string | null>(null)
-
-  async function load(query: string) {
-    setErr(null)
-    const res = await apiFetch<{ items: CustomerSummary[] }>(`/api/customers${query ? `?q=${encodeURIComponent(query)}` : ''}`)
-    setItems(res.items)
-  }
+  const items = useAppSelector((s) => s.customers.list.items)
+  const err = useAppSelector((s) => s.customers.list.error)
 
   useEffect(() => {
-    void load('')
-  }, [])
+    void dispatch(fetchCustomers({ q: '' }))
+  }, [dispatch])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
-    try {
-      await load(q)
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : 'Failed to load customers')
-    }
+    await dispatch(fetchCustomers({ q }))
   }
 
   return (
@@ -70,7 +54,7 @@ export function CustomersPage() {
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <TextField
               label="Search"
-              placeholder="Search by name or code..."
+              placeholder="Search by name..."
               value={q}
               onChange={(e) => setQ(e.currentTarget.value)}
               sx={{ minWidth: 240 }}
@@ -93,7 +77,6 @@ export function CustomersPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Code</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Actions</TableCell>
@@ -102,11 +85,6 @@ export function CustomersPage() {
             <TableBody>
               {items.map((c) => (
                 <TableRow key={c.id} hover>
-                  <TableCell>
-                    <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
-                      {c.code}
-                    </MuiLink>
-                  </TableCell>
                   <TableCell>
                     <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
                       {c.name}

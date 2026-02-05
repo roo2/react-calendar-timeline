@@ -35,7 +35,7 @@ class ContactInput(BaseModel):
         # If email-validator is installed, Pydantic's EmailStr already validated it.
         # Otherwise fall back to a lightweight sanity check so the app can run.
         if isinstance(v, str):
-            if not re.match(r"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", v):
+            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
                 raise ValueError("Invalid email address")
         return v
 
@@ -133,7 +133,6 @@ class CustomerUpdateRequest(CustomerCreateRequest):
 
 class CustomerResponse(BaseModel):
     id: str
-    code: str
     name: str
     abn: Optional[str] = None
     tax_id: Optional[str] = None

@@ -82,24 +82,6 @@ async def create_order(payload: CreateOrderRequest):
         raise HTTPException(status_code=400, detail=e.message)
 
 
-@router.get("/{order_id}", response_model=OrderDetailDTO, dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
-async def show_order(order_id: str):
-    o = service.get_detail(order_id)
-    if not o:
-        raise HTTPException(status_code=404, detail="Order not found")
-    dto = _order_to_detail_dto(o)
-    # Add customer_name and product meta
-    dto.customer_name = (o.customer.name if getattr(o, "customer", None) else None)
-    dto.created_at = str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None
-    with SessionLocal() as db:
-        pv = db.get(ProductVersion, str(o.product_version_id))
-        if pv:
-            p = db.get(Product, str(pv.product_id))
-            dto.product_code = p.code if p else None
-            dto.version_number = pv.version_number
-    return dto
-
-
 @router.get("/bootstrap", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
 async def orders_bootstrap():
     """
@@ -121,7 +103,7 @@ async def orders_bootstrap():
             .all()
         )
     return {
-        "customers": [{"id": c.id, "code": c.code, "name": c.name} for c in customers],
+        "customers": [{"id": c.id, "name": c.name} for c in customers],
         "versions": [
             {
                 "id": str(pv.id),
@@ -133,6 +115,24 @@ async def orders_bootstrap():
             for (pv, p, cust) in versions
         ],
     }
+
+
+@router.get("/{order_id}", response_model=OrderDetailDTO, dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def show_order(order_id: str):
+    o = service.get_detail(order_id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    dto = _order_to_detail_dto(o)
+    # Add customer_name and product meta
+    dto.customer_name = (o.customer.name if getattr(o, "customer", None) else None)
+    dto.created_at = str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None
+    with SessionLocal() as db:
+        pv = db.get(ProductVersion, str(o.product_version_id))
+        if pv:
+            p = db.get(Product, str(pv.product_id))
+            dto.product_code = p.code if p else None
+            dto.version_number = pv.version_number
+    return dto
 
 
 @router.post("/{order_id}/jobs", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])

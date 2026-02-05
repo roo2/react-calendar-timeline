@@ -79,8 +79,6 @@ Fields (conceptual)
 
 customer_id (internal)
 
-customer_code (human-visible, sequential)
-
 name
 
 contacts (structured)

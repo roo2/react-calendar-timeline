@@ -23,7 +23,7 @@
 - Machine exclusivity: partial unique index on operation_runs(machine_id) where status='running'
 - ToolMount overlap prevention: GiST exclusion constraint on (tool_id, tstzrange(mounted_from, mounted_to))
 - ToolReservation overlap prevention: GiST exclusion constraint on (tool_id, tstzrange(planned_from, planned_to))
-- Sequences: customer_code_seq, product_code_seq, order_code_seq (string formatting handled in app)
+- Sequences: product_code_seq, order_code_seq (string formatting handled in app)
 
 ## Append-only Protections
 

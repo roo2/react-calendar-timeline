@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import List, Optional
 
 from sqlalchemy import select, func
@@ -11,44 +10,17 @@ from app.db.models.domain import Customer
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
 
 
-def generate_customer_code() -> str:
-    """
-    Generate next sequential customer code in format CUST001, CUST002, etc.
-    Ensures uniqueness by finding the highest existing code number.
-    """
-    with SessionLocal() as db:  # type: Session
-        # Find all customer codes that match the pattern CUST followed by digits
-        stmt = select(Customer.code).where(Customer.code.like("CUST%"))
-        codes = db.scalars(stmt).all()
-        
-        max_num = 0
-        pattern = re.compile(r"^CUST(\d+)$")
-        
-        for code in codes:
-            match = pattern.match(code)
-            if match:
-                num = int(match.group(1))
-                if num > max_num:
-                    max_num = num
-        
-        # Generate next code
-        next_num = max_num + 1
-        return f"CUST{next_num:03d}"
-
-
 def list_customers(query: Optional[str] = None) -> List[Customer]:
     """
     List all customers, optionally filtered by search query.
-    Search matches customer name or code.
+    Search matches customer name.
     """
     with SessionLocal() as db:  # type: Session
         stmt = select(Customer).order_by(Customer.name.asc())
         
         if query:
             search_term = f"%{query}%"
-            stmt = stmt.where(
-                (Customer.name.ilike(search_term)) | (Customer.code.ilike(search_term))
-            )
+            stmt = stmt.where(Customer.name.ilike(search_term))
         
         return list(db.scalars(stmt).all())
 
@@ -60,33 +32,18 @@ def get_customer(customer_id: str) -> Optional[Customer]:
         return db.scalar(stmt)
 
 
-def get_customer_by_code(code: str) -> Optional[Customer]:
-    """Get customer by code."""
-    with SessionLocal() as db:  # type: Session
-        stmt = select(Customer).where(Customer.code == code)
-        return db.scalar(stmt)
-
-
 def create_customer(payload: CustomerCreateRequest) -> Customer:
     """
-    Create a new customer with auto-generated code.
+    Create a new customer.
     Validates that at least one contact and one address are provided.
     """
     with SessionLocal() as db:  # type: Session
-        # Generate customer code
-        code = generate_customer_code()
-        
-        # Ensure code is unique (handle race condition)
-        while get_customer_by_code(code) is not None:
-            code = generate_customer_code()
-        
         # Convert contacts and addresses to JSON-compatible format
         contacts_list = [contact.model_dump() for contact in payload.contacts]
         addresses_list = [address.model_dump() for address in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
         customer = Customer(
-            code=code,
             name=payload.name,
             abn=payload.abn,
             tax_id=payload.tax_id,
@@ -113,7 +70,9 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
     Validates that at least one contact and one address are provided.
     """
     with SessionLocal() as db:  # type: Session
-        customer = get_customer(customer_id)
+        # IMPORTANT: load within the same SessionLocal; using get_customer() would
+        # create a different session and return a detached instance.
+        customer = db.scalar(select(Customer).where(Customer.id == customer_id))
         if not customer:
             raise ValueError(f"Customer with id {customer_id} not found")
         

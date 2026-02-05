@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { clearUpsertErrors, clearUpsertFieldError, createCustomer, fetchCustomer, updateCustomer } from '../store/slices/customersSlice'
 import {
   Alert,
   Box,
@@ -49,9 +49,62 @@ type DeliveryPrefs = {
   special_instructions?: string | null
 }
 
-export function CustomerNewPage() {
+type CustomerDetail = {
+  id: string
+  name: string
+  status: string
+  abn?: string | null
+  tax_id?: string | null
+  payment_terms?: string | null
+  credit_limit?: number | null
+  currency_preference: string
+  notes?: string | null
+  internal_notes?: string | null
+  contacts: any[]
+  delivery_addresses: any[]
+  delivery_preferences: any
+}
+
+function coerceContact(x: any): Contact {
+  return {
+    type: String(x?.type ?? 'Other'),
+    name: String(x?.name ?? ''),
+    title: x?.title ?? '',
+    email: String(x?.email ?? ''),
+    phone: String(x?.phone ?? ''),
+    phone_alt: x?.phone_alt ?? '',
+    preferred_method: String(x?.preferred_method ?? 'Email'),
+    notes: x?.notes ?? '',
+  }
+}
+
+function coerceAddress(x: any, fallbackLabel: string): Address {
+  return {
+    label: String(x?.label ?? fallbackLabel),
+    type: String(x?.type ?? 'Delivery'),
+    street1: String(x?.street1 ?? ''),
+    street2: x?.street2 ?? '',
+    suburb: String(x?.suburb ?? ''),
+    state: String(x?.state ?? 'NSW'),
+    postcode: String(x?.postcode ?? ''),
+    country: String(x?.country ?? 'Australia'),
+    contact_name: x?.contact_name ?? '',
+    contact_phone: x?.contact_phone ?? '',
+    delivery_instructions: x?.delivery_instructions ?? '',
+    is_default: Boolean(x?.is_default ?? false),
+  }
+}
+
+export function CustomerUpsertPage() {
+  const { customerId } = useParams()
+  const isEdit = !!customerId
   const nav = useNavigate()
+  const dispatch = useAppDispatch()
   const csrf = useAppSelector((s) => s.auth.csrfToken)
+
+  const detailEntry = useAppSelector((s) => (customerId ? s.customers.detail.byId[customerId] : undefined))
+  const upsert = useAppSelector((s) => s.customers.upsert)
+  const loading = isEdit ? detailEntry?.status === 'loading' : false
 
   const [name, setName] = useState('')
   const [abn, setAbn] = useState('')
@@ -98,16 +151,76 @@ export function CustomerNewPage() {
   const [notes, setNotes] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
 
-  const [err, setErr] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const [localErr, setLocalErr] = useState<string | null>(null)
+
+  const fieldErrors = upsert.fieldErrors
+  const errorSummary = upsert.messages
+  const err = upsert.error
+  const saving = upsert.status === 'loading'
+
+  function clearFieldError(key: string) {
+    dispatch(clearUpsertFieldError(key))
+  }
 
   function setDefaultAddress(i: number) {
     setAddresses((prev) => prev.map((a, idx) => ({ ...a, is_default: idx === i })))
   }
 
+  // Load initial values in edit mode.
+  const [hydratedId, setHydratedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Reset upsert errors when switching between create/edit.
+    dispatch(clearUpsertErrors())
+    setLocalErr(null)
+    setHydratedId(null)
+  }, [dispatch, customerId])
+
+  useEffect(() => {
+    if (!customerId) return
+    void dispatch(fetchCustomer(customerId))
+  }, [customerId, dispatch])
+
+  useEffect(() => {
+    if (!customerId) return
+    const c = detailEntry?.customer as CustomerDetail | undefined
+    if (!c) return
+    if (hydratedId === customerId) return
+
+    setName(c.name ?? '')
+    setAbn(c.abn || '')
+    setTaxId(c.tax_id || '')
+    setStatus((c.status as any) || 'Active')
+
+    const loadedContacts = Array.isArray(c.contacts) ? c.contacts.map(coerceContact) : []
+    setContacts(loadedContacts.length > 0 ? loadedContacts : contacts)
+
+    const loadedAddresses = Array.isArray(c.delivery_addresses)
+      ? c.delivery_addresses.map((a, idx) => coerceAddress(a, `Address ${idx + 1}`))
+      : []
+    const normalizedAddresses = loadedAddresses.length > 0 ? loadedAddresses : addresses
+    if (normalizedAddresses.length > 0 && !normalizedAddresses.some((a) => a.is_default)) {
+      normalizedAddresses[0] = { ...normalizedAddresses[0], is_default: true }
+    }
+    setAddresses(normalizedAddresses)
+
+    const p = c.delivery_preferences || {}
+    setPreferredPalletType(String(p.preferred_pallet_type ?? 'Plain'))
+    setPreferredTransportCompany(String(p.preferred_transport_company ?? ''))
+    setPreferredWrapping(Boolean(p.preferred_wrapping ?? true))
+    setSpecialInstructions(String(p.special_instructions ?? ''))
+
+    setPaymentTerms(c.payment_terms || '')
+    setCreditLimit(c.credit_limit != null ? String(c.credit_limit) : '')
+    setCurrencyPreference(c.currency_preference || 'AUD')
+    setNotes(c.notes || '')
+    setInternalNotes(c.internal_notes || '')
+
+    setHydratedId(customerId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailEntry?.customer, customerId, hydratedId])
+
   async function submit() {
-    setErr(null)
-    setSaving(true)
     try {
       const payload = {
         name,
@@ -139,28 +252,45 @@ export function CustomerNewPage() {
         notes: notes || null,
         internal_notes: internalNotes || null,
       }
-      const res = await apiFetch<{ ok: boolean; customer: { id: string } }>('/api/customers', {
-        method: 'POST',
-        csrfToken: csrf || undefined,
-        body: JSON.stringify(payload),
-      })
-      nav(`/customers/${res.customer.id}`)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to create customer')
-    } finally {
-      setSaving(false)
+
+      if (isEdit) {
+        await dispatch(updateCustomer({ customerId: customerId!, data: payload, csrfToken: csrf })).unwrap()
+        nav(`/customers/${customerId}`)
+      } else {
+        const res = await dispatch(createCustomer({ data: payload, csrfToken: csrf })).unwrap()
+        nav(`/customers/${res.id}`)
+      }
+    } catch {
+      // Errors are stored in the slice (including field-level validation).
     }
   }
+
+  if (loading) return <p>Loading…</p>
 
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 2 }}>
-        New Customer
+        {isEdit ? 'Edit Customer' : 'New Customer'}
       </Typography>
 
       {err && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {err}
+          <Stack spacing={1}>
+            <div>{err}</div>
+            {errorSummary.length > 0 && (
+              <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                {errorSummary.map((m, i) => (
+                  <li key={i}>{m}</li>
+                ))}
+              </Box>
+            )}
+          </Stack>
+        </Alert>
+      )}
+
+      {localErr && !err && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {localErr}
         </Alert>
       )}
 
@@ -170,10 +300,20 @@ export function CustomerNewPage() {
             Basic Information
           </Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-            <TextField label="Customer Name" value={name} onChange={(e) => setName(e.currentTarget.value)} required />
+            <TextField
+              label="Customer Name"
+              value={name}
+              onChange={(e) => {
+                setName(e.currentTarget.value)
+                clearFieldError('name')
+              }}
+              required
+              error={!!fieldErrors['name']}
+              helperText={fieldErrors['name'] || ''}
+            />
             <TextField label="ABN" value={abn} onChange={(e) => setAbn(e.currentTarget.value)} />
             <TextField label="Tax ID" value={taxId} onChange={(e) => setTaxId(e.currentTarget.value)} />
-            <TextField select label="Status" value={status} onChange={(e) => setStatus(e.currentTarget.value as any)}>
+            <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
               <MenuItem value="Active">Active</MenuItem>
               <MenuItem value="Inactive">Inactive</MenuItem>
               <MenuItem value="Archived">Archived</MenuItem>
@@ -216,7 +356,7 @@ export function CustomerNewPage() {
                     size="small"
                     type="button"
                     onClick={() => {
-                      if (contacts.length <= 1) return setErr('At least one contact is required')
+                      if (contacts.length <= 1) return setLocalErr('At least one contact is required')
                       setContacts((prev) => prev.filter((_, i) => i !== idx))
                     }}
                   >
@@ -240,7 +380,12 @@ export function CustomerNewPage() {
                   <TextField
                     label="Full Name"
                     value={c.name}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))}
+                    onChange={(e) => {
+                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
+                      clearFieldError(`contacts[${idx}].name`)
+                    }}
+                    error={!!fieldErrors[`contacts[${idx}].name`]}
+                    helperText={fieldErrors[`contacts[${idx}].name`] || ''}
                   />
                   <TextField
                     label="Job Title"
@@ -250,12 +395,22 @@ export function CustomerNewPage() {
                   <TextField
                     label="Email"
                     value={c.email}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, email: e.target.value } : x)))}
+                    onChange={(e) => {
+                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, email: e.target.value } : x)))
+                      clearFieldError(`contacts[${idx}].email`)
+                    }}
+                    error={!!fieldErrors[`contacts[${idx}].email`]}
+                    helperText={fieldErrors[`contacts[${idx}].email`] || ''}
                   />
                   <TextField
                     label="Phone"
                     value={c.phone}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone: e.target.value } : x)))}
+                    onChange={(e) => {
+                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone: e.target.value } : x)))
+                      clearFieldError(`contacts[${idx}].phone`)
+                    }}
+                    error={!!fieldErrors[`contacts[${idx}].phone`]}
+                    helperText={fieldErrors[`contacts[${idx}].phone`] || ''}
                   />
                   <TextField
                     label="Phone Alternate"
@@ -339,7 +494,7 @@ export function CustomerNewPage() {
                       size="small"
                       type="button"
                       onClick={() => {
-                        if (addresses.length <= 1) return setErr('At least one address is required')
+                        if (addresses.length <= 1) return setLocalErr('At least one address is required')
                         setAddresses((prev) => prev.filter((_, i) => i !== idx))
                         setTimeout(() => setDefaultAddress(0), 0)
                       }}
@@ -353,17 +508,13 @@ export function CustomerNewPage() {
                   <TextField
                     label="Address Label/Name"
                     value={a.label}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))}
                   />
                   <TextField
                     select
                     label="Address Type"
                     value={a.type}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, type: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, type: e.target.value } : x)))}
                   >
                     {['Billing', 'Delivery', 'Both'].map((t) => (
                       <MenuItem key={t} value={t}>
@@ -374,31 +525,33 @@ export function CustomerNewPage() {
                   <TextField
                     label="Street Address"
                     value={a.street1}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, street1: e.target.value } : x)))
-                    }
+                      clearFieldError(`delivery_addresses[${idx}].street1`)
+                    }}
+                    error={!!fieldErrors[`delivery_addresses[${idx}].street1`]}
+                    helperText={fieldErrors[`delivery_addresses[${idx}].street1`] || ''}
                   />
                   <TextField
                     label="Street Address Line 2"
                     value={a.street2 || ''}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, street2: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, street2: e.target.value } : x)))}
                   />
                   <TextField
                     label="Suburb"
                     value={a.suburb}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, suburb: e.target.value } : x)))
-                    }
+                      clearFieldError(`delivery_addresses[${idx}].suburb`)
+                    }}
+                    error={!!fieldErrors[`delivery_addresses[${idx}].suburb`]}
+                    helperText={fieldErrors[`delivery_addresses[${idx}].suburb`] || ''}
                   />
                   <TextField
                     select
                     label="State"
                     value={a.state}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, state: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, state: e.target.value } : x)))}
                   >
                     {['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].map((s) => (
                       <MenuItem key={s} value={s}>
@@ -409,38 +562,33 @@ export function CustomerNewPage() {
                   <TextField
                     label="Postcode"
                     value={a.postcode}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, postcode: e.target.value } : x)))
-                    }
+                      clearFieldError(`delivery_addresses[${idx}].postcode`)
+                    }}
+                    error={!!fieldErrors[`delivery_addresses[${idx}].postcode`]}
+                    helperText={fieldErrors[`delivery_addresses[${idx}].postcode`] || ''}
                   />
                   <TextField
                     label="Country"
                     value={a.country}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, country: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, country: e.target.value } : x)))}
                   />
                   <TextField
                     label="Contact Name"
                     value={a.contact_name || ''}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, contact_name: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, contact_name: e.target.value } : x)))}
                   />
                   <TextField
                     label="Contact Phone"
                     value={a.contact_phone || ''}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, contact_phone: e.target.value } : x)))
-                    }
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, contact_phone: e.target.value } : x)))}
                   />
                   <TextField
                     label="Delivery Instructions"
                     value={a.delivery_instructions || ''}
                     onChange={(e) =>
-                      setAddresses((p) =>
-                        p.map((x, i) => (i === idx ? { ...x, delivery_instructions: e.target.value } : x)),
-                      )
+                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, delivery_instructions: e.target.value } : x)))
                     }
                     multiline
                     minRows={2}
@@ -509,30 +657,28 @@ export function CustomerNewPage() {
               select
               label="Currency Preference"
               value={currencyPreference}
-              onChange={(e) => setCurrencyPreference(e.currentTarget.value)}
+              onChange={(e) => setCurrencyPreference(e.target.value as string)}
             >
               <MenuItem value="AUD">AUD</MenuItem>
               <MenuItem value="USD">USD</MenuItem>
             </TextField>
             <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} multiline minRows={3} />
-            <TextField
-              label="Internal Notes"
-              value={internalNotes}
-              onChange={(e) => setInternalNotes(e.currentTarget.value)}
-              multiline
-              minRows={3}
-            />
+            <TextField label="Internal Notes" value={internalNotes} onChange={(e) => setInternalNotes(e.currentTarget.value)} multiline minRows={3} />
           </Box>
         </Paper>
 
         <Divider />
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-        <Button variant="contained" onClick={submit} disabled={saving}>
-          {saving ? 'Saving…' : 'Create Customer'}
-        </Button>
-        <Button variant="outlined" component={Link} to="/customers">
-          Cancel
-        </Button>
+          <Button variant="contained" onClick={submit} disabled={saving}>
+            {saving ? 'Saving…' : isEdit ? 'Update Customer' : 'Create Customer'}
+          </Button>
+          <Button
+            variant="outlined"
+            component={Link}
+            to={isEdit && customerId ? `/customers/${customerId}` : '/customers'}
+          >
+            Cancel
+          </Button>
         </Box>
       </Stack>
     </Box>

@@ -4,7 +4,7 @@ import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
 import { Alert, Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 
-type Customer = { id: string; name: string; code: string }
+type Customer = { id: string; name: string }
 type Version = { id: string; product_code: string; version_number: number; customer_name?: string | null }
 
 export function OrderNewPage() {
@@ -75,7 +75,7 @@ export function OrderNewPage() {
             select
             label="Customer"
             value={customerId}
-            onChange={(e) => setCustomerId(e.currentTarget.value)}
+            onChange={(e) => setCustomerId(e.target.value)}
           >
             <MenuItem value="" disabled>
               Select customer
@@ -91,7 +91,7 @@ export function OrderNewPage() {
             select
             label="Product Version"
             value={productVersionId}
-            onChange={(e) => setProductVersionId(e.currentTarget.value)}
+            onChange={(e) => setProductVersionId(e.target.value)}
           >
             <MenuItem value="" disabled>
               Select product version
@@ -111,7 +111,7 @@ export function OrderNewPage() {
             onChange={(e) => setCurrency(e.currentTarget.value)}
           />
 
-          <TextField select label="Status" value={status} onChange={(e) => setStatus(e.currentTarget.value as any)}>
+          <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
             <MenuItem value="confirmed">confirmed</MenuItem>
             <MenuItem value="draft">draft</MenuItem>
           </TextField>

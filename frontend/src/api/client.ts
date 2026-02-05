@@ -1,5 +1,6 @@
 export type ApiErrorBody = {
-  detail?: string
+  // FastAPI may return `detail` as a string OR a list of validation issues.
+  detail?: unknown
   error?: string
   message?: string
 }
@@ -37,8 +38,14 @@ export async function apiFetch<T>(
 
   if (!resp.ok) {
     const body = (data as ApiErrorBody | undefined) || undefined
-    const msg = body?.detail || body?.error || body?.message || resp.statusText
-    throw new ApiError(resp.status, msg || `HTTP ${resp.status}`, body)
+    const detail = body?.detail
+    const msg =
+      (typeof detail === 'string' ? detail : undefined) ||
+      body?.error ||
+      body?.message ||
+      resp.statusText ||
+      `HTTP ${resp.status}`
+    throw new ApiError(resp.status, msg, body)
   }
 
   return data as T

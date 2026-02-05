@@ -44,7 +44,6 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     abn: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     tax_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)

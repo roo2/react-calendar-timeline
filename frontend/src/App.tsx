@@ -13,9 +13,8 @@ import { ProductsPage } from './pages/ProductsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SchedulePage } from './pages/SchedulePage'
 import { AdminPage } from './pages/AdminPage.tsx'
-import { CustomerNewPage } from './pages/CustomerNewPage'
 import { CustomerShowPage } from './pages/CustomerShowPage'
-import { CustomerEditPage } from './pages/CustomerEditPage'
+import { CustomerUpsertPage } from './pages/CustomerUpsertPage'
 import { ProductShowPage } from './pages/ProductShowPage'
 import { ProductNewPage } from './pages/ProductNewPage'
 import { ProductVersionNewPage } from './pages/ProductVersionNewPage'
@@ -159,9 +158,9 @@ function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/customers" element={<CustomersPage />} />
-              <Route path="/customers/new" element={<CustomerNewPage />} />
+              <Route path="/customers/new" element={<CustomerUpsertPage />} />
               <Route path="/customers/:customerId" element={<CustomerShowPage />} />
-              <Route path="/customers/:customerId/edit" element={<CustomerEditPage />} />
+              <Route path="/customers/:customerId/edit" element={<CustomerUpsertPage />} />
               <Route path="/products" element={<ProductsPage />} />
               <Route path="/products/new" element={<ProductNewPage />} />
               <Route path="/products/:productId" element={<ProductShowPage />} />

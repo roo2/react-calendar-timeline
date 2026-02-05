@@ -1149,8 +1149,6 @@ Strategy for sequential codes
 
 Use DB sequences or locked rows for:
 
-customer_code
-
 product_code
 
 order_code

@@ -1,49 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
+import { fetchCustomer } from '../store/slices/customersSlice'
 import { Alert, Box, Button, Paper, Typography, Link as MuiLink } from '@mui/material'
-
-type CustomerDetail = {
-  id: string
-  code: string
-  name: string
-  status: string
-  abn?: string | null
-  tax_id?: string | null
-  payment_terms?: string | null
-  credit_limit?: number | null
-  currency_preference: string
-  notes?: string | null
-  internal_notes?: string | null
-  contacts: any[]
-  delivery_addresses: any[]
-  delivery_preferences: any
-  products_count?: number
-  orders_count?: number
-}
 
 export function CustomerShowPage() {
   const { customerId } = useParams()
+  const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
 
-  const [customer, setCustomer] = useState<CustomerDetail | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const entry = useAppSelector((s) => (customerId ? s.customers.detail.byId[customerId] : undefined))
+  const customer = entry?.customer || null
+  const err = entry?.error || null
 
   useEffect(() => {
     if (!customerId) return
-    void (async () => {
-      try {
-        setErr(null)
-        const res = await apiFetch<{ customer: CustomerDetail }>(`/api/customers/${customerId}`)
-        setCustomer(res.customer)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load customer')
-      }
-    })()
-  }, [customerId])
+    void dispatch(fetchCustomer(customerId))
+  }, [customerId, dispatch])
 
   if (err) {
     return (
@@ -72,7 +47,7 @@ export function CustomerShowPage() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 2, flexWrap: 'wrap', mb: 3 }}>
         <Box>
           <Typography variant="h5">
-            {customer.name} ({customer.code})
+            {customer.name}
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Status: {customer.status} • Currency: {customer.currency_preference}
@@ -110,10 +85,6 @@ export function CustomerShowPage() {
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
         <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Basic Information</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div>
-            <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Customer Code</strong>
-            <p style={{ margin: '4px 0 0' }}>{customer.code}</p>
-          </div>
           <div>
             <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Customer Name</strong>
             <p style={{ margin: '4px 0 0' }}>{customer.name}</p>
