@@ -238,34 +238,3 @@ class OperatorSuggestionRequest(BaseModel):
 class ProductListQuery(BaseModel):
     q: Optional[str] = None
 
-
-class DerivedDimensions(BaseModel):
-    layflat_mm: float
-    decision_width_mm: float
-    area_per_unit_mm2: Optional[float] = None
-
-
-def compute_derived_dimensions(spec: SpecPayload) -> DerivedDimensions:
-    width = spec.dimensions.base_width_mm
-    geometry = spec.dimensions.geometry
-    gusset = spec.dimensions.gusset_mm or 0
-    finish = spec.identity.finish_mode
-    length = spec.dimensions.base_length_mm
-
-    if geometry == Geometry.CENTRE_FOLD:
-        decision = width / 2.0
-    elif geometry in (Geometry.GUSSET, Geometry.BOTTOM_GUSSET):
-        decision = width + 2.0 * gusset
-    else:
-        decision = float(width)
-
-    layflat = decision
-    area = None
-    if finish == FinishMode.CARTONS and length:
-        area = decision * float(length)
-    elif finish == FinishMode.ROLLS:
-        # per linear meter
-        area = decision * 1000.0
-
-    return DerivedDimensions(layflat_mm=layflat, decision_width_mm=decision, area_per_unit_mm2=area)
-

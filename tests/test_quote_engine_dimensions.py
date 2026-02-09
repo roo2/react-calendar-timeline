@@ -20,25 +20,21 @@ def _spec(geometry: str, width: int, length: int | None = 500, gusset: int | Non
 def test_dimensions_flat():
     dims = compute_dimensions(_spec("flat", 300, 500))
     assert dims.layflat_mm == Decimal(300)
-    assert dims.decision_width_mm == Decimal(300)
 
 
 def test_dimensions_gusset():
     dims = compute_dimensions(_spec("gusset", 200, 400, gusset=50))
     assert dims.layflat_mm == Decimal(200 + 2 * 50)
-    assert dims.decision_width_mm == dims.layflat_mm
 
 
 def test_dimensions_bottom_gusset():
     dims = compute_dimensions(_spec("bottom_gusset", 250, 600))
     assert dims.layflat_mm == Decimal(250)
-    assert dims.decision_width_mm == Decimal(250)
 
 
 def test_dimensions_centre_fold():
     dims = compute_dimensions(_spec("centre_fold", 150, 700))
-    assert dims.layflat_mm == Decimal(150)
-    assert dims.decision_width_mm == Decimal(150 * 2)
+    assert dims.layflat_mm == Decimal(150) / Decimal(2)
 
 
 def test_dimensions_roll_uses_1m_length():

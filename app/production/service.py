@@ -38,6 +38,7 @@ from app.db.models.enums import (
     PrintingMethod,
 )
 from app.exceptions import DomainError
+from app.machines.service import validate_machine_capability
 from app.production.schemas import ChecklistDTO, ChecklistItem, TotalsDTO
 from app.scheduling.service import _required_tool_type_codes as scheduling_required_tool_type_codes
 
@@ -77,21 +78,6 @@ def _get_printing_method_from_spec(product_version: Optional[ProductVersion]) ->
         if m in ("uteco", "printing_uteco", "out_of_line"):
             return PrintingMethod.UTECO
     return PrintingMethod.NONE
-
-
-def _validate_machine_capability(machine: Machine, product_version: Optional[ProductVersion]) -> None:
-    spec = (product_version.spec_payload if product_version else {}) or {}
-    width_mm = (spec.get("dimensions") or {}).get("decision_width_mm") or spec.get("decision_width_mm")
-    gauge_um = (spec.get("materials") or {}).get("gauge_um") or spec.get("gauge_um")
-    cap = machine.capability or {}
-    if width_mm is not None and "width_range_mm" in cap:
-        min_w, max_w = cap["width_range_mm"][0], cap["width_range_mm"][1]
-        if not (min_w <= float(width_mm) <= max_w):
-            raise DomainError("Machine width capability out of range for this job")
-    if gauge_um is not None and "gauge_range_um" in cap:
-        min_g, max_g = cap["gauge_range_um"][0], cap["gauge_range_um"][1]
-        if not (min_g <= float(gauge_um) <= max_g):
-            raise DomainError("Machine gauge capability out of range for this job")
 
 
 def _has_completed_run(session: Session, job_id: uuid.UUID, op_type: OperationType) -> bool:
@@ -205,7 +191,7 @@ def start_run(job_id: uuid.UUID, machine_id: uuid.UUID, operation_type: Operatio
             raise DomainError("; ".join(conflicts))
 
         # Capability check
-        _validate_machine_capability(machine, product_version)
+        validate_machine_capability(machine, product_version)
 
         # Create operation run
         run = OperationRun(

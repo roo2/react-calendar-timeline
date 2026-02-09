@@ -29,6 +29,7 @@ from app.db.models.enums import (
 	PrintingMethod,
 )
 from app.exceptions import DomainError
+from app.machines.service import validate_machine_capability
 from app.scheduling.schemas import (
 	LaneDTO,
 	MachineQueueItemDTO,
@@ -339,25 +340,6 @@ def remove(machine_id: uuid.UUID, job_id: uuid.UUID) -> LaneDTO:
 		return _lane_dto(machine_id, refreshed)
 
 
-def _validate_machine_capability(machine: Machine, product_version: Optional[ProductVersion], operation_type: OperationType) -> None:
-	spec = (product_version.spec_payload if product_version else {}) or {}
-	width_mm = (
-		(spec.get("dimensions") or {}).get("decision_width_mm")
-		or spec.get("decision_width_mm")
-	)
-	gauge_um = (spec.get("materials") or {}).get("gauge_um") or spec.get("gauge_um")
-	cap = machine.capability or {}
-	if width_mm is not None and "width_range_mm" in cap:
-		min_w, max_w = cap["width_range_mm"][0], cap["width_range_mm"][1]
-		if not (min_w <= float(width_mm) <= max_w):
-			raise DomainError("Machine width capability out of range for this job")
-	if gauge_um is not None and "gauge_range_um" in cap:
-		min_g, max_g = cap["gauge_range_um"][0], cap["gauge_range_um"][1]
-		if not (min_g <= float(gauge_um) <= max_g):
-			raise DomainError("Machine gauge capability out of range for this job")
-	# Additional operation-specific checks can be added later
-
-
 def validate_move(job_id: uuid.UUID, operation_type: OperationType, target_machine_id: uuid.UUID) -> None:
 	with SessionLocal.begin() as session:
 		target: Machine = session.get(Machine, target_machine_id)
@@ -367,7 +349,7 @@ def validate_move(job_id: uuid.UUID, operation_type: OperationType, target_machi
 		if expected != operation_type:
 			raise DomainError("Target machine does not match operation type")
 		job, order, product_version = _get_job_with_context(session, job_id)
-		_validate_machine_capability(target, product_version, operation_type)
+		validate_machine_capability(target, product_version, operation_type=operation_type)
 
 
 def move_bar(
@@ -405,7 +387,7 @@ def move_bar(
 
 		# Capability check
 		job, order, product_version = _get_job_with_context(session, job_id)
-		_validate_machine_capability(target, product_version, operation_type)
+		validate_machine_capability(target, product_version, operation_type=operation_type)
 
 		# Lock both lanes
 		source_items = _load_lane_items_for_update(session, source_machine.id)

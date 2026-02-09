@@ -38,23 +38,18 @@ def quantize_money(x: Decimal) -> Decimal:
 
 
 def compute_dimensions(spec: SpecDTO) -> Dimensions:
-    # Layflat and decision width per SDS-3 §3.2
+    # Layflat per SDS-3 §3.2
     if spec.geometry == "flat":
         layflat_mm = spec.base_width_mm
-        decision_width_mm = spec.base_width_mm
     elif spec.geometry == "gusset":
         g = spec.gusset_mm or Decimal("0")
         layflat_mm = spec.base_width_mm + (g * 2)
-        decision_width_mm = layflat_mm
     elif spec.geometry == "bottom_gusset":
         layflat_mm = spec.base_width_mm
-        decision_width_mm = spec.base_width_mm
     elif spec.geometry == "centre_fold":
-        layflat_mm = spec.base_width_mm
-        decision_width_mm = spec.base_width_mm * 2
+        layflat_mm = spec.base_width_mm / Decimal("2")
     else:
         layflat_mm = spec.base_width_mm
-        decision_width_mm = spec.base_width_mm
 
     unit_length_mm = None if spec.continuous_roll else (spec.base_length_mm or Decimal("0"))
     effective_length_m = Decimal("1") if spec.continuous_roll else _mm_to_m(unit_length_mm or Decimal("0"))
@@ -69,7 +64,6 @@ def compute_dimensions(spec: SpecDTO) -> Dimensions:
 
     return Dimensions(
         layflat_mm=layflat_mm,
-        decision_width_mm=decision_width_mm,
         unit_length_mm=unit_length_mm,
         area_per_unit_m2=area_per_unit_m2,
         kg_per_unit=kg_per_unit,

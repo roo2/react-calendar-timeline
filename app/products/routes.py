@@ -12,7 +12,6 @@ from app.products.schemas import (
     CreateProductRequest,
     CreateProductVersionRequest,
     SpecPayload,
-    compute_derived_dimensions,
 )
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -108,14 +107,3 @@ async def create_product_version(product_id: str, payload: CreateProductVersionR
         return {"ok": True, "version": _version_summary(v)}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
-
-
-@router.post(
-    "/preview/dimensions",
-    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR")), Depends(csrf_protect())],
-)
-async def preview_dimensions(payload: SpecPayload):
-    derived = compute_derived_dimensions(payload)
-    return {"derived": derived}
-
-

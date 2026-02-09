@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../components/SpecPayloadForm'
 import { Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
@@ -31,7 +30,6 @@ export function ProductNewPage() {
   const [code, setCode] = useState('')
   const [description, setDescription] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
-  const [derived, setDerived] = useState<unknown>(null)
 
   const canSubmit = useMemo(() => customerId && code && !saving, [customerId, code, saving])
 
@@ -56,21 +54,6 @@ export function ProductNewPage() {
     // Products slice doesn't support prefix clearing; remove spec errors by clearing the whole create state.
     // This is a tradeoff to keep behavior simple/consistent without over-engineering.
     if (prefix === 'spec') dispatch(clearCreateErrors())
-  }
-
-  async function previewDerived() {
-    try {
-      const res = await apiFetch<{ derived: unknown }>('/api/products/preview/dimensions', {
-        method: 'POST',
-        body: JSON.stringify(spec),
-      })
-      setDerived(res.derived)
-    } catch (e) {
-      // Keep preview errors local to avoid polluting create validation state.
-      // (Preview is a separate action.)
-      // eslint-disable-next-line no-console
-      console.error(e)
-    }
   }
 
   async function onSubmit(e: FormEvent) {
@@ -186,8 +169,6 @@ export function ProductNewPage() {
               // Any spec edit clears spec-related validation to reduce stale highlights.
               clearLocalFieldErrorsByPrefix('spec')
             }}
-            onPreviewDerived={previewDerived}
-            derived={derived as any}
             fieldErrors={fieldErrors}
           />
 

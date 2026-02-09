@@ -55,7 +55,6 @@ export function ProductVersionShowPage() {
 
   const [productData, setProductData] = useState<any>(null)
   const [versionData, setVersionData] = useState<any>(null)
-  const [derived, setDerived] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
@@ -77,19 +76,15 @@ export function ProductVersionShowPage() {
 
   const spec = useMemo(() => versionData?.version?.spec_payload || null, [versionData])
 
-  useEffect(() => {
-    if (!spec) return
-    void (async () => {
-      try {
-        const res = await apiFetch<{ derived: any }>('/api/products/preview/dimensions', {
-          method: 'POST',
-          body: JSON.stringify(spec),
-        })
-        setDerived(res.derived)
-      } catch {
-        // ignore: derived preview is a convenience
-      }
-    })()
+  const layflatMm = useMemo(() => {
+    const productType = spec?.identity?.product_type as string | undefined
+    const baseWidth = typeof spec?.dimensions?.base_width_mm === 'number' ? spec.dimensions.base_width_mm : 0
+    const sideOrGusset = typeof spec?.dimensions?.gusset_mm === 'number' ? spec.dimensions.gusset_mm : 0
+
+    if (productType === 'Centerfold') return 0.5 * baseWidth
+    if (productType === 'U-Film') return baseWidth + 2 * sideOrGusset
+    if ((productType === 'Bag' || productType === 'Tube') && sideOrGusset > 0) return baseWidth + 2 * sideOrGusset
+    return baseWidth
   }, [spec])
 
   if (err) {
@@ -180,24 +175,14 @@ export function ProductVersionShowPage() {
               ]}
             />
 
-            {derived && (
-              <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  Derived dimensions
-                </Typography>
-                <Typography variant="body2">
-                  Layflat (mm): <strong>{derived.layflat_mm}</strong>
-                </Typography>
-                <Typography variant="body2">
-                  Decision Width (mm): <strong>{derived.decision_width_mm}</strong>
-                </Typography>
-                {derived.area_per_unit_mm2 != null && (
-                  <Typography variant="body2">
-                    Area per unit (mm²): <strong>{derived.area_per_unit_mm2}</strong>
-                  </Typography>
-                )}
-              </Paper>
-            )}
+            <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Derived dimensions
+              </Typography>
+              <Typography variant="body2">
+                Layflat (mm): <strong>{layflatMm}</strong>
+              </Typography>
+            </Paper>
           </SectionCard>
 
           <SectionCard title="3. Materials & Formulation">

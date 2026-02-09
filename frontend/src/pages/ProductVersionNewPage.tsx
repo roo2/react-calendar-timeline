@@ -36,7 +36,6 @@ export function ProductVersionNewPage() {
 
   const [data, setData] = useState<any>(null)
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
-  const [derived, setDerived] = useState<unknown>(null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
 
   const upsert = useAppSelector((s) => s.products.newVersion)
@@ -73,19 +72,6 @@ export function ProductVersionNewPage() {
   useEffect(() => {
     dispatch(clearNewVersionErrors())
   }, [dispatch, productId])
-
-  async function previewDerived() {
-    try {
-      const res = await apiFetch<{ derived: unknown }>('/api/products/preview/dimensions', {
-        method: 'POST',
-        body: JSON.stringify(spec),
-      })
-      setDerived(res.derived)
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error(e)
-    }
-  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -130,8 +116,6 @@ export function ProductVersionNewPage() {
           <SpecPayloadForm
             value={spec}
             onChange={setSpec}
-            onPreviewDerived={previewDerived}
-            derived={derived as any}
             fieldErrors={fieldErrors}
           />
 

@@ -46,7 +46,6 @@ class SpecDTO(BaseModel):
 
 class Dimensions(BaseModel):
     layflat_mm: Decimal
-    decision_width_mm: Decimal
     unit_length_mm: Optional[Decimal] = None  # for bags; None for rolls
     area_per_unit_m2: Decimal
     kg_per_unit: Decimal

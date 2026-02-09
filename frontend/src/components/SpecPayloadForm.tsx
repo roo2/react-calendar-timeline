@@ -15,11 +15,29 @@ import {
 
 type DerivedDimensions = {
   layflat_mm: number
-  decision_width_mm: number
-  area_per_unit_mm2?: number | null
 }
 
 export type SpecPayload = any
+
+const PRODUCT_TYPE = {
+  Bag: 'Bag',
+  Tube: 'Tube',
+  Sleeve: 'Sleeve',
+  Sheet: 'Sheet',
+  Centerfold: 'Centerfold',
+  UFilm: 'U-Film',
+} as const
+
+type ProductType = (typeof PRODUCT_TYPE)[keyof typeof PRODUCT_TYPE]
+
+const PRODUCT_TYPES: ProductType[] = [
+  PRODUCT_TYPE.Bag,
+  PRODUCT_TYPE.Tube,
+  PRODUCT_TYPE.Sleeve,
+  PRODUCT_TYPE.Sheet,
+  PRODUCT_TYPE.Centerfold,
+  PRODUCT_TYPE.UFilm,
+]
 
 function clone<T>(v: T): T {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,7 +60,7 @@ function listToCsv(xs: unknown): string {
 export function makeDefaultSpec(): SpecPayload {
   return {
     identity: {
-      product_type: 'Bag',
+      product_type: PRODUCT_TYPE.Bag,
       finish_mode: 'Rolls',
       industry_flags: [],
       notes: null,
@@ -96,11 +114,9 @@ export function makeDefaultSpec(): SpecPayload {
 export function SpecPayloadForm(props: {
   value: SpecPayload
   onChange: (next: SpecPayload) => void
-  onPreviewDerived?: () => void
-  derived?: DerivedDimensions | null
   fieldErrors?: Record<string, string>
 }) {
-  const { value, onChange, onPreviewDerived, derived, fieldErrors } = props
+  const { value, onChange, fieldErrors } = props
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
@@ -128,6 +144,61 @@ export function SpecPayloadForm(props: {
   const printingEnabled = printing.method && printing.method !== 'None'
   const finishMode = identity.finish_mode || 'Rolls'
 
+  const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
+  const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
+  const isCenterfold = productType === PRODUCT_TYPE.Centerfold
+  const isUFilm = productType === PRODUCT_TYPE.UFilm
+
+  const derived: DerivedDimensions = useMemo(() => {
+    const baseWidth = typeof dimensions.base_width_mm === 'number' ? dimensions.base_width_mm : 0
+    const gussetOrSide = typeof dimensions.gusset_mm === 'number' ? dimensions.gusset_mm : 0
+
+    let layflat = baseWidth
+    if (productType === PRODUCT_TYPE.Centerfold) {
+      layflat = 0.5 * baseWidth
+    } else if (productType === PRODUCT_TYPE.UFilm) {
+      layflat = baseWidth + 2 * gussetOrSide
+    } else if (canHaveGusset && gussetOrSide > 0) {
+      layflat = baseWidth + 2 * gussetOrSide
+    }
+
+    return {
+      layflat_mm: layflat,
+    }
+  }, [canHaveGusset, dimensions.base_width_mm, dimensions.gusset_mm, productType])
+
+  function onProductTypeChange(nextTypeRaw: string) {
+    const nextType = nextTypeRaw as ProductType
+    update((d) => {
+      d.identity.product_type = nextType
+
+      // Centerfold implies CentreFold geometry and no gusset.
+      if (nextType === PRODUCT_TYPE.Centerfold) {
+        d.dimensions.geometry = 'CentreFold'
+        d.dimensions.gusset_mm = null
+        return
+      }
+
+      // If leaving Centerfold, fall back to Flat.
+      if (d.dimensions.geometry === 'CentreFold') d.dimensions.geometry = 'Flat'
+
+      // Gusset only allowed for Bag/Tube.
+      const allowGusset = nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Tube
+      if (!allowGusset) {
+        d.dimensions.geometry = 'Flat'
+        // For U-Film we repurpose gusset_mm as "Side Width"; don't clear it.
+        if (nextType !== PRODUCT_TYPE.UFilm) d.dimensions.gusset_mm = null
+      }
+
+      // Tubes are always rolls in our simplified UI (length disabled for Tube).
+      if (nextType === PRODUCT_TYPE.Tube) {
+        d.identity.finish_mode = 'Rolls'
+        d.packaging.pack_mode = 'Rolls'
+        d.dimensions.base_length_mm = null
+      }
+    })
+  }
+
   function errorFor(key: string): string | undefined {
     return fieldErrors?.[key]
   }
@@ -151,13 +222,13 @@ export function SpecPayloadForm(props: {
           <TextField
             select
             label="Product Type"
-            value={identity.product_type || 'Bag'}
-            onChange={(e) => update((d) => (d.identity.product_type = e.target.value))}
+            value={identity.product_type || PRODUCT_TYPE.Bag}
+            onChange={(e) => onProductTypeChange(e.target.value)}
             required
             error={!!errorFor('spec.identity.product_type')}
             helperText={errorFor('spec.identity.product_type') || ''}
           >
-            {['Bag', 'BagOnRoll', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'].map((v) => (
+            {PRODUCT_TYPES.map((v) => (
               <MenuItem key={v} value={v}>
                 {v}
               </MenuItem>
@@ -173,7 +244,6 @@ export function SpecPayloadForm(props: {
               update((d) => {
                 d.identity.finish_mode = v
                 d.packaging.pack_mode = v
-                if (v === 'Rolls') d.dimensions.base_length_mm = null
               })
             }}
             required
@@ -234,6 +304,7 @@ export function SpecPayloadForm(props: {
         </Typography>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, gridColumn: '1 / -1' }}>
           <TextField
             label="Base Width (mm)"
             type="number"
@@ -245,16 +316,57 @@ export function SpecPayloadForm(props: {
             helperText={errorFor('spec.dimensions.base_width_mm') || ''}
           />
 
+          {isUFilm ? (
+            <TextField
+              label="Side Width (mm)"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={dimensions.gusset_mm ?? ''}
+              onChange={(e) => update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))}
+              error={!!errorFor('spec.dimensions.gusset_mm')}
+              helperText={errorFor('spec.dimensions.gusset_mm') || ''}
+            />
+          ) : (
+            <TextField
+              label="Gusset Size (mm)"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={dimensions.gusset_mm ?? ''}
+              disabled={!canHaveGusset}
+              onChange={(e) => {
+                const raw = e.target.value
+                const next = raw ? parseInt(raw) : null
+                update((d) => {
+                  d.dimensions.gusset_mm = next
+                })
+              }}
+              error={!!errorFor('spec.dimensions.gusset_mm')}
+              helperText={
+                errorFor('spec.dimensions.gusset_mm') ||
+                (!canHaveGusset
+                  ? `Not used for ${productType}`
+                  : '')
+              }
+            />
+          )}
+          </Box>
+
           <TextField
-            label="Base Length (mm)"
+            label="Length (mm)"
             type="number"
             inputProps={{ min: 1, step: 1 }}
             value={dimensions.base_length_mm ?? ''}
             onChange={(e) =>
               update((d) => (d.dimensions.base_length_mm = e.target.value ? parseInt(e.target.value) : null))
             }
-            disabled={finishMode === 'Rolls'}
-            helperText={finishMode === 'Rolls' ? 'Not used for Rolls' : 'Required when Finish Mode = Cartons'}
+            disabled={productType === PRODUCT_TYPE.Tube}
+            helperText={
+              productType === PRODUCT_TYPE.Tube
+                ? 'Not used for tubes'
+                : finishMode === 'Cartons'
+                  ? 'Required when Finish Mode = Cartons'
+                  : ''
+            }
             error={!!errorFor('spec.dimensions.base_length_mm')}
           />
 
@@ -268,60 +380,12 @@ export function SpecPayloadForm(props: {
             error={!!errorFor('spec.dimensions.thickness_um')}
             helperText={errorFor('spec.dimensions.thickness_um') || ''}
           />
-
-          <TextField
-            select
-            label="Geometry"
-            value={dimensions.geometry || 'Flat'}
-            onChange={(e) => update((d) => (d.dimensions.geometry = e.target.value))}
-            required
-            error={!!errorFor('spec.dimensions.geometry')}
-            helperText={errorFor('spec.dimensions.geometry') || ''}
-          >
-            {['Flat', 'Gusset', 'BottomGusset', 'CentreFold'].map((v) => (
-              <MenuItem key={v} value={v}>
-                {v}
-              </MenuItem>
-            ))}
-          </TextField>
-
-          <TextField
-            label="Gusset Size (mm)"
-            type="number"
-            inputProps={{ min: 1, step: 1 }}
-            value={dimensions.gusset_mm ?? ''}
-            onChange={(e) => update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))}
-            error={!!errorFor('spec.dimensions.gusset_mm')}
-            helperText={errorFor('spec.dimensions.gusset_mm') || ''}
-          />
         </Box>
-
-        {onPreviewDerived && (
-          <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-            <Button type="button" variant="outlined" size="small" onClick={onPreviewDerived}>
-              Preview Dimensions
-            </Button>
-            <Typography variant="body2" color="text.secondary">
-              Computes derived dimensions from the current spec
-            </Typography>
-          </Box>
-        )}
-
-        {derived && (
-          <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
-            <Typography variant="body2">
-              Layflat (mm): <strong>{derived.layflat_mm}</strong>
-            </Typography>
-            <Typography variant="body2">
-              Decision Width (mm): <strong>{derived.decision_width_mm}</strong>
-            </Typography>
-            {derived.area_per_unit_mm2 != null && (
-              <Typography variant="body2">
-                Area per unit (mm²): <strong>{derived.area_per_unit_mm2}</strong>
-              </Typography>
-            )}
-          </Paper>
-        )}
+        <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
+          <Typography variant="body2">
+            Layflat (mm): <strong>{derived.layflat_mm}</strong>
+          </Typography>
+        </Paper>
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
