@@ -109,13 +109,12 @@ export const fetchCustomer = createAsyncThunk('customers/detail', async (custome
 export const createCustomer = createAsyncThunk(
   'customers/create',
   async (
-    payload: { data: CustomerUpsertPayload; csrfToken: string | null },
+    payload: { data: CustomerUpsertPayload },
     { rejectWithValue },
   ) => {
     try {
       const res = await apiFetch<{ ok: boolean; customer: { id: string } }>('/api/customers', {
         method: 'POST',
-        csrfToken: payload.csrfToken || undefined,
         body: JSON.stringify(payload.data),
       })
       return res.customer
@@ -130,13 +129,12 @@ export const createCustomer = createAsyncThunk(
 export const updateCustomer = createAsyncThunk(
   'customers/update',
   async (
-    payload: { customerId: string; data: CustomerUpsertPayload; csrfToken: string | null },
+    payload: { customerId: string; data: CustomerUpsertPayload },
     { rejectWithValue },
   ) => {
     try {
       await apiFetch(`/api/customers/${payload.customerId}`, {
         method: 'PUT',
-        csrfToken: payload.csrfToken || undefined,
         body: JSON.stringify(payload.data),
       })
       return { customerId: payload.customerId }

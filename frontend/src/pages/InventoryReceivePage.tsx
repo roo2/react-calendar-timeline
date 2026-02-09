@@ -1,41 +1,34 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { receiveInventory } from '../store/slices/inventorySlice'
 import { Alert, Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 
 export function InventoryReceivePage() {
   const nav = useNavigate()
-  const csrf = useAppSelector((s) => s.auth.csrfToken)
+  const dispatch = useAppDispatch()
+  const receive = useAppSelector((s) => s.inventory.receive)
 
   const [itemId, setItemId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [uom, setUom] = useState('kg')
   const [msg, setMsg] = useState<string | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
 
   async function submit() {
-    setErr(null)
     setMsg(null)
-    setSaving(true)
     try {
-      await apiFetch('/api/inventory/receive', {
-        method: 'POST',
-        csrfToken: csrf || undefined,
-        body: JSON.stringify({
+      await dispatch(
+        receiveInventory({
           category: 'raw_material',
           item_id: itemId || null,
           quantity,
           uom,
         }),
-      })
+      ).unwrap()
       setMsg('Received inventory successfully.')
       nav('/inventory')
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Validation error')
-    } finally {
-      setSaving(false)
+      // error shown from slice
     }
   }
 
@@ -45,9 +38,9 @@ export function InventoryReceivePage() {
         Receive Inventory
       </Typography>
 
-      {err && (
+      {receive.error && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {err}
+          {receive.error}
         </Alert>
       )}
       {msg && (
@@ -87,8 +80,8 @@ export function InventoryReceivePage() {
           </TextField>
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <Button variant="contained" onClick={submit} disabled={saving}>
-              {saving ? 'Receiving…' : 'Receive'}
+            <Button variant="contained" onClick={submit} disabled={receive.status === 'loading'}>
+              {receive.status === 'loading' ? 'Receiving…' : 'Receive'}
             </Button>
             <Button variant="outlined" component={Link} to="/inventory">
               Cancel

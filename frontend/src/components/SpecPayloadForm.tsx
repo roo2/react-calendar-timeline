@@ -1,5 +1,17 @@
 import { useMemo } from 'react'
-import { Box, Button, Paper, Typography } from '@mui/material'
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  FormControlLabel,
+  FormGroup,
+  MenuItem,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -86,8 +98,9 @@ export function SpecPayloadForm(props: {
   onChange: (next: SpecPayload) => void
   onPreviewDerived?: () => void
   derived?: DerivedDimensions | null
+  fieldErrors?: Record<string, string>
 }) {
-  const { value, onChange, onPreviewDerived, derived } = props
+  const { value, onChange, onPreviewDerived, derived, fieldErrors } = props
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
@@ -115,29 +128,45 @@ export function SpecPayloadForm(props: {
   const printingEnabled = printing.method && printing.method !== 'None'
   const finishMode = identity.finish_mode || 'Rolls'
 
+  function errorFor(key: string): string | undefined {
+    return fieldErrors?.[key]
+  }
+
+  function firstErrorForPrefix(prefix: string): string | undefined {
+    if (!fieldErrors) return undefined
+    for (const [k, v] of Object.entries(fieldErrors)) {
+      if (k === prefix || k.startsWith(prefix + '.') || k.startsWith(prefix + '[')) return v
+    }
+    return undefined
+  }
+
   return (
-    <div>
-      <fieldset>
-        <legend>Section 1: Product Identity</legend>
-        <div>
-          <label>Product Type</label>
-          <select
+    <Stack spacing={2}>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Product Identity
+        </Typography>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <TextField
+            select
+            label="Product Type"
             value={identity.product_type || 'Bag'}
             onChange={(e) => update((d) => (d.identity.product_type = e.target.value))}
             required
+            error={!!errorFor('spec.identity.product_type')}
+            helperText={errorFor('spec.identity.product_type') || ''}
           >
-            <option value="Bag">Bag</option>
-            <option value="BagOnRoll">BagOnRoll</option>
-            <option value="Tube">Tube</option>
-            <option value="Sleeve">Sleeve</option>
-            <option value="Sheet">Sheet</option>
-            <option value="Centerfold">Centerfold</option>
-            <option value="U-Film">U-Film</option>
-          </select>
-        </div>
-        <div>
-          <label>Finish Mode</label>
-          <select
+            {['Bag', 'BagOnRoll', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'].map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          <TextField
+            select
+            label="Finish Mode"
             value={identity.finish_mode || 'Rolls'}
             onChange={(e) => {
               const v = e.target.value
@@ -148,106 +177,124 @@ export function SpecPayloadForm(props: {
               })
             }}
             required
+            error={!!errorFor('spec.identity.finish_mode')}
+            helperText={errorFor('spec.identity.finish_mode') || ''}
           >
-            <option value="Rolls">Rolls</option>
-            <option value="Cartons">Cartons</option>
-          </select>
-        </div>
-        <div>
-          <label>Industry / Compliance Intent</label>
-          <div>
+            <MenuItem value="Rolls">Rolls</MenuItem>
+            <MenuItem value="Cartons">Cartons</MenuItem>
+          </TextField>
+
+          <TextField
+            label="Notes"
+            value={identity.notes || ''}
+            onChange={(e) => update((d) => (d.identity.notes = e.target.value || null))}
+            multiline
+            minRows={3}
+            error={!!errorFor('spec.identity.notes')}
+            helperText={errorFor('spec.identity.notes') || ''}
+          />
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Industry / Compliance Intent
+          </Typography>
+          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
             {[
               { id: 'food_contact', label: 'Food Contact' },
               { id: 'non_food', label: 'Non-Food' },
               { id: 'medical', label: 'Medical' },
               { id: 'chemical_industrial', label: 'Chemical / Industrial' },
             ].map((f) => (
-              <label key={f.id} style={{ marginRight: 12 }}>
-                <input
-                  type="checkbox"
-                  checked={industryFlags.has(f.id)}
-                  onChange={(e) =>
-                    update((d) => {
-                      const cur = new Set<string>(d.identity.industry_flags || [])
-                      if (e.target.checked) cur.add(f.id)
-                      else cur.delete(f.id)
-                      d.identity.industry_flags = Array.from(cur)
-                    })
-                  }
-                />{' '}
-                {f.label}
-              </label>
+              <FormControlLabel
+                key={f.id}
+                control={
+                  <Checkbox
+                    checked={industryFlags.has(f.id)}
+                    onChange={(e) =>
+                      update((d) => {
+                        const cur = new Set<string>(d.identity.industry_flags || [])
+                        if (e.target.checked) cur.add(f.id)
+                        else cur.delete(f.id)
+                        d.identity.industry_flags = Array.from(cur)
+                      })
+                    }
+                  />
+                }
+                label={f.label}
+              />
             ))}
-          </div>
-        </div>
-        <div>
-          <label>Notes</label>
-          <textarea
-            value={identity.notes || ''}
-            onChange={(e) => update((d) => (d.identity.notes = e.target.value || null))}
-          />
-        </div>
-      </fieldset>
+          </FormGroup>
+        </Box>
+      </Paper>
 
-      <fieldset>
-        <legend>Section 2: Dimensions &amp; Geometry</legend>
-        <div>
-          <label>Base Width (mm)</label>
-          <input
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Dimensions &amp; Geometry
+        </Typography>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
+          <TextField
+            label="Base Width (mm)"
             type="number"
-            min={1}
+            inputProps={{ min: 1, step: 1 }}
             value={dimensions.base_width_mm ?? ''}
             onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
             required
+            error={!!errorFor('spec.dimensions.base_width_mm')}
+            helperText={errorFor('spec.dimensions.base_width_mm') || ''}
           />
-        </div>
-        <div>
-          <label>Base Length (mm)</label>
-          <input
+
+          <TextField
+            label="Base Length (mm)"
             type="number"
-            min={1}
+            inputProps={{ min: 1, step: 1 }}
             value={dimensions.base_length_mm ?? ''}
             onChange={(e) =>
               update((d) => (d.dimensions.base_length_mm = e.target.value ? parseInt(e.target.value) : null))
             }
             disabled={finishMode === 'Rolls'}
+            helperText={finishMode === 'Rolls' ? 'Not used for Rolls' : 'Required when Finish Mode = Cartons'}
+            error={!!errorFor('spec.dimensions.base_length_mm')}
           />
-          <small>Required if Finish Mode = Cartons</small>
-        </div>
-        <div>
-          <label>Thickness (µm)</label>
-          <input
+
+          <TextField
+            label="Thickness (µm)"
             type="number"
-            min={1}
+            inputProps={{ min: 1, step: 1 }}
             value={dimensions.thickness_um ?? ''}
             onChange={(e) => update((d) => (d.dimensions.thickness_um = parseInt(e.target.value || '0')))}
             required
+            error={!!errorFor('spec.dimensions.thickness_um')}
+            helperText={errorFor('spec.dimensions.thickness_um') || ''}
           />
-        </div>
-        <div>
-          <label>Geometry</label>
-          <select
+
+          <TextField
+            select
+            label="Geometry"
             value={dimensions.geometry || 'Flat'}
             onChange={(e) => update((d) => (d.dimensions.geometry = e.target.value))}
             required
+            error={!!errorFor('spec.dimensions.geometry')}
+            helperText={errorFor('spec.dimensions.geometry') || ''}
           >
-            <option value="Flat">Flat</option>
-            <option value="Gusset">Gusset</option>
-            <option value="BottomGusset">BottomGusset</option>
-            <option value="CentreFold">CentreFold</option>
-          </select>
-        </div>
-        <div>
-          <label>Gusset Size (mm)</label>
-          <input
+            {['Flat', 'Gusset', 'BottomGusset', 'CentreFold'].map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          <TextField
+            label="Gusset Size (mm)"
             type="number"
-            min={1}
+            inputProps={{ min: 1, step: 1 }}
             value={dimensions.gusset_mm ?? ''}
-            onChange={(e) =>
-              update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))
-            }
+            onChange={(e) => update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))}
+            error={!!errorFor('spec.dimensions.gusset_mm')}
+            helperText={errorFor('spec.dimensions.gusset_mm') || ''}
           />
-        </div>
+        </Box>
 
         {onPreviewDerived && (
           <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -275,63 +322,90 @@ export function SpecPayloadForm(props: {
             )}
           </Paper>
         )}
-      </fieldset>
+      </Paper>
 
-      <fieldset>
-        <legend>Section 3: Materials &amp; Formulation</legend>
-        <div>
-          <label>Blend Type</label>
-          <select value={formulation.blend_type || 'Custom'} onChange={(e) => update((d) => (d.formulation.blend_type = e.target.value))}>
-            <option value="LD">LD</option>
-            <option value="MD">MD</option>
-            <option value="Custom">Custom</option>
-          </select>
-          <small>Resin blend must sum to 100%</small>
-        </div>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Materials &amp; Formulation
+        </Typography>
+
+        {firstErrorForPrefix('spec.formulation.blend') && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {firstErrorForPrefix('spec.formulation.blend')}
+          </Alert>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <TextField
+            select
+            label="Blend Type"
+            value={formulation.blend_type || 'Custom'}
+            onChange={(e) => update((d) => (d.formulation.blend_type = e.target.value))}
+            helperText="Resin blend must sum to 100%"
+            error={!!errorFor('spec.formulation.blend_type')}
+          >
+            <MenuItem value="LD">LD</MenuItem>
+            <MenuItem value="MD">MD</MenuItem>
+            <MenuItem value="Custom">Custom</MenuItem>
+          </TextField>
+        </Box>
 
         <Box sx={{ mt: 2 }}>
-          <label>Resin Blend</label>
-          <div style={{ display: 'grid', gap: 8 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Resin Blend
+          </Typography>
+
+          <Stack spacing={1}>
             {blend.map((row: any, idx: number) => (
-              <div key={idx} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <input
-                  type="text"
-                  placeholder="resin_code"
-                  value={row.resin_code || ''}
-                  onChange={(e) =>
-                    update((d) => {
-                      d.formulation.blend[idx].resin_code = e.target.value
-                    })
-                  }
-                />
-                <input
-                  type="number"
-                  placeholder="pct"
-                  min={0}
-                  step={0.01}
-                  value={row.pct ?? ''}
-                  onChange={(e) =>
-                    update((d) => {
-                      d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : 0
-                    })
-                  }
-                />
-                <Button
-                  type="button"
-                  variant="outlined"
-                  size="small"
-                  onClick={() =>
-                    update((d) => {
-                      d.formulation.blend.splice(idx, 1)
-                      if (d.formulation.blend.length === 0) d.formulation.blend.push({ resin_code: '', pct: 100 })
-                    })
-                  }
-                >
-                  Remove
-                </Button>
-              </div>
+              <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
+                  <TextField
+                    label="Resin code"
+                    value={row.resin_code || ''}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.formulation.blend[idx].resin_code = e.target.value
+                      })
+                    }
+                    error={!!errorFor(`spec.formulation.blend[${idx}].resin_code`) || !!firstErrorForPrefix('spec.formulation.blend')}
+                    helperText={
+                      errorFor(`spec.formulation.blend[${idx}].resin_code`) || (idx === 0 ? firstErrorForPrefix('spec.formulation.blend') || '' : '')
+                    }
+                  />
+                  <TextField
+                    label="Pct"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.01 }}
+                    value={row.pct ?? ''}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : 0
+                      })
+                    }
+                    error={!!errorFor(`spec.formulation.blend[${idx}].pct`) || !!firstErrorForPrefix('spec.formulation.blend')}
+                    helperText={errorFor(`spec.formulation.blend[${idx}].pct`) || ''}
+                  />
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                    <Button
+                      type="button"
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={() =>
+                        update((d) => {
+                          d.formulation.blend.splice(idx, 1)
+                          if (d.formulation.blend.length === 0) d.formulation.blend.push({ resin_code: '', pct: 100 })
+                        })
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </Box>
+                </Box>
+              </Paper>
             ))}
-          </div>
+          </Stack>
+
           <Box sx={{ mt: 2 }}>
             <Button
               type="button"
@@ -345,11 +419,13 @@ export function SpecPayloadForm(props: {
         </Box>
 
         <Box sx={{ mt: 2 }}>
-          <label>Colour</label>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              placeholder="colour_code"
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Colour
+          </Typography>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
+            <TextField
+              label="Colour code"
               value={formulation.colour?.colour_code || ''}
               onChange={(e) =>
                 update((d) => {
@@ -358,11 +434,10 @@ export function SpecPayloadForm(props: {
                 })
               }
             />
-            <input
+            <TextField
+              label="Strength pct"
               type="number"
-              placeholder="strength_pct"
-              min={0}
-              step={0.01}
+              inputProps={{ min: 0, step: 0.01 }}
               value={formulation.colour?.strength_pct ?? ''}
               onChange={(e) =>
                 update((d) => {
@@ -371,24 +446,24 @@ export function SpecPayloadForm(props: {
                 })
               }
             />
-            <label>
-              <input
-                type="checkbox"
-                checked={!!formulation.colour?.opaque}
-                onChange={(e) =>
-                  update((d) => {
-                    d.formulation.colour = d.formulation.colour || {}
-                    d.formulation.colour.opaque = e.target.checked
-                  })
-                }
-              />{' '}
-              Opaque
-            </label>
-            <input
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!formulation.colour?.opaque}
+                  onChange={(e) =>
+                    update((d) => {
+                      d.formulation.colour = d.formulation.colour || {}
+                      d.formulation.colour.opaque = e.target.checked
+                    })
+                  }
+                />
+              }
+              label="Opaque"
+            />
+            <TextField
+              label="Opaque strength pct"
               type="number"
-              placeholder="opaque_strength_pct"
-              min={0}
-              step={0.01}
+              inputProps={{ min: 0, step: 0.01 }}
               value={formulation.colour?.opaque_strength_pct ?? ''}
               onChange={(e) =>
                 update((d) => {
@@ -397,63 +472,72 @@ export function SpecPayloadForm(props: {
                 })
               }
             />
-            <Button
-              type="button"
-              variant="outlined"
-              size="small"
-              onClick={() =>
-                update((d) => {
-                  d.formulation.colour = null
-                })
-              }
-            >
-              Clear
-            </Button>
-          </div>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Button
+                type="button"
+                variant="outlined"
+                size="small"
+                onClick={() =>
+                  update((d) => {
+                    d.formulation.colour = null
+                  })
+                }
+              >
+                Clear colour
+              </Button>
+            </Box>
+          </Box>
         </Box>
 
         <Box sx={{ mt: 2 }}>
-          <label>Additives</label>
-          <div style={{ display: 'grid', gap: 8 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Additives
+          </Typography>
+
+          <Stack spacing={1}>
             {additives.map((row: any, idx: number) => (
-              <div key={idx} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <input
-                  type="text"
-                  placeholder="additive_code"
-                  value={row.additive_code || ''}
-                  onChange={(e) =>
-                    update((d) => {
-                      d.formulation.additives[idx].additive_code = e.target.value
-                    })
-                  }
-                />
-                <input
-                  type="number"
-                  placeholder="pct"
-                  min={0}
-                  step={0.01}
-                  value={row.pct ?? ''}
-                  onChange={(e) =>
-                    update((d) => {
-                      d.formulation.additives[idx].pct = e.target.value ? parseFloat(e.target.value) : 0
-                    })
-                  }
-                />
-                <Button
-                  type="button"
-                  variant="outlined"
-                  size="small"
-                  onClick={() =>
-                    update((d) => {
-                      d.formulation.additives.splice(idx, 1)
-                    })
-                  }
-                >
-                  Remove
-                </Button>
-              </div>
+              <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
+                  <TextField
+                    label="Additive code"
+                    value={row.additive_code || ''}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.formulation.additives[idx].additive_code = e.target.value
+                      })
+                    }
+                  />
+                  <TextField
+                    label="Pct"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.01 }}
+                    value={row.pct ?? ''}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.formulation.additives[idx].pct = e.target.value ? parseFloat(e.target.value) : 0
+                      })
+                    }
+                  />
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                    <Button
+                      type="button"
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={() =>
+                        update((d) => {
+                          d.formulation.additives.splice(idx, 1)
+                        })
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </Box>
+                </Box>
+              </Paper>
             ))}
-          </div>
+          </Stack>
+
           <Box sx={{ mt: 2 }}>
             <Button
               type="button"
@@ -465,277 +549,345 @@ export function SpecPayloadForm(props: {
             </Button>
           </Box>
         </Box>
-      </fieldset>
+      </Paper>
 
-      <fieldset>
-        <legend>Section 4: Printing &amp; Artwork</legend>
-        <div>
-          <label>Printing Method</label>
-          <select value={printing.method || 'None'} onChange={(e) => update((d) => (d.printing.method = e.target.value))}>
-            <option value="None">None</option>
-            <option value="Inline">Inline</option>
-            <option value="Uteco">Uteco</option>
-          </select>
-        </div>
-        <div>
-          <label>Number of Colours</label>
-          <input
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Printing &amp; Artwork
+        </Typography>
+
+        {firstErrorForPrefix('spec.printing') && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {firstErrorForPrefix('spec.printing')}
+          </Alert>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <TextField
+            select
+            label="Printing Method"
+            value={printing.method || 'None'}
+            onChange={(e) => update((d) => (d.printing.method = e.target.value))}
+            error={!!errorFor('spec.printing.method') || !!firstErrorForPrefix('spec.printing')}
+            helperText={errorFor('spec.printing.method') || ''}
+          >
+            <MenuItem value="None">None</MenuItem>
+            <MenuItem value="Inline">Inline</MenuItem>
+            <MenuItem value="Uteco">Uteco</MenuItem>
+          </TextField>
+
+          <TextField
+            label="Number of Colours"
             type="number"
-            min={0}
+            inputProps={{ min: 0, step: 1 }}
             value={printing.num_colours ?? 0}
             onChange={(e) => update((d) => (d.printing.num_colours = e.target.value ? parseInt(e.target.value) : 0))}
             disabled={!printingEnabled}
+            error={!!errorFor('spec.printing.num_colours') || !!firstErrorForPrefix('spec.printing')}
+            helperText={errorFor('spec.printing.num_colours') || ''}
           />
-        </div>
-        <div>
-          <label>Ink Codes (comma-separated)</label>
-          <input
-            type="text"
+
+          <TextField
+            label="Ink Codes (comma-separated)"
             value={listToCsv(printing.ink_codes)}
             onChange={(e) => update((d) => (d.printing.ink_codes = csvToList(e.target.value)))}
             disabled={!printingEnabled}
           />
-        </div>
-        <div>
-          <label>Plate Codes (comma-separated)</label>
-          <input
-            type="text"
+
+          <TextField
+            label="Plate Codes (comma-separated)"
             value={listToCsv(printing.plate_codes)}
             onChange={(e) => update((d) => (d.printing.plate_codes = csvToList(e.target.value)))}
             disabled={!printingEnabled}
           />
-        </div>
-        <div>
-          <label>Print Side</label>
-          <select
+
+          <TextField
+            select
+            label="Print Side"
             value={printing.side || ''}
             onChange={(e) => update((d) => (d.printing.side = e.target.value || null))}
             disabled={!printingEnabled}
           >
-            <option value="">-</option>
-            <option value="front">front</option>
-            <option value="back">back</option>
-            <option value="both">both</option>
-          </select>
-        </div>
-        <div>
-          <label>Artwork Refs (comma-separated)</label>
-          <input
-            type="text"
+            <MenuItem value="">-</MenuItem>
+            <MenuItem value="front">front</MenuItem>
+            <MenuItem value="back">back</MenuItem>
+            <MenuItem value="both">both</MenuItem>
+          </TextField>
+
+          <TextField
+            label="Artwork Refs (comma-separated)"
             value={listToCsv(printing.artwork_refs)}
             onChange={(e) => update((d) => (d.printing.artwork_refs = csvToList(e.target.value)))}
             disabled={!printingEnabled}
+            helperText={printingEnabled ? 'Required when printing is enabled' : ''}
           />
-          {printingEnabled && <small>Required when printing is enabled</small>}
-        </div>
-      </fieldset>
+        </Box>
+      </Paper>
 
-      <fieldset>
-        <legend>Section 5: Quality Expectations</legend>
-        <div>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Quality Expectations
+        </Typography>
+
+        <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
           {[
             { id: 'tight_gauge', label: 'Tight gauge tolerance' },
             { id: 'seal_integrity', label: 'Seal integrity critical' },
             { id: 'cosmetic', label: 'Cosmetic critical' },
             { id: 'colour', label: 'Colour critical' },
           ].map((f) => (
-            <label key={f.id} style={{ marginRight: 12 }}>
-              <input
-                type="checkbox"
-                checked={qualityFlags.has(f.id)}
-                onChange={(e) =>
-                  update((d) => {
-                    const cur = new Set<string>(d.quality_expectations.flags || [])
-                    if (e.target.checked) cur.add(f.id)
-                    else cur.delete(f.id)
-                    d.quality_expectations.flags = Array.from(cur)
-                  })
-                }
-              />{' '}
-              {f.label}
-            </label>
+            <FormControlLabel
+              key={f.id}
+              control={
+                <Checkbox
+                  checked={qualityFlags.has(f.id)}
+                  onChange={(e) =>
+                    update((d) => {
+                      const cur = new Set<string>(d.quality_expectations.flags || [])
+                      if (e.target.checked) cur.add(f.id)
+                      else cur.delete(f.id)
+                      d.quality_expectations.flags = Array.from(cur)
+                    })
+                  }
+                />
+              }
+              label={f.label}
+            />
           ))}
-        </div>
-        <div>
-          <label>Known Issues</label>
-          <textarea
+        </FormGroup>
+
+        <Box sx={{ mt: 2 }}>
+          <TextField
+            label="Known Issues"
             value={quality.known_issues || ''}
             onChange={(e) => update((d) => (d.quality_expectations.known_issues = e.target.value || null))}
+            multiline
+            minRows={3}
+            fullWidth
+            error={!!errorFor('spec.quality_expectations.known_issues')}
+            helperText={errorFor('spec.quality_expectations.known_issues') || ''}
           />
-        </div>
-      </fieldset>
+        </Box>
+      </Paper>
 
-      <fieldset>
-        <legend>Section 6: Run Requirements</legend>
-        <div>
-          <label>Preferred Extruders (comma-separated)</label>
-          <input
-            type="text"
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Run Requirements
+        </Typography>
+
+        {firstErrorForPrefix('spec.run_requirements') && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {firstErrorForPrefix('spec.run_requirements')}
+          </Alert>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <TextField
+            label="Preferred Extruders (comma-separated)"
             value={listToCsv(run.preferred_extruders)}
             onChange={(e) => update((d) => (d.run_requirements.preferred_extruders = csvToList(e.target.value)))}
+            error={!!errorFor('spec.run_requirements.preferred_extruders')}
+            helperText={errorFor('spec.run_requirements.preferred_extruders') || ''}
           />
-        </div>
-        <div>
-          <label>Preferred Printer</label>
-          <input
-            type="text"
+          <TextField
+            label="Preferred Printer"
             value={run.preferred_printer || ''}
             onChange={(e) => update((d) => (d.run_requirements.preferred_printer = e.target.value || null))}
+            error={!!errorFor('spec.run_requirements.preferred_printer')}
+            helperText={errorFor('spec.run_requirements.preferred_printer') || ''}
           />
-        </div>
-        <div>
-          <label>Preferred Converter</label>
-          <input
-            type="text"
+          <TextField
+            label="Preferred Converter"
             value={run.preferred_converter || ''}
             onChange={(e) => update((d) => (d.run_requirements.preferred_converter = e.target.value || null))}
+            error={!!errorFor('spec.run_requirements.preferred_converter')}
+            helperText={errorFor('spec.run_requirements.preferred_converter') || ''}
           />
-        </div>
-        <div>
-          <label>Treat Inside/Outside</label>
-          <select
+          <TextField
+            select
+            label="Treat Inside/Outside"
             value={run.treat_inside_outside || 'none'}
             onChange={(e) => update((d) => (d.run_requirements.treat_inside_outside = e.target.value))}
+            error={!!errorFor('spec.run_requirements.treat_inside_outside')}
+            helperText={errorFor('spec.run_requirements.treat_inside_outside') || ''}
           >
-            <option value="none">none</option>
-            <option value="inside">inside</option>
-            <option value="outside">outside</option>
-          </select>
-        </div>
-        <div>
-          <label style={{ marginRight: 12 }}>
-            <input
-              type="checkbox"
-              checked={!!run.inline_perforation}
-              onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
-            />{' '}
-            Inline Perforation
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={!!run.inline_seal}
-              onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))}
-            />{' '}
-            Inline Seal
-          </label>
-        </div>
-        <div>
-          <label>Notes</label>
-          <textarea value={run.notes || ''} onChange={(e) => update((d) => (d.run_requirements.notes = e.target.value || null))} />
-        </div>
-      </fieldset>
+            <MenuItem value="none">none</MenuItem>
+            <MenuItem value="inside">inside</MenuItem>
+            <MenuItem value="outside">outside</MenuItem>
+          </TextField>
+        </Box>
 
-      <fieldset>
-        <legend>Section 7: Packaging &amp; Logistics</legend>
-        <div>
-          <label>Pack Mode</label>
-          <select
+        <Box sx={{ mt: 2 }}>
+          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!run.inline_perforation}
+                  onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
+                />
+              }
+              label="Inline Perforation"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox checked={!!run.inline_seal} onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))} />
+              }
+              label="Inline Seal"
+            />
+          </FormGroup>
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <TextField
+            label="Notes"
+            value={run.notes || ''}
+            onChange={(e) => update((d) => (d.run_requirements.notes = e.target.value || null))}
+            multiline
+            minRows={3}
+            fullWidth
+            error={!!errorFor('spec.run_requirements.notes')}
+            helperText={errorFor('spec.run_requirements.notes') || ''}
+          />
+        </Box>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Packaging &amp; Logistics
+        </Typography>
+
+        {firstErrorForPrefix('spec.packaging') && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {firstErrorForPrefix('spec.packaging')}
+          </Alert>
+        )}
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <TextField
+            select
+            label="Pack Mode"
             value={packaging.pack_mode || finishMode}
             onChange={(e) => update((d) => (d.packaging.pack_mode = e.target.value))}
+            error={!!errorFor('spec.packaging.pack_mode')}
+            helperText={errorFor('spec.packaging.pack_mode') || ''}
           >
-            <option value="Rolls">Rolls</option>
-            <option value="Cartons">Cartons</option>
-          </select>
-        </div>
-        <div>
-          <label>Core Type</label>
-          <select value={packaging.core_type || '7mm'} onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}>
-            <option value="7mm">7mm</option>
-            <option value="13mm">13mm</option>
-            <option value="PVC">PVC</option>
-            <option value="None">None</option>
-          </select>
-        </div>
-        <div>
-          <label>Core Policy</label>
-          <select
+            <MenuItem value="Rolls">Rolls</MenuItem>
+            <MenuItem value="Cartons">Cartons</MenuItem>
+          </TextField>
+
+          <TextField
+            select
+            label="Core Type"
+            value={packaging.core_type || '7mm'}
+            onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
+          >
+            {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          <TextField
+            select
+            label="Core Policy"
             value={packaging.core_policy || 'Include'}
             onChange={(e) => update((d) => (d.packaging.core_policy = e.target.value))}
           >
-            <option value="Include">Include</option>
-            <option value="Half">Half</option>
-            <option value="Exclude">Exclude</option>
-          </select>
-        </div>
-        <div>
-          <label>Bags per Carton</label>
-          <input
+            <MenuItem value="Include">Include</MenuItem>
+            <MenuItem value="Half">Half</MenuItem>
+            <MenuItem value="Exclude">Exclude</MenuItem>
+          </TextField>
+
+          <TextField
+            label="Bags per Carton"
             type="number"
-            min={1}
+            inputProps={{ min: 1, step: 1 }}
             value={packaging.bags_per_carton ?? ''}
             onChange={(e) =>
               update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
             }
             disabled={(packaging.pack_mode || finishMode) === 'Rolls'}
+            helperText={
+              (packaging.pack_mode || finishMode) === 'Rolls' ? 'Not used for Rolls' : 'Required when pack_mode = Cartons'
+            }
+            error={!!errorFor('spec.packaging.bags_per_carton')}
           />
-          <small>Required when pack_mode = Cartons</small>
-        </div>
-        <div>
-          <label>Pallet Type</label>
-          <select value={packaging.pallet_type || 'Chep'} onChange={(e) => update((d) => (d.packaging.pallet_type = e.target.value))}>
-            <option value="Chep">Chep</option>
-            <option value="Plain">Plain</option>
-            <option value="Resin">Resin</option>
-            <option value="None">None</option>
-          </select>
-        </div>
-        <div>
-          <label>
-            <input type="checkbox" checked={!!packaging.wrapped} onChange={(e) => update((d) => (d.packaging.wrapped = e.target.checked))} />{' '}
-            Wrapped
-          </label>
-        </div>
-      </fieldset>
 
-      <fieldset>
-        <legend>Section 8: Tool Requirements</legend>
-        <div style={{ display: 'grid', gap: 8 }}>
+          <TextField
+            select
+            label="Pallet Type"
+            value={packaging.pallet_type || 'Chep'}
+            onChange={(e) => update((d) => (d.packaging.pallet_type = e.target.value))}
+          >
+            {['Chep', 'Plain', 'Resin', 'None'].map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <FormControlLabel
+            control={<Checkbox checked={!!packaging.wrapped} onChange={(e) => update((d) => (d.packaging.wrapped = e.target.checked))} />}
+            label="Wrapped"
+          />
+        </Box>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Tool Requirements
+        </Typography>
+
+        <Stack spacing={1}>
           {tools.map((t: any, idx: number) => (
-            <div key={idx} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <select
-                value={t.stage || 'extrusion'}
-                onChange={(e) => update((d) => (d.tool_requirements[idx].stage = e.target.value))}
-              >
-                <option value="extrusion">extrusion</option>
-                <option value="conversion">conversion</option>
-              </select>
-              <input
-                type="text"
-                placeholder="tool_type"
-                value={t.tool_type || ''}
-                onChange={(e) => update((d) => (d.tool_requirements[idx].tool_type = e.target.value))}
-              />
-              <input
-                type="number"
-                min={1}
-                style={{ width: 90 }}
-                value={t.quantity ?? 1}
-                onChange={(e) => update((d) => (d.tool_requirements[idx].quantity = e.target.value ? parseInt(e.target.value) : 1))}
-              />
-              <input
-                type="text"
-                placeholder="preferred_machine_ids (comma-separated)"
-                value={listToCsv(t.preferred_machine_ids)}
-                onChange={(e) => update((d) => (d.tool_requirements[idx].preferred_machine_ids = csvToList(e.target.value)))}
-              />
-              <input
-                type="text"
-                placeholder="notes"
-                value={t.notes || ''}
-                onChange={(e) => update((d) => (d.tool_requirements[idx].notes = e.target.value || null))}
-              />
-              <Button
-                type="button"
-                variant="outlined"
-                size="small"
-                onClick={() => update((d) => d.tool_requirements.splice(idx, 1))}
-              >
-                Remove
-              </Button>
-            </div>
+            <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
+                <TextField
+                  select
+                  label="Stage"
+                  value={t.stage || 'extrusion'}
+                  onChange={(e) => update((d) => (d.tool_requirements[idx].stage = e.target.value))}
+                >
+                  <MenuItem value="extrusion">extrusion</MenuItem>
+                  <MenuItem value="conversion">conversion</MenuItem>
+                </TextField>
+                <TextField
+                  label="Tool type"
+                  value={t.tool_type || ''}
+                  onChange={(e) => update((d) => (d.tool_requirements[idx].tool_type = e.target.value))}
+                />
+                <TextField
+                  label="Quantity"
+                  type="number"
+                  inputProps={{ min: 1, step: 1 }}
+                  value={t.quantity ?? 1}
+                  onChange={(e) =>
+                    update((d) => (d.tool_requirements[idx].quantity = e.target.value ? parseInt(e.target.value) : 1))
+                  }
+                />
+                <TextField
+                  label="Preferred machine IDs (comma-separated)"
+                  value={listToCsv(t.preferred_machine_ids)}
+                  onChange={(e) => update((d) => (d.tool_requirements[idx].preferred_machine_ids = csvToList(e.target.value)))}
+                />
+                <TextField
+                  label="Notes"
+                  value={t.notes || ''}
+                  onChange={(e) => update((d) => (d.tool_requirements[idx].notes = e.target.value || null))}
+                />
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                  <Button type="button" variant="outlined" color="error" size="small" onClick={() => update((d) => d.tool_requirements.splice(idx, 1))}>
+                    Remove
+                  </Button>
+                </Box>
+              </Box>
+            </Paper>
           ))}
-        </div>
+        </Stack>
+
         <Box sx={{ mt: 2 }}>
           <Button
             type="button"
@@ -756,8 +908,8 @@ export function SpecPayloadForm(props: {
             Add Tool Requirement
           </Button>
         </Box>
-      </fieldset>
-    </div>
+      </Paper>
+    </Stack>
   )
 }
 

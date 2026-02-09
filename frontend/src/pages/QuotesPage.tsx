@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
 import {
   Alert,
   Box,
@@ -87,8 +86,6 @@ function QuotePreview({ preview }: { preview: any }) {
 }
 
 export function QuotesPage() {
-  const csrf = useAppSelector((s) => s.auth.csrfToken)
-
   const [bootstrap, setBootstrap] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -161,7 +158,6 @@ export function QuotesPage() {
       }
       const res = await apiFetch<any>('/api/quotes/calculate', {
         method: 'POST',
-        csrfToken: csrf || undefined,
         body: JSON.stringify(payload),
       })
       setProductPreview(res)
@@ -203,7 +199,6 @@ export function QuotesPage() {
       }
       const res = await apiFetch<any>('/api/quotes/quick/calculate', {
         method: 'POST',
-        csrfToken: csrf || undefined,
         body: JSON.stringify(payload),
       })
       setQuickPreview(res)

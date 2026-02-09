@@ -3,15 +3,53 @@ import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
-import { Alert, Box, Button, Paper, Typography } from '@mui/material'
+import {
+  Alert,
+  Box,
+  Button,
+  Link as MuiLink,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material'
 
 function fmtList(x: unknown): string {
   return Array.isArray(x) && x.length > 0 ? x.join(', ') : '-'
 }
 
+function SectionCard(props: { title: string; children: React.ReactNode }) {
+  return (
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Typography variant="h6" sx={{ mb: 2 }}>
+        {props.title}
+      </Typography>
+      {props.children}
+    </Paper>
+  )
+}
+
+function KVTable(props: { rows: Array<{ k: string; v: React.ReactNode }> }) {
+  return (
+    <Table size="small">
+      <TableBody>
+        {props.rows.map((r) => (
+          <TableRow key={r.k}>
+            <TableCell sx={{ width: 240, color: 'text.secondary', fontWeight: 600 }}>{r.k}</TableCell>
+            <TableCell>{r.v}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
 export function ProductVersionShowPage() {
   const { productId, versionId } = useParams()
-  const csrfToken = useAppSelector((s) => s.auth.csrfToken)
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const isPm = can(roles, 'PROD_MANAGER')
 
@@ -46,14 +84,13 @@ export function ProductVersionShowPage() {
         const res = await apiFetch<{ derived: any }>('/api/products/preview/dimensions', {
           method: 'POST',
           body: JSON.stringify(spec),
-          csrfToken: csrfToken || undefined,
         })
         setDerived(res.derived)
       } catch {
         // ignore: derived preview is a convenience
       }
     })()
-  }, [spec, csrfToken])
+  }, [spec])
 
   if (err) {
     return (
@@ -78,24 +115,31 @@ export function ProductVersionShowPage() {
   const routing = versionData.routing || { operations: [], warnings: [] }
 
   return (
-    <Box>
-      <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div>
+    <Stack spacing={2}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <Box>
           <Typography variant="h5">
             Job Sheet: {product.code} — Version {version.version_number}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-            <span>Customer: {product.customer_name || '-'}</span>
-            <span>Created by: {version.created_by}</span>
-            <span>Created at: {version.created_at || '-'}</span>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Customer: {product.customer_name || '-'} • Created by: {version.created_by} • Created at: {version.created_at || '-'}
           </Typography>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {product.description ? (
+            <Typography variant="body2" color="text.secondary">
+              Description: {product.description}
+            </Typography>
+          ) : null}
+        </Box>
+
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
           {isPm && (
             <Button variant="contained" component={Link} to={`/products/${productId}/versions/new`}>
               Create New Version
             </Button>
           )}
+          <Button variant="outlined" component={Link} to={`/products/${productId}`}>
+            Previous Versions
+          </Button>
           <Button
             variant="outlined"
             component={Link}
@@ -105,8 +149,8 @@ export function ProductVersionShowPage() {
           >
             Print
           </Button>
-        </div>
-      </header>
+        </Box>
+      </Box>
 
       {!spec ? (
         <Typography color="text.secondary" sx={{ mt: 2 }}>
@@ -114,61 +158,33 @@ export function ProductVersionShowPage() {
         </Typography>
       ) : (
         <>
-          <section style={{ marginTop: 24 }}>
-            <h2>1. Product Identity</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Product Type</th>
-                  <td>{spec.identity?.product_type || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Finish Mode</th>
-                  <td>{spec.identity?.finish_mode || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Industry Flags</th>
-                  <td>{fmtList(spec.identity?.industry_flags)}</td>
-                </tr>
-                <tr>
-                  <th>Notes</th>
-                  <td>{spec.identity?.notes || '-'}</td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+          <SectionCard title="1. Product Identity">
+            <KVTable
+              rows={[
+                { k: 'Product Type', v: spec.identity?.product_type || '-' },
+                { k: 'Finish Mode', v: spec.identity?.finish_mode || '-' },
+                { k: 'Industry Flags', v: fmtList(spec.identity?.industry_flags) },
+                { k: 'Notes', v: spec.identity?.notes || '-' },
+              ]}
+            />
+          </SectionCard>
 
-          <section style={{ marginTop: 24 }}>
-            <h2>2. Dimensions &amp; Geometry</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Base Width</th>
-                  <td>{spec.dimensions?.base_width_mm} mm</td>
-                </tr>
-                <tr>
-                  <th>Base Length</th>
-                  <td>{spec.dimensions?.base_length_mm ?? 'Continuous'} mm</td>
-                </tr>
-                <tr>
-                  <th>Thickness</th>
-                  <td>{spec.dimensions?.thickness_um} µm</td>
-                </tr>
-                <tr>
-                  <th>Geometry</th>
-                  <td>{spec.dimensions?.geometry}</td>
-                </tr>
-                {spec.dimensions?.gusset_mm ? (
-                  <tr>
-                    <th>Gusset Size</th>
-                    <td>{spec.dimensions?.gusset_mm} mm</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+          <SectionCard title="2. Dimensions & Geometry">
+            <KVTable
+              rows={[
+                { k: 'Base Width', v: `${spec.dimensions?.base_width_mm ?? '-'} mm` },
+                { k: 'Base Length', v: `${spec.dimensions?.base_length_mm ?? 'Continuous'} mm` },
+                { k: 'Thickness', v: `${spec.dimensions?.thickness_um ?? '-'} µm` },
+                { k: 'Geometry', v: spec.dimensions?.geometry || '-' },
+                { k: 'Gusset Size', v: spec.dimensions?.gusset_mm ? `${spec.dimensions?.gusset_mm} mm` : '-' },
+              ]}
+            />
 
             {derived && (
               <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Derived dimensions
+                </Typography>
                 <Typography variant="body2">
                   Layflat (mm): <strong>{derived.layflat_mm}</strong>
                 </Typography>
@@ -182,243 +198,173 @@ export function ProductVersionShowPage() {
                 )}
               </Paper>
             )}
-          </section>
+          </SectionCard>
 
-          <section style={{ marginTop: 24 }}>
-            <h2>3. Materials &amp; Formulation</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Blend Type</th>
-                  <td>{spec.formulation?.blend_type || 'Custom'}</td>
-                </tr>
-                <tr>
-                  <th>Resin Blend</th>
-                  <td>
-                    {Array.isArray(spec.formulation?.blend) && spec.formulation.blend.length > 0 ? (
-                      <ul>
+          <SectionCard title="3. Materials & Formulation">
+            <KVTable
+              rows={[
+                { k: 'Blend Type', v: spec.formulation?.blend_type || 'Custom' },
+                {
+                  k: 'Resin Blend',
+                  v:
+                    Array.isArray(spec.formulation?.blend) && spec.formulation.blend.length > 0 ? (
+                      <Stack spacing={0.5}>
                         {spec.formulation.blend.map((c: any, idx: number) => (
-                          <li key={idx}>
+                          <Typography key={idx} variant="body2">
                             {c.resin_code}: {c.pct}%
-                          </li>
+                          </Typography>
                         ))}
-                      </ul>
+                      </Stack>
                     ) : (
                       '-'
-                    )}
-                  </td>
-                </tr>
-                <tr>
-                  <th>Colour</th>
-                  <td>
-                    {spec.formulation?.colour?.colour_code ? (
-                      <>
-                        Code: {spec.formulation.colour.colour_code}
-                        {spec.formulation.colour.strength_pct != null ? `, Strength: ${spec.formulation.colour.strength_pct}%` : ''}
-                        {spec.formulation.colour.opaque ? ', Opaque' : ''}
-                      </>
-                    ) : (
-                      'None'
-                    )}
-                  </td>
-                </tr>
-                <tr>
-                  <th>Additives</th>
-                  <td>
-                    {Array.isArray(spec.formulation?.additives) && spec.formulation.additives.length > 0 ? (
-                      <ul>
+                    ),
+                },
+                {
+                  k: 'Colour',
+                  v: spec.formulation?.colour?.colour_code ? (
+                    <>
+                      Code: {spec.formulation.colour.colour_code}
+                      {spec.formulation.colour.strength_pct != null ? `, Strength: ${spec.formulation.colour.strength_pct}%` : ''}
+                      {spec.formulation.colour.opaque ? ', Opaque' : ''}
+                    </>
+                  ) : (
+                    'None'
+                  ),
+                },
+                {
+                  k: 'Additives',
+                  v:
+                    Array.isArray(spec.formulation?.additives) && spec.formulation.additives.length > 0 ? (
+                      <Stack spacing={0.5}>
                         {spec.formulation.additives.map((a: any, idx: number) => (
-                          <li key={idx}>
+                          <Typography key={idx} variant="body2">
                             {a.additive_code}: {a.pct}%
-                          </li>
+                          </Typography>
                         ))}
-                      </ul>
+                      </Stack>
                     ) : (
                       '-'
-                    )}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+                    ),
+                },
+              ]}
+            />
+          </SectionCard>
 
-          <section style={{ marginTop: 24 }}>
-            <h2>4. Printing &amp; Artwork</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Printing Method</th>
-                  <td>{spec.printing?.method || '-'}</td>
-                </tr>
-                {spec.printing?.method && spec.printing.method !== 'None' ? (
-                  <>
-                    <tr>
-                      <th>Number of Colours</th>
-                      <td>{spec.printing?.num_colours || 0}</td>
-                    </tr>
-                    <tr>
-                      <th>Ink Codes</th>
-                      <td>{fmtList(spec.printing?.ink_codes)}</td>
-                    </tr>
-                    <tr>
-                      <th>Plate Codes</th>
-                      <td>{fmtList(spec.printing?.plate_codes)}</td>
-                    </tr>
-                    <tr>
-                      <th>Print Side</th>
-                      <td>{spec.printing?.side || '-'}</td>
-                    </tr>
-                    <tr>
-                      <th>Artwork References</th>
-                      <td>{fmtList(spec.printing?.artwork_refs)}</td>
-                    </tr>
-                  </>
-                ) : null}
-              </tbody>
-            </table>
-          </section>
+          <SectionCard title="4. Printing & Artwork">
+            <KVTable
+              rows={[
+                { k: 'Printing Method', v: spec.printing?.method || '-' },
+                { k: 'Number of Colours', v: spec.printing?.method && spec.printing.method !== 'None' ? spec.printing?.num_colours || 0 : '-' },
+                { k: 'Ink Codes', v: spec.printing?.method && spec.printing.method !== 'None' ? fmtList(spec.printing?.ink_codes) : '-' },
+                { k: 'Plate Codes', v: spec.printing?.method && spec.printing.method !== 'None' ? fmtList(spec.printing?.plate_codes) : '-' },
+                { k: 'Print Side', v: spec.printing?.method && spec.printing.method !== 'None' ? spec.printing?.side || '-' : '-' },
+                { k: 'Artwork References', v: spec.printing?.method && spec.printing.method !== 'None' ? fmtList(spec.printing?.artwork_refs) : '-' },
+              ]}
+            />
+          </SectionCard>
 
-          <section style={{ marginTop: 24 }}>
-            <h2>5. Quality Expectations</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Critical Flags</th>
-                  <td>{fmtList(spec.quality_expectations?.flags)}</td>
-                </tr>
-                <tr>
-                  <th>Known Issues</th>
-                  <td>{spec.quality_expectations?.known_issues || '-'}</td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+          <SectionCard title="5. Quality Expectations">
+            <KVTable
+              rows={[
+                { k: 'Critical Flags', v: fmtList(spec.quality_expectations?.flags) },
+                { k: 'Known Issues', v: spec.quality_expectations?.known_issues || '-' },
+              ]}
+            />
+          </SectionCard>
 
-          <section style={{ marginTop: 24 }}>
-            <h2>6. Run Requirements</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Preferred Extruders</th>
-                  <td>{fmtList(spec.run_requirements?.preferred_extruders)}</td>
-                </tr>
-                <tr>
-                  <th>Preferred Printer</th>
-                  <td>{spec.run_requirements?.preferred_printer || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Preferred Converter</th>
-                  <td>{spec.run_requirements?.preferred_converter || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Treat Inside/Outside</th>
-                  <td>{spec.run_requirements?.treat_inside_outside || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Inline Perforation</th>
-                  <td>{spec.run_requirements?.inline_perforation ? 'Yes' : 'No'}</td>
-                </tr>
-                <tr>
-                  <th>Inline Seal</th>
-                  <td>{spec.run_requirements?.inline_seal ? 'Yes' : 'No'}</td>
-                </tr>
-                <tr>
-                  <th>Setup Notes</th>
-                  <td>{spec.run_requirements?.notes || '-'}</td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+          <SectionCard title="6. Run Requirements">
+            <KVTable
+              rows={[
+                { k: 'Preferred Extruders', v: fmtList(spec.run_requirements?.preferred_extruders) },
+                { k: 'Preferred Printer', v: spec.run_requirements?.preferred_printer || '-' },
+                { k: 'Preferred Converter', v: spec.run_requirements?.preferred_converter || '-' },
+                { k: 'Treat Inside/Outside', v: spec.run_requirements?.treat_inside_outside || '-' },
+                { k: 'Inline Perforation', v: spec.run_requirements?.inline_perforation ? 'Yes' : 'No' },
+                { k: 'Inline Seal', v: spec.run_requirements?.inline_seal ? 'Yes' : 'No' },
+                { k: 'Setup Notes', v: spec.run_requirements?.notes || '-' },
+              ]}
+            />
+          </SectionCard>
 
-          <section style={{ marginTop: 24 }}>
-            <h2>7. Packaging &amp; Logistics Requirements</h2>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Pack Mode</th>
-                  <td>{spec.packaging?.pack_mode || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Core Type</th>
-                  <td>{spec.packaging?.core_type || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Core Policy</th>
-                  <td>{spec.packaging?.core_policy || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Bags per Carton</th>
-                  <td>{spec.packaging?.bags_per_carton ?? '-'}</td>
-                </tr>
-                <tr>
-                  <th>Pallet Type</th>
-                  <td>{spec.packaging?.pallet_type || '-'}</td>
-                </tr>
-                <tr>
-                  <th>Wrapping Required</th>
-                  <td>{spec.packaging?.wrapped ? 'Yes' : 'No'}</td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+          <SectionCard title="7. Packaging & Logistics Requirements">
+            <KVTable
+              rows={[
+                { k: 'Pack Mode', v: spec.packaging?.pack_mode || '-' },
+                { k: 'Core Type', v: spec.packaging?.core_type || '-' },
+                { k: 'Core Policy', v: spec.packaging?.core_policy || '-' },
+                { k: 'Bags per Carton', v: spec.packaging?.bags_per_carton ?? '-' },
+                { k: 'Pallet Type', v: spec.packaging?.pallet_type || '-' },
+                { k: 'Wrapping Required', v: spec.packaging?.wrapped ? 'Yes' : 'No' },
+              ]}
+            />
+          </SectionCard>
 
           {Array.isArray(spec.tool_requirements) && spec.tool_requirements.length > 0 ? (
-            <section style={{ marginTop: 24 }}>
-              <h2>8. Tool Requirements</h2>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Stage</th>
-                    <th>Tool Type</th>
-                    <th>Quantity</th>
-                    <th>Preferred Machines</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <SectionCard title="8. Tool Requirements">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Stage</TableCell>
+                    <TableCell>Tool Type</TableCell>
+                    <TableCell>Quantity</TableCell>
+                    <TableCell>Preferred Machines</TableCell>
+                    <TableCell>Notes</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
                   {spec.tool_requirements.map((t: any, idx: number) => (
-                    <tr key={idx}>
-                      <td>{t.stage}</td>
-                      <td>{t.tool_type}</td>
-                      <td>{t.quantity}</td>
-                      <td>{fmtList(t.preferred_machine_ids)}</td>
-                      <td>{t.notes || '-'}</td>
-                    </tr>
+                    <TableRow key={idx} hover>
+                      <TableCell>{t.stage}</TableCell>
+                      <TableCell>{t.tool_type}</TableCell>
+                      <TableCell>{t.quantity}</TableCell>
+                      <TableCell>{fmtList(t.preferred_machine_ids)}</TableCell>
+                      <TableCell>{t.notes || '-'}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </section>
+                </TableBody>
+              </Table>
+            </SectionCard>
           ) : null}
 
-          <section style={{ marginTop: 24 }}>
-            <h2>Required Operation Sequence</h2>
-            <ol>
+          <SectionCard title="Required Operation Sequence">
+            <Stack spacing={1}>
               {(routing.operations || []).map((op: any, idx: number) => (
-                <li key={idx}>
-                  {op.operation_type}: {op.description}
-                </li>
+                <Typography key={idx} variant="body2">
+                  <strong>{op.operation_type}</strong>: {op.description}
+                </Typography>
               ))}
-            </ol>
+            </Stack>
+
             {Array.isArray(routing.warnings) && routing.warnings.length > 0 ? (
               <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
-                <strong>Warnings:</strong>
-                <ul>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Warnings
+                </Typography>
+                <Stack spacing={0.5}>
                   {routing.warnings.map((w: string, idx: number) => (
-                    <li key={idx}>{w}</li>
+                    <Typography key={idx} variant="body2">
+                      {w}
+                    </Typography>
                   ))}
-                </ul>
+                </Stack>
               </Paper>
             ) : null}
-          </section>
+          </SectionCard>
         </>
       )}
 
-      <Box sx={{ mt: 3 }}>
+      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <Button component={Link} to={`/products/${productId}`} variant="outlined">
-          ← Back to Product
+          Back to Product
         </Button>
+        <Button component={Link} to="/products" variant="outlined">
+          Back to Products
+        </Button>
+        <MuiLink component={Link} to={`/products/${productId}`} underline="hover" sx={{ alignSelf: 'center' }}>
+          View product versions
+        </MuiLink>
       </Box>
-    </Box>
+    </Stack>
   )
 }
 

@@ -12,7 +12,12 @@ router = APIRouter(prefix="/api/customers", tags=["customers"])
 
 
 def _customer_summary(c) -> dict:
-    return {"id": c.id, "name": c.name, "status": c.status, "currency_preference": c.currency_preference}
+    return {
+        "id": c.id,
+        "name": c.name,
+        "status": c.status,
+        "currency_preference": c.currency_preference,
+    }
 
 
 @router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])

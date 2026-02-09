@@ -20,8 +20,10 @@ from app.products.schemas import (
 
 
 def _ensure_customer_exists(db: Session, customer_id: str) -> None:
+    # IDs are stored as String(36) in the DB. We still validate UUID format,
+    # but comparisons/PK lookups must use the string value.
     try:
-        cid = uuid.UUID(customer_id)
+        cid = str(uuid.UUID(customer_id))
     except Exception as e:
         raise DomainError("Invalid customer_id") from e
     exists = db.scalar(select(func.count()).select_from(Customer).where(Customer.id == cid)) or 0
@@ -29,7 +31,7 @@ def _ensure_customer_exists(db: Session, customer_id: str) -> None:
         raise DomainError("Customer not found")
 
 
-def _next_version_number(db: Session, product_id: uuid.UUID) -> int:
+def _next_version_number(db: Session, product_id: str) -> int:
     current = db.scalar(
         select(func.max(ProductVersion.version_number)).where(ProductVersion.product_id == product_id)
     )
@@ -43,7 +45,11 @@ def create_product_with_version(payload: CreateProductRequest, created_by: str) 
         existing = db.scalar(select(func.count()).select_from(Product).where(Product.code == payload.code)) or 0
         if existing > 0:
             raise DomainError("Product code already exists")
-        product = Product(code=payload.code, customer_id=uuid.UUID(payload.customer_id))
+        product = Product(
+            code=payload.code,
+            description=(payload.description.strip() if payload.description and payload.description.strip() else None),
+            customer_id=str(uuid.UUID(payload.customer_id)),
+        )
         db.add(product)
         db.flush()  # get product.id
         version = ProductVersion(
@@ -64,7 +70,7 @@ def create_product_with_version(payload: CreateProductRequest, created_by: str) 
 
 def get_with_versions(product_id: str) -> Optional[Product]:
     with SessionLocal() as db:
-        pid = uuid.UUID(product_id)
+        pid = str(uuid.UUID(product_id))
         stmt = (
             select(Product)
             .options(joinedload(Product.versions))
@@ -76,14 +82,14 @@ def get_with_versions(product_id: str) -> Optional[Product]:
 
 def get_version(version_id: str) -> Optional[ProductVersion]:
     with SessionLocal() as db:
-        vid = uuid.UUID(version_id)
+        vid = str(uuid.UUID(version_id))
         stmt = select(ProductVersion).where(ProductVersion.id == vid)
         return db.scalar(stmt)
 
 
 def create_new_version(product_id: str, payload: CreateProductVersionRequest, created_by: str) -> ProductVersion:
     with SessionLocal() as db:
-        pid = uuid.UUID(product_id)
+        pid = str(uuid.UUID(product_id))
         # ensure product exists
         product = db.get(Product, pid)
         if not product:
@@ -172,9 +178,11 @@ def resolve_suggestion(suggestion_id: str, decision: str, resolver: str) -> Oper
         return sug
 
 
-def search_products(query: Optional[str]) -> List[Product]:
+def search_products(query: Optional[str], *, customer_id: Optional[str] = None) -> List[Product]:
     with SessionLocal() as db:
-        stmt = select(Product).options(joinedload(Product.customer))
+        stmt = select(Product).options(joinedload(Product.customer)).options(joinedload(Product.active_version))
+        if customer_id:
+            stmt = stmt.where(Product.customer_id == str(customer_id))
         if query:
             like = f"%{query}%"
             stmt = stmt.where(or_(Product.code.ilike(like)))

@@ -68,6 +68,7 @@ class Product(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
     active_version_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("product_versions.id", ondelete="RESTRICT"), nullable=True
@@ -140,8 +141,9 @@ class Order(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
-    product_version_id: Mapped[str] = mapped_column(
-        ForeignKey("product_versions.id", ondelete="RESTRICT"), index=True
+    # Deprecated in favor of OrderItem rows (kept for backward compatibility)
+    product_version_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("product_versions.id", ondelete="RESTRICT"), index=True, nullable=True
     )
     quote_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus, name="order_status"))
@@ -150,6 +152,25 @@ class Order(Base):
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order")
+    items: Mapped[list["OrderItem"]] = relationship(back_populates="order")
+
+
+class OrderItem(Base):
+    __tablename__ = "order_items"
+    __table_args__ = (
+        UniqueConstraint("order_id", "product_version_id", name="uq_order_item_order_version"),
+        Index("ix_order_items_order", "order_id"),
+        Index("ix_order_items_version", "product_version_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
+    product_version_id: Mapped[str] = mapped_column(
+        ForeignKey("product_versions.id", ondelete="RESTRICT"), index=True
+    )
+    quantity: Mapped[float] = mapped_column(Numeric(18, 6))
+
+    order: Mapped["Order"] = relationship(back_populates="items")
 
 
 class Job(Base):

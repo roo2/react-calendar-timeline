@@ -24,6 +24,7 @@ type OrderRow = {
   customer_name?: string | null
   product_code?: string | null
   version_number?: number | null
+  item_count?: number | null
   currency: string
   created_at?: string | null
 }
@@ -81,7 +82,11 @@ export function OrdersPage() {
                   </MuiLink>
                 </TableCell>
                 <TableCell>{o.customer_name || '-'}</TableCell>
-                <TableCell>{o.product_code ? `${o.product_code} v${o.version_number ?? ''}` : '-'}</TableCell>
+                <TableCell>
+                  {o.product_code
+                    ? `${o.product_code}${o.version_number != null ? ` v${o.version_number}` : ''}${o.item_count && o.item_count > 1 ? ` (+${o.item_count - 1})` : ''}`
+                    : '-'}
+                </TableCell>
                 <TableCell>{o.status}</TableCell>
                 <TableCell>{o.currency}</TableCell>
                 <TableCell>{o.created_at || ''}</TableCell>

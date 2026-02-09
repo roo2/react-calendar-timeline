@@ -23,8 +23,11 @@ import {
 type ProductSummary = {
   id: string
   code: string
+  description?: string | null
   customer_name?: string | null
   active_version_id?: string | null
+  product_type?: string | null
+  pack_mode?: string | null
 }
 
 export function ProductsPage() {
@@ -87,21 +90,29 @@ export function ProductsPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Code</TableCell>
               <TableCell>Customer</TableCell>
-              <TableCell>Active Version</TableCell>
+              <TableCell>Code</TableCell>
+              <TableCell>Description</TableCell>
+              <TableCell>Type</TableCell>
+              <TableCell>Packing</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {items.map((p) => (
               <TableRow key={p.id} hover>
+                <TableCell>{p.customer_name || '-'}</TableCell>
                 <TableCell>
-                  <MuiLink component={Link} to={`/products/${p.id}`} underline="hover">
+                  <MuiLink
+                    component={Link}
+                    to={p.active_version_id ? `/products/${p.id}/versions/${p.active_version_id}` : `/products/${p.id}`}
+                    underline="hover"
+                  >
                     {p.code}
                   </MuiLink>
                 </TableCell>
-                <TableCell>{p.customer_name || '-'}</TableCell>
-                <TableCell>{p.active_version_id || '-'}</TableCell>
+                <TableCell>{p.description || '-'}</TableCell>
+                <TableCell>{p.product_type || '-'}</TableCell>
+                <TableCell>{p.pack_mode || '-'}</TableCell>
               </TableRow>
             ))}
           </TableBody>

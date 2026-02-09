@@ -31,10 +31,9 @@ export const login = createAsyncThunk(
   },
 )
 
-export const logout = createAsyncThunk('auth/logout', async (csrfToken: string | null) => {
+export const logout = createAsyncThunk('auth/logout', async () => {
   return await apiFetch<{ ok: boolean }>('/api/auth/logout', {
     method: 'POST',
-    csrfToken: csrfToken || undefined,
   })
 })
 

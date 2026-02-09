@@ -1,13 +1,11 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
 import { Alert, Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
 
 export function OrderAddJobPage() {
   const { orderId } = useParams()
   const nav = useNavigate()
-  const csrf = useAppSelector((s) => s.auth.csrfToken)
 
   const [plannedQty, setPlannedQty] = useState('')
   const [allocated, setAllocated] = useState('')
@@ -21,7 +19,6 @@ export function OrderAddJobPage() {
     try {
       await apiFetch(`/api/orders/${orderId}/jobs`, {
         method: 'POST',
-        csrfToken: csrf || undefined,
         body: JSON.stringify({
           planned_qty: plannedQty,
           allocated_order_units: allocated ? allocated : null,

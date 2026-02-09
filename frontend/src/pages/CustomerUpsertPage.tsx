@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { clearUpsertErrors, clearUpsertFieldError, createCustomer, fetchCustomer, updateCustomer } from '../store/slices/customersSlice'
+import { FormErrorAlert } from '../components/FormErrorAlert'
 import {
-  Alert,
   Box,
   Button,
   Checkbox,
@@ -100,7 +100,6 @@ export function CustomerUpsertPage() {
   const isEdit = !!customerId
   const nav = useNavigate()
   const dispatch = useAppDispatch()
-  const csrf = useAppSelector((s) => s.auth.csrfToken)
 
   const detailEntry = useAppSelector((s) => (customerId ? s.customers.detail.byId[customerId] : undefined))
   const upsert = useAppSelector((s) => s.customers.upsert)
@@ -254,10 +253,10 @@ export function CustomerUpsertPage() {
       }
 
       if (isEdit) {
-        await dispatch(updateCustomer({ customerId: customerId!, data: payload, csrfToken: csrf })).unwrap()
+        await dispatch(updateCustomer({ customerId: customerId!, data: payload })).unwrap()
         nav(`/customers/${customerId}`)
       } else {
-        const res = await dispatch(createCustomer({ data: payload, csrfToken: csrf })).unwrap()
+        const res = await dispatch(createCustomer({ data: payload })).unwrap()
         nav(`/customers/${res.id}`)
       }
     } catch {
@@ -273,25 +272,10 @@ export function CustomerUpsertPage() {
         {isEdit ? 'Edit Customer' : 'New Customer'}
       </Typography>
 
-      {err && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          <Stack spacing={1}>
-            <div>{err}</div>
-            {errorSummary.length > 0 && (
-              <Box component="ul" sx={{ m: 0, pl: 2 }}>
-                {errorSummary.map((m, i) => (
-                  <li key={i}>{m}</li>
-                ))}
-              </Box>
-            )}
-          </Stack>
-        </Alert>
-      )}
+      <FormErrorAlert error={err} messages={errorSummary} scrollOnShow={false} />
 
       {localErr && !err && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {localErr}
-        </Alert>
+        <FormErrorAlert error={localErr} scrollOnShow={false} />
       )}
 
       <Stack spacing={2}>

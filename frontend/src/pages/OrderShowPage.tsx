@@ -60,8 +60,7 @@ export function OrderShowPage() {
         Order {order.code}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Product:{' '}
-        {order.product_code ? `${order.product_code} v${order.version_number ?? ''}` : '-'} • Currency: {order.currency} • Created:{' '}
+        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Currency: {order.currency} • Created:{' '}
         {order.created_at || ''}
       </Typography>
 
@@ -75,6 +74,36 @@ export function OrderShowPage() {
           Back to Orders
         </Button>
       </Box>
+
+      <Paper variant="outlined" sx={{ mb: 2 }}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Product Code</TableCell>
+              <TableCell>Product Name</TableCell>
+              <TableCell>Version</TableCell>
+              <TableCell>Quantity</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {(order.items || []).map((it: any) => (
+              <TableRow key={it.id} hover>
+                <TableCell>{it.product_code || '-'}</TableCell>
+                <TableCell>{it.product_name || '-'}</TableCell>
+                <TableCell>{it.version_number != null ? `v${it.version_number}` : '-'}</TableCell>
+                <TableCell>{it.quantity ?? '-'}</TableCell>
+              </TableRow>
+            ))}
+            {(order.items || []).length === 0 && (
+              <TableRow>
+                <TableCell colSpan={4}>
+                  <Typography color="text.secondary">No products.</Typography>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Paper>
 
       <Paper variant="outlined">
         <Table size="small">

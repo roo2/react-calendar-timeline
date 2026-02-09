@@ -133,7 +133,7 @@ function App() {
                   variant="outlined"
                   size="small"
                   onClick={async () => {
-                    await dispatch(logout(auth.csrfToken)).unwrap()
+                    await dispatch(logout()).unwrap()
                     nav('/login')
                   }}
                 >

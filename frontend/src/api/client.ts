@@ -15,14 +15,34 @@ export class ApiError extends Error {
   }
 }
 
+type CsrfTokenGetter = () => string | null | undefined
+
+let _csrfTokenGetter: CsrfTokenGetter = () => null
+
+/**
+ * Configure how apiFetch should retrieve the current CSRF token.
+ *
+ * This avoids importing the Redux store into the API client (which can create
+ * circular dependencies), while still allowing automatic CSRF headers.
+ */
+export function setCsrfTokenGetter(getter: CsrfTokenGetter) {
+  _csrfTokenGetter = getter
+}
+
+function isMutatingMethod(method: string) {
+  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE'
+}
+
 export async function apiFetch<T>(
   path: string,
-  opts: RequestInit & { csrfToken?: string } = {},
+  opts: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(opts.headers || {})
   headers.set('Accept', 'application/json')
 
-  if (opts.csrfToken) headers.set('x-csrf-token', opts.csrfToken)
+  const method = (opts.method || 'GET').toUpperCase()
+  const token = isMutatingMethod(method) ? _csrfTokenGetter() : null
+  if (token) headers.set('x-csrf-token', token)
   if (opts.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
   const resp = await fetch(path, {
