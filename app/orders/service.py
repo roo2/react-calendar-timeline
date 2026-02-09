@@ -49,7 +49,7 @@ def _next_job_code(db, order_id: str) -> int:
     return int(current or 0) + 1
 
 
-def list_orders() -> List[OrderModel]:
+def list_orders(*, customer_id: Optional[str] = None) -> List[OrderModel]:
     with SessionLocal() as db:
         stmt = (
             select(OrderModel)
@@ -57,6 +57,8 @@ def list_orders() -> List[OrderModel]:
             .options(joinedload(OrderModel.items))
             .order_by(OrderModel.created_at.desc())
         )
+        if customer_id:
+            stmt = stmt.where(OrderModel.customer_id == str(customer_id))
         # joinedload(Order.items) is a collection eager load; Result must be de-duped.
         return list(db.execute(stmt).unique().scalars().all())
 

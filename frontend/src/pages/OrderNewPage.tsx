@@ -98,6 +98,26 @@ export function OrderNewPage() {
   }
 
   useEffect(() => {
+    // Allow deep-linking into "New Order for customer X" from Customers page.
+    // If present, we treat it as an explicit intent to start a new order for that customer.
+    const qs = new URLSearchParams(loc.search)
+    const pre = qs.get('customerId') || qs.get('customer_id')
+    if (!pre) return
+    if (pre === customerId && items.length > 0) return
+    try {
+      sessionStorage.removeItem(draftKey)
+    } catch {
+      // ignore
+    }
+    setCustomerId(pre)
+    setItems([])
+    setProducts([])
+    setProductId('')
+    setErr(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
     void (async () => {
       try {
         const res = await apiFetch<{ customers: Customer[] }>('/api/orders/bootstrap')

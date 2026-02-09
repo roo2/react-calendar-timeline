@@ -1,9 +1,30 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
 import { fetchCustomer } from '../store/slices/customersSlice'
-import { Alert, Box, Button, Paper, Typography, Link as MuiLink } from '@mui/material'
+import { apiFetch } from '../api/client'
+import { Alert, Box, Button, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
+
+type ProductRow = {
+  id: string
+  code: string
+  description?: string | null
+  active_version_id?: string | null
+  product_type?: string | null
+  pack_mode?: string | null
+}
+
+type OrderRow = {
+  id: string
+  code: string
+  status: string
+  product_code?: string | null
+  version_number?: number | null
+  item_count?: number | null
+  currency: string
+  created_at?: string | null
+}
 
 export function CustomerShowPage() {
   const { customerId } = useParams()
@@ -15,10 +36,31 @@ export function CustomerShowPage() {
   const customer = entry?.customer || null
   const err = entry?.error || null
 
+  const [products, setProducts] = useState<ProductRow[]>([])
+  const [orders, setOrders] = useState<OrderRow[]>([])
+  const [relErr, setRelErr] = useState<string | null>(null)
+
   useEffect(() => {
     if (!customerId) return
     void dispatch(fetchCustomer(customerId))
   }, [customerId, dispatch])
+
+  useEffect(() => {
+    if (!customerId) return
+    void (async () => {
+      try {
+        setRelErr(null)
+        const [pRes, oRes] = await Promise.all([
+          apiFetch<{ items: ProductRow[] }>(`/api/products?customer_id=${encodeURIComponent(customerId)}`),
+          apiFetch<OrderRow[]>(`/api/orders?customer_id=${encodeURIComponent(customerId)}`),
+        ])
+        setProducts(pRes.items || [])
+        setOrders(oRes || [])
+      } catch (e) {
+        setRelErr(e instanceof Error ? e.message : 'Failed to load related records')
+      }
+    })()
+  }, [customerId])
 
   if (err) {
     return (
@@ -124,6 +166,100 @@ export function CustomerShowPage() {
             <p style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{customer.notes}</p>
           </div>
         )}
+      </section>
+
+      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Products</h2>
+        {relErr && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {relErr}
+          </Alert>
+        )}
+        <Paper variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Code</TableCell>
+                <TableCell>Description</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Packing</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {products.map((p) => (
+                <TableRow key={p.id} hover>
+                  <TableCell>
+                    <MuiLink
+                      component={Link}
+                      to={p.active_version_id ? `/products/${p.id}/versions/${p.active_version_id}` : `/products/${p.id}`}
+                      underline="hover"
+                    >
+                      {p.code}
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>{p.description || '-'}</TableCell>
+                  <TableCell>{p.product_type || '-'}</TableCell>
+                  <TableCell>{p.pack_mode || '-'}</TableCell>
+                </TableRow>
+              ))}
+              {products.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4}>
+                    <Typography color="text.secondary">No products.</Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Paper>
+      </section>
+
+      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Orders</h2>
+        {relErr && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {relErr}
+          </Alert>
+        )}
+        <Paper variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Code</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Product</TableCell>
+                <TableCell>Currency</TableCell>
+                <TableCell>Created</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {orders.map((o) => (
+                <TableRow key={o.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/orders/${o.id}`} underline="hover">
+                      {o.code}
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>{o.status}</TableCell>
+                  <TableCell>
+                    {o.product_code
+                      ? `${o.product_code}${o.version_number != null ? ` v${o.version_number}` : ''}${o.item_count && o.item_count > 1 ? ` (+${o.item_count - 1})` : ''}`
+                      : '-'}
+                  </TableCell>
+                  <TableCell>{o.currency}</TableCell>
+                  <TableCell>{o.created_at || ''}</TableCell>
+                </TableRow>
+              ))}
+              {orders.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5}>
+                    <Typography color="text.secondary">No orders.</Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Paper>
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>

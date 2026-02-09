@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth.deps import require_roles, allow_roles_any, csrf_protect, current_identity
 from app.orders.schemas import (
@@ -48,8 +50,13 @@ def _order_to_detail_dto(o) -> OrderDetailDTO:
 
 
 @router.get("", response_model=list[OrderListItemDTO], dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def list_orders():
-    orders = service.list_orders()
+async def list_orders(customer_id: str | None = Query(default=None)):
+    if customer_id:
+        try:
+            uuid.UUID(str(customer_id))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid customer_id")
+    orders = service.list_orders(customer_id=customer_id)
     # Enrich with product code/version in a single DB round trip.
     # For multi-item orders, we use the first item as the summary.
     meta: dict[str, dict] = {}

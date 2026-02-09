@@ -24,6 +24,7 @@ export function CustomersPage() {
   const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
+  const canCreateOrder = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [q, setQ] = useState('')
   const items = useAppSelector((s) => s.customers.list.items)
@@ -99,6 +100,11 @@ export function CustomersPage() {
                       {canEdit && (
                         <Button size="small" variant="outlined" component={Link} to={`/customers/${c.id}/edit`}>
                           Edit
+                        </Button>
+                      )}
+                      {canCreateOrder && (
+                        <Button size="small" variant="contained" component={Link} to={`/orders/new?customerId=${encodeURIComponent(c.id)}`}>
+                          New Order
                         </Button>
                       )}
                     </Box>
