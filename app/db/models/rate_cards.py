@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, CheckConstraint, Enum as SAEnum, Integer, Numeric, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, CheckConstraint, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 
 from app.db.models import Base
@@ -20,6 +20,39 @@ class Resin(Base):
     __table_args__ = (
         CheckConstraint("density > 0", name="ck_resins_density_positive"),
         CheckConstraint("price_per_kg >= 0", name="ck_resins_price_nonneg"),
+    )
+
+
+class ResinBlend(Base):
+    __tablename__ = "resin_blends"
+
+    blend_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+
+    components: Mapped[list["ResinBlendComponent"]] = relationship(
+        "ResinBlendComponent",
+        back_populates="blend",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ResinBlendComponent(Base):
+    __tablename__ = "resin_blend_components"
+
+    blend_code: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("resin_blends.blend_code", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    resin_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    pct: Mapped[float] = mapped_column(Numeric(6, 2))
+
+    blend: Mapped["ResinBlend"] = relationship("ResinBlend", back_populates="components")
+
+    __table_args__ = (
+        CheckConstraint("pct >= 0", name="ck_resin_blend_components_pct_nonneg"),
+        CheckConstraint("pct <= 100", name="ck_resin_blend_components_pct_le_100"),
     )
 
 

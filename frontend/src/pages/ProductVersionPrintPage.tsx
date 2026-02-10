@@ -216,25 +216,63 @@ export function ProductVersionPrintPage() {
                   {spec.printing?.method && spec.printing.method !== 'None' ? (
                     <>
                       <tr>
-                        <th>Number of Colours</th>
-                        <td>{spec.printing?.num_colours || 0}</td>
-                      </tr>
-                      <tr>
-                        <th>Ink Codes</th>
-                        <td>{fmtList(spec.printing?.ink_codes)}</td>
-                      </tr>
-                      <tr>
-                        <th>Plate Codes</th>
-                        <td>{fmtList(spec.printing?.plate_codes)}</td>
-                      </tr>
-                      <tr>
                         <th>Print Side</th>
                         <td>{spec.printing?.side || '-'}</td>
                       </tr>
                       <tr>
-                        <th>Artwork References</th>
-                        <td>{fmtList(spec.printing?.artwork_refs)}</td>
+                        <th>Number of Colours</th>
+                        <td>{spec.printing?.num_colours || 0}</td>
                       </tr>
+                      <tr>
+                        <th>Print Description</th>
+                        <td>{spec.printing?.print_description || '-'}</td>
+                      </tr>
+                      {Array.isArray(spec.printing?.front_ink_plate) && spec.printing.front_ink_plate.length > 0 ? (
+                        <tr>
+                          <th>Front Ink/Plate</th>
+                          <td>
+                            <table className="spec-table" style={{ margin: 0 }}>
+                              <thead>
+                                <tr>
+                                  <th>Ink Code</th>
+                                  <th>Plate Code</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {spec.printing.front_ink_plate.map((r: any, idx: number) => (
+                                  <tr key={idx}>
+                                    <td>{r?.ink_code || '-'}</td>
+                                    <td>{r?.plate_code || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      ) : null}
+                      {Array.isArray(spec.printing?.back_ink_plate) && spec.printing.back_ink_plate.length > 0 ? (
+                        <tr>
+                          <th>Back Ink/Plate</th>
+                          <td>
+                            <table className="spec-table" style={{ margin: 0 }}>
+                              <thead>
+                                <tr>
+                                  <th>Ink Code</th>
+                                  <th>Plate Code</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {spec.printing.back_ink_plate.map((r: any, idx: number) => (
+                                  <tr key={idx}>
+                                    <td>{r?.ink_code || '-'}</td>
+                                    <td>{r?.plate_code || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      ) : null}
                     </>
                   ) : null}
                 </tbody>

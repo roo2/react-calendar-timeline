@@ -25,6 +25,8 @@ try:
 except Exception:
     sys_router = None
 from app.quotes.routes import router as quotes_router
+from app.admin_ratecards.api_routes import router as admin_ratecards_api_router
+from app.rate_cards.routes import router as rate_cards_router
 try:
     from app.integrations.telemetry.routes import router as telemetry_router  # type: ignore
 except Exception:
@@ -207,6 +209,8 @@ else:
     print("✗ ERROR: Products router is None - routes will not be available!", file=sys.stderr)
 
 app.include_router(quotes_router)
+app.include_router(admin_ratecards_api_router)
+app.include_router(rate_cards_router)
 if orders_router is not None:
     app.include_router(orders_router)
 if scheduling_router is not None:

@@ -239,11 +239,39 @@ export function ProductVersionShowPage() {
             <KVTable
               rows={[
                 { k: 'Printing Method', v: spec.printing?.method || '-' },
-                { k: 'Number of Colours', v: spec.printing?.method && spec.printing.method !== 'None' ? spec.printing?.num_colours || 0 : '-' },
-                { k: 'Ink Codes', v: spec.printing?.method && spec.printing.method !== 'None' ? fmtList(spec.printing?.ink_codes) : '-' },
-                { k: 'Plate Codes', v: spec.printing?.method && spec.printing.method !== 'None' ? fmtList(spec.printing?.plate_codes) : '-' },
                 { k: 'Print Side', v: spec.printing?.method && spec.printing.method !== 'None' ? spec.printing?.side || '-' : '-' },
-                { k: 'Artwork References', v: spec.printing?.method && spec.printing.method !== 'None' ? fmtList(spec.printing?.artwork_refs) : '-' },
+                { k: 'Number of Colours', v: spec.printing?.method && spec.printing.method !== 'None' ? spec.printing?.num_colours || 0 : '-' },
+                { k: 'Print Description', v: spec.printing?.method && spec.printing.method !== 'None' ? spec.printing?.print_description || '-' : '-' },
+                {
+                  k: 'Front Ink/Plate',
+                  v:
+                    spec.printing?.method && spec.printing.method !== 'None' && Array.isArray(spec.printing?.front_ink_plate) && spec.printing.front_ink_plate.length > 0 ? (
+                      <Stack spacing={0.5}>
+                        {spec.printing.front_ink_plate.map((r: any, idx: number) => (
+                          <Typography key={idx} variant="body2">
+                            {r?.ink_code || '-'} | {r?.plate_code || '-'}
+                          </Typography>
+                        ))}
+                      </Stack>
+                    ) : (
+                      '-'
+                    ),
+                },
+                {
+                  k: 'Back Ink/Plate',
+                  v:
+                    spec.printing?.method && spec.printing.method !== 'None' && Array.isArray(spec.printing?.back_ink_plate) && spec.printing.back_ink_plate.length > 0 ? (
+                      <Stack spacing={0.5}>
+                        {spec.printing.back_ink_plate.map((r: any, idx: number) => (
+                          <Typography key={idx} variant="body2">
+                            {r?.ink_code || '-'} | {r?.plate_code || '-'}
+                          </Typography>
+                        ))}
+                      </Stack>
+                    ) : (
+                      '-'
+                    ),
+                },
               ]}
             />
           </SectionCard>

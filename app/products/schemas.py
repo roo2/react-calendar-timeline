@@ -39,6 +39,11 @@ class PrintSide(str, Enum):
     BOTH = "both"
 
 
+class InkPlatePair(BaseModel):
+    ink_code: Optional[str] = None
+    plate_code: Optional[str] = None
+
+
 class TreatIO(str, Enum):
     INSIDE = "inside"
     OUTSIDE = "outside"
@@ -118,21 +123,21 @@ class FormulationSpec(BaseModel):
 class PrintingSpec(BaseModel):
     method: PrintMethod
     num_colours: Optional[int] = Field(0, ge=0)
+    print_description: Optional[str] = None
     ink_codes: List[str] = []
     plate_codes: List[str] = []
     side: Optional[PrintSide] = None
     artwork_refs: List[str] = []
+    front_ink_plate: List[InkPlatePair] = []
+    back_ink_plate: List[InkPlatePair] = []
 
     @root_validator(skip_on_failure=True)
     def validate_printing(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         method: PrintMethod = values.get("method")
         num_colours = values.get("num_colours") or 0
-        artwork_refs = values.get("artwork_refs") or []
         if method != PrintMethod.NONE:
             if num_colours < 1:
                 raise ValueError("num_colours must be ≥ 1 when printing is enabled")
-            if len(artwork_refs) == 0:
-                raise ValueError("artwork_refs required when printing is enabled")
         return values
 
 
