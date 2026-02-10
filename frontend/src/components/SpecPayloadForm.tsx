@@ -146,7 +146,6 @@ export function SpecPayloadForm(props: {
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
-  const isCenterfold = productType === PRODUCT_TYPE.Centerfold
   const isUFilm = productType === PRODUCT_TYPE.UFilm
 
   const derived: DerivedDimensions = useMemo(() => {
