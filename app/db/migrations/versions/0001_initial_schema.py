@@ -76,11 +76,10 @@ def upgrade() -> None:
         _create_pg_enum("queue_status", ["queued", "running", "completed", "removed"])
         _create_pg_enum("printing_method", ["none", "inline", "uteco"])
 
-    # Customers (final shape, includes fields previously added later)
+    # Customers
     op.create_table(
         "customers",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("code", sa.String(length=32), nullable=False, unique=True),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("abn", sa.String(length=50), nullable=True),
         sa.Column("tax_id", sa.String(length=50), nullable=True),
@@ -112,13 +111,13 @@ def upgrade() -> None:
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
     )
-    op.create_index("ix_customers_code", "customers", ["code"], unique=True)
 
     # Products
     op.create_table(
         "products",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("code", sa.String(length=32), nullable=False, unique=True),
+        sa.Column("description", sa.String(length=255), nullable=True),
         sa.Column(
             "customer_id",
             sa.String(length=36),
@@ -242,7 +241,7 @@ def upgrade() -> None:
             "product_version_id",
             sa.String(length=36),
             sa.ForeignKey("product_versions.id", ondelete="RESTRICT"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column("quote_id", sa.String(length=36), nullable=True),
         sa.Column("status", sa.Enum(name="order_status", native_enum=False), nullable=False),
@@ -257,6 +256,28 @@ def upgrade() -> None:
     op.create_index("ix_orders_code", "orders", ["code"], unique=True)
     op.create_index("ix_orders_customer", "orders", ["customer_id"], unique=False)
     op.create_index("ix_orders_product_version", "orders", ["product_version_id"], unique=False)
+
+    # Order items (multi-product orders)
+    op.create_table(
+        "order_items",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column(
+            "order_id",
+            sa.String(length=36),
+            sa.ForeignKey("orders.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column(
+            "product_version_id",
+            sa.String(length=36),
+            sa.ForeignKey("product_versions.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column("quantity", sa.Numeric(18, 6), nullable=False),
+        sa.UniqueConstraint("order_id", "product_version_id", name="uq_order_item_order_version"),
+    )
+    op.create_index("ix_order_items_order", "order_items", ["order_id"], unique=False)
+    op.create_index("ix_order_items_version", "order_items", ["product_version_id"], unique=False)
 
     # Jobs (includes allocated_order_units)
     op.create_table(
@@ -899,6 +920,9 @@ def downgrade() -> None:
     # Jobs/orders/machines
     op.drop_index("ix_jobs_order", table_name="jobs")
     op.drop_table("jobs")
+    op.drop_index("ix_order_items_version", table_name="order_items")
+    op.drop_index("ix_order_items_order", table_name="order_items")
+    op.drop_table("order_items")
     op.drop_index("ix_orders_product_version", table_name="orders")
     op.drop_index("ix_orders_customer", table_name="orders")
     op.drop_index("ix_orders_code", table_name="orders")
@@ -922,7 +946,6 @@ def downgrade() -> None:
     op.drop_table("products")
 
     # Customers
-    op.drop_index("ix_customers_code", table_name="customers")
     op.drop_table("customers")
 
     # Drop enum types (PostgreSQL only)

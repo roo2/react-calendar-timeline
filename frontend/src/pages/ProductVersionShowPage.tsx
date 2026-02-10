@@ -205,16 +205,26 @@ export function ProductVersionShowPage() {
                     ),
                 },
                 {
-                  k: 'Colour',
-                  v: spec.formulation?.colour?.colour_code ? (
-                    <>
-                      Code: {spec.formulation.colour.colour_code}
-                      {spec.formulation.colour.strength_pct != null ? `, Strength: ${spec.formulation.colour.strength_pct}%` : ''}
-                      {spec.formulation.colour.opaque ? ', Opaque' : ''}
-                    </>
-                  ) : (
-                    'None'
-                  ),
+                  k: 'Colour Components',
+                  v:
+                    Array.isArray(spec.formulation?.colour_components) && spec.formulation.colour_components.length > 0 ? (
+                      <Stack spacing={0.5}>
+                        {spec.formulation.colour_components.map((c: any, idx: number) => (
+                          <Typography key={idx} variant="body2">
+                            {c.colour_code || '-'}
+                            {c.strength_pct != null ? `: ${c.strength_pct}%` : ''}
+                          </Typography>
+                        ))}
+                      </Stack>
+                    ) : spec.formulation?.colour?.colour_code ? (
+                      <>
+                        Code: {spec.formulation.colour.colour_code}
+                        {spec.formulation.colour.strength_pct != null ? `, Strength: ${spec.formulation.colour.strength_pct}%` : ''}
+                        {spec.formulation.colour.opaque ? ', Opaque' : ''}
+                      </>
+                    ) : (
+                      'None'
+                    ),
                 },
                 {
                   k: 'Additives',

@@ -30,11 +30,40 @@ type ResinBlend = {
   components: Array<{ resin_code: string; pct: number }>
 }
 
+type Additive = {
+  additive_code: string
+  name: string
+  price_per_kg: number
+  category?: string | null
+}
+
+type Colour = {
+  colour_code: string
+  name: string
+  price_per_kg: number
+  opacity_multiplier: number
+  currency: string
+}
+
+type Core = {
+  core_type: string
+  description?: string | null
+  cost_per_meter: number
+  kg_per_meter: number
+  currency: string
+}
+
 export function AdminPage() {
   const [resins, setResins] = useState<Resin[]>([])
+  const [additives, setAdditives] = useState<Additive[]>([])
+  const [colours, setColours] = useState<Colour[]>([])
+  const [cores, setCores] = useState<Core[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savingCode, setSavingCode] = useState<string | null>(null)
+  const [savingAdditiveCode, setSavingAdditiveCode] = useState<string | null>(null)
+  const [savingColourCode, setSavingColourCode] = useState<string | null>(null)
+  const [savingCoreType, setSavingCoreType] = useState<string | null>(null)
   const [resinBlends, setResinBlends] = useState<ResinBlend[]>([])
   const [savingBlendCode, setSavingBlendCode] = useState<string | null>(null)
 
@@ -43,6 +72,23 @@ export function AdminPage() {
   const [newDensity, setNewDensity] = useState<number | ''>('')
   const [newPrice, setNewPrice] = useState<number | ''>('')
   const [newCurrency, setNewCurrency] = useState('AUD')
+
+  const [newAdditiveCode, setNewAdditiveCode] = useState('')
+  const [newAdditiveName, setNewAdditiveName] = useState('')
+  const [newAdditivePrice, setNewAdditivePrice] = useState<number | ''>('')
+  const [newAdditiveCategory, setNewAdditiveCategory] = useState('process')
+
+  const [newColourCode, setNewColourCode] = useState('')
+  const [newColourName, setNewColourName] = useState('')
+  const [newColourPrice, setNewColourPrice] = useState<number | ''>('')
+  const [newColourOpacity, setNewColourOpacity] = useState<number | ''>(0)
+  const [newColourCurrency, setNewColourCurrency] = useState('AUD')
+
+  const [newCoreType, setNewCoreType] = useState('')
+  const [newCoreDescription, setNewCoreDescription] = useState('')
+  const [newCoreCostPerM, setNewCoreCostPerM] = useState<number | ''>('')
+  const [newCoreKgPerM, setNewCoreKgPerM] = useState<number | ''>('')
+  const [newCoreCurrency, setNewCoreCurrency] = useState('AUD')
 
   const [newBlendCode, setNewBlendCode] = useState('')
   const [newBlendName, setNewBlendName] = useState('')
@@ -63,6 +109,24 @@ export function AdminPage() {
     return !!newCode.trim() && !!newName.trim() && newDensity !== '' && newPrice !== '' && !!newCurrency.trim()
   }, [newCode, newCurrency, newDensity, newName, newPrice])
 
+  const canCreateAdditive = useMemo(() => {
+    return !!newAdditiveCode.trim() && !!newAdditiveName.trim() && newAdditivePrice !== ''
+  }, [newAdditiveCode, newAdditiveName, newAdditivePrice])
+
+  const canCreateColour = useMemo(() => {
+    return (
+      !!newColourCode.trim() &&
+      !!newColourName.trim() &&
+      newColourPrice !== '' &&
+      newColourOpacity !== '' &&
+      !!newColourCurrency.trim()
+    )
+  }, [newColourCode, newColourCurrency, newColourName, newColourOpacity, newColourPrice])
+
+  const canCreateCore = useMemo(() => {
+    return !!newCoreType.trim() && newCoreCostPerM !== '' && newCoreKgPerM !== '' && !!newCoreCurrency.trim()
+  }, [newCoreCostPerM, newCoreCurrency, newCoreKgPerM, newCoreType])
+
   const canCreateBlend = useMemo(() => {
     if (!newBlendCode.trim() || !newBlendName.trim()) return false
     const comps = newBlendComponents.filter((c) => c.resin_code.trim() && c.pct !== '')
@@ -78,6 +142,12 @@ export function AdminPage() {
         setLoading(true)
         const rows = await apiFetch<Resin[]>('/api/admin/rate-cards/resins')
         setResins(rows)
+        const adds = await apiFetch<Additive[]>('/api/admin/rate-cards/additives')
+        setAdditives(adds)
+        const cols = await apiFetch<Colour[]>('/api/admin/rate-cards/colours')
+        setColours(cols)
+        const cs = await apiFetch<Core[]>('/api/admin/rate-cards/cores')
+        setCores(cs)
         const blends = await apiFetch<ResinBlend[]>('/api/admin/rate-cards/resin-blends')
         setResinBlends(blends)
       } catch (e) {
@@ -136,24 +206,97 @@ export function AdminPage() {
     }
   }
 
+  async function saveAdditive(code: string, patch: Omit<Additive, 'additive_code'>) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingAdditiveCode(trimmed)
+      const saved = await apiFetch<Additive>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      })
+      setAdditives((cur) => {
+        const idx = cur.findIndex((a) => a.additive_code === saved.additive_code)
+        if (idx === -1) return [...cur, saved].sort((a, b) => a.additive_code.localeCompare(b.additive_code))
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save additive')
+    } finally {
+      setSavingAdditiveCode(null)
+    }
+  }
+
+  async function saveColour(code: string, patch: Omit<Colour, 'colour_code'>) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingColourCode(trimmed)
+      const saved = await apiFetch<Colour>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      })
+      setColours((cur) => {
+        const idx = cur.findIndex((c) => c.colour_code === saved.colour_code)
+        if (idx === -1) return [...cur, saved].sort((a, b) => a.colour_code.localeCompare(b.colour_code))
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save colour')
+    } finally {
+      setSavingColourCode(null)
+    }
+  }
+
+  async function saveCore(coreType: string, patch: Omit<Core, 'core_type'>) {
+    const trimmed = coreType.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingCoreType(trimmed)
+      const saved = await apiFetch<Core>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      })
+      setCores((cur) => {
+        const idx = cur.findIndex((c) => c.core_type === saved.core_type)
+        if (idx === -1) return [...cur, saved].sort((a, b) => a.core_type.localeCompare(b.core_type))
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save core')
+    } finally {
+      setSavingCoreType(null)
+    }
+  }
+
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 2 }}>
         Admin
       </Typography>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack spacing={2}>
-          {err && <Alert severity="error">{err}</Alert>}
+      <Stack spacing={2}>
+        {err && <Alert severity="error">{err}</Alert>}
 
-          <Box>
-            <Typography variant="h6" sx={{ mb: 1 }}>
-              Resins
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Add or update resin master data used by materials and quoting.
-            </Typography>
-          </Box>
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Resins
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Add or update resin master data used by materials and quoting.
+              </Typography>
+            </Box>
 
           <Paper variant="outlined" sx={{ p: 2 }}>
             {loading ? (
@@ -207,7 +350,7 @@ export function AdminPage() {
                     <TableCell align="right">
                       <Button
                         size="small"
-                        variant="contained"
+                        variant="outlined"
                         disabled={!canCreate || savingCode === newCode.trim()}
                         onClick={() => {
                           if (!canCreate) return
@@ -234,7 +377,170 @@ export function AdminPage() {
             )}
           </Paper>
 
-          <Box>
+            <Box sx={{ mt: 1 }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>
+              Additives
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Add or update additive master data.
+            </Typography>
+            </Box>
+
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            {loading ? (
+              <Typography color="text.secondary">Loading…</Typography>
+            ) : (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ width: 180 }}>Code</TableCell>
+                    <TableCell>Name</TableCell>
+                    <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
+                    <TableCell sx={{ width: 180 }}>Category</TableCell>
+                    <TableCell sx={{ width: 140 }} />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {additives.map((a) => (
+                    <AdditiveRow key={a.additive_code} additive={a} saving={savingAdditiveCode === a.additive_code} onSave={saveAdditive} />
+                  ))}
+                  <TableRow>
+                    <TableCell>
+                      <TextField size="small" label="Code" value={newAdditiveCode} onChange={(e) => setNewAdditiveCode(e.target.value)} />
+                    </TableCell>
+                    <TableCell>
+                      <TextField size="small" fullWidth label="Name" value={newAdditiveName} onChange={(e) => setNewAdditiveName(e.target.value)} />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        label="Price / kg"
+                        type="number"
+                        inputProps={{ step: 0.0001, min: 0 }}
+                        value={newAdditivePrice}
+                        onChange={(e) => setNewAdditivePrice(e.target.value ? parseFloat(e.target.value) : '')}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField size="small" label="Category" value={newAdditiveCategory} onChange={(e) => setNewAdditiveCategory(e.target.value)} />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!canCreateAdditive || savingAdditiveCode === newAdditiveCode.trim()}
+                        onClick={() => {
+                          if (!canCreateAdditive) return
+                          void saveAdditive(newAdditiveCode, {
+                            name: newAdditiveName.trim(),
+                            price_per_kg: Number(newAdditivePrice),
+                            category: newAdditiveCategory.trim() ? newAdditiveCategory.trim() : null,
+                          }).then(() => {
+                            setNewAdditiveCode('')
+                            setNewAdditiveName('')
+                            setNewAdditivePrice('')
+                            setNewAdditiveCategory('process')
+                          })
+                        }}
+                      >
+                        Add additive
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            )}
+          </Paper>
+
+            <Box sx={{ mt: 1 }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>
+              Colours
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Add or update colour master data.
+            </Typography>
+            </Box>
+
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            {loading ? (
+              <Typography color="text.secondary">Loading…</Typography>
+            ) : (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ width: 180 }}>Code</TableCell>
+                    <TableCell>Name</TableCell>
+                    <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
+                    <TableCell sx={{ width: 160 }}>Opacity mult</TableCell>
+                    <TableCell sx={{ width: 120 }}>Currency</TableCell>
+                    <TableCell sx={{ width: 140 }} />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {colours.map((c) => (
+                    <ColourRow key={c.colour_code} colour={c} saving={savingColourCode === c.colour_code} onSave={saveColour} />
+                  ))}
+                  <TableRow>
+                    <TableCell>
+                      <TextField size="small" label="Code" value={newColourCode} onChange={(e) => setNewColourCode(e.target.value)} />
+                    </TableCell>
+                    <TableCell>
+                      <TextField size="small" fullWidth label="Name" value={newColourName} onChange={(e) => setNewColourName(e.target.value)} />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        label="Price / kg"
+                        type="number"
+                        inputProps={{ step: 0.0001, min: 0 }}
+                        value={newColourPrice}
+                        onChange={(e) => setNewColourPrice(e.target.value ? parseFloat(e.target.value) : '')}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        label="Opacity mult"
+                        type="number"
+                        inputProps={{ step: 0.001, min: 0 }}
+                        value={newColourOpacity}
+                        onChange={(e) => setNewColourOpacity(e.target.value ? parseFloat(e.target.value) : '')}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField size="small" label="Currency" value={newColourCurrency} onChange={(e) => setNewColourCurrency(e.target.value)} />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!canCreateColour || savingColourCode === newColourCode.trim()}
+                        onClick={() => {
+                          if (!canCreateColour) return
+                          void saveColour(newColourCode, {
+                            name: newColourName.trim(),
+                            price_per_kg: Number(newColourPrice),
+                            opacity_multiplier: Number(newColourOpacity),
+                            currency: newColourCurrency.trim().toUpperCase(),
+                          }).then(() => {
+                            setNewColourCode('')
+                            setNewColourName('')
+                            setNewColourPrice('')
+                            setNewColourOpacity(0)
+                            setNewColourCurrency('AUD')
+                          })
+                        }}
+                      >
+                        Add colour
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            )}
+          </Paper>
+
+            <Box>
             <Typography variant="h6" sx={{ mb: 1 }}>
               Resin blends
             </Typography>
@@ -318,9 +624,108 @@ export function AdminPage() {
                 </Paper>
               </Stack>
             )}
-          </Box>
-        </Stack>
-      </Paper>
+            </Box>
+          </Stack>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Cores
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Add or update core master data (cost/kg per meter).
+              </Typography>
+            </Box>
+
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              {loading ? (
+                <Typography color="text.secondary">Loading…</Typography>
+              ) : (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ width: 140 }}>Type</TableCell>
+                      <TableCell>Description</TableCell>
+                      <TableCell sx={{ width: 170 }}>Cost / m</TableCell>
+                      <TableCell sx={{ width: 170 }}>Kg / m</TableCell>
+                      <TableCell sx={{ width: 120 }}>Currency</TableCell>
+                      <TableCell sx={{ width: 140 }} />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {cores.map((c) => (
+                      <CoreRow key={c.core_type} core={c} saving={savingCoreType === c.core_type} onSave={saveCore} />
+                    ))}
+                    <TableRow>
+                      <TableCell>
+                        <TextField size="small" label="Type" value={newCoreType} onChange={(e) => setNewCoreType(e.target.value)} />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Description"
+                          value={newCoreDescription}
+                          onChange={(e) => setNewCoreDescription(e.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Cost / m"
+                          type="number"
+                          inputProps={{ step: 0.0001, min: 0 }}
+                          value={newCoreCostPerM}
+                          onChange={(e) => setNewCoreCostPerM(e.target.value ? parseFloat(e.target.value) : '')}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Kg / m"
+                          type="number"
+                          inputProps={{ step: 0.0001, min: 0 }}
+                          value={newCoreKgPerM}
+                          onChange={(e) => setNewCoreKgPerM(e.target.value ? parseFloat(e.target.value) : '')}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField size="small" label="Currency" value={newCoreCurrency} onChange={(e) => setNewCoreCurrency(e.target.value)} />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={!canCreateCore || savingCoreType === newCoreType.trim()}
+                          onClick={() => {
+                            if (!canCreateCore) return
+                            void saveCore(newCoreType, {
+                              description: newCoreDescription.trim() ? newCoreDescription.trim() : null,
+                              cost_per_meter: Number(newCoreCostPerM),
+                              kg_per_meter: Number(newCoreKgPerM),
+                              currency: newCoreCurrency.trim().toUpperCase(),
+                            }).then(() => {
+                              setNewCoreType('')
+                              setNewCoreDescription('')
+                              setNewCoreCostPerM('')
+                              setNewCoreKgPerM('')
+                              setNewCoreCurrency('AUD')
+                            })
+                          }}
+                        >
+                          Add core
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              )}
+            </Paper>
+          </Stack>
+        </Paper>
+      </Stack>
     </Box>
   )
 }
@@ -379,6 +784,186 @@ function ResinRow(props: {
               name: name.trim(),
               density: Number(density),
               price_per_kg: Number(price),
+              currency: currency.trim().toUpperCase(),
+            })
+          }
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function AdditiveRow(props: {
+  additive: Additive
+  saving: boolean
+  onSave: (code: string, patch: Omit<Additive, 'additive_code'>) => Promise<void>
+}) {
+  const { additive, saving, onSave } = props
+  const [name, setName] = useState(additive.name)
+  const [price, setPrice] = useState<number | ''>(additive.price_per_kg)
+  const [category, setCategory] = useState(additive.category || '')
+
+  const dirty = name !== additive.name || price !== additive.price_per_kg || category !== (additive.category || '')
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{additive.additive_code}</TableCell>
+      <TableCell>
+        <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          type="number"
+          inputProps={{ step: 0.0001, min: 0 }}
+          value={price}
+          onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" value={category} onChange={(e) => setCategory(e.target.value)} />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || !name.trim() || price === ''}
+          onClick={() =>
+            void onSave(additive.additive_code, {
+              name: name.trim(),
+              price_per_kg: Number(price),
+              category: category.trim() ? category.trim() : null,
+            })
+          }
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function ColourRow(props: {
+  colour: Colour
+  saving: boolean
+  onSave: (code: string, patch: Omit<Colour, 'colour_code'>) => Promise<void>
+}) {
+  const { colour, saving, onSave } = props
+  const [name, setName] = useState(colour.name)
+  const [price, setPrice] = useState<number | ''>(colour.price_per_kg)
+  const [opacity, setOpacity] = useState<number | ''>(colour.opacity_multiplier)
+  const [currency, setCurrency] = useState(colour.currency)
+
+  const dirty =
+    name !== colour.name ||
+    price !== colour.price_per_kg ||
+    opacity !== colour.opacity_multiplier ||
+    currency !== colour.currency
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{colour.colour_code}</TableCell>
+      <TableCell>
+        <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          type="number"
+          inputProps={{ step: 0.0001, min: 0 }}
+          value={price}
+          onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          type="number"
+          inputProps={{ step: 0.001, min: 0 }}
+          value={opacity}
+          onChange={(e) => setOpacity(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" value={currency} onChange={(e) => setCurrency(e.target.value)} />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || !name.trim() || price === '' || opacity === '' || !currency.trim()}
+          onClick={() =>
+            void onSave(colour.colour_code, {
+              name: name.trim(),
+              price_per_kg: Number(price),
+              opacity_multiplier: Number(opacity),
+              currency: currency.trim().toUpperCase(),
+            })
+          }
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function CoreRow(props: {
+  core: Core
+  saving: boolean
+  onSave: (coreType: string, patch: Omit<Core, 'core_type'>) => Promise<void>
+}) {
+  const { core, saving, onSave } = props
+  const [description, setDescription] = useState(core.description || '')
+  const [cost, setCost] = useState<number | ''>(core.cost_per_meter)
+  const [kg, setKg] = useState<number | ''>(core.kg_per_meter)
+  const [currency, setCurrency] = useState(core.currency)
+
+  const dirty =
+    description !== (core.description || '') ||
+    cost !== core.cost_per_meter ||
+    kg !== core.kg_per_meter ||
+    currency !== core.currency
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{core.core_type}</TableCell>
+      <TableCell>
+        <TextField size="small" fullWidth value={description} onChange={(e) => setDescription(e.target.value)} />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          type="number"
+          inputProps={{ step: 0.0001, min: 0 }}
+          value={cost}
+          onChange={(e) => setCost(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          type="number"
+          inputProps={{ step: 0.0001, min: 0 }}
+          value={kg}
+          onChange={(e) => setKg(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" value={currency} onChange={(e) => setCurrency(e.target.value)} />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || cost === '' || kg === '' || !currency.trim()}
+          onClick={() =>
+            void onSave(core.core_type, {
+              description: description.trim() ? description.trim() : null,
+              cost_per_meter: Number(cost),
+              kg_per_meter: Number(kg),
               currency: currency.trim().toUpperCase(),
             })
           }

@@ -87,6 +87,11 @@ class ColourSpec(BaseModel):
     opaque_strength_pct: Optional[float] = Field(None, ge=0)
 
 
+class ColourComponentSpec(BaseModel):
+    colour_code: Optional[str] = None
+    strength_pct: Optional[float] = Field(None, ge=0)
+
+
 class AdditiveComponent(BaseModel):
     additive_code: str
     pct: float = Field(..., ge=0)
@@ -102,6 +107,7 @@ class FormulationSpec(BaseModel):
     blend_type: BlendType = BlendType.CUSTOM
     blend: List[ResinComponent]
     colour: Optional[ColourSpec] = None
+    colour_components: List[ColourComponentSpec] = []
     additives: List[AdditiveComponent] = []
 
     @validator("blend")

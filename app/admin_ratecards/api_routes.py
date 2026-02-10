@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from app.auth.deps import require_roles, csrf_protect
-from app.db.models.rate_cards import Resin, ResinBlend, ResinBlendComponent
+from app.db.models.rate_cards import Additive, Colour, Core, Resin, ResinBlend, ResinBlendComponent
 from app.db.session import SessionLocal
 
 
@@ -43,6 +43,51 @@ class ResinBlendDTO(BaseModel):
 class ResinBlendUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     components: List[ResinBlendComponentDTO] = Field(default_factory=list)
+
+
+class AdditiveDTO(BaseModel):
+    additive_code: str
+    name: str
+    price_per_kg: float
+    category: str | None = None
+    notes: str | None = None
+
+
+class AdditiveUpsertRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    price_per_kg: float = Field(..., ge=0)
+    category: str | None = Field(default=None, max_length=64)
+    notes: str | None = None
+
+
+class ColourDTO(BaseModel):
+    colour_code: str
+    name: str
+    price_per_kg: float
+    opacity_multiplier: float
+    currency: str
+
+
+class ColourUpsertRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    price_per_kg: float = Field(..., ge=0)
+    opacity_multiplier: float = Field(default=0, ge=0)
+    currency: str = Field(..., min_length=3, max_length=3)
+
+
+class CoreDTO(BaseModel):
+    core_type: str
+    description: str | None = None
+    cost_per_meter: float
+    kg_per_meter: float
+    currency: str
+
+
+class CoreUpsertRequest(BaseModel):
+    description: str | None = None
+    cost_per_meter: float = Field(..., ge=0)
+    kg_per_meter: float = Field(..., ge=0)
+    currency: str = Field(..., min_length=3, max_length=3)
 
 
 @router.get(
@@ -182,5 +227,182 @@ async def upsert_resin_blend(blend_code: str, payload: ResinBlendUpsertRequest):
             blend_code=b2.blend_code,
             name=b2.name,
             components=[ResinBlendComponentDTO(resin_code=c.resin_code, pct=float(c.pct)) for c in comps2],
+        )
+
+
+@router.get(
+    "/additives",
+    response_model=List[AdditiveDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_additives():
+    with SessionLocal() as db:
+        rows = db.execute(select(Additive).order_by(Additive.additive_code.asc())).scalars().all()
+        return [
+            AdditiveDTO(
+                additive_code=a.additive_code,
+                name=a.name,
+                price_per_kg=float(a.price_per_kg),
+                category=a.category,
+                notes=a.notes,
+            )
+            for a in rows
+        ]
+
+
+@router.put(
+    "/additives/{additive_code}",
+    response_model=AdditiveDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
+    code = (additive_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="additive_code is required")
+
+    with SessionLocal.begin() as db:
+        a = db.get(Additive, code)
+        if not a:
+            a = Additive(
+                additive_code=code,
+                name=payload.name,
+                price_per_kg=payload.price_per_kg,
+                category=payload.category,
+                notes=payload.notes,
+            )
+            db.add(a)
+        else:
+            a.name = payload.name
+            a.price_per_kg = payload.price_per_kg
+            a.category = payload.category
+            a.notes = payload.notes
+
+    with SessionLocal() as db:
+        a2 = db.get(Additive, code)
+        assert a2 is not None
+        return AdditiveDTO(
+            additive_code=a2.additive_code,
+            name=a2.name,
+            price_per_kg=float(a2.price_per_kg),
+            category=a2.category,
+            notes=a2.notes,
+        )
+
+
+@router.get(
+    "/colours",
+    response_model=List[ColourDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_colours():
+    with SessionLocal() as db:
+        rows = db.execute(select(Colour).order_by(Colour.colour_code.asc())).scalars().all()
+        return [
+            ColourDTO(
+                colour_code=c.colour_code,
+                name=c.name,
+                price_per_kg=float(c.price_per_kg),
+                opacity_multiplier=float(c.opacity_multiplier),
+                currency=c.currency,
+            )
+            for c in rows
+        ]
+
+
+@router.put(
+    "/colours/{colour_code}",
+    response_model=ColourDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
+    code = (colour_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="colour_code is required")
+
+    with SessionLocal.begin() as db:
+        c = db.get(Colour, code)
+        if not c:
+            c = Colour(
+                colour_code=code,
+                name=payload.name,
+                price_per_kg=payload.price_per_kg,
+                opacity_multiplier=payload.opacity_multiplier,
+                currency=payload.currency,
+            )
+            db.add(c)
+        else:
+            c.name = payload.name
+            c.price_per_kg = payload.price_per_kg
+            c.opacity_multiplier = payload.opacity_multiplier
+            c.currency = payload.currency
+
+    with SessionLocal() as db:
+        c2 = db.get(Colour, code)
+        assert c2 is not None
+        return ColourDTO(
+            colour_code=c2.colour_code,
+            name=c2.name,
+            price_per_kg=float(c2.price_per_kg),
+            opacity_multiplier=float(c2.opacity_multiplier),
+            currency=c2.currency,
+        )
+
+
+@router.get(
+    "/cores",
+    response_model=List[CoreDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_cores():
+    with SessionLocal() as db:
+        rows = db.execute(select(Core).order_by(Core.core_type.asc())).scalars().all()
+        return [
+            CoreDTO(
+                core_type=c.core_type,
+                description=c.description,
+                cost_per_meter=float(c.cost_per_meter),
+                kg_per_meter=float(c.kg_per_meter),
+                currency=c.currency,
+            )
+            for c in rows
+        ]
+
+
+@router.put(
+    "/cores/{core_type}",
+    response_model=CoreDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_core(core_type: str, payload: CoreUpsertRequest):
+    code = (core_type or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="core_type is required")
+
+    with SessionLocal.begin() as db:
+        c = db.get(Core, code)
+        if not c:
+            c = Core(
+                core_type=code,
+                description=payload.description,
+                cost_per_meter=payload.cost_per_meter,
+                kg_per_meter=payload.kg_per_meter,
+                currency=payload.currency,
+            )
+            db.add(c)
+        else:
+            c.description = payload.description
+            c.cost_per_meter = payload.cost_per_meter
+            c.kg_per_meter = payload.kg_per_meter
+            c.currency = payload.currency
+
+    with SessionLocal() as db:
+        c2 = db.get(Core, code)
+        assert c2 is not None
+        return CoreDTO(
+            core_type=c2.core_type,
+            description=c2.description,
+            cost_per_meter=float(c2.cost_per_meter),
+            kg_per_meter=float(c2.kg_per_meter),
+            currency=c2.currency,
         )
 

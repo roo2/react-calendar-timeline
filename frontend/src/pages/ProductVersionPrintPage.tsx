@@ -172,9 +172,18 @@ export function ProductVersionPrintPage() {
                     </td>
                   </tr>
                   <tr>
-                    <th>Colour</th>
+                    <th>Colour Components</th>
                     <td>
-                      {spec.formulation?.colour?.colour_code ? (
+                      {Array.isArray(spec.formulation?.colour_components) && spec.formulation.colour_components.length > 0 ? (
+                        <ul>
+                          {spec.formulation.colour_components.map((c: any, idx: number) => (
+                            <li key={idx}>
+                              {c.colour_code || '-'}
+                              {c.strength_pct != null ? `: ${c.strength_pct}%` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : spec.formulation?.colour?.colour_code ? (
                         <>
                           Code: {spec.formulation.colour.colour_code}
                           {spec.formulation.colour.strength_pct != null ? `, Strength: ${spec.formulation.colour.strength_pct}%` : ''}

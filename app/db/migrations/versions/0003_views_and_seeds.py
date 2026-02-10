@@ -180,136 +180,145 @@ def upgrade() -> None:
             {"id": str(uuid.uuid4()), "code": code, "name": name, "icon": icon},
         )
 
-    # Seed rate-card reference data
-    conn.execute(
-        sa.text(
-            "INSERT INTO resins (resin_code, name, density, price_per_kg, currency) "
-            "VALUES ('LD', 'Low Density PE', 0.9200, 1.8000, 'AUD') "
-            "ON CONFLICT (resin_code) DO NOTHING"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO resins (resin_code, name, density, price_per_kg, currency) "
-            "VALUES ('MD', 'Medium Density PE', 0.9350, 2.1000, 'AUD') "
-            "ON CONFLICT (resin_code) DO NOTHING"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO additives (additive_code, name, price_per_kg, category) "
-            "VALUES ('SLIP', 'Slip Agent', 4.5000, 'process') "
-            "ON CONFLICT (additive_code) DO NOTHING"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO additives (additive_code, name, price_per_kg, category) "
-            "VALUES ('AB', 'Anti-Block', 3.7500, 'process') "
-            "ON CONFLICT (additive_code) DO NOTHING"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO colours (colour_code, name, price_per_kg, opacity_multiplier, currency) "
-            "VALUES ('WHT', 'White', 5.0000, 0.200, 'AUD') "
-            "ON CONFLICT (colour_code) DO NOTHING"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO colours (colour_code, name, price_per_kg, opacity_multiplier, currency) "
-            "VALUES ('BLK', 'Black', 4.5000, 0.100, 'AUD') "
-            "ON CONFLICT (colour_code) DO NOTHING"
-        )
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO cores (core_type, description, cost_per_meter, kg_per_meter, currency) "
-            "VALUES ('STD', 'Standard core', 0.1500, 0.0500, 'AUD') "
-            "ON CONFLICT (core_type) DO NOTHING"
-        )
-    )
+    # --- Seed rate-card master data (resins/additives/colours/cores) ---
+    # This is the SQL equivalent of:
+    # - scripts/seed_resins_from_tsv.py (embedded DEFAULT_TSV)
+    # - scripts/seed_additives.py
+    # - scripts/seed_colours.py
+    # - scripts/seed_cores.py
+    #
+    # NOTE: resin_blends are created in a later migration (0004_resin_blends) and are seeded there.
 
-    # Idempotent inserts for printing_rates / conversion_rates (no natural unique key in schema)
-    # printing_rates
-    printing_rates = [
-        ("inline", 0, 45.0000, 30, False),
-        ("uteco", 0, 85.0000, 60, True),
-        ("none", 0, 0.0000, 0, False),
+    resins_seed = [
+        # resin_code, name, density, price_per_kg, currency
+        ("Q1018H", "Linear", 0.001848, 1.98, "AUD"),
+        ("FD0270", "Sanofi", 0.001848, 2.26, "AUD"),
+        ("FD0274", "Light G", 0.001848, 2.29, "AUD"),
+        ("FE8004", "Med G", 0.001848, 2.28, "AUD"),
+        ("FE3000", "Heavy G", 0.001848, 2.28, "AUD"),
+        ("S199F", "H/D", 0.001924, 2.06, "AUD"),
+        ("1018RA/25", "Metallizine", 0.001848, 2.21, "AUD"),
     ]
-    for method, min_meters, cost_per_1000m, setup_minutes, duplex_supported in printing_rates:
+    for resin_code, name, density, price_per_kg, currency in resins_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO printing_rates (id, method, min_meters, cost_per_1000m, setup_minutes, duplex_supported)
-                SELECT :id, CAST(:method as varchar), :min_meters, :cost_per_1000m, :setup_minutes, :duplex_supported
-                WHERE NOT EXISTS (
-                  SELECT 1 FROM printing_rates
-                  WHERE method = :method
-                    AND min_meters = :min_meters
-                    AND cost_per_1000m = :cost_per_1000m
-                    AND setup_minutes = :setup_minutes
-                    AND duplex_supported = :duplex_supported
-                )
+                INSERT INTO resins (resin_code, name, density, price_per_kg, currency)
+                VALUES (:resin_code, :name, :density, :price_per_kg, :currency)
+                ON CONFLICT (resin_code) DO UPDATE SET
+                  name = excluded.name,
+                  density = excluded.density,
+                  price_per_kg = excluded.price_per_kg,
+                  currency = excluded.currency
                 """
             ),
             {
-                "id": str(uuid.uuid4()),
-                "method": str(method),
-                "min_meters": min_meters,
-                "cost_per_1000m": cost_per_1000m,
-                "setup_minutes": setup_minutes,
-                "duplex_supported": duplex_supported,
+                "resin_code": resin_code,
+                "name": name,
+                "density": density,
+                "price_per_kg": price_per_kg,
+                "currency": currency,
             },
         )
 
-    # conversion_rates
-    conv = (20, 100, 200, 1200, 18000, 30)
-    conn.execute(
-        sa.text(
-            """
-            INSERT INTO conversion_rates (id, min_gauge_um, max_gauge_um, min_length_mm, max_length_mm, bags_per_hour, setup_minutes)
-            SELECT :id, :min_g, :max_g, :min_l, :max_l, :bph, :setup
-            WHERE NOT EXISTS (
-              SELECT 1 FROM conversion_rates
-              WHERE min_gauge_um = :min_g
-                AND max_gauge_um = :max_g
-                AND min_length_mm = :min_l
-                AND max_length_mm = :max_l
-                AND bags_per_hour = :bph
-                AND setup_minutes = :setup
-            )
-            """
-        ),
-        {
-            "id": str(uuid.uuid4()),
-            "min_g": conv[0],
-            "max_g": conv[1],
-            "min_l": conv[2],
-            "max_l": conv[3],
-            "bph": conv[4],
-            "setup": conv[5],
-        },
-    )
+    additives_seed = [
+        # additive_code, name, price_per_kg, category, notes
+        ("ANTI_BLOCK", "Anti Block", 3.5, "process", None),
+        ("ANTI_STATIC", "Anti Static", 7.7, "process", None),
+        ("SLIP", "Slip", 6.4, "process", None),
+        ("UV", "UV", 13.4, "process", None),
+    ]
+    for additive_code, name, price_per_kg, category, notes in additives_seed:
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO additives (additive_code, name, price_per_kg, category, notes)
+                VALUES (:additive_code, :name, :price_per_kg, :category, :notes)
+                ON CONFLICT (additive_code) DO UPDATE SET
+                  name = excluded.name,
+                  price_per_kg = excluded.price_per_kg,
+                  category = excluded.category,
+                  notes = excluded.notes
+                """
+            ),
+            {
+                "additive_code": additive_code,
+                "name": name,
+                "price_per_kg": price_per_kg,
+                "category": category,
+                "notes": notes,
+            },
+        )
 
-    # waste_adders
-    conn.execute(
-        sa.text(
-            "INSERT INTO waste_adders (id, condition, waste_minutes) "
-            "VALUES (:id, 'default', 10) "
-            "ON CONFLICT (condition) DO NOTHING"
-        ),
-        {"id": str(uuid.uuid4())},
-    )
-    conn.execute(
-        sa.text(
-            "INSERT INTO waste_adders (id, condition, waste_minutes) "
-            "VALUES (:id, 'duplex_print', 20) "
-            "ON CONFLICT (condition) DO NOTHING"
-        ),
-        {"id": str(uuid.uuid4())},
-    )
+    colours_seed = [
+        # colour_code, name, price_per_kg, opacity_multiplier, currency
+        ("WHITE", "White", 5.8, 0.0, "AUD"),
+        ("BLACK", "Black", 4.5, 0.0, "AUD"),
+        ("SILVER", "Silver", 19.88, 0.0, "AUD"),
+        ("GREY", "Grey", 14.5, 0.0, "AUD"),
+        ("BLUE", "Blue", 5.7, 0.0, "AUD"),
+        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0, 0.0, "AUD"),
+        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86, 0.0, "AUD"),
+        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1, 0.0, "AUD"),
+        ("YELLOW", "Yellow", 20.33, 0.0, "AUD"),
+        ("SIGNET_YELLOW", "Signet Yellow", 17.33, 0.0, "AUD"),
+        ("GREEN", "Green", 14.69, 0.0, "AUD"),
+        ("ORANGE", "Orange", 19.55, 0.0, "AUD"),
+        ("RED", "Red", 19.02, 0.0, "AUD"),
+        ("PURPLE", "Purple", 17.23, 0.0, "AUD"),
+        ("BROWN", "Brown", 19.42, 0.0, "AUD"),
+        ("PINK", "Pink", 32.29, 0.0, "AUD"),
+        ("OTHER", "Other", 25.0, 0.0, "AUD"),
+    ]
+    for colour_code, name, price_per_kg, opacity_multiplier, currency in colours_seed:
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO colours (colour_code, name, price_per_kg, opacity_multiplier, currency)
+                VALUES (:colour_code, :name, :price_per_kg, :opacity_multiplier, :currency)
+                ON CONFLICT (colour_code) DO UPDATE SET
+                  name = excluded.name,
+                  price_per_kg = excluded.price_per_kg,
+                  opacity_multiplier = excluded.opacity_multiplier,
+                  currency = excluded.currency
+                """
+            ),
+            {
+                "colour_code": colour_code,
+                "name": name,
+                "price_per_kg": price_per_kg,
+                "opacity_multiplier": opacity_multiplier,
+                "currency": currency,
+            },
+        )
+
+    cores_seed = [
+        # core_type, description, cost_per_meter, kg_per_meter, currency
+        ("13mm", "13mm core", 4.65040650406504, 2.92682926829268, "AUD"),
+        ("7mm", "7mm core", 2.15454545454545, 1.44545454545455, "AUD"),
+        ("PVC", "PVC core", 3.62251655629139, 0.728476821192053, "AUD"),
+    ]
+    for core_type, description, cost_per_meter, kg_per_meter, currency in cores_seed:
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO cores (core_type, description, cost_per_meter, kg_per_meter, currency)
+                VALUES (:core_type, :description, :cost_per_meter, :kg_per_meter, :currency)
+                ON CONFLICT (core_type) DO UPDATE SET
+                  description = excluded.description,
+                  cost_per_meter = excluded.cost_per_meter,
+                  kg_per_meter = excluded.kg_per_meter,
+                  currency = excluded.currency
+                """
+            ),
+            {
+                "core_type": core_type,
+                "description": description,
+                "cost_per_meter": cost_per_meter,
+                "kg_per_meter": kg_per_meter,
+                "currency": currency,
+            },
+        )
 
 
 def downgrade() -> None:
@@ -320,14 +329,22 @@ def downgrade() -> None:
     op.execute("DROP VIEW IF EXISTS v_wip_stage_balances")
     op.execute("DROP VIEW IF EXISTS v_inventory_balances_by_category")
 
-    # Remove seeded data (best-effort)
-    conn.execute(sa.text("DELETE FROM waste_adders WHERE condition IN ('default','duplex_print')"))
-    conn.execute(sa.text("DELETE FROM conversion_rates"))
-    conn.execute(sa.text("DELETE FROM printing_rates"))
-    conn.execute(sa.text("DELETE FROM cores WHERE core_type IN ('STD')"))
-    conn.execute(sa.text("DELETE FROM colours WHERE colour_code IN ('WHT','BLK')"))
-    conn.execute(sa.text("DELETE FROM additives WHERE additive_code IN ('SLIP','AB')"))
-    conn.execute(sa.text("DELETE FROM resins WHERE resin_code IN ('LD','MD')"))
+    # Remove seeded rate-card master data (best-effort)
+    conn.execute(sa.text("DELETE FROM cores WHERE core_type IN ('13mm','7mm','PVC')"))
+    conn.execute(
+        sa.text(
+            "DELETE FROM colours WHERE colour_code IN ("
+            "'WHITE','BLACK','SILVER','GREY','BLUE','PIPE_COVER_BLUE','PIPECOVER_PURPLE','PIPECOVER_BEIGE',"
+            "'YELLOW','SIGNET_YELLOW','GREEN','ORANGE','RED','PURPLE','BROWN','PINK','OTHER'"
+            ")"
+        )
+    )
+    conn.execute(sa.text("DELETE FROM additives WHERE additive_code IN ('ANTI_BLOCK','ANTI_STATIC','SLIP','UV')"))
+    conn.execute(
+        sa.text(
+            "DELETE FROM resins WHERE resin_code IN ('Q1018H','FD0270','FD0274','FE8004','FE3000','S199F','1018RA/25')"
+        )
+    )
 
     # Seeded tool types
     conn.execute(sa.text("DELETE FROM tool_types WHERE code IN ('inline_printer_1c','electra_punch')"))

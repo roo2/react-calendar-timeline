@@ -22,17 +22,10 @@ def upgrade() -> None:
         op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
 
         # Sequences for code columns
-        op.execute(sa.text("CREATE SEQUENCE IF NOT EXISTS customer_code_seq START WITH 1000"))
         op.execute(sa.text("CREATE SEQUENCE IF NOT EXISTS product_code_seq START WITH 1000"))
         op.execute(sa.text("CREATE SEQUENCE IF NOT EXISTS order_code_seq START WITH 1000"))
 
         # Server defaults for code columns (explicit ::text casts for varchar columns)
-        op.alter_column(
-            "customers",
-            "code",
-            server_default=sa.text("nextval('customer_code_seq')::text"),
-            existing_type=sa.String(length=32),
-        )
         op.alter_column(
             "products",
             "code",
@@ -141,10 +134,8 @@ def downgrade() -> None:
         # Drop sequences and defaults
         op.alter_column("orders", "code", server_default=None, existing_type=sa.String(length=32))
         op.alter_column("products", "code", server_default=None, existing_type=sa.String(length=32))
-        op.alter_column("customers", "code", server_default=None, existing_type=sa.String(length=32))
         op.execute("DROP SEQUENCE IF EXISTS order_code_seq")
         op.execute("DROP SEQUENCE IF EXISTS product_code_seq")
-        op.execute("DROP SEQUENCE IF EXISTS customer_code_seq")
 
         # Drop exclusion constraints
         op.execute("ALTER TABLE tool_reservations DROP CONSTRAINT IF EXISTS ex_tool_res_no_overlap")

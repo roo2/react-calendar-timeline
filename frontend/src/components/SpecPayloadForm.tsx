@@ -19,6 +19,8 @@ import {
 } from '@mui/material'
 import { apiFetch } from '../api/client'
 import { ResinSelect, type ResinOption } from './ResinSelect'
+import { ColourSelect, type ColourOption } from './ColourSelect'
+import { AdditiveSelect, type AdditiveOption } from './AdditiveSelect'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -89,6 +91,7 @@ export function makeDefaultSpec(): SpecPayload {
       blend_type: 'Custom',
       blend: [{ resin_code: 'LDPE', pct: 100 }],
       colour: null,
+      colour_components: [],
       additives: [],
     },
     printing: {
@@ -136,9 +139,16 @@ export function SpecPayloadForm(props: {
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
+  function normalizeSpec(d: SpecPayload) {
+    const flags = Array.isArray(d?.identity?.industry_flags) ? d.identity.industry_flags : []
+    // "non_food" is redundant (inverse of food_contact) and should not be persisted.
+    d.identity.industry_flags = Array.from(new Set(flags)).filter((x) => x !== 'non_food')
+  }
+
   function update(mut: (draft: SpecPayload) => void) {
     const next = clone(spec)
     mut(next)
+    normalizeSpec(next)
     onChange(next)
   }
 
@@ -156,6 +166,12 @@ export function SpecPayloadForm(props: {
 
   const blend = Array.isArray(formulation.blend) ? formulation.blend : []
   const additives = Array.isArray(formulation.additives) ? formulation.additives : []
+  const legacyColourRow =
+    formulation.colour?.colour_code || formulation.colour?.strength_pct != null
+      ? [{ colour_code: formulation.colour?.colour_code || '', strength_pct: formulation.colour?.strength_pct ?? null }]
+      : []
+  const colourComponents =
+    Array.isArray(formulation.colour_components) && formulation.colour_components.length > 0 ? formulation.colour_components : legacyColourRow
 
   const printingEnabled = printing.method && printing.method !== 'None'
   const finishMode = identity.finish_mode || 'Rolls'
@@ -168,6 +184,10 @@ export function SpecPayloadForm(props: {
   const [resinBlendsErr, setResinBlendsErr] = useState<string | null>(null)
   const [resins, setResins] = useState<ResinOption[]>([])
   const [resinsErr, setResinsErr] = useState<string | null>(null)
+  const [colours, setColours] = useState<ColourOption[]>([])
+  const [coloursErr, setColoursErr] = useState<string | null>(null)
+  const [additiveOptions, setAdditiveOptions] = useState<AdditiveOption[]>([])
+  const [additivesErr, setAdditivesErr] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -205,6 +225,42 @@ export function SpecPayloadForm(props: {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        setColoursErr(null)
+        const rows = await apiFetch<ColourOption[]>('/api/rate-cards/colours')
+        if (cancelled) return
+        setColours(Array.isArray(rows) ? rows : [])
+      } catch (e) {
+        if (cancelled) return
+        setColoursErr(e instanceof Error ? e.message : 'Failed to load colours')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        setAdditivesErr(null)
+        const rows = await apiFetch<AdditiveOption[]>('/api/rate-cards/additives')
+        if (cancelled) return
+        setAdditiveOptions(Array.isArray(rows) ? rows : [])
+      } catch (e) {
+        if (cancelled) return
+        setAdditivesErr(e instanceof Error ? e.message : 'Failed to load additives')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   function syncLegacyInkPlateFromPairs(d: SpecPayload) {
     const p = d.printing || {}
     if (p.method !== 'Inline') return
@@ -213,6 +269,22 @@ export function SpecPayloadForm(props: {
     const all = [...front, ...back]
     p.ink_codes = all.map((r: any) => (r?.ink_code || '').trim()).filter(Boolean)
     p.plate_codes = all.map((r: any) => (r?.plate_code || '').trim()).filter(Boolean)
+  }
+
+  function syncLegacyColourFromComponents(d: SpecPayload) {
+    const comps = Array.isArray(d?.formulation?.colour_components) ? d.formulation.colour_components : []
+    const first = comps[0]
+    const cc = (first?.colour_code || '').trim()
+    const sp = first?.strength_pct
+    if (!cc && (sp == null || sp === '')) {
+      d.formulation.colour = null
+      return
+    }
+    d.formulation.colour = d.formulation.colour || { opaque: false }
+    d.formulation.colour.colour_code = cc || null
+    d.formulation.colour.strength_pct = typeof sp === 'number' ? sp : sp ? parseFloat(String(sp)) : null
+    // Keep existing opaque fields if they were set previously; otherwise default.
+    if (d.formulation.colour.opaque == null) d.formulation.colour.opaque = false
   }
 
   const derived: DerivedDimensions = useMemo(() => {
@@ -338,7 +410,6 @@ export function SpecPayloadForm(props: {
           <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
             {[
               { id: 'food_contact', label: 'Food Contact' },
-              { id: 'non_food', label: 'Non-Food' },
               { id: 'medical', label: 'Medical' },
               { id: 'chemical_industrial', label: 'Chemical / Industrial' },
             ].map((f) => (
@@ -468,6 +539,18 @@ export function SpecPayloadForm(props: {
         {resinBlendsErr && (
           <Alert severity="warning" sx={{ mb: 2 }}>
             Resin blends unavailable: {resinBlendsErr}
+          </Alert>
+        )}
+
+        {coloursErr && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Colours unavailable: {coloursErr}
+          </Alert>
+        )}
+
+        {additivesErr && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Additives unavailable: {additivesErr}
           </Alert>
         )}
 
@@ -630,73 +713,109 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Colour
+            Colour Components
           </Typography>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
-            <TextField
-              label="Colour code"
-              value={formulation.colour?.colour_code || ''}
-              onChange={(e) =>
-                update((d) => {
-                  d.formulation.colour = d.formulation.colour || { opaque: false }
-                  d.formulation.colour.colour_code = e.target.value || null
-                })
-              }
-            />
-            <TextField
-              label="Strength pct"
-              type="number"
-              inputProps={{ min: 0, step: 0.01 }}
-              value={formulation.colour?.strength_pct ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  d.formulation.colour = d.formulation.colour || { opaque: false }
-                  d.formulation.colour.strength_pct = e.target.value ? parseFloat(e.target.value) : null
-                })
-              }
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!formulation.colour?.opaque}
-                  onChange={(e) =>
-                    update((d) => {
-                      d.formulation.colour = d.formulation.colour || {}
-                      d.formulation.colour.opaque = e.target.checked
-                    })
-                  }
-                />
-              }
-              label="Opaque"
-            />
-            <TextField
-              label="Opaque strength pct"
-              type="number"
-              inputProps={{ min: 0, step: 0.01 }}
-              value={formulation.colour?.opaque_strength_pct ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  d.formulation.colour = d.formulation.colour || {}
-                  d.formulation.colour.opaque_strength_pct = e.target.value ? parseFloat(e.target.value) : null
-                })
-              }
-            />
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <Button
-                type="button"
-                variant="outlined"
-                size="small"
-                onClick={() =>
-                  update((d) => {
-                    d.formulation.colour = null
-                  })
-                }
-              >
-                Clear colour
-              </Button>
-            </Box>
-          </Box>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Table
+              size="small"
+              sx={{
+                '& th, & td': { borderBottom: 'none' },
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  <TableCell>Colour</TableCell>
+                  <TableCell sx={{ width: 200 }}>Strength pct</TableCell>
+                  <TableCell sx={{ width: 140 }} />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {colourComponents.map((row: any, idx: number) => (
+                  <TableRow key={idx} hover>
+                    <TableCell>
+                      <ColourSelect
+                        options={colours}
+                        valueCode={row.colour_code || ''}
+                        onChangeCode={(nextCode) =>
+                          update((d) => {
+                            if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
+                            d.formulation.colour_components[idx] = {
+                              ...(d.formulation.colour_components[idx] || {}),
+                              colour_code: nextCode,
+                            }
+                            syncLegacyColourFromComponents(d)
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        label="Strength pct"
+                        type="number"
+                        inputProps={{ min: 0, step: 0.01 }}
+                        value={row.strength_pct ?? ''}
+                        onChange={(e) =>
+                          update((d) => {
+                            if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
+                            d.formulation.colour_components[idx] = {
+                              ...(d.formulation.colour_components[idx] || {}),
+                              strength_pct: e.target.value ? parseFloat(e.target.value) : null,
+                            }
+                            syncLegacyColourFromComponents(d)
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        type="button"
+                        variant="outlined"
+                        color="error"
+                        size="small"
+                        onClick={() =>
+                          update((d) => {
+                            if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
+                            d.formulation.colour_components.splice(idx, 1)
+                            syncLegacyColourFromComponents(d)
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+
+                <TableRow>
+                  <TableCell />
+                  <TableCell />
+                  <TableCell align="right">
+                    <Button
+                      type="button"
+                      variant="outlined"
+                      size="small"
+                      sx={{ whiteSpace: 'nowrap' }}
+                      onClick={() =>
+                        update((d) => {
+                          if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
+                          d.formulation.colour_components.push({ colour_code: '', strength_pct: null })
+                          syncLegacyColourFromComponents(d)
+                        })
+                      }
+                    >
+                      Add Colour
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Strength pct values do not need to sum to 100%.
+            </Typography>
+          </Paper>
         </Box>
 
         <Box sx={{ mt: 2 }}>
@@ -704,60 +823,96 @@ export function SpecPayloadForm(props: {
             Additives
           </Typography>
 
-          <Stack spacing={1}>
-            {additives.map((row: any, idx: number) => (
-              <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-                  <TextField
-                    label="Additive code"
-                    value={row.additive_code || ''}
-                    onChange={(e) =>
-                      update((d) => {
-                        d.formulation.additives[idx].additive_code = e.target.value
-                      })
-                    }
-                  />
-                  <TextField
-                    label="Pct"
-                    type="number"
-                    inputProps={{ min: 0, step: 0.01 }}
-                    value={row.pct ?? ''}
-                    onChange={(e) =>
-                      update((d) => {
-                        d.formulation.additives[idx].pct = e.target.value ? parseFloat(e.target.value) : 0
-                      })
-                    }
-                  />
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Table
+              size="small"
+              sx={{
+                '& th, & td': { borderBottom: 'none' },
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  <TableCell>Additive</TableCell>
+                  <TableCell sx={{ width: 160 }}>Pct</TableCell>
+                  <TableCell sx={{ width: 140 }} />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {additives.map((row: any, idx: number) => (
+                  <TableRow key={idx} hover>
+                    <TableCell>
+                      <AdditiveSelect
+                        options={additiveOptions}
+                        valueCode={row.additive_code || ''}
+                        onChangeCode={(nextCode) =>
+                          update((d) => {
+                            if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
+                            d.formulation.additives[idx] = { ...(d.formulation.additives[idx] || {}), additive_code: nextCode }
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        label="Pct"
+                        type="number"
+                        inputProps={{ min: 0, step: 0.01 }}
+                        value={row.pct ?? ''}
+                        onChange={(e) =>
+                          update((d) => {
+                            if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
+                            d.formulation.additives[idx] = {
+                              ...(d.formulation.additives[idx] || {}),
+                              pct: e.target.value ? parseFloat(e.target.value) : 0,
+                            }
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        type="button"
+                        variant="outlined"
+                        color="error"
+                        size="small"
+                        onClick={() =>
+                          update((d) => {
+                            if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
+                            d.formulation.additives.splice(idx, 1)
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+
+                <TableRow>
+                  <TableCell />
+                  <TableCell />
+                  <TableCell align="right">
                     <Button
                       type="button"
                       variant="outlined"
-                      color="error"
                       size="small"
+                      sx={{ whiteSpace: 'nowrap' }}
                       onClick={() =>
                         update((d) => {
-                          d.formulation.additives.splice(idx, 1)
+                          if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
+                          const defaultCode = additiveOptions[0]?.additive_code || ''
+                          d.formulation.additives.push({ additive_code: defaultCode, pct: 0 })
                         })
                       }
                     >
-                      Remove
+                      Add Additive
                     </Button>
-                  </Box>
-                </Box>
-              </Paper>
-            ))}
-          </Stack>
-
-          <Box sx={{ mt: 2 }}>
-            <Button
-              type="button"
-              variant="outlined"
-              size="small"
-              onClick={() => update((d) => d.formulation.additives.push({ additive_code: '', pct: 0 }))}
-            >
-              Add Additive
-            </Button>
-          </Box>
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </Paper>
         </Box>
       </Paper>
 

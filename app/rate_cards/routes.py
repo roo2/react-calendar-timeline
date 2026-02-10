@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
 from app.auth.deps import allow_roles_any
-from app.db.models.rate_cards import Resin, ResinBlend, ResinBlendComponent
+from app.db.models.rate_cards import Additive, Colour, Resin, ResinBlend, ResinBlendComponent
 from app.db.session import SessionLocal
 
 
@@ -41,4 +41,18 @@ async def list_resin_blends():
                 }
             )
         return out
+
+
+@router.get("/colours", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def list_colours():
+    with SessionLocal() as db:
+        rows = db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.colour_code.asc())).all()
+        return [{"colour_code": r[0], "name": r[1]} for r in rows]
+
+
+@router.get("/additives", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def list_additives():
+    with SessionLocal() as db:
+        rows = db.execute(select(Additive.additive_code, Additive.name).order_by(Additive.additive_code.asc())).all()
+        return [{"additive_code": r[0], "name": r[1]} for r in rows]
 
