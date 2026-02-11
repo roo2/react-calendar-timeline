@@ -955,17 +955,6 @@ export function SpecPayloadForm(props: {
           </TextField>
 
           <TextField
-            label="Number of Colours"
-            type="number"
-            inputProps={{ min: 0, step: 1 }}
-            value={printing.num_colours ?? 0}
-            onChange={(e) => update((d) => (d.printing.num_colours = e.target.value ? parseInt(e.target.value) : 0))}
-            disabled={!printingEnabled}
-            error={!!errorFor('spec.printing.num_colours') || !!firstErrorForPrefix('spec.printing')}
-            helperText={errorFor('spec.printing.num_colours') || ''}
-          />
-
-          <TextField
             label="Print Description"
             value={printing.print_description || ''}
             onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}

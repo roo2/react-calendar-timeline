@@ -97,14 +97,10 @@ class AdditiveComponent(BaseModel):
     pct: float = Field(..., ge=0)
 
 
-class BlendType(str, Enum):
-    LD = "LD"
-    MD = "MD"
-    CUSTOM = "Custom"
-
-
 class FormulationSpec(BaseModel):
-    blend_type: BlendType = BlendType.CUSTOM
+    # Free-form label/code (e.g. "Custom" or a preset blend_code like "HOUSE_LD").
+    # UI only allows selecting valid options, so we don't constrain this in the schema.
+    blend_type: Optional[str] = "Custom"
     blend: List[ResinComponent]
     colour: Optional[ColourSpec] = None
     colour_components: List[ColourComponentSpec] = []
@@ -116,15 +112,6 @@ class FormulationSpec(BaseModel):
         if round(total, 4) != 100.0:
             raise ValueError("Resin blend percentages must sum to 100%")
         return blend
-
-    @root_validator(skip_on_failure=True)
-    def validate_blend_type(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        blend_type = values.get("blend_type")
-        blend = values.get("blend", [])
-        if blend_type == BlendType.CUSTOM and len(blend) < 1:
-            raise ValueError("Custom blend requires at least one component")
-        return values
-
 
 class PrintingSpec(BaseModel):
     method: PrintMethod
