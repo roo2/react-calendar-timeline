@@ -124,15 +124,6 @@ class PrintingSpec(BaseModel):
     front_ink_plate: List[InkPlatePair] = []
     back_ink_plate: List[InkPlatePair] = []
 
-    @root_validator(skip_on_failure=True)
-    def validate_printing(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        method: PrintMethod = values.get("method")
-        num_colours = values.get("num_colours") or 0
-        if method != PrintMethod.NONE:
-            if num_colours < 1:
-                raise ValueError("num_colours must be ≥ 1 when printing is enabled")
-        return values
-
 
 class QualityExpectationsSpec(BaseModel):
     flags: List[Literal["tight_gauge", "seal_integrity", "cosmetic", "colour"]] = []
