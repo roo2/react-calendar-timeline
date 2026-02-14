@@ -44,6 +44,7 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
         customer = Customer(
+            code=payload.code,
             name=payload.name,
             abn=payload.abn,
             tax_id=payload.tax_id,

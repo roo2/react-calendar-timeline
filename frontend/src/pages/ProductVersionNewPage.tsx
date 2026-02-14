@@ -117,6 +117,7 @@ export function ProductVersionNewPage() {
             value={spec}
             onChange={setSpec}
             fieldErrors={fieldErrors}
+            customerId={product?.customer_id || undefined}
           />
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>

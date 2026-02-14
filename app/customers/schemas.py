@@ -17,8 +17,8 @@ class ContactInput(BaseModel):
     name: str = Field(..., min_length=1, description="Full name")
     title: Optional[str] = Field(None, description="Job title/position")
     email: _EmailType = Field(..., description="Email address")
-    phone: str = Field(..., min_length=1, description="Phone number")
-    phone_alt: Optional[str] = Field(None, description="Alternate phone number")
+    phone: Optional[str] = Field(None, description="Phone number (optional)")
+    phone_alt: Optional[str] = Field(None, description="Alternate phone number (optional)")
     preferred_method: str = Field("Email", description="Preferred contact method: Email or Phone")
     notes: Optional[str] = Field(None, description="Additional notes about this contact")
 
@@ -78,6 +78,7 @@ class DeliveryPreferencesInput(BaseModel):
 
 
 class CustomerCreateRequest(BaseModel):
+    code: str = Field(..., min_length=2, max_length=4, description="2-4 letter customer code (e.g., CP)")
     name: str = Field(..., min_length=1, description="Customer name")
     abn: Optional[str] = Field(None, description="Business Registration/ABN")
     tax_id: Optional[str] = Field(None, description="Tax ID")
@@ -104,6 +105,14 @@ class CustomerCreateRequest(BaseModel):
         if len(v) != 3:
             raise ValueError("Currency preference must be a 3-letter code (e.g., AUD, USD)")
         return v.upper()
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        s = (v or "").strip().upper()
+        if not re.match(r"^[A-Z]{2,4}$", s):
+            raise ValueError("Customer code must be 2-4 letters (A-Z)")
+        return s
 
     @field_validator("delivery_addresses")
     @classmethod
@@ -133,6 +142,7 @@ class CustomerUpdateRequest(CustomerCreateRequest):
 
 class CustomerResponse(BaseModel):
     id: str
+    code: str
     name: str
     abn: Optional[str] = None
     tax_id: Optional[str] = None

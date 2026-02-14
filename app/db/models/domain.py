@@ -44,6 +44,8 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # 2-4 letter customer code used for job sheet numbering (manual entry).
+    code: Mapped[str] = mapped_column(String(4), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     abn: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     tax_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)

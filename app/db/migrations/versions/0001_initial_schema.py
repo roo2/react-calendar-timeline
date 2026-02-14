@@ -80,6 +80,7 @@ def upgrade() -> None:
     op.create_table(
         "customers",
         sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("code", sa.String(length=4), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("abn", sa.String(length=50), nullable=True),
         sa.Column("tax_id", sa.String(length=50), nullable=True),
@@ -110,7 +111,10 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
+        sa.CheckConstraint("length(code) BETWEEN 2 AND 4", name="ck_customers_code_len"),
+        sa.UniqueConstraint("code", name="uq_customer_code"),
     )
+    op.create_index("ix_customers_code", "customers", ["code"], unique=True)
 
     # Products
     op.create_table(
@@ -783,6 +787,26 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "inks",
+        sa.Column("ink_code", sa.String(length=32), primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
+    )
+
+    op.create_table(
+        "plates",
+        sa.Column(
+            "customer_id",
+            sa.String(length=36),
+            sa.ForeignKey("customers.id", ondelete="RESTRICT"),
+            primary_key=True,
+            nullable=False,
+        ),
+        sa.Column("plate_code", sa.String(length=32), primary_key=True, nullable=False),
+        sa.Column("description", sa.String(length=255), nullable=True),
+    )
+    op.create_index("ix_plates_customer_id", "plates", ["customer_id"])
+
+    op.create_table(
         "cores",
         sa.Column("core_type", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("description", sa.Text, nullable=True),
@@ -841,6 +865,9 @@ def downgrade() -> None:
     op.drop_table("conversion_rates")
     op.drop_table("printing_rates")
     op.drop_table("cores")
+    op.drop_index("ix_plates_customer_id", table_name="plates")
+    op.drop_table("plates")
+    op.drop_table("inks")
     op.drop_table("colours")
     op.drop_table("additives")
     op.drop_table("resins")
@@ -946,6 +973,7 @@ def downgrade() -> None:
     op.drop_table("products")
 
     # Customers
+    op.drop_index("ix_customers_code", table_name="customers")
     op.drop_table("customers")
 
     # Drop enum types (PostgreSQL only)

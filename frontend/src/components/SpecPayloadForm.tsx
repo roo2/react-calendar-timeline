@@ -21,6 +21,8 @@ import { apiFetch } from '../api/client'
 import { ResinSelect, type ResinOption } from './ResinSelect'
 import { ColourSelect, type ColourOption } from './ColourSelect'
 import { AdditiveSelect, type AdditiveOption } from './AdditiveSelect'
+import { InkSelect, type InkOption } from './InkSelect'
+import { PlateSelect, type PlateOption } from './PlateSelect'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -77,6 +79,8 @@ export function makeDefaultSpec(): SpecPayload {
     identity: {
       product_type: PRODUCT_TYPE.Bag,
       finish_mode: 'Rolls',
+      trim_pct: null,
+      roll_weight_billing: 'core_included',
       industry_flags: [],
       notes: null,
     },
@@ -88,7 +92,7 @@ export function makeDefaultSpec(): SpecPayload {
       gusset_mm: null,
     },
     formulation: {
-      blend_type: 'Custom',
+      blend_type: 'LD',
       blend: [{ resin_code: 'LDPE', pct: 100 }],
       colour: null,
       colour_components: [],
@@ -113,8 +117,10 @@ export function makeDefaultSpec(): SpecPayload {
       preferred_extruders: [],
       preferred_printer: null,
       preferred_converter: null,
+      slit: 'none',
       treat_inside_outside: 'none',
       inline_perforation: false,
+      hole_punched: false,
       inline_seal: false,
       notes: null,
     },
@@ -134,8 +140,9 @@ export function SpecPayloadForm(props: {
   value: SpecPayload
   onChange: (next: SpecPayload) => void
   fieldErrors?: Record<string, string>
+  customerId?: string
 }) {
-  const { value, onChange, fieldErrors } = props
+  const { value, onChange, fieldErrors, customerId } = props
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
@@ -159,7 +166,6 @@ export function SpecPayloadForm(props: {
   const quality = spec.quality_expectations || {}
   const run = spec.run_requirements || {}
   const packaging = spec.packaging || {}
-  const tools = Array.isArray(spec.tool_requirements) ? spec.tool_requirements : []
 
   const industryFlags = new Set<string>(Array.isArray(identity.industry_flags) ? identity.industry_flags : [])
   const qualityFlags = new Set<string>(Array.isArray(quality.flags) ? quality.flags : [])
@@ -188,6 +194,25 @@ export function SpecPayloadForm(props: {
   const [coloursErr, setColoursErr] = useState<string | null>(null)
   const [additiveOptions, setAdditiveOptions] = useState<AdditiveOption[]>([])
   const [additivesErr, setAdditivesErr] = useState<string | null>(null)
+  const [inks, setInks] = useState<InkOption[]>([])
+  const [inksErr, setInksErr] = useState<string | null>(null)
+  const [plates, setPlates] = useState<PlateOption[]>([])
+  const [platesErr, setPlatesErr] = useState<string | null>(null)
+
+  const computedTrimSelect = useMemo(() => {
+    const v = identity.trim_pct
+    if (v == null) return ''
+    const n = Number(v)
+    if ([5, 10, 20].includes(n)) return String(n)
+    return 'custom'
+  }, [identity.trim_pct])
+  const [trimSelect, setTrimSelect] = useState<string>(computedTrimSelect)
+
+  useEffect(() => {
+    // Keep dropdown in sync with identity.trim_pct, except when the user is
+    // actively in "custom" mode (trim_pct may temporarily equal 5/10/20).
+    setTrimSelect((prev) => (prev === 'custom' ? 'custom' : computedTrimSelect))
+  }, [computedTrimSelect])
 
   useEffect(() => {
     let cancelled = false
@@ -206,6 +231,25 @@ export function SpecPayloadForm(props: {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!Array.isArray(resinBlends) || resinBlends.length === 0) return
+    const preset = resinBlends.find((b) => b.blend_code === 'LD')
+    if (!preset) return
+    const curType = formulation.blend_type || 'Custom'
+    if (curType !== 'LD') return
+    const curBlend = Array.isArray(formulation.blend) ? formulation.blend : []
+    const looksPlaceholder =
+      curBlend.length === 0 ||
+      (curBlend.length === 1 && curBlend[0]?.resin_code === 'LDPE' && Math.abs(Number(curBlend[0]?.pct || 0) - 100) < 0.0001)
+    if (!looksPlaceholder) return
+
+    update((d) => {
+      d.formulation.blend_type = 'LD'
+      d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resinBlends])
 
   useEffect(() => {
     let cancelled = false
@@ -261,6 +305,53 @@ export function SpecPayloadForm(props: {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        setInksErr(null)
+        const rows = await apiFetch<InkOption[]>('/api/rate-cards/inks')
+        if (cancelled) return
+        setInks(Array.isArray(rows) ? rows : [])
+      } catch (e) {
+        if (cancelled) return
+        setInksErr(e instanceof Error ? e.message : 'Failed to load inks')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        setPlatesErr(null)
+        const q = customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ''
+        const rows = await apiFetch<Array<{ plate_code: string; description?: string | null }>>(`/api/rate-cards/plates${q}`)
+        if (cancelled) return
+        setPlates(Array.isArray(rows) ? rows : [])
+      } catch (e) {
+        if (cancelled) return
+        setPlatesErr(e instanceof Error ? e.message : 'Failed to load plates')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [customerId])
+
+  function ensureFixedInkPlateRows(d: SpecPayload) {
+    const p = d.printing || {}
+    if (p.method !== 'Inline') return
+    for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
+      const cur = Array.isArray(p[key]) ? p[key].slice(0, 4) : []
+      while (cur.length < 4) cur.push({ ink_code: '', plate_code: '' })
+      p[key] = cur
+    }
+  }
+
   function syncLegacyInkPlateFromPairs(d: SpecPayload) {
     const p = d.printing || {}
     if (p.method !== 'Inline') return
@@ -270,6 +361,18 @@ export function SpecPayloadForm(props: {
     p.ink_codes = all.map((r: any) => (r?.ink_code || '').trim()).filter(Boolean)
     p.plate_codes = all.map((r: any) => (r?.plate_code || '').trim()).filter(Boolean)
   }
+
+  useEffect(() => {
+    if (printing.method !== 'Inline') return
+    const fl = Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate.length : 0
+    const bl = Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate.length : 0
+    if (fl === 4 && bl === 4) return
+    update((d) => {
+      ensureFixedInkPlateRows(d)
+      syncLegacyInkPlateFromPairs(d)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printing.method])
 
   function syncLegacyColourFromComponents(d: SpecPayload) {
     const comps = Array.isArray(d?.formulation?.colour_components) ? d.formulation.colour_components : []
@@ -393,6 +496,41 @@ export function SpecPayloadForm(props: {
           </TextField>
 
           <TextField
+            select
+            label="Trim"
+            value={trimSelect}
+            onChange={(e) => {
+              const v = e.target.value
+              setTrimSelect(v)
+              update((d) => {
+                if (!v) d.identity.trim_pct = null
+                else if (v === 'custom') d.identity.trim_pct = d.identity.trim_pct ?? 5
+                else d.identity.trim_pct = parseFloat(v)
+              })
+            }}
+          >
+            <MenuItem value="">-</MenuItem>
+            <MenuItem value="5">5%</MenuItem>
+            <MenuItem value="10">10%</MenuItem>
+            <MenuItem value="20">20%</MenuItem>
+            <MenuItem value="custom">Custom…</MenuItem>
+          </TextField>
+
+          {trimSelect === 'custom' ? (
+            <TextField
+              label="Custom trim (%)"
+              type="number"
+              inputProps={{ min: 0, step: 0.1 }}
+              value={identity.trim_pct ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  d.identity.trim_pct = e.target.value ? parseFloat(e.target.value) : null
+                })
+              }
+            />
+          ) : null}
+
+          <TextField
             label="Notes"
             value={identity.notes || ''}
             onChange={(e) => update((d) => (d.identity.notes = e.target.value || null))}
@@ -401,6 +539,26 @@ export function SpecPayloadForm(props: {
             error={!!errorFor('spec.identity.notes')}
             helperText={errorFor('spec.identity.notes') || ''}
           />
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Volume calculations
+          </Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+            <TextField
+              select
+              label="Roll weight billing"
+              value={identity.roll_weight_billing || 'core_included'}
+              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
+              helperText="How core weight is treated when billing a customer."
+              error={!!errorFor('spec.identity.roll_weight_billing')}
+            >
+              <MenuItem value="core_included">Core included in weight of roll</MenuItem>
+              <MenuItem value="core_off">Take core weight off weight</MenuItem>
+              <MenuItem value="core_half_off">Take half of core weight off</MenuItem>
+            </TextField>
+          </Box>
         </Box>
 
         <Box sx={{ mt: 2 }}>
@@ -560,53 +718,52 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-          <TextField
-            select
-            label="Blend Type"
-            value={formulation.blend_type || 'Custom'}
-            onChange={(e) => {
-              const v = e.target.value
-              update((d) => {
-                d.formulation.blend_type = v
-                if (v === 'Custom') return
-                const preset = resinBlends.find((b) => b.blend_code === v)
-                if (!preset) return
-                d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
-              })
-            }}
-            helperText="Resin blend must sum to 100%"
-            error={!!errorFor('spec.formulation.blend_type')}
-          >
-            <MenuItem value="Custom">Custom</MenuItem>
-            {resinBlends.map((b) => (
-              <MenuItem key={b.blend_code} value={b.blend_code}>
-                {b.name}
-              </MenuItem>
-            ))}
-            {(() => {
-              const cur = formulation.blend_type
-              if (!cur || cur === 'Custom') return null
-              const known = resinBlends.some((b) => b.blend_code === cur)
-              if (known) return null
-              return (
-                <MenuItem value={cur} disabled>
-                  {cur}
-                </MenuItem>
-              )
-            })()}
-          </TextField>
-        </Box>
-
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
             Resin Blend
           </Typography>
 
           <Paper variant="outlined" sx={{ p: 2 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mb: 2 }}>
+              <TextField
+                select
+                label="Resin Blend"
+                value={formulation.blend_type || 'Custom'}
+                onChange={(e) => {
+                  const v = e.target.value
+                  update((d) => {
+                    d.formulation.blend_type = v
+                    if (v === 'Custom') return
+                    const preset = resinBlends.find((b) => b.blend_code === v)
+                    if (!preset) return
+                    d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
+                  })
+                }}
+              >
+                <MenuItem value="Custom">Custom</MenuItem>
+                {resinBlends.map((b) => (
+                  <MenuItem key={b.blend_code} value={b.blend_code}>
+                    {b.name}
+                  </MenuItem>
+                ))}
+                {(() => {
+                  const cur = formulation.blend_type
+                  if (!cur || cur === 'Custom') return null
+                  const known = resinBlends.some((b) => b.blend_code === cur)
+                  if (known) return null
+                  return (
+                    <MenuItem value={cur} disabled>
+                      {cur}
+                    </MenuItem>
+                  )
+                })()}
+              </TextField>
+            </Box>
+
             <Table
               size="small"
               sx={{
+                tableLayout: 'fixed',
                 '& th, & td': { borderBottom: 'none' },
               }}
             >
@@ -644,7 +801,7 @@ export function SpecPayloadForm(props: {
                         size="small"
                         label="Pct"
                         type="number"
-                        inputProps={{ min: 0, step: 0.01 }}
+                        inputProps={{ min: 0, step: 0.1 }}
                         value={row.pct ?? ''}
                         onChange={(e) =>
                           update((d) => {
@@ -713,20 +870,24 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Colour Components
+            Colour Components &amp; Additives (Pct values do not need to sum to 100%.)
           </Typography>
 
           <Paper variant="outlined" sx={{ p: 2 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Colour Components
+            </Typography>
             <Table
               size="small"
               sx={{
+                tableLayout: 'fixed',
                 '& th, & td': { borderBottom: 'none' },
               }}
             >
               <TableHead>
                 <TableRow>
                   <TableCell>Colour</TableCell>
-                  <TableCell sx={{ width: 200 }}>Strength pct</TableCell>
+                  <TableCell sx={{ width: 160 }}>Pct</TableCell>
                   <TableCell sx={{ width: 140 }} />
                 </TableRow>
               </TableHead>
@@ -752,9 +913,9 @@ export function SpecPayloadForm(props: {
                     <TableCell>
                       <TextField
                         size="small"
-                        label="Strength pct"
+                        label="Pct"
                         type="number"
-                        inputProps={{ min: 0, step: 0.01 }}
+                        inputProps={{ min: 0, step: 0.1 }}
                         value={row.strength_pct ?? ''}
                         onChange={(e) =>
                           update((d) => {
@@ -812,21 +973,15 @@ export function SpecPayloadForm(props: {
               </TableBody>
             </Table>
 
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-              Strength pct values do not need to sum to 100%.
+            <Box sx={{ mt: 2 }} />
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Additives
             </Typography>
-          </Paper>
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Additives
-          </Typography>
-
-          <Paper variant="outlined" sx={{ p: 2 }}>
             <Table
               size="small"
               sx={{
+                tableLayout: 'fixed',
                 '& th, & td': { borderBottom: 'none' },
               }}
             >
@@ -857,7 +1012,7 @@ export function SpecPayloadForm(props: {
                         size="small"
                         label="Pct"
                         type="number"
-                        inputProps={{ min: 0, step: 0.01 }}
+                        inputProps={{ min: 0, step: 0.1 }}
                         value={row.pct ?? ''}
                         onChange={(e) =>
                           update((d) => {
@@ -932,7 +1087,13 @@ export function SpecPayloadForm(props: {
             select
             label="Printing Method"
             value={printing.method || 'None'}
-            onChange={(e) => update((d) => (d.printing.method = e.target.value))}
+            onChange={(e) =>
+              update((d) => {
+                const next = e.target.value
+                d.printing.method = next
+                if (next === 'Inline' && !d.printing.side) d.printing.side = 'front'
+              })
+            }
             error={!!errorFor('spec.printing.method') || !!firstErrorForPrefix('spec.printing')}
             helperText={errorFor('spec.printing.method') || ''}
           >
@@ -970,142 +1131,120 @@ export function SpecPayloadForm(props: {
             {(printing.side === 'front' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Front print (Ink Code | Plate Code)
+                  Front print (Ink | Plate)
                 </Typography>
-                <Stack spacing={1}>
-                  {(Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate : []).map((row: any, idx: number) => (
-                    <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
-                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
-                        <TextField
-                          label="Ink Code"
-                          value={row?.ink_code || ''}
-                          onChange={(e) =>
-                            update((d) => {
-                              if (!Array.isArray(d.printing.front_ink_plate)) d.printing.front_ink_plate = []
-                              d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), ink_code: e.target.value }
-                              syncLegacyInkPlateFromPairs(d)
-                            })
-                          }
-                        />
-                        <TextField
-                          label="Plate Code"
-                          value={row?.plate_code || ''}
-                          onChange={(e) =>
-                            update((d) => {
-                              if (!Array.isArray(d.printing.front_ink_plate)) d.printing.front_ink_plate = []
-                              d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: e.target.value }
-                              syncLegacyInkPlateFromPairs(d)
-                            })
-                          }
-                        />
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                          <Button
-                            type="button"
-                            variant="outlined"
-                            color="error"
-                            size="small"
-                            onClick={() =>
-                              update((d) => {
-                                if (!Array.isArray(d.printing.front_ink_plate)) d.printing.front_ink_plate = []
-                                d.printing.front_ink_plate.splice(idx, 1)
-                                syncLegacyInkPlateFromPairs(d)
-                              })
-                            }
-                          >
-                            Remove
-                          </Button>
-                        </Box>
-                      </Box>
-                    </Paper>
-                  ))}
-                </Stack>
-                <Box sx={{ mt: 2 }}>
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    size="small"
-                    onClick={() =>
-                      update((d) => {
-                        if (!Array.isArray(d.printing.front_ink_plate)) d.printing.front_ink_plate = []
-                        d.printing.front_ink_plate.push({ ink_code: '', plate_code: '' })
-                        syncLegacyInkPlateFromPairs(d)
-                      })
-                    }
-                  >
-                    Add Front Row
-                  </Button>
-                </Box>
+                {(inksErr || platesErr) && (
+                  <Alert severity="warning" sx={{ mb: 1 }}>
+                    {inksErr || platesErr}
+                  </Alert>
+                )}
+                <Paper variant="outlined" sx={{ p: 1 }}>
+                  <Table size="small" sx={{ tableLayout: 'fixed' }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: '50%' }}>Ink</TableCell>
+                        <TableCell sx={{ width: '50%' }}>Plate</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {[0, 1, 2, 3].map((idx) => {
+                        const row: any = (Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate[idx] : null) || {}
+                        return (
+                          <TableRow key={idx} hover>
+                            <TableCell>
+                              <InkSelect
+                                options={inks}
+                                valueCode={row?.ink_code || ''}
+                                label={`Ink ${idx + 1}`}
+                                onChangeCode={(nextCode) =>
+                                  update((d) => {
+                                    ensureFixedInkPlateRows(d)
+                                    d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), ink_code: nextCode }
+                                    syncLegacyInkPlateFromPairs(d)
+                                  })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <PlateSelect
+                                options={plates}
+                                valueCode={row?.plate_code || ''}
+                                label={`Plate ${idx + 1}`}
+                                onChangeCode={(nextCode) =>
+                                  update((d) => {
+                                    ensureFixedInkPlateRows(d)
+                                    d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
+                                    syncLegacyInkPlateFromPairs(d)
+                                  })
+                                }
+                              />
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </Paper>
               </Box>
             )}
 
             {(printing.side === 'back' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Back print (Ink Code | Plate Code)
+                  Back print (Ink | Plate)
                 </Typography>
-                <Stack spacing={1}>
-                  {(Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate : []).map((row: any, idx: number) => (
-                    <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
-                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
-                        <TextField
-                          label="Ink Code"
-                          value={row?.ink_code || ''}
-                          onChange={(e) =>
-                            update((d) => {
-                              if (!Array.isArray(d.printing.back_ink_plate)) d.printing.back_ink_plate = []
-                              d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), ink_code: e.target.value }
-                              syncLegacyInkPlateFromPairs(d)
-                            })
-                          }
-                        />
-                        <TextField
-                          label="Plate Code"
-                          value={row?.plate_code || ''}
-                          onChange={(e) =>
-                            update((d) => {
-                              if (!Array.isArray(d.printing.back_ink_plate)) d.printing.back_ink_plate = []
-                              d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: e.target.value }
-                              syncLegacyInkPlateFromPairs(d)
-                            })
-                          }
-                        />
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                          <Button
-                            type="button"
-                            variant="outlined"
-                            color="error"
-                            size="small"
-                            onClick={() =>
-                              update((d) => {
-                                if (!Array.isArray(d.printing.back_ink_plate)) d.printing.back_ink_plate = []
-                                d.printing.back_ink_plate.splice(idx, 1)
-                                syncLegacyInkPlateFromPairs(d)
-                              })
-                            }
-                          >
-                            Remove
-                          </Button>
-                        </Box>
-                      </Box>
-                    </Paper>
-                  ))}
-                </Stack>
-                <Box sx={{ mt: 2 }}>
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    size="small"
-                    onClick={() =>
-                      update((d) => {
-                        if (!Array.isArray(d.printing.back_ink_plate)) d.printing.back_ink_plate = []
-                        d.printing.back_ink_plate.push({ ink_code: '', plate_code: '' })
-                        syncLegacyInkPlateFromPairs(d)
-                      })
-                    }
-                  >
-                    Add Back Row
-                  </Button>
-                </Box>
+                {(inksErr || platesErr) && (
+                  <Alert severity="warning" sx={{ mb: 1 }}>
+                    {inksErr || platesErr}
+                  </Alert>
+                )}
+                <Paper variant="outlined" sx={{ p: 1 }}>
+                  <Table size="small" sx={{ tableLayout: 'fixed' }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: '50%' }}>Ink</TableCell>
+                        <TableCell sx={{ width: '50%' }}>Plate</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {[0, 1, 2, 3].map((idx) => {
+                        const row: any = (Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate[idx] : null) || {}
+                        return (
+                          <TableRow key={idx} hover>
+                            <TableCell>
+                              <InkSelect
+                                options={inks}
+                                valueCode={row?.ink_code || ''}
+                                label={`Ink ${idx + 1}`}
+                                onChangeCode={(nextCode) =>
+                                  update((d) => {
+                                    ensureFixedInkPlateRows(d)
+                                    d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), ink_code: nextCode }
+                                    syncLegacyInkPlateFromPairs(d)
+                                  })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <PlateSelect
+                                options={plates}
+                                valueCode={row?.plate_code || ''}
+                                label={`Plate ${idx + 1}`}
+                                onChangeCode={(nextCode) =>
+                                  update((d) => {
+                                    ensureFixedInkPlateRows(d)
+                                    d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
+                                    syncLegacyInkPlateFromPairs(d)
+                                  })
+                                }
+                              />
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </Paper>
               </Box>
             )}
           </Box>
@@ -1190,26 +1329,18 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
           <TextField
-            label="Preferred Extruders (comma-separated)"
-            value={listToCsv(run.preferred_extruders)}
-            onChange={(e) => update((d) => (d.run_requirements.preferred_extruders = csvToList(e.target.value)))}
-            error={!!errorFor('spec.run_requirements.preferred_extruders')}
-            helperText={errorFor('spec.run_requirements.preferred_extruders') || ''}
-          />
-          <TextField
-            label="Preferred Printer"
-            value={run.preferred_printer || ''}
-            onChange={(e) => update((d) => (d.run_requirements.preferred_printer = e.target.value || null))}
-            error={!!errorFor('spec.run_requirements.preferred_printer')}
-            helperText={errorFor('spec.run_requirements.preferred_printer') || ''}
-          />
-          <TextField
-            label="Preferred Converter"
-            value={run.preferred_converter || ''}
-            onChange={(e) => update((d) => (d.run_requirements.preferred_converter = e.target.value || null))}
-            error={!!errorFor('spec.run_requirements.preferred_converter')}
-            helperText={errorFor('spec.run_requirements.preferred_converter') || ''}
-          />
+            select
+            label="Slit"
+            value={run.slit || 'none'}
+            onChange={(e) => update((d) => (d.run_requirements.slit = e.target.value))}
+            error={!!errorFor('spec.run_requirements.slit')}
+            helperText={errorFor('spec.run_requirements.slit') || ''}
+          >
+            <MenuItem value="none">none</MenuItem>
+            <MenuItem value="one_side">Slit one side</MenuItem>
+            <MenuItem value="both_sides">Slit both sides</MenuItem>
+            <MenuItem value="middle">slit up middle</MenuItem>
+          </TextField>
           <TextField
             select
             label="Treat Inside/Outside"
@@ -1234,6 +1365,15 @@ export function SpecPayloadForm(props: {
                 />
               }
               label="Inline Perforation"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!run.hole_punched}
+                  onChange={(e) => update((d) => (d.run_requirements.hole_punched = e.target.checked))}
+                />
+              }
+              label="Hole punched"
             />
             <FormControlLabel
               control={
@@ -1343,79 +1483,6 @@ export function SpecPayloadForm(props: {
         </Box>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Tool Requirements
-        </Typography>
-
-        <Stack spacing={1}>
-          {tools.map((t: any, idx: number) => (
-            <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-                <TextField
-                  select
-                  label="Stage"
-                  value={t.stage || 'extrusion'}
-                  onChange={(e) => update((d) => (d.tool_requirements[idx].stage = e.target.value))}
-                >
-                  <MenuItem value="extrusion">extrusion</MenuItem>
-                  <MenuItem value="conversion">conversion</MenuItem>
-                </TextField>
-                <TextField
-                  label="Tool type"
-                  value={t.tool_type || ''}
-                  onChange={(e) => update((d) => (d.tool_requirements[idx].tool_type = e.target.value))}
-                />
-                <TextField
-                  label="Quantity"
-                  type="number"
-                  inputProps={{ min: 1, step: 1 }}
-                  value={t.quantity ?? 1}
-                  onChange={(e) =>
-                    update((d) => (d.tool_requirements[idx].quantity = e.target.value ? parseInt(e.target.value) : 1))
-                  }
-                />
-                <TextField
-                  label="Preferred machine IDs (comma-separated)"
-                  value={listToCsv(t.preferred_machine_ids)}
-                  onChange={(e) => update((d) => (d.tool_requirements[idx].preferred_machine_ids = csvToList(e.target.value)))}
-                />
-                <TextField
-                  label="Notes"
-                  value={t.notes || ''}
-                  onChange={(e) => update((d) => (d.tool_requirements[idx].notes = e.target.value || null))}
-                />
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                  <Button type="button" variant="outlined" color="error" size="small" onClick={() => update((d) => d.tool_requirements.splice(idx, 1))}>
-                    Remove
-                  </Button>
-                </Box>
-              </Box>
-            </Paper>
-          ))}
-        </Stack>
-
-        <Box sx={{ mt: 2 }}>
-          <Button
-            type="button"
-            variant="outlined"
-            size="small"
-            onClick={() =>
-              update((d) =>
-                d.tool_requirements.push({
-                  stage: 'extrusion',
-                  tool_type: '',
-                  quantity: 1,
-                  preferred_machine_ids: [],
-                  notes: null,
-                }),
-              )
-            }
-          >
-            Add Tool Requirement
-          </Button>
-        </Box>
-      </Paper>
     </Stack>
   )
 }

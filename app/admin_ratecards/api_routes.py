@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from app.auth.deps import require_roles, csrf_protect
-from app.db.models.rate_cards import Additive, Colour, Core, Resin, ResinBlend, ResinBlendComponent
+from app.db.models.rate_cards import Additive, Colour, Core, Ink, Plate, Resin, ResinBlend, ResinBlendComponent
 from app.db.session import SessionLocal
 
 
@@ -88,6 +88,25 @@ class CoreUpsertRequest(BaseModel):
     cost_per_meter: float = Field(..., ge=0)
     kg_per_meter: float = Field(..., ge=0)
     currency: str = Field(..., min_length=3, max_length=3)
+
+
+class InkDTO(BaseModel):
+    ink_code: str
+    name: str
+
+
+class InkUpsertRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class PlateDTO(BaseModel):
+    customer_id: str
+    plate_code: str
+    description: str | None = None
+
+
+class PlateUpsertRequest(BaseModel):
+    description: str | None = Field(default=None, max_length=255)
 
 
 @router.get(
@@ -405,4 +424,77 @@ async def upsert_core(core_type: str, payload: CoreUpsertRequest):
             kg_per_meter=float(c2.kg_per_meter),
             currency=c2.currency,
         )
+
+
+@router.get(
+    "/inks",
+    response_model=List[InkDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_inks():
+    with SessionLocal() as db:
+        rows = db.execute(select(Ink).order_by(Ink.ink_code.asc())).scalars().all()
+        return [InkDTO(ink_code=i.ink_code, name=i.name) for i in rows]
+
+
+@router.put(
+    "/inks/{ink_code}",
+    response_model=InkDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_ink(ink_code: str, payload: InkUpsertRequest):
+    code = (ink_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ink_code is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(Ink, code)
+        if not row:
+            row = Ink(ink_code=code, name=payload.name)
+            db.add(row)
+        else:
+            row.name = payload.name
+
+    with SessionLocal() as db:
+        i2 = db.get(Ink, code)
+        assert i2 is not None
+        return InkDTO(ink_code=i2.ink_code, name=i2.name)
+
+
+@router.get(
+    "/plates",
+    response_model=List[PlateDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_plates():
+    with SessionLocal() as db:
+        rows = db.execute(select(Plate).order_by(Plate.customer_id.asc(), Plate.plate_code.asc())).scalars().all()
+        return [PlateDTO(customer_id=p.customer_id, plate_code=p.plate_code, description=p.description) for p in rows]
+
+
+@router.put(
+    "/plates/{customer_id}/{plate_code}",
+    response_model=PlateDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_plate(customer_id: str, plate_code: str, payload: PlateUpsertRequest):
+    cid = (customer_id or "").strip()
+    code = (plate_code or "").strip()
+    if not cid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="customer_id is required")
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="plate_code is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(Plate, {"customer_id": cid, "plate_code": code})
+        if not row:
+            row = Plate(customer_id=cid, plate_code=code, description=payload.description)
+            db.add(row)
+        else:
+            row.description = payload.description
+
+    with SessionLocal() as db:
+        p2 = db.get(Plate, {"customer_id": cid, "plate_code": code})
+        assert p2 is not None
+        return PlateDTO(customer_id=p2.customer_id, plate_code=p2.plate_code, description=p2.description)
 

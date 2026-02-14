@@ -4,6 +4,7 @@ import { parseFastApiValidationDetail } from '../../api/validation'
 
 export type CustomerSummary = {
   id: string
+  code: string
   name: string
   status: string
   currency_preference: string
@@ -11,6 +12,7 @@ export type CustomerSummary = {
 
 export type CustomerDetail = {
   id: string
+  code: string
   name: string
   status: string
   abn?: string | null
@@ -28,6 +30,7 @@ export type CustomerDetail = {
 }
 
 export type CustomerUpsertPayload = {
+  code: string
   name: string
   abn: string | null
   tax_id: string | null

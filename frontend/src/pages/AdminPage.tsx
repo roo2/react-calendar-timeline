@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -53,17 +54,39 @@ type Core = {
   currency: string
 }
 
+type Ink = {
+  ink_code: string
+  name: string
+}
+
+type Plate = {
+  customer_id: string
+  plate_code: string
+  description?: string | null
+}
+
+type CustomerSummary = {
+  id: string
+  code?: string | null
+  name: string
+}
+
 export function AdminPage() {
   const [resins, setResins] = useState<Resin[]>([])
   const [additives, setAdditives] = useState<Additive[]>([])
   const [colours, setColours] = useState<Colour[]>([])
   const [cores, setCores] = useState<Core[]>([])
+  const [inks, setInks] = useState<Ink[]>([])
+  const [plates, setPlates] = useState<Plate[]>([])
+  const [customers, setCustomers] = useState<CustomerSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savingCode, setSavingCode] = useState<string | null>(null)
   const [savingAdditiveCode, setSavingAdditiveCode] = useState<string | null>(null)
   const [savingColourCode, setSavingColourCode] = useState<string | null>(null)
   const [savingCoreType, setSavingCoreType] = useState<string | null>(null)
+  const [savingInkCode, setSavingInkCode] = useState<string | null>(null)
+  const [savingPlateKey, setSavingPlateKey] = useState<string | null>(null)
   const [resinBlends, setResinBlends] = useState<ResinBlend[]>([])
   const [savingBlendCode, setSavingBlendCode] = useState<string | null>(null)
 
@@ -89,6 +112,13 @@ export function AdminPage() {
   const [newCoreCostPerM, setNewCoreCostPerM] = useState<number | ''>('')
   const [newCoreKgPerM, setNewCoreKgPerM] = useState<number | ''>('')
   const [newCoreCurrency, setNewCoreCurrency] = useState('AUD')
+
+  const [newInkCode, setNewInkCode] = useState('')
+  const [newInkName, setNewInkName] = useState('')
+
+  const [newPlateCustomerId, setNewPlateCustomerId] = useState('')
+  const [newPlateCode, setNewPlateCode] = useState('')
+  const [newPlateDescription, setNewPlateDescription] = useState('')
 
   const [newBlendCode, setNewBlendCode] = useState('')
   const [newBlendName, setNewBlendName] = useState('')
@@ -127,6 +157,14 @@ export function AdminPage() {
     return !!newCoreType.trim() && newCoreCostPerM !== '' && newCoreKgPerM !== '' && !!newCoreCurrency.trim()
   }, [newCoreCostPerM, newCoreCurrency, newCoreKgPerM, newCoreType])
 
+  const canCreateInk = useMemo(() => {
+    return !!newInkCode.trim() && !!newInkName.trim()
+  }, [newInkCode, newInkName])
+
+  const canCreatePlate = useMemo(() => {
+    return !!newPlateCustomerId.trim() && !!newPlateCode.trim()
+  }, [newPlateCode, newPlateCustomerId])
+
   const canCreateBlend = useMemo(() => {
     if (!newBlendCode.trim() || !newBlendName.trim()) return false
     const comps = newBlendComponents.filter((c) => c.resin_code.trim() && c.pct !== '')
@@ -134,6 +172,12 @@ export function AdminPage() {
     const sum = comps.reduce((acc, c) => acc + Number(c.pct || 0), 0)
     return Math.abs(sum - 100) < 0.01
   }, [newBlendCode, newBlendComponents, newBlendName])
+
+  const customersById = useMemo(() => {
+    const m = new Map<string, CustomerSummary>()
+    for (const c of customers || []) m.set(c.id, c)
+    return m
+  }, [customers])
 
   useEffect(() => {
     void (async () => {
@@ -148,6 +192,12 @@ export function AdminPage() {
         setColours(cols)
         const cs = await apiFetch<Core[]>('/api/admin/rate-cards/cores')
         setCores(cs)
+        const inkRows = await apiFetch<Ink[]>('/api/admin/rate-cards/inks')
+        setInks(inkRows)
+        const plateRows = await apiFetch<Plate[]>('/api/admin/rate-cards/plates')
+        setPlates(plateRows)
+        const custRes = await apiFetch<{ items: CustomerSummary[] }>('/api/customers')
+        setCustomers(custRes.items || [])
         const blends = await apiFetch<ResinBlend[]>('/api/admin/rate-cards/resin-blends')
         setResinBlends(blends)
       } catch (e) {
@@ -275,6 +325,65 @@ export function AdminPage() {
       setErr(e instanceof Error ? e.message : 'Failed to save core')
     } finally {
       setSavingCoreType(null)
+    }
+  }
+
+  async function saveInk(code: string, patch: Omit<Ink, 'ink_code'>) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingInkCode(trimmed)
+      const saved = await apiFetch<Ink>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      })
+      setInks((cur) => {
+        const idx = cur.findIndex((i) => i.ink_code === saved.ink_code)
+        if (idx === -1) return [...cur, saved].sort((a, b) => a.ink_code.localeCompare(b.ink_code))
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save ink')
+    } finally {
+      setSavingInkCode(null)
+    }
+  }
+
+  async function savePlate(customerId: string, plateCode: string, patch: Omit<Plate, 'customer_id' | 'plate_code'>) {
+    const cid = customerId.trim()
+    const code = plateCode.trim()
+    const key = `${cid}__${code}`
+    if (!cid || !code) return
+    try {
+      setErr(null)
+      setSavingPlateKey(key)
+      const saved = await apiFetch<Plate>(
+        `/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(patch),
+        },
+      )
+      setPlates((cur) => {
+        const idx = cur.findIndex((p) => p.customer_id === saved.customer_id && p.plate_code === saved.plate_code)
+        if (idx === -1) {
+          return [...cur, saved].sort((a, b) => {
+            const ak = `${customersById.get(a.customer_id)?.code || ''}__${a.plate_code}`
+            const bk = `${customersById.get(b.customer_id)?.code || ''}__${b.plate_code}`
+            return ak.localeCompare(bk)
+          })
+        }
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save plate')
+    } finally {
+      setSavingPlateKey(null)
     }
   }
 
@@ -632,6 +741,162 @@ export function AdminPage() {
           <Stack spacing={2}>
             <Box>
               <Typography variant="h6" sx={{ mb: 1 }}>
+                Printing
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Configure inks and customer plate libraries used by inline printing setup.
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                Ink
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                {loading ? (
+                  <Typography color="text.secondary">Loading…</Typography>
+                ) : (
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: 200 }}>Ink code</TableCell>
+                        <TableCell>Colour name</TableCell>
+                        <TableCell sx={{ width: 140 }} />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {inks.map((i) => (
+                        <InkRow key={i.ink_code} ink={i} saving={savingInkCode === i.ink_code} onSave={saveInk} />
+                      ))}
+                      <TableRow>
+                        <TableCell>
+                          <TextField size="small" label="Ink code" value={newInkCode} onChange={(e) => setNewInkCode(e.target.value)} />
+                        </TableCell>
+                        <TableCell>
+                          <TextField size="small" fullWidth label="Colour name" value={newInkName} onChange={(e) => setNewInkName(e.target.value)} />
+                        </TableCell>
+                        <TableCell align="right">
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={!canCreateInk || savingInkCode === newInkCode.trim()}
+                            onClick={() => {
+                              if (!canCreateInk) return
+                              void saveInk(newInkCode, { name: newInkName.trim() }).then(() => {
+                                setNewInkCode('')
+                                setNewInkName('')
+                              })
+                            }}
+                          >
+                            Add ink
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                )}
+              </Paper>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                Plates
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                {loading ? (
+                  <Typography color="text.secondary">Loading…</Typography>
+                ) : (
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: 220 }}>Customer code</TableCell>
+                        <TableCell sx={{ width: 220 }}>Plate code</TableCell>
+                        <TableCell>Description</TableCell>
+                        <TableCell sx={{ width: 140 }} />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {plates
+                        .slice()
+                        .sort((a, b) => {
+                          const ak = `${customersById.get(a.customer_id)?.code || ''}__${a.plate_code}`
+                          const bk = `${customersById.get(b.customer_id)?.code || ''}__${b.plate_code}`
+                          return ak.localeCompare(bk)
+                        })
+                        .map((p) => (
+                          <PlateRow
+                            key={`${p.customer_id}__${p.plate_code}`}
+                            plate={p}
+                            customerCode={customersById.get(p.customer_id)?.code || ''}
+                            saving={savingPlateKey === `${p.customer_id}__${p.plate_code}`}
+                            onSave={savePlate}
+                          />
+                        ))}
+                      <TableRow>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            select
+                            fullWidth
+                            label="Customer"
+                            value={newPlateCustomerId}
+                            onChange={(e) => setNewPlateCustomerId(e.target.value)}
+                          >
+                            <MenuItem value="">-</MenuItem>
+                            {customers
+                              .slice()
+                              .sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+                              .map((c) => (
+                                <MenuItem key={c.id} value={c.id}>
+                                  {(c.code || '(no code)') + ' — ' + c.name}
+                                </MenuItem>
+                              ))}
+                          </TextField>
+                        </TableCell>
+                        <TableCell>
+                          <TextField size="small" label="Plate code" value={newPlateCode} onChange={(e) => setNewPlateCode(e.target.value)} />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            fullWidth
+                            label="Description"
+                            value={newPlateDescription}
+                            onChange={(e) => setNewPlateDescription(e.target.value)}
+                          />
+                        </TableCell>
+                        <TableCell align="right">
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={!canCreatePlate || savingPlateKey === `${newPlateCustomerId.trim()}__${newPlateCode.trim()}`}
+                            onClick={() => {
+                              if (!canCreatePlate) return
+                              void savePlate(newPlateCustomerId, newPlateCode, {
+                                description: newPlateDescription.trim() ? newPlateDescription.trim() : null,
+                              }).then(() => {
+                                setNewPlateCustomerId('')
+                                setNewPlateCode('')
+                                setNewPlateDescription('')
+                              })
+                            }}
+                          >
+                            Add plate
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                )}
+              </Paper>
+            </Box>
+          </Stack>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="h6" sx={{ mb: 1 }}>
                 Cores
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -965,6 +1230,72 @@ function CoreRow(props: {
               cost_per_meter: Number(cost),
               kg_per_meter: Number(kg),
               currency: currency.trim().toUpperCase(),
+            })
+          }
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function InkRow(props: {
+  ink: Ink
+  saving: boolean
+  onSave: (code: string, patch: Omit<Ink, 'ink_code'>) => Promise<void>
+}) {
+  const { ink, saving, onSave } = props
+  const [name, setName] = useState(ink.name)
+
+  const dirty = name !== ink.name
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{ink.ink_code}</TableCell>
+      <TableCell>
+        <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || !name.trim()}
+          onClick={() => void onSave(ink.ink_code, { name: name.trim() })}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function PlateRow(props: {
+  plate: Plate
+  customerCode: string
+  saving: boolean
+  onSave: (customerId: string, plateCode: string, patch: Omit<Plate, 'customer_id' | 'plate_code'>) => Promise<void>
+}) {
+  const { plate, customerCode, saving, onSave } = props
+  const [description, setDescription] = useState(plate.description || '')
+
+  const dirty = description !== (plate.description || '')
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{customerCode || plate.customer_id}</TableCell>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{plate.plate_code}</TableCell>
+      <TableCell>
+        <TextField size="small" fullWidth value={description} onChange={(e) => setDescription(e.target.value)} />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty}
+          onClick={() =>
+            void onSave(plate.customer_id, plate.plate_code, {
+              description: description.trim() ? description.trim() : null,
             })
           }
         >

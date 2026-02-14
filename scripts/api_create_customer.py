@@ -63,6 +63,7 @@ def _default_customer_payload(name: str) -> Dict[str, Any]:
     # - at least one contact
     # - at least one delivery address (one default)
     return {
+        "code": _generate_customer_code(),
         "name": name,
         "abn": None,
         "tax_id": None,
@@ -108,6 +109,23 @@ def _default_customer_payload(name: str) -> Dict[str, Any]:
         "notes": "Seeded customer",
         "internal_notes": "Internal seeded note",
     }
+
+
+def _generate_customer_code() -> str:
+    """
+    Generate a 4-letter (A-Z) code to satisfy CustomerCreateRequest.
+    This is only for test data; for real customers, pick a meaningful code.
+    """
+    # uuid hex is [0-9a-f]; map to letters so we always satisfy ^[A-Z]{2,4}$
+    h = uuid.uuid4().hex[:4].lower()
+    out = []
+    for ch in h:
+        if "0" <= ch <= "9":
+            out.append(chr(ord("A") + int(ch)))
+        else:
+            # a-f -> K-P
+            out.append(chr(ord("K") + (ord(ch) - ord("a"))))
+    return "".join(out)
 
 
 def main(argv: list[str]) -> int:
@@ -160,7 +178,7 @@ def main(argv: list[str]) -> int:
     if not csrf:
         raise SystemExit("ERROR: could not obtain CSRF token after login")
 
-    name = args.customer_name or f"Test Customer {uuid.uuid4().hex[:8]}"
+    name = args.customer_name or "Rosemount Nursery"
     if args.payload_json:
         payload = json.loads(args.payload_json)
     else:

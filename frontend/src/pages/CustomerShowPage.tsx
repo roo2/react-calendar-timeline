@@ -92,7 +92,7 @@ export function CustomerShowPage() {
             {customer.name}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Status: {customer.status} • Currency: {customer.currency_preference}
+            Code: {customer.code} • Status: {customer.status} • Currency: {customer.currency_preference}
           </Typography>
         </Box>
         {canEdit && (
@@ -281,10 +281,6 @@ export function CustomerShowPage() {
                     <MuiLink href={`mailto:${c.email}`} underline="hover">
                       {c.email}
                     </MuiLink>
-                  </p>
-                  <p style={{ margin: '4px 0' }}>
-                    <strong>Phone:</strong> {c.phone}
-                    {c.phone_alt ? ` / ${c.phone_alt}` : ''}
                   </p>
                   <p style={{ margin: '4px 0' }}>
                     <strong>Preferred Method:</strong> {c.preferred_method}

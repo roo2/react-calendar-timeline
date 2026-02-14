@@ -98,6 +98,25 @@ class Core(Base):
     )
 
 
+class Ink(Base):
+    __tablename__ = "inks"
+
+    ink_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+
+
+class Plate(Base):
+    __tablename__ = "plates"
+
+    customer_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    plate_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class PrintingRate(Base):
     __tablename__ = "printing_rates"
 

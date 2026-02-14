@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/customers", tags=["customers"])
 def _customer_summary(c) -> dict:
     return {
         "id": c.id,
+        "code": getattr(c, "code", None),
         "name": c.name,
         "status": c.status,
         "currency_preference": c.currency_preference,
@@ -60,6 +61,12 @@ async def get_customer(customer_id: str):
 @router.put("/{customer_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def update_customer(customer_id: str, payload: CustomerUpdateRequest):
     try:
+        # Customer codes are immutable once created.
+        existing = service.get_customer(customer_id)
+        if not existing:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+        if payload.code != getattr(existing, "code", None):
+            raise HTTPException(status_code=400, detail="Customer code cannot be changed after creation")
         c = service.update_customer(customer_id, payload)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

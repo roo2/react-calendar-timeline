@@ -13,6 +13,7 @@ import { ProductsPage } from './pages/ProductsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SchedulePage } from './pages/SchedulePage'
 import { AdminPage } from './pages/AdminPage.tsx'
+import { JobSheetNewPage } from './pages/JobSheetNewPage'
 import { CustomerShowPage } from './pages/CustomerShowPage'
 import { CustomerUpsertPage } from './pages/CustomerUpsertPage'
 import { ProductShowPage } from './pages/ProductShowPage'
@@ -75,6 +76,7 @@ function App() {
     { to: '/customers', label: 'Customers', visible: isSalesOrPm },
     { to: '/quotes', label: 'Quotes', visible: isSalesOrPm },
     { to: '/orders', label: 'Orders', visible: isSalesOrPm },
+    { to: '/job-sheets/new', label: 'Job Sheets', visible: isSalesOrPm },
     { to: '/products', label: 'Products', visible: isSalesOrPm },
     { to: '/schedule', label: 'Schedule', visible: isPm },
     { to: '/inventory', label: 'Inventory', visible: isPm },
@@ -176,6 +178,7 @@ function App() {
               <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
               <Route path="/inventory/transactions" element={<InventoryTransactionsPage />} />
               <Route path="/quotes" element={<QuotesPage />} />
+              <Route path="/job-sheets/new" element={<JobSheetNewPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="*" element={<NotFoundPage />} />

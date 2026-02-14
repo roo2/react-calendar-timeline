@@ -78,6 +78,7 @@ export function CustomersPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell>Code</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Actions</TableCell>
@@ -86,6 +87,7 @@ export function CustomersPage() {
             <TableBody>
               {items.map((c) => (
                 <TableRow key={c.id} hover>
+                  <TableCell sx={{ width: 90, fontFamily: 'monospace' }}>{c.code}</TableCell>
                   <TableCell>
                     <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
                       {c.name}

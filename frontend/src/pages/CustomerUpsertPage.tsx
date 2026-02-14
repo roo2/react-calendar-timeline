@@ -21,8 +21,6 @@ type Contact = {
   name: string
   title?: string | null
   email: string
-  phone: string
-  phone_alt?: string | null
   preferred_method: string
   notes?: string | null
 }
@@ -51,6 +49,7 @@ type DeliveryPrefs = {
 
 type CustomerDetail = {
   id: string
+  code: string
   name: string
   status: string
   abn?: string | null
@@ -71,8 +70,6 @@ function coerceContact(x: any): Contact {
     name: String(x?.name ?? ''),
     title: x?.title ?? '',
     email: String(x?.email ?? ''),
-    phone: String(x?.phone ?? ''),
-    phone_alt: x?.phone_alt ?? '',
     preferred_method: String(x?.preferred_method ?? 'Email'),
     notes: x?.notes ?? '',
   }
@@ -105,6 +102,7 @@ export function CustomerUpsertPage() {
   const upsert = useAppSelector((s) => s.customers.upsert)
   const loading = isEdit ? detailEntry?.status === 'loading' : false
 
+  const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [abn, setAbn] = useState('')
   const [taxId, setTaxId] = useState('')
@@ -116,8 +114,6 @@ export function CustomerUpsertPage() {
       name: '',
       title: '',
       email: '',
-      phone: '',
-      phone_alt: '',
       preferred_method: 'Email',
       notes: '',
     },
@@ -186,6 +182,7 @@ export function CustomerUpsertPage() {
     if (!c) return
     if (hydratedId === customerId) return
 
+    setCode(c.code ?? '')
     setName(c.name ?? '')
     setAbn(c.abn || '')
     setTaxId(c.tax_id || '')
@@ -222,6 +219,7 @@ export function CustomerUpsertPage() {
   async function submit() {
     try {
       const payload = {
+        code,
         name,
         abn: abn || null,
         tax_id: taxId || null,
@@ -229,7 +227,6 @@ export function CustomerUpsertPage() {
         contacts: contacts.map((c) => ({
           ...c,
           title: c.title || null,
-          phone_alt: c.phone_alt || null,
           notes: c.notes || null,
         })),
         delivery_addresses: addresses.map((a) => ({
@@ -285,6 +282,24 @@ export function CustomerUpsertPage() {
           </Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
             <TextField
+              label="Customer Code"
+              value={code}
+              onChange={(e) => {
+                setCode(e.currentTarget.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4))
+                clearFieldError('code')
+              }}
+              required
+              inputProps={{ maxLength: 4 }}
+              disabled={isEdit}
+              error={!!fieldErrors['code']}
+              helperText={
+                fieldErrors['code'] ||
+                (isEdit
+                  ? 'Customer code cannot be changed after creation.'
+                  : '2–4 letters (A–Z). Used for job sheet numbering.')
+              }
+            />
+            <TextField
               label="Customer Name"
               value={name}
               onChange={(e) => {
@@ -319,7 +334,7 @@ export function CustomerUpsertPage() {
               onClick={() =>
                 setContacts((prev) => [
                   ...prev,
-                  { type: 'Other', name: '', email: '', phone: '', preferred_method: 'Email', title: '', phone_alt: '', notes: '' },
+                  { type: 'Other', name: '', email: '', preferred_method: 'Email', title: '', notes: '' },
                 ])
               }
             >
@@ -387,21 +402,6 @@ export function CustomerUpsertPage() {
                     helperText={fieldErrors[`contacts[${idx}].email`] || ''}
                   />
                   <TextField
-                    label="Phone"
-                    value={c.phone}
-                    onChange={(e) => {
-                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone: e.target.value } : x)))
-                      clearFieldError(`contacts[${idx}].phone`)
-                    }}
-                    error={!!fieldErrors[`contacts[${idx}].phone`]}
-                    helperText={fieldErrors[`contacts[${idx}].phone`] || ''}
-                  />
-                  <TextField
-                    label="Phone Alternate"
-                    value={c.phone_alt || ''}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone_alt: e.target.value } : x)))}
-                  />
-                  <TextField
                     select
                     label="Preferred Method"
                     value={c.preferred_method}
@@ -410,7 +410,6 @@ export function CustomerUpsertPage() {
                     }
                   >
                     <MenuItem value="Email">Email</MenuItem>
-                    <MenuItem value="Phone">Phone</MenuItem>
                   </TextField>
                   <TextField
                     label="Notes"

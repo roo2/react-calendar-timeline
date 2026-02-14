@@ -53,6 +53,7 @@ class TreatIO(str, Enum):
 class IdentitySpec(BaseModel):
     product_type: ProductType
     finish_mode: FinishMode
+    trim_pct: Optional[float] = Field(None, ge=0, le=100)
     industry_flags: List[Literal["food_contact", "non_food", "medical", "chemical_industrial"]] = []
     notes: Optional[str] = None
 

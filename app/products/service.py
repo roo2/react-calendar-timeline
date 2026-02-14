@@ -41,14 +41,23 @@ def _next_version_number(db: Session, product_id: str) -> int:
 def create_product_with_version(payload: CreateProductRequest, created_by: str) -> Tuple[Product, ProductVersion]:
     with SessionLocal() as db:
         _ensure_customer_exists(db, payload.customer_id)
+        cid = str(uuid.UUID(payload.customer_id))
+        customer = db.get(Customer, cid)
+        customer_code = (getattr(customer, "code", None) or "").strip().upper()
+        code_in = (payload.code or "").strip()
+        if customer_code:
+            code_up = code_in.upper()
+            ok = code_up.startswith(f"{customer_code}-") or code_up.startswith(f"{customer_code}_")
+            if not ok:
+                raise DomainError(f"Product code must start with {customer_code}-")
         # Ensure unique product code
         existing = db.scalar(select(func.count()).select_from(Product).where(Product.code == payload.code)) or 0
         if existing > 0:
             raise DomainError("Product code already exists")
         product = Product(
-            code=payload.code,
+            code=code_in,
             description=(payload.description.strip() if payload.description and payload.description.strip() else None),
-            customer_id=str(uuid.UUID(payload.customer_id)),
+            customer_id=cid,
         )
         db.add(product)
         db.flush()  # get product.id

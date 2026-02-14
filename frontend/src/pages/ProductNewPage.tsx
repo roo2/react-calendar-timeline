@@ -31,7 +31,18 @@ export function ProductNewPage() {
   const [description, setDescription] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
 
-  const canSubmit = useMemo(() => customerId && code && !saving, [customerId, code, saving])
+  const customerCode = useMemo(() => {
+    const c = customers.find((x) => x.id === customerId) as any
+    return (c?.code ? String(c.code) : '').trim().toUpperCase()
+  }, [customerId, customers])
+
+  const codePrefixOk = useMemo(() => {
+    if (!customerCode) return true
+    const v = (code || '').trim().toUpperCase()
+    return v.startsWith(`${customerCode}-`) || v.startsWith(`${customerCode}_`)
+  }, [code, customerCode])
+
+  const canSubmit = useMemo(() => customerId && code && codePrefixOk && !saving, [customerId, code, codePrefixOk, saving])
 
   useEffect(() => {
     if (customersStatus !== 'idle') return
@@ -145,8 +156,13 @@ export function ProductNewPage() {
                   dispatch(clearCreateFieldError('code'))
                 }}
                 required
-                helperText="Human-visible unique identifier (e.g. F15-123)"
-                error={!!fieldErrors['code']}
+                helperText={
+                  fieldErrors['code'] ||
+                  (customerCode
+                    ? `Must start with ${customerCode}- (e.g. ${customerCode}-F15-123)`
+                    : 'Select a customer first to see the required prefix.')
+                }
+                error={!!fieldErrors['code'] || (customerId ? !codePrefixOk : false)}
               />
 
               <TextField
@@ -170,6 +186,7 @@ export function ProductNewPage() {
               clearLocalFieldErrorsByPrefix('spec')
             }}
             fieldErrors={fieldErrors}
+            customerId={customerId || undefined}
           />
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
