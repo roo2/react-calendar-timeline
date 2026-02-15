@@ -129,7 +129,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("active_version_id", sa.String(length=36), nullable=True),
-        sa.Column("lifecycle_status", sa.String(length=50), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -181,6 +180,44 @@ def upgrade() -> None:
             ["id"],
             ondelete="RESTRICT",
         )
+
+    # Job Sheets (front-end concept; persisted references + quantity/due date)
+    op.create_table(
+        "job_sheets",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("job_no", sa.String(length=64), nullable=False),
+        sa.Column(
+            "customer_id",
+            sa.String(length=36),
+            sa.ForeignKey("customers.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column(
+            "product_id",
+            sa.String(length=36),
+            sa.ForeignKey("products.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column(
+            "product_version_id",
+            sa.String(length=36),
+            sa.ForeignKey("product_versions.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column("due_date", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("quantity_value", sa.Numeric(18, 6), nullable=False),
+        sa.Column("quantity_unit", sa.String(length=16), nullable=False),
+        sa.Column("created_by", sa.String(length=100), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.UniqueConstraint("job_no", name="uq_job_sheets_job_no"),
+    )
+    op.create_index("ix_job_sheets_customer", "job_sheets", ["customer_id"])
+    op.create_index("ix_job_sheets_product", "job_sheets", ["product_id"])
+    op.create_index("ix_job_sheets_due_date", "job_sheets", ["due_date"])
 
     # Operator Suggestions
     op.create_table(
@@ -961,6 +998,10 @@ def downgrade() -> None:
     op.drop_index("ix_operator_suggestions_product_version", table_name="operator_suggestions")
     op.drop_index("ix_operator_suggestions_product", table_name="operator_suggestions")
     op.drop_table("operator_suggestions")
+    op.drop_index("ix_job_sheets_due_date", table_name="job_sheets")
+    op.drop_index("ix_job_sheets_product", table_name="job_sheets")
+    op.drop_index("ix_job_sheets_customer", table_name="job_sheets")
+    op.drop_table("job_sheets")
     if conn.dialect.name == "sqlite":
         with op.batch_alter_table("products", schema=None) as batch_op:
             batch_op.drop_constraint("fk_products_active_version", type_="foreignkey")

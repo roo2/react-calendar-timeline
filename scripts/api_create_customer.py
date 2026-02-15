@@ -63,7 +63,7 @@ def _default_customer_payload(name: str) -> Dict[str, Any]:
     # - at least one contact
     # - at least one delivery address (one default)
     return {
-        "code": _generate_customer_code(),
+        "code": "RSM",
         "name": name,
         "abn": None,
         "tax_id": None,

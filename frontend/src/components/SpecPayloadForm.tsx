@@ -90,6 +90,9 @@ export function makeDefaultSpec(): SpecPayload {
       thickness_um: 50,
       geometry: 'Flat',
       gusset_mm: null,
+      ufilm_left_width_mm: null,
+      ufilm_right_width_mm: null,
+      length_units: 'mm',
     },
     formulation: {
       blend_type: 'LD',
@@ -117,6 +120,7 @@ export function makeDefaultSpec(): SpecPayload {
       preferred_extruders: [],
       preferred_printer: null,
       preferred_converter: null,
+      run_up: 'none',
       slit: 'none',
       treat_inside_outside: 'none',
       inline_perforation: false,
@@ -131,6 +135,7 @@ export function makeDefaultSpec(): SpecPayload {
       bags_per_carton: null,
       pallet_type: 'Chep',
       wrapped: false,
+      notes: null,
     },
     tool_requirements: [],
   }
@@ -185,6 +190,10 @@ export function SpecPayloadForm(props: {
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
   const isUFilm = productType === PRODUCT_TYPE.UFilm
+  const gussetEnabled =
+    !isUFilm &&
+    canHaveGusset &&
+    (((dimensions.geometry as string) || 'Flat') === 'Gusset' || Number(dimensions.gusset_mm || 0) > 0)
 
   const [resinBlends, setResinBlends] = useState<ResinBlendPreset[]>([])
   const [resinBlendsErr, setResinBlendsErr] = useState<string | null>(null)
@@ -391,27 +400,80 @@ export function SpecPayloadForm(props: {
   }
 
   const derived: DerivedDimensions = useMemo(() => {
-    const baseWidth = typeof dimensions.base_width_mm === 'number' ? dimensions.base_width_mm : 0
-    const gussetOrSide = typeof dimensions.gusset_mm === 'number' ? dimensions.gusset_mm : 0
+    const width = typeof dimensions.base_width_mm === 'number' ? dimensions.base_width_mm : 0
+    const gussetReturnOrSide = typeof dimensions.gusset_mm === 'number' ? dimensions.gusset_mm : 0
 
-    let layflat = baseWidth
-    if (productType === PRODUCT_TYPE.Centerfold) {
-      layflat = 0.5 * baseWidth
+    let layflat = width
+    if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
+      layflat = 0.5 * width
     } else if (productType === PRODUCT_TYPE.UFilm) {
-      layflat = baseWidth + 2 * gussetOrSide
-    } else if (canHaveGusset && gussetOrSide > 0) {
-      layflat = baseWidth + 2 * gussetOrSide
+      const l = typeof dimensions.ufilm_left_width_mm === 'number' ? dimensions.ufilm_left_width_mm : 0
+      const r = typeof dimensions.ufilm_right_width_mm === 'number' ? dimensions.ufilm_right_width_mm : 0
+      layflat = width + l + r
+    } else if (gussetEnabled && gussetReturnOrSide > 0) {
+      layflat = width + 2 * gussetReturnOrSide
     }
 
     return {
       layflat_mm: layflat,
     }
-  }, [canHaveGusset, dimensions.base_width_mm, dimensions.gusset_mm, productType])
+  }, [dimensions.base_width_mm, dimensions.geometry, dimensions.gusset_mm, gussetEnabled, productType])
+
+  function fmtMm(v: unknown): string {
+    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
+    if (!Number.isFinite(n)) return ''
+    if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n))
+    return String(Math.round(n * 10) / 10)
+  }
+
+  const layflatShorthand = useMemo(() => {
+    if (productType === PRODUCT_TYPE.UFilm) {
+      const l = fmtMm(dimensions.ufilm_left_width_mm)
+      const m = fmtMm(dimensions.base_width_mm)
+      const r = fmtMm(dimensions.ufilm_right_width_mm)
+      return `${l} / ${m} / ${r}`.trim()
+    }
+
+    if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
+      const w = fmtMm(dimensions.base_width_mm)
+      const lf = fmtMm(derived.layflat_mm)
+      return `${w} ( ${lf} )`.trim()
+    }
+
+    if (gussetEnabled) {
+      const w = fmtMm(dimensions.base_width_mm)
+      const g = fmtMm(dimensions.gusset_mm)
+      return `( ${w} + ${g} )`.trim()
+    }
+
+    return fmtMm(dimensions.base_width_mm)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [derived.layflat_mm, dimensions.base_width_mm, dimensions.geometry, dimensions.gusset_mm, dimensions.ufilm_left_width_mm, dimensions.ufilm_right_width_mm, gussetEnabled, productType])
+
+  const lengthUnits = (dimensions.length_units as 'mm' | 'M' | undefined) || 'mm'
+  const lengthDisplay = useMemo(() => {
+    const mm = typeof dimensions.base_length_mm === 'number' ? dimensions.base_length_mm : null
+    if (mm == null) return ''
+    if (lengthUnits === 'M') return String(Math.round((mm / 1000) * 1000) / 1000)
+    return String(mm)
+  }, [dimensions.base_length_mm, lengthUnits])
+
+  const runUpAllowed = productType === PRODUCT_TYPE.Centerfold || productType === PRODUCT_TYPE.Sheet
 
   function onProductTypeChange(nextTypeRaw: string) {
     const nextType = nextTypeRaw as ProductType
     update((d) => {
       d.identity.product_type = nextType
+
+      // Run-up only supported for Centerfold (2up) and Sheet (2up/4up/6up).
+      const nextRunUp = d.run_requirements?.run_up || 'none'
+      const allowed =
+        nextType === PRODUCT_TYPE.Centerfold
+          ? new Set(['none', '2up'])
+          : nextType === PRODUCT_TYPE.Sheet
+            ? new Set(['none', '2up', '4up', '6up'])
+            : new Set(['none'])
+      if (!allowed.has(String(nextRunUp))) d.run_requirements.run_up = 'none'
 
       // Centerfold implies CentreFold geometry and no gusset.
       if (nextType === PRODUCT_TYPE.Centerfold) {
@@ -427,8 +489,7 @@ export function SpecPayloadForm(props: {
       const allowGusset = nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Tube
       if (!allowGusset) {
         d.dimensions.geometry = 'Flat'
-        // For U-Film we repurpose gusset_mm as "Side Width"; don't clear it.
-        if (nextType !== PRODUCT_TYPE.UFilm) d.dimensions.gusset_mm = null
+        d.dimensions.gusset_mm = null
       }
 
       // Tubes are always rolls in our simplified UI (length disabled for Tube).
@@ -496,41 +557,6 @@ export function SpecPayloadForm(props: {
           </TextField>
 
           <TextField
-            select
-            label="Trim"
-            value={trimSelect}
-            onChange={(e) => {
-              const v = e.target.value
-              setTrimSelect(v)
-              update((d) => {
-                if (!v) d.identity.trim_pct = null
-                else if (v === 'custom') d.identity.trim_pct = d.identity.trim_pct ?? 5
-                else d.identity.trim_pct = parseFloat(v)
-              })
-            }}
-          >
-            <MenuItem value="">-</MenuItem>
-            <MenuItem value="5">5%</MenuItem>
-            <MenuItem value="10">10%</MenuItem>
-            <MenuItem value="20">20%</MenuItem>
-            <MenuItem value="custom">Custom…</MenuItem>
-          </TextField>
-
-          {trimSelect === 'custom' ? (
-            <TextField
-              label="Custom trim (%)"
-              type="number"
-              inputProps={{ min: 0, step: 0.1 }}
-              value={identity.trim_pct ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  d.identity.trim_pct = e.target.value ? parseFloat(e.target.value) : null
-                })
-              }
-            />
-          ) : null}
-
-          <TextField
             label="Notes"
             value={identity.notes || ''}
             onChange={(e) => update((d) => (d.identity.notes = e.target.value || null))}
@@ -543,54 +569,83 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Volume calculations
-          </Typography>
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-            <TextField
-              select
-              label="Roll weight billing"
-              value={identity.roll_weight_billing || 'core_included'}
-              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
-              helperText="How core weight is treated when billing a customer."
-              error={!!errorFor('spec.identity.roll_weight_billing')}
-            >
-              <MenuItem value="core_included">Core included in weight of roll</MenuItem>
-              <MenuItem value="core_off">Take core weight off weight</MenuItem>
-              <MenuItem value="core_half_off">Take half of core weight off</MenuItem>
-            </TextField>
-          </Box>
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Industry / Compliance Intent
+            Options
           </Typography>
           <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-            {[
-              { id: 'food_contact', label: 'Food Contact' },
-              { id: 'medical', label: 'Medical' },
-              { id: 'chemical_industrial', label: 'Chemical / Industrial' },
-            ].map((f) => (
-              <FormControlLabel
-                key={f.id}
-                control={
-                  <Checkbox
-                    checked={industryFlags.has(f.id)}
-                    onChange={(e) =>
-                      update((d) => {
-                        const cur = new Set<string>(d.identity.industry_flags || [])
-                        if (e.target.checked) cur.add(f.id)
-                        else cur.delete(f.id)
-                        d.identity.industry_flags = Array.from(cur)
-                      })
-                    }
-                  />
-                }
-                label={f.label}
-              />
-            ))}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={gussetEnabled}
+                  disabled={!canHaveGusset || isUFilm}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!canHaveGusset || isUFilm) return
+                      if (e.target.checked) {
+                        d.dimensions.geometry = 'Gusset'
+                        d.dimensions.gusset_mm =
+                          d.dimensions.gusset_mm && d.dimensions.gusset_mm > 0 ? d.dimensions.gusset_mm : 50
+                      } else {
+                        d.dimensions.geometry = 'Flat'
+                        d.dimensions.gusset_mm = null
+                      }
+                    })
+                  }
+                />
+              }
+              label="Gusset"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!printingEnabled}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (e.target.checked) {
+                        if (!d.printing.method || d.printing.method === 'None') d.printing.method = 'Inline'
+                      } else {
+                        d.printing.method = 'None'
+                        d.printing.side = null
+                        d.printing.print_description = null
+                        d.printing.num_colours = 0
+                        d.printing.ink_codes = []
+                        d.printing.plate_codes = []
+                        d.printing.artwork_refs = []
+                        d.printing.front_ink_plate = []
+                        d.printing.back_ink_plate = []
+                      }
+                    })
+                  }
+                />
+              }
+              label="Printed"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!run.inline_perforation}
+                  onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
+                />
+              }
+              label="Perforated"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox checked={!!run.inline_seal} onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))} />
+              }
+              label="Sealed"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!run.hole_punched}
+                  onChange={(e) => update((d) => (d.run_requirements.hole_punched = e.target.checked))}
+                />
+              }
+              label="Punched"
+            />
           </FormGroup>
         </Box>
+
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -599,60 +654,133 @@ export function SpecPayloadForm(props: {
         </Typography>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, gridColumn: '1 / -1' }}>
-          <TextField
-            label="Base Width (mm)"
-            type="number"
-            inputProps={{ min: 1, step: 1 }}
-            value={dimensions.base_width_mm ?? ''}
-            onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
-            required
-            error={!!errorFor('spec.dimensions.base_width_mm')}
-            helperText={errorFor('spec.dimensions.base_width_mm') || ''}
-          />
-
           {isUFilm ? (
-            <TextField
-              label="Side Width (mm)"
-              type="number"
-              inputProps={{ min: 1, step: 1 }}
-              value={dimensions.gusset_mm ?? ''}
-              onChange={(e) => update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))}
-              error={!!errorFor('spec.dimensions.gusset_mm')}
-              helperText={errorFor('spec.dimensions.gusset_mm') || ''}
-            />
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
+              <TextField
+                label="Left Width (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.ufilm_left_width_mm ?? ''}
+                onChange={(e) =>
+                  update((d) => (d.dimensions.ufilm_left_width_mm = e.target.value ? parseInt(e.target.value) : null))
+                }
+                error={!!errorFor('spec.dimensions.ufilm_left_width_mm')}
+                helperText={errorFor('spec.dimensions.ufilm_left_width_mm') || ''}
+              />
+              <TextField
+                label="Middle Width (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.base_width_mm ?? ''}
+                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
+                required
+                error={!!errorFor('spec.dimensions.base_width_mm')}
+                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+              />
+              <TextField
+                label="Right Width (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.ufilm_right_width_mm ?? ''}
+                onChange={(e) =>
+                  update((d) => (d.dimensions.ufilm_right_width_mm = e.target.value ? parseInt(e.target.value) : null))
+                }
+                error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
+                helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
+              />
+            </Box>
+          ) : productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold' ? (
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
+              <TextField
+                label="Layflat Width (mm)"
+                value={Number.isFinite(derived.layflat_mm) ? Math.round(derived.layflat_mm) : ''}
+                InputProps={{ readOnly: true }}
+                helperText="[Layflat Width (mm)]"
+              />
+              <TextField
+                label="Product Width (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.base_width_mm ?? ''}
+                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
+                required
+                error={!!errorFor('spec.dimensions.base_width_mm')}
+                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+              />
+            </Box>
+          ) : gussetEnabled ? (
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
+              <TextField
+                label="Width (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.base_width_mm ?? ''}
+                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
+                required
+                error={!!errorFor('spec.dimensions.base_width_mm')}
+                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+              />
+              <TextField
+                label="Gusset Return (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.gusset_mm ?? ''}
+                onChange={(e) => update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))}
+                error={!!errorFor('spec.dimensions.gusset_mm')}
+                helperText={errorFor('spec.dimensions.gusset_mm') || ''}
+              />
+            </Box>
           ) : (
-            <TextField
-              label="Gusset Size (mm)"
-              type="number"
-              inputProps={{ min: 1, step: 1 }}
-              value={dimensions.gusset_mm ?? ''}
-              disabled={!canHaveGusset}
-              onChange={(e) => {
-                const raw = e.target.value
-                const next = raw ? parseInt(raw) : null
-                update((d) => {
-                  d.dimensions.gusset_mm = next
-                })
-              }}
-              error={!!errorFor('spec.dimensions.gusset_mm')}
-              helperText={
-                errorFor('spec.dimensions.gusset_mm') ||
-                (!canHaveGusset
-                  ? `Not used for ${productType}`
-                  : '')
-              }
-            />
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2, gridColumn: '1 / -1' }}>
+              <TextField
+                label="Width (mm)"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={dimensions.base_width_mm ?? ''}
+                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
+                required
+                error={!!errorFor('spec.dimensions.base_width_mm')}
+                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+              />
+            </Box>
           )}
-          </Box>
+
+          <Paper variant="outlined" sx={{ p: 2, gridColumn: '1 / -1' }}>
+            <Typography variant="body2" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
+              Shorthand: {layflatShorthand}
+            </Typography>
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
+              Layflat Width: <strong>{fmtMm(derived.layflat_mm)}mm</strong>
+            </Typography>
+          </Paper>
 
           <TextField
-            label="Length (mm)"
+            select
+            label="Length Units"
+            value={lengthUnits}
+            onChange={(e) => update((d) => (d.dimensions.length_units = e.target.value))}
+            disabled={productType === PRODUCT_TYPE.Tube}
+          >
+            <MenuItem value="mm">mm</MenuItem>
+            <MenuItem value="M">M</MenuItem>
+          </TextField>
+
+          <TextField
+            label={`Length (${lengthUnits})`}
             type="number"
             inputProps={{ min: 1, step: 1 }}
-            value={dimensions.base_length_mm ?? ''}
+            value={lengthDisplay}
             onChange={(e) =>
-              update((d) => (d.dimensions.base_length_mm = e.target.value ? parseInt(e.target.value) : null))
+              update((d) => {
+                const raw = e.target.value
+                if (!raw) {
+                  d.dimensions.base_length_mm = null
+                  return
+                }
+                const n = Number(raw)
+                if (!Number.isFinite(n)) return
+                d.dimensions.base_length_mm = lengthUnits === 'M' ? Math.round(n * 1000) : Math.round(n)
+              })
             }
             disabled={productType === PRODUCT_TYPE.Tube}
             helperText={
@@ -666,7 +794,7 @@ export function SpecPayloadForm(props: {
           />
 
           <TextField
-            label="Thickness (µm)"
+            label="Thickness/Gauge (µm)"
             type="number"
             inputProps={{ min: 1, step: 1 }}
             value={dimensions.thickness_um ?? ''}
@@ -676,11 +804,6 @@ export function SpecPayloadForm(props: {
             helperText={errorFor('spec.dimensions.thickness_um') || ''}
           />
         </Box>
-        <Paper variant="outlined" sx={{ mt: 2, p: 2 }}>
-          <Typography variant="body2">
-            Layflat (mm): <strong>{derived.layflat_mm}</strong>
-          </Typography>
-        </Paper>
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1303,6 +1426,37 @@ export function SpecPayloadForm(props: {
         </FormGroup>
 
         <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+            Industry / Compliance Intent
+          </Typography>
+          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+            {[
+              { id: 'food_contact', label: 'Food Contact' },
+              { id: 'medical', label: 'Medical' },
+              { id: 'chemical_industrial', label: 'Chemical / Industrial' },
+            ].map((f) => (
+              <FormControlLabel
+                key={f.id}
+                control={
+                  <Checkbox
+                    checked={industryFlags.has(f.id)}
+                    onChange={(e) =>
+                      update((d) => {
+                        const cur = new Set<string>(d.identity.industry_flags || [])
+                        if (e.target.checked) cur.add(f.id)
+                        else cur.delete(f.id)
+                        d.identity.industry_flags = Array.from(cur)
+                      })
+                    }
+                  />
+                }
+                label={f.label}
+              />
+            ))}
+          </FormGroup>
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
           <TextField
             label="Known Issues"
             value={quality.known_issues || ''}
@@ -1330,6 +1484,78 @@ export function SpecPayloadForm(props: {
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
           <TextField
             select
+            label="Trim"
+            value={trimSelect}
+            onChange={(e) => {
+              const v = e.target.value
+              setTrimSelect(v)
+              update((d) => {
+                if (!v) d.identity.trim_pct = null
+                else if (v === 'custom') d.identity.trim_pct = d.identity.trim_pct ?? 5
+                else d.identity.trim_pct = parseFloat(v)
+              })
+            }}
+            error={!!errorFor('spec.identity.trim_pct')}
+            helperText={errorFor('spec.identity.trim_pct') || ''}
+          >
+            <MenuItem value="">-</MenuItem>
+            <MenuItem value="5">5%</MenuItem>
+            <MenuItem value="10">10%</MenuItem>
+            <MenuItem value="20">20%</MenuItem>
+            <MenuItem value="custom">Custom…</MenuItem>
+          </TextField>
+
+          {trimSelect === 'custom' ? (
+            <TextField
+              label="Custom trim (%)"
+              type="number"
+              inputProps={{ min: 0, step: 0.1 }}
+              value={identity.trim_pct ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  d.identity.trim_pct = e.target.value ? parseFloat(e.target.value) : null
+                })
+              }
+              error={!!errorFor('spec.identity.trim_pct')}
+              helperText={errorFor('spec.identity.trim_pct') || ''}
+            />
+          ) : null}
+
+          <TextField
+            select
+            label="Run Up"
+            value={(run.run_up as string | undefined) || 'none'}
+            onChange={(e) =>
+              update((d) => {
+                d.run_requirements.run_up = String(e.target.value || 'none')
+              })
+            }
+            disabled={!runUpAllowed}
+            helperText={
+              productType === PRODUCT_TYPE.Centerfold
+                ? 'Centerfold can be run 2 up'
+                : productType === PRODUCT_TYPE.Sheet
+                  ? 'Sheet can be run 2/4/6 up'
+                  : 'Not available for this product type'
+            }
+            error={!!errorFor('spec.run_requirements.run_up')}
+          >
+            <MenuItem value="none">-</MenuItem>
+            {runUpAllowed && <MenuItem value="2up">2 up</MenuItem>}
+            {productType === PRODUCT_TYPE.Sheet
+              ? [
+                  <MenuItem key="4up" value="4up">
+                    4 up
+                  </MenuItem>,
+                  <MenuItem key="6up" value="6up">
+                    6 up
+                  </MenuItem>,
+                ]
+              : null}
+          </TextField>
+
+          <TextField
+            select
             label="Slit"
             value={run.slit || 'none'}
             onChange={(e) => update((d) => (d.run_requirements.slit = e.target.value))}
@@ -1353,35 +1579,6 @@ export function SpecPayloadForm(props: {
             <MenuItem value="inside">inside</MenuItem>
             <MenuItem value="outside">outside</MenuItem>
           </TextField>
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!run.inline_perforation}
-                  onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
-                />
-              }
-              label="Inline Perforation"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!run.hole_punched}
-                  onChange={(e) => update((d) => (d.run_requirements.hole_punched = e.target.checked))}
-                />
-              }
-              label="Hole punched"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox checked={!!run.inline_seal} onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))} />
-              }
-              label="Inline Seal"
-            />
-          </FormGroup>
         </Box>
 
         <Box sx={{ mt: 2 }}>
@@ -1411,16 +1608,11 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
           <TextField
-            select
-            label="Pack Mode"
-            value={packaging.pack_mode || finishMode}
-            onChange={(e) => update((d) => (d.packaging.pack_mode = e.target.value))}
-            error={!!errorFor('spec.packaging.pack_mode')}
-            helperText={errorFor('spec.packaging.pack_mode') || ''}
-          >
-            <MenuItem value="Rolls">Rolls</MenuItem>
-            <MenuItem value="Cartons">Cartons</MenuItem>
-          </TextField>
+            label="Finish Mode"
+            value={finishMode}
+            InputProps={{ readOnly: true }}
+            helperText="From Product Identity"
+          />
 
           <TextField
             select
@@ -1437,13 +1629,15 @@ export function SpecPayloadForm(props: {
 
           <TextField
             select
-            label="Core Policy"
-            value={packaging.core_policy || 'Include'}
-            onChange={(e) => update((d) => (d.packaging.core_policy = e.target.value))}
+            label="Roll weight billing"
+            value={identity.roll_weight_billing || 'core_included'}
+            onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
+            helperText="How core weight is treated when billing."
+            error={!!errorFor('spec.identity.roll_weight_billing')}
           >
-            <MenuItem value="Include">Include</MenuItem>
-            <MenuItem value="Half">Half</MenuItem>
-            <MenuItem value="Exclude">Exclude</MenuItem>
+            <MenuItem value="core_included">Include core</MenuItem>
+            <MenuItem value="core_off">Exclude core</MenuItem>
+            <MenuItem value="core_half_off">Half core</MenuItem>
           </TextField>
 
           <TextField
@@ -1454,9 +1648,9 @@ export function SpecPayloadForm(props: {
             onChange={(e) =>
               update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
             }
-            disabled={(packaging.pack_mode || finishMode) === 'Rolls'}
+            disabled={finishMode === 'Rolls'}
             helperText={
-              (packaging.pack_mode || finishMode) === 'Rolls' ? 'Not used for Rolls' : 'Required when pack_mode = Cartons'
+              finishMode === 'Rolls' ? 'Not used for Rolls' : 'Required when Finish Mode = Cartons'
             }
             error={!!errorFor('spec.packaging.bags_per_carton')}
           />
@@ -1473,6 +1667,19 @@ export function SpecPayloadForm(props: {
               </MenuItem>
             ))}
           </TextField>
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <TextField
+            label="Packing Notes"
+            value={packaging.notes || ''}
+            onChange={(e) => update((d) => (d.packaging.notes = e.target.value || null))}
+            multiline
+            minRows={2}
+            fullWidth
+            error={!!errorFor('spec.packaging.notes')}
+            helperText={errorFor('spec.packaging.notes') || ''}
+          />
         </Box>
 
         <Box sx={{ mt: 2 }}>

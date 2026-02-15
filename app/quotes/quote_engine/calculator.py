@@ -39,7 +39,11 @@ def quantize_money(x: Decimal) -> Decimal:
 
 def compute_dimensions(spec: SpecDTO) -> Dimensions:
     # Layflat per SDS-3 §3.2
-    if spec.geometry == "flat":
+    if spec.product_type == "U-Film":
+        l = spec.ufilm_left_width_mm or Decimal("0")
+        r = spec.ufilm_right_width_mm or Decimal("0")
+        layflat_mm = spec.base_width_mm + l + r
+    elif spec.geometry == "flat":
         layflat_mm = spec.base_width_mm
     elif spec.geometry == "gusset":
         g = spec.gusset_mm or Decimal("0")

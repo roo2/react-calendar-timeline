@@ -75,7 +75,6 @@ class Product(Base):
     active_version_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("product_versions.id", ondelete="RESTRICT"), nullable=True
     )
-    lifecycle_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     customer: Mapped["Customer"] = relationship(back_populates="products")
@@ -101,6 +100,31 @@ class ProductVersion(Base):
     product: Mapped["Product"] = relationship(
         "Product", foreign_keys="[ProductVersion.product_id]", back_populates="versions"
     )
+
+
+class JobSheet(Base):
+    __tablename__ = "job_sheets"
+    __table_args__ = (
+        UniqueConstraint("job_no", name="uq_job_sheets_job_no"),
+        Index("ix_job_sheets_customer", "customer_id"),
+        Index("ix_job_sheets_product", "product_id"),
+        Index("ix_job_sheets_due_date", "due_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    product_version_id: Mapped[str] = mapped_column(ForeignKey("product_versions.id", ondelete="RESTRICT"), nullable=False)
+    due_date: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
+    quantity_value: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    quantity_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    customer: Mapped["Customer"] = relationship()
+    product: Mapped["Product"] = relationship()
+    version: Mapped["ProductVersion"] = relationship()
 
 
 class OperatorSuggestion(Base):

@@ -67,7 +67,6 @@ def main() -> None:
             {
                 "customer_id": customer_id,
                 "active_version_id": None,
-                "lifecycle_status": "active",
                 "created_at": now,
             },
         )

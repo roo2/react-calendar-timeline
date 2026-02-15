@@ -98,6 +98,11 @@ except Exception as e:  # pragma: no cover - allow tests without product deps
     print(f"✗ ERROR: Failed to import products router: {e}", file=sys.stderr)
     traceback.print_exc()
     products_router = None
+
+try:
+    from app.job_sheets.routes import router as job_sheets_router  # type: ignore
+except Exception:
+    job_sheets_router = None
 try:
     from app.orders.routes import router as orders_router  # type: ignore
 except Exception:
@@ -207,6 +212,9 @@ if products_router is not None:
 else:
     import sys
     print("✗ ERROR: Products router is None - routes will not be available!", file=sys.stderr)
+
+if job_sheets_router is not None:
+    app.include_router(job_sheets_router)
 
 app.include_router(quotes_router)
 app.include_router(admin_ratecards_api_router)

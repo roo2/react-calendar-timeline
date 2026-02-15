@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   Box,
@@ -17,7 +18,7 @@ import {
 import { apiFetch } from '../api/client'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchCustomers } from '../store/slices/customersSlice'
-import { clearCreateErrors, clearNewVersionErrors, createProduct, createProductVersion } from '../store/slices/productsSlice'
+import { clearCreateErrors, createProduct } from '../store/slices/productsSlice'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../components/SpecPayloadForm'
 
 type ProductSummary = {
@@ -53,36 +54,23 @@ function ensureSpec(s: any): SpecPayload {
 
 type QuantityUnit = 'kg' | 'rolls' | 'bags' | 'meters'
 
-function jobSeqStorageKey(customerCode: string) {
-  return `job_seq_${customerCode}`
-}
-
-function getNextJobSeq(customerCode: string): number {
-  const raw = localStorage.getItem(jobSeqStorageKey(customerCode))
-  const last = raw ? Number(raw) : 0
-  return Number.isFinite(last) && last >= 0 ? last + 1 : 1
-}
-
-function commitJobSeq(customerCode: string, usedSeq: number) {
-  localStorage.setItem(jobSeqStorageKey(customerCode), String(usedSeq))
-}
-
 export function JobSheetNewPage() {
   const dispatch = useAppDispatch()
+  const nav = useNavigate()
 
   const customers = useAppSelector((s) => s.customers.list.items)
   const customersStatus = useAppSelector((s) => s.customers.list.status)
 
   const createState = useAppSelector((s) => s.products.create)
-  const newVersionState = useAppSelector((s) => s.products.newVersion)
+  const [savingJobSheet, setSavingJobSheet] = useState(false)
 
   const [customerId, setCustomerId] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [qtyUnit, setQtyUnit] = useState<QuantityUnit>('kg')
   const [qtyValue, setQtyValue] = useState<number | ''>('')
   const [jobNo, setJobNo] = useState('')
-  const [jobSeq, setJobSeq] = useState<number | null>(null)
   const [lastSavedJobNo, setLastSavedJobNo] = useState<string | null>(null)
+  const dueDateInputRef = useRef<HTMLInputElement | null>(null)
 
   const [products, setProducts] = useState<ProductSummary[]>([])
   const [productsStatus, setProductsStatus] = useState<'idle' | 'loading' | 'failed' | 'succeeded'>('idle')
@@ -94,6 +82,7 @@ export function JobSheetNewPage() {
   const [specLoading, setSpecLoading] = useState(false)
 
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [saveErr, setSaveErr] = useState<string | null>(null)
 
   const [newProductOpen, setNewProductOpen] = useState(false)
   const [newProductCode, setNewProductCode] = useState('')
@@ -137,23 +126,20 @@ export function JobSheetNewPage() {
     setSaveMsg(null)
     setLastSavedJobNo(null)
     setJobNo('')
-    setJobSeq(null)
     if (!customerId) return
     void loadProducts(customerId)
   }, [customerId])
 
   useEffect(() => {
     if (!customerId) return
-    const c = customers.find((x) => x.id === customerId) as any
-    const code = c?.code ? String(c.code) : ''
-    if (!code) {
-      setJobNo('')
-      setJobSeq(null)
-      return
-    }
-    const next = getNextJobSeq(code)
-    setJobSeq(next)
-    setJobNo(`${code}_${next}`)
+    void (async () => {
+      try {
+        const res = await apiFetch<{ job_no: string }>(`/api/job-sheets/next-job-no?customer_id=${encodeURIComponent(customerId)}`)
+        setJobNo(res.job_no || '')
+      } catch {
+        setJobNo('')
+      }
+    })()
   }, [customerId, customers])
 
   useEffect(() => {
@@ -179,8 +165,6 @@ export function JobSheetNewPage() {
     })()
   }, [productId])
 
-  const canSaveVersion = useMemo(() => !!productId && newVersionState.status !== 'loading', [productId, newVersionState.status])
-
   const qtyLabel = useMemo(() => {
     if (qtyUnit === 'kg') return 'Total KGs'
     if (qtyUnit === 'rolls') return 'No. of Rolls'
@@ -188,37 +172,53 @@ export function JobSheetNewPage() {
     return 'Total Meters'
   }, [qtyUnit])
 
-  async function onSaveNewVersion() {
-    if (!productId) return
+  async function onSaveJobSheet() {
     setSaveMsg(null)
-    dispatch(clearNewVersionErrors())
+    setSaveErr(null)
+
+    const missing: string[] = []
+    if (!customerId) missing.push('Customer')
+    if (!dueDate) missing.push('Due Date')
+    if (!jobNo) missing.push('Job No')
+    if (!productId) missing.push('Product')
+    if (qtyValue === '' || !Number.isFinite(Number(qtyValue)) || Number(qtyValue) <= 0) missing.push('Quantity')
+    if (missing.length > 0) {
+      setSaveErr(`Missing required fields: ${missing.join(', ')}`)
+      return
+    }
+    if (savingJobSheet) return
+
     try {
-      await dispatch(createProductVersion({ productId, spec })).unwrap()
-      if (jobNo) {
-        setLastSavedJobNo(jobNo)
-        setSaveMsg(`Saved job sheet ${jobNo}: created a new product version.`)
-      } else {
-        setSaveMsg('Saved: created a new product version.')
-      }
-
-      // Advance the per-customer job sequence so repeated saves don't reuse the same job number.
-      const c = customers.find((x) => x.id === customerId) as any
-      const code = c?.code ? String(c.code) : ''
-      if (code && jobSeq != null) {
-        commitJobSeq(code, jobSeq)
-        const next = jobSeq + 1
-        setJobSeq(next)
-        setJobNo(`${code}_${next}`)
-      }
-
-      // Refresh product/versions to reflect the new version number.
+      setSavingJobSheet(true)
       setSpecLoading(true)
-      const res = await apiFetch<{ product: ProductSummary; versions: ProductVersionSummary[] }>(`/api/products/${productId}`)
-      setProductInfo(res.product || null)
-      // We don't currently display version history on this page; refresh ensures the backend accepted the spec.
-    } catch {
-      // Errors are stored in the slice (including field-level validation).
+      const res = await apiFetch<{ ok: boolean; job_sheet: { id: string } }>('/api/job-sheets', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: customerId,
+          product_id: productId,
+          job_no: jobNo,
+          due_date: dueDate,
+          quantity_value: Number(qtyValue),
+          quantity_unit: qtyUnit,
+          spec,
+        }),
+      })
+      const id = res?.job_sheet?.id
+      setLastSavedJobNo(jobNo)
+      setSaveMsg(`Saved job sheet ${jobNo}.`)
+      // Refresh suggested job number (prevents reusing an existing job no).
+      try {
+        const next = await apiFetch<{ job_no: string }>(`/api/job-sheets/next-job-no?customer_id=${encodeURIComponent(customerId)}`)
+        setJobNo(next.job_no || '')
+      } catch {
+        // ignore
+      }
+
+      if (id) nav(`/job-sheets/${id}`)
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
     } finally {
+      setSavingJobSheet(false)
       setSpecLoading(false)
     }
   }
@@ -258,17 +258,16 @@ export function JobSheetNewPage() {
       </Typography>
 
       <Stack spacing={2}>
-        {(productsErr || newVersionState.error || createState.error) && (
-          <Alert severity="error">
-            {productsErr || newVersionState.error || createState.error}
-          </Alert>
-        )}
+        {(productsErr || createState.error || saveErr) && <Alert severity="error">{productsErr || createState.error || saveErr}</Alert>}
         {saveMsg && <Alert severity="success">{saveMsg}</Alert>}
 
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Typography variant="h6" sx={{ mb: 2 }}>
-            Job Sheet
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6">Job Sheet</Typography>
+            <Button variant="contained" onClick={onSaveJobSheet}>
+              {savingJobSheet ? 'Saving…' : 'Save job sheet'}
+            </Button>
+          </Box>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
             <TextField
               select
@@ -293,6 +292,15 @@ export function JobSheetNewPage() {
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
+              onClick={() => {
+                const el = dueDateInputRef.current as any
+                if (el && typeof el.showPicker === 'function') el.showPicker()
+              }}
+              onFocus={() => {
+                const el = dueDateInputRef.current as any
+                if (el && typeof el.showPicker === 'function') el.showPicker()
+              }}
+              inputRef={dueDateInputRef}
               InputLabelProps={{ shrink: true }}
             />
 
@@ -372,14 +380,9 @@ export function JobSheetNewPage() {
 
           {productId && (
             <Box sx={{ mt: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 1 }}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Editing latest spec for: <strong>{productInfo?.code || productId}</strong>
-                </Typography>
-                <Button variant="contained" disabled={!canSaveVersion} onClick={onSaveNewVersion}>
-                  {newVersionState.status === 'loading' ? 'Saving…' : 'Save spec → new version'}
-                </Button>
-              </Box>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                Editing latest spec for: <strong>{productInfo?.code || productId}</strong>
+              </Typography>
 
               {specLoading ? (
                 <Typography color="text.secondary">Loading spec…</Typography>
@@ -387,13 +390,19 @@ export function JobSheetNewPage() {
                 <SpecPayloadForm
                   value={spec}
                   onChange={setSpec}
-                  fieldErrors={newVersionState.fieldErrors}
+                  fieldErrors={{}}
                   customerId={customerId || undefined}
                 />
               )}
             </Box>
           )}
         </Paper>
+
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="contained" onClick={onSaveJobSheet}>
+            {savingJobSheet ? 'Saving…' : 'Save job sheet'}
+          </Button>
+        </Box>
       </Stack>
 
       <Dialog open={newProductOpen} onClose={() => setNewProductOpen(false)} maxWidth="lg" fullWidth>

@@ -25,6 +25,9 @@ class SpecDTO(BaseModel):
     base_length_mm: Optional[Decimal] = None  # bags; None for rolls
     continuous_roll: bool = False
     gusset_mm: Optional[Decimal] = None
+    # U-Film: left/right can differ; middle uses base_width_mm
+    ufilm_left_width_mm: Optional[Decimal] = None
+    ufilm_right_width_mm: Optional[Decimal] = None
     print_method: PrintMethod = "none"
     num_colours: int = 0
     opacity_pct: Optional[Decimal] = None

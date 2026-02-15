@@ -64,6 +64,10 @@ class DimensionsSpec(BaseModel):
     thickness_um: int = Field(..., gt=0)
     geometry: Geometry
     gusset_mm: Optional[int] = Field(None, gt=0)
+    # For U-Film, left/right widths can differ. Middle width uses base_width_mm.
+    ufilm_left_width_mm: Optional[int] = Field(None, gt=0)
+    ufilm_right_width_mm: Optional[int] = Field(None, gt=0)
+    length_units: Optional[Literal["mm", "M"]] = "mm"
 
     @root_validator(skip_on_failure=True)
     def validate_gusset_and_length(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -135,6 +139,7 @@ class RunRequirementsSpec(BaseModel):
     preferred_extruders: List[str] = []
     preferred_printer: Optional[str] = None
     preferred_converter: Optional[str] = None
+    run_up: Optional[Literal["none", "2up", "4up", "6up"]] = "none"
     treat_inside_outside: Optional[TreatIO] = TreatIO.NONE
     inline_perforation: Optional[bool] = False
     inline_seal: Optional[bool] = False
@@ -148,6 +153,7 @@ class PackagingSpec(BaseModel):
     bags_per_carton: Optional[int] = Field(None, gt=0)
     pallet_type: Literal["Chep", "Plain", "Resin", "None"]
     wrapped: Optional[bool] = False
+    notes: Optional[str] = None
 
     @root_validator(skip_on_failure=True)
     def validate_packaging(cls, values: Dict[str, Any]) -> Dict[str, Any]:
