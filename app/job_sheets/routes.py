@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth.deps import allow_roles_any, csrf_protect, current_identity
 from app.exceptions import DomainError
 from app.job_sheets import service
-from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetSummary, JobSheetDetail
+from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest, JobSheetSummary, JobSheetDetail
 
 
 router = APIRouter(prefix="/api/job-sheets", tags=["job_sheets"])
@@ -18,6 +18,7 @@ def _to_summary(js) -> JobSheetSummary:
     return JobSheetSummary(
         id=js.id,
         job_no=js.job_no,
+        job_seq=int(getattr(js, "job_seq", 0) or 0),
         customer_id=js.customer_id,
         product_id=js.product_id,
         product_version_id=js.product_version_id,
@@ -70,4 +71,17 @@ async def get_job_sheet(job_sheet_id: str):
     spec = getattr(getattr(js, "version", None), "spec_payload", None) or {}
     out = JobSheetDetail(job_sheet=_to_summary(js), spec_payload=spec)
     return out.model_dump()
+
+
+@router.put("/{job_sheet_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, identity=Depends(current_identity)):
+    try:
+        u = identity.get("user")
+        updated_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
+        jid = service.update_job_sheet(job_sheet_id, payload, updated_by=updated_by)
+        full = service.get_job_sheet(jid)
+        assert full is not None
+        return {"ok": True, "job_sheet": _to_summary(full).model_dump()}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
 

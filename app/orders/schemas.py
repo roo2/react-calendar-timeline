@@ -1,25 +1,29 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 from typing import List, Optional
+
+from app.job_sheets.schemas import QuantityUnit
 
 from pydantic import BaseModel, Field
 
 
 class CreateOrderItemRequest(BaseModel):
-    product_version_id: uuid.UUID
-    quantity: Decimal = Field(gt=0)
+    product_id: uuid.UUID
+    due_date: Optional[date] = None
+    quantity_value: Decimal = Field(gt=0)
+    quantity_unit: QuantityUnit
 
 
 class CreateOrderRequest(BaseModel):
     customer_id: uuid.UUID
-    # Legacy single-product field (deprecated). Prefer items[].
-    product_version_id: Optional[uuid.UUID] = None
     items: List[CreateOrderItemRequest] = []
     currency: str = Field(min_length=3, max_length=3, default="AUD")
     quote_id: Optional[uuid.UUID] = None  # optional for MVP creation from approved quote
-    status: str = "draft"  # default; PM may confirm later
+    # Orders are always created as DRAFT; publishing is a separate action.
+    status: str = "draft"
 
 
 class CreateJobRequest(BaseModel):

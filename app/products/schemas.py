@@ -133,6 +133,7 @@ class PrintingSpec(BaseModel):
 class QualityExpectationsSpec(BaseModel):
     flags: List[Literal["tight_gauge", "seal_integrity", "cosmetic", "colour"]] = []
     known_issues: Optional[str] = None
+    tolerance_pct: Optional[float] = Field(None, ge=0, le=100)
 
 
 class RunRequirementsSpec(BaseModel):

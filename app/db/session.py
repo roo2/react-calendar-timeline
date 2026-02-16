@@ -47,7 +47,9 @@ def _create_engine():
 
 
 engine = _create_engine()
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+# API services frequently return ORM objects after commits; disabling expiration
+# avoids DetachedInstanceError when routes access simple attributes like `id`.
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
 
 
 def _ensure_schema_and_seed() -> None:

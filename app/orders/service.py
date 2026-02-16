@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, time
 from typing import List, Optional, Tuple
 
 from sqlalchemy import select, func
@@ -17,6 +18,7 @@ from app.db.models.domain import (
 from app.db.models.enums import OrderStatus, JobStatus
 from app.exceptions import DomainError
 from app.orders.schemas import CreateOrderRequest, CreateJobRequest
+from app.job_sheets import service as job_sheets_service
 
 
 def _new_order_code() -> str:
@@ -24,24 +26,16 @@ def _new_order_code() -> str:
     return f"ORD-{uuid.uuid4().hex[:8].upper()}"
 
 
-def _ensure_customer_and_version(db, customer_id: str, product_version_id: str) -> None:
+def _ensure_customer_exists(db, customer_id: str) -> None:
     # Validate UUID formats early (but keep DB keys as strings)
     try:
         uuid.UUID(str(customer_id))
-        uuid.UUID(str(product_version_id))
     except Exception as e:
         raise DomainError("Invalid identifiers") from e
 
     # Validate customer exists
     if not db.get(Customer, str(customer_id)):
         raise DomainError("Customer not found")
-    # Validate version exists
-    pv = db.get(ProductVersion, str(product_version_id))
-    if not pv:
-        raise DomainError("Product version not found")
-    # Optional: ensure version belongs to the same customer's product
-    if pv.product.customer_id != str(customer_id):
-        raise DomainError("Product version does not belong to the specified customer")
 
 
 def _next_job_code(db, order_id: str) -> int:
@@ -63,56 +57,54 @@ def list_orders(*, customer_id: Optional[str] = None) -> List[OrderModel]:
         return list(db.execute(stmt).unique().scalars().all())
 
 
-def create_order(payload: CreateOrderRequest) -> OrderModel:
-    with SessionLocal() as db:
-        # Validate identifiers, but keep DB keys as strings (SQLite can't bind UUID objects)
+def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
+    """
+    Create an Order in DRAFT state and create its Job Sheets inline.
+    Each item becomes a Job Sheet referencing the product's latest active version.
+    """
+    with SessionLocal.begin() as db:
         customer_id = str(payload.customer_id)
         quote_id = str(payload.quote_id) if payload.quote_id else None
 
-        # Normalize items: prefer items[], fall back to legacy product_version_id
-        item_pvs: list[tuple[str, object]] = []
-        if payload.items:
-            for it in payload.items:
-                pv_id = str(it.product_version_id)
-                item_pvs.append((pv_id, it))
-        elif payload.product_version_id:
-            pv_id = str(payload.product_version_id)
-            # quantity default = 1
-            class _Tmp:
-                quantity = 1
+        if not payload.items:
+            raise DomainError("At least one order line (job sheet) is required")
 
-            item_pvs.append((pv_id, _Tmp()))
-        else:
-            raise DomainError("At least one product is required")
+        _ensure_customer_exists(db, customer_id)
 
-        for pv_id, _it in item_pvs:
-            _ensure_customer_and_version(db, customer_id, pv_id)
+        # Create job sheets first (so we can store first version id into legacy field).
+        created_job_sheets = []
+        for it in payload.items:
+            due_dt = None
+            if it.due_date is not None:
+                due_dt = datetime.combine(it.due_date, time.min)
+            js = job_sheets_service.create_job_sheet_from_product_latest_version(
+                db=db,
+                customer_id=customer_id,
+                product_id=str(it.product_id),
+                due_date=due_dt,
+                quantity_value=float(it.quantity_value),
+                quantity_unit=str(it.quantity_unit),
+                created_by=created_by or "system",
+            )
+            created_job_sheets.append(js)
 
-        try:
-            status = OrderStatus(payload.status)
-        except Exception:
-            status = OrderStatus.DRAFT
         order = OrderModel(
             code=_new_order_code(),
             customer_id=customer_id,
-            # For backward compatibility, store the first item in the legacy field
-            product_version_id=str(item_pvs[0][0]) if item_pvs else None,
+            # Backward compatibility summary: first line's referenced version
+            product_version_id=str(created_job_sheets[0].product_version_id) if created_job_sheets else None,
             quote_id=quote_id,
-            status=status,
+            status=OrderStatus.DRAFT,
             currency=payload.currency,
         )
         db.add(order)
         db.flush()
 
-        for pv_id, it in item_pvs:
-            oi = OrderItemModel(
-                order_id=str(order.id),
-                product_version_id=str(pv_id),
-                quantity=getattr(it, "quantity", 1),
-            )
+        for js in created_job_sheets:
+            oi = OrderItemModel(order_id=str(order.id), job_sheet_id=str(js.id))
             db.add(oi)
 
-        db.commit()
+        db.flush()
         db.refresh(order)
         return order
 
@@ -157,4 +149,22 @@ def create_job(order_id: str, payload: CreateJobRequest) -> JobModel:
         db.commit()
         db.refresh(job)
         return job
+
+
+def publish_order(order_id: str) -> OrderModel:
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be published")
+        o.status = OrderStatus.CONFIRMED
+        db.add(o)
+        db.flush()
+        db.refresh(o)
+        return o
 

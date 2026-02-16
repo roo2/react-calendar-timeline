@@ -24,6 +24,7 @@ class JobSheetCreateRequest(BaseModel):
 class JobSheetSummary(BaseModel):
     id: str
     job_no: str
+    job_seq: int
     customer_id: str
     product_id: str
     product_version_id: str
@@ -42,4 +43,13 @@ class JobSheetSummary(BaseModel):
 class JobSheetDetail(BaseModel):
     job_sheet: JobSheetSummary
     spec_payload: dict
+
+
+class JobSheetUpdateRequest(BaseModel):
+    due_date: Optional[date] = None
+    quantity_value: float = Field(..., gt=0)
+    quantity_unit: QuantityUnit
+    # If provided, a new ProductVersion is created and the job sheet is updated
+    # to reference it (and the product's active version is advanced).
+    spec: Optional[SpecPayload] = None
 

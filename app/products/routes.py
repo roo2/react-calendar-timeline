@@ -69,6 +69,11 @@ async def list_products(
     return {"items": [_product_summary(p) for p in products]}
 
 
+@router.get("/code-exists", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
+async def product_code_exists(code: str = Query(..., min_length=1)):
+    return {"exists": service.product_code_exists(code)}
+
+
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_product(payload: CreateProductRequest, identity=Depends(current_identity)):
     try:

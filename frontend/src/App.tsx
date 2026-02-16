@@ -13,9 +13,10 @@ import { ProductsPage } from './pages/ProductsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SchedulePage } from './pages/SchedulePage'
 import { AdminPage } from './pages/AdminPage.tsx'
-import { JobSheetNewPage } from './pages/JobSheetNewPage'
-import { JobSheetsPage } from './pages/JobSheetsPage'
-import { JobSheetShowPage } from './pages/JobSheetShowPage'
+import { JobSheetNewPage } from './pages/JobSheetNewPage.tsx'
+import { JobSheetsPage } from './pages/JobSheetsPage.tsx'
+import { JobSheetShowPage } from './pages/JobSheetShowPage.tsx'
+import { JobSheetEditPage } from './pages/JobSheetEditPage.tsx'
 import { CustomerShowPage } from './pages/CustomerShowPage'
 import { CustomerUpsertPage } from './pages/CustomerUpsertPage'
 import { ProductShowPage } from './pages/ProductShowPage'
@@ -183,6 +184,7 @@ function App() {
               <Route path="/job-sheets" element={<JobSheetsPage />} />
               <Route path="/job-sheets/new" element={<JobSheetNewPage />} />
               <Route path="/job-sheets/:jobSheetId" element={<JobSheetShowPage />} />
+              <Route path="/job-sheets/:jobSheetId/edit" element={<JobSheetEditPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
               <Route path="/admin" element={<AdminPage />} />
               <Route path="*" element={<NotFoundPage />} />

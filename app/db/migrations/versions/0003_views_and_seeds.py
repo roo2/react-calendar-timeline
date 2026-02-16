@@ -187,7 +187,7 @@ def upgrade() -> None:
     # - scripts/seed_colours.py
     # - scripts/seed_cores.py
     #
-    # NOTE: resin_blends are created in a later migration (0004_resin_blends) and are seeded there.
+    # NOTE: resin_blends schema is created in the initial migration; seeds live here.
 
     resins_seed = [
         # resin_code, name, density, price_per_kg, currency
@@ -197,7 +197,7 @@ def upgrade() -> None:
         ("FE8004", "Med G", 0.001848, 2.28, "AUD"),
         ("FE3000", "Heavy G", 0.001848, 2.28, "AUD"),
         ("S199F", "H/D", 0.001924, 2.06, "AUD"),
-        ("1018RA/25", "Metallizine", 0.001848, 2.21, "AUD"),
+        ("1018RA", "Metallizine", 0.001848, 2.21, "AUD"),
     ]
     for resin_code, name, density, price_per_kg, currency in resins_seed:
         conn.execute(
@@ -219,6 +219,49 @@ def upgrade() -> None:
                 "price_per_kg": price_per_kg,
                 "currency": currency,
             },
+        )
+
+    # Resin blend presets (SQL equivalent of scripts/seed_resin_blends.py)
+    blends_seed = [
+        ("HOUSE_LD", "House Blend (LD)"),
+        ("LD", "LD"),
+        ("MD", "MD"),
+    ]
+    for blend_code, name in blends_seed:
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO resin_blends (blend_code, name)
+                VALUES (:blend_code, :name)
+                ON CONFLICT (blend_code) DO UPDATE SET
+                  name = excluded.name
+                """
+            ),
+            {"blend_code": blend_code, "name": name},
+        )
+
+    # Replace components for these blends to match the presets.
+    conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('HOUSE_LD','LD','MD')"))
+    comps_seed = [
+        ("HOUSE_LD", "Q1018H", 50.0),
+        ("HOUSE_LD", "FE3000", 50.0),
+        ("LD", "FD0270", 50.0),
+        ("LD", "S199F", 50.0),
+        ("MD", "FD0270", 30.0),
+        ("MD", "FE3000", 40.0),
+        ("MD", "S199F", 30.0),
+    ]
+    for blend_code, resin_code, pct in comps_seed:
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO resin_blend_components (blend_code, resin_code, pct)
+                VALUES (:blend_code, :resin_code, :pct)
+                ON CONFLICT (blend_code, resin_code) DO UPDATE SET
+                  pct = excluded.pct
+                """
+            ),
+            {"blend_code": blend_code, "resin_code": resin_code, "pct": pct},
         )
 
     additives_seed = [
@@ -342,9 +385,11 @@ def downgrade() -> None:
     conn.execute(sa.text("DELETE FROM additives WHERE additive_code IN ('ANTI_BLOCK','ANTI_STATIC','SLIP','UV')"))
     conn.execute(
         sa.text(
-            "DELETE FROM resins WHERE resin_code IN ('Q1018H','FD0270','FD0274','FE8004','FE3000','S199F','1018RA/25')"
+            "DELETE FROM resins WHERE resin_code IN ('Q1018H','FD0270','FD0274','FE8004','FE3000','S199F','1018RA')"
         )
     )
+    conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('HOUSE_LD','LD','MD')"))
+    conn.execute(sa.text("DELETE FROM resin_blends WHERE blend_code IN ('HOUSE_LD','LD','MD')"))
 
     # Seeded tool types
     conn.execute(sa.text("DELETE FROM tool_types WHERE code IN ('inline_printer_1c','electra_punch')"))

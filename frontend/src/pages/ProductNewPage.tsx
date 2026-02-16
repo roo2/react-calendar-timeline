@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../components/SpecPayloadForm'
+import { apiFetch } from '../api/client'
 import { Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import { FormErrorAlert } from '../components/FormErrorAlert'
 import { fetchCustomers } from '../store/slices/customersSlice'
@@ -15,6 +16,8 @@ export function ProductNewPage() {
 
   const qs0 = new URLSearchParams(loc.search)
   const returnTo = qs0.get('returnTo')
+  const preCustomerId = qs0.get('customerId') || qs0.get('customer_id')
+  const customerLocked = !!(preCustomerId && String(preCustomerId).trim())
 
   const customers = useAppSelector((s) => s.customers.list.items)
   const customersStatus = useAppSelector((s) => s.customers.list.status)
@@ -30,6 +33,8 @@ export function ProductNewPage() {
   const [code, setCode] = useState('')
   const [description, setDescription] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
+  const [codeExists, setCodeExists] = useState(false)
+  const lastAutoPrefixRef = useRef<string>('')
 
   const customerCode = useMemo(() => {
     const c = customers.find((x) => x.id === customerId) as any
@@ -52,9 +57,51 @@ export function ProductNewPage() {
   useEffect(() => {
     // Allow preselecting a customer when navigating from "New Order" via query string.
     if (customerId) return
-    const pre = qs0.get('customerId') || qs0.get('customer_id')
-    if (pre) setCustomerId(pre)
-  }, [customerId, qs0])
+    if (preCustomerId) setCustomerId(preCustomerId)
+  }, [customerId, preCustomerId])
+
+  useEffect(() => {
+    // If a customer was preselected via query string, auto-fill the code prefix once
+    // the customer record has loaded (customerCode becomes available).
+    if (!customerId) return
+    if (!customerCode) return
+    const nextPrefix = `${customerCode}-`
+    const cur = (code || '').trim()
+    const curUp = cur.toUpperCase()
+    const lastAuto = (lastAutoPrefixRef.current || '').toUpperCase()
+    const isEmpty = !curUp
+    const isOnlyAutoPrefix = !!lastAuto && curUp === lastAuto
+    if (isEmpty || isOnlyAutoPrefix) {
+      setCode(nextPrefix)
+      lastAutoPrefixRef.current = nextPrefix
+    }
+  }, [customerId, customerCode, code])
+
+  useEffect(() => {
+    const v = (code || '').trim()
+    if (!v) {
+      setCodeExists(false)
+      return
+    }
+    const controller = new AbortController()
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await apiFetch<{ exists: boolean }>(`/api/products/code-exists?code=${encodeURIComponent(v)}`, {
+            signal: controller.signal as any,
+          })
+          setCodeExists(!!res?.exists)
+        } catch {
+          // If the check fails (offline/server), don't block the form.
+          setCodeExists(false)
+        }
+      })()
+    }, 250)
+    return () => {
+      controller.abort()
+      window.clearTimeout(t)
+    }
+  }, [code])
 
   useEffect(() => {
     // Reset product create errors when entering the page.
@@ -130,13 +177,24 @@ export function ProductNewPage() {
                 label="Customer"
                 value={customerId}
                 onChange={(e) => {
-                  setCustomerId(e.target.value)
+                  const nextCustomerId = e.target.value
+                  const nextCustomer = customers.find((x) => x.id === nextCustomerId) as any
+                  const nextCustomerCode = (nextCustomer?.code ? String(nextCustomer.code) : '').trim().toUpperCase()
+
+                  const cur = (code || '').trim()
+                  const curUp = cur.toUpperCase()
+                  const oldDash = customerCode ? `${customerCode}-` : ''
+                  const oldUnderscore = customerCode ? `${customerCode}_` : ''
+                  const isJustOldPrefix = !!customerCode && (curUp === oldDash || curUp === oldUnderscore)
+
+                  setCustomerId(nextCustomerId)
+                  if (!curUp || isJustOldPrefix) setCode(nextCustomerCode ? `${nextCustomerCode}-` : '')
                   dispatch(clearCreateFieldError('customer_id'))
                 }}
                 required
                 error={!!fieldErrors['customer_id']}
                 helperText={fieldErrors['customer_id'] || ''}
-                disabled={customersStatus === 'loading' || customersStatus === 'idle'}
+                disabled={customersStatus === 'loading' || customersStatus === 'idle' || customerLocked}
               >
                 <MenuItem value="" disabled>
                   Select customer
@@ -153,16 +211,19 @@ export function ProductNewPage() {
                 value={code}
                 onChange={(e) => {
                   setCode(e.currentTarget.value)
+                  setCodeExists(false)
                   dispatch(clearCreateFieldError('code'))
                 }}
                 required
                 helperText={
                   fieldErrors['code'] ||
-                  (customerCode
+                  (codeExists
+                    ? 'Product code already exists'
+                    : customerCode
                     ? `Must start with ${customerCode}- (e.g. ${customerCode}-F15-123)`
                     : 'Select a customer first to see the required prefix.')
                 }
-                error={!!fieldErrors['code'] || (customerId ? !codePrefixOk : false)}
+                error={!!fieldErrors['code'] || codeExists || (customerId ? !codePrefixOk : false)}
               />
 
               <TextField

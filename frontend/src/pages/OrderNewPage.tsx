@@ -21,81 +21,74 @@ import {
 
 type Customer = { id: string; name: string }
 type Product = { id: string; code: string; description?: string | null; customer_id: string; active_version_id?: string | null }
-type OrderItem = { product_id: string; product_version_id: string; product_code: string; product_name?: string | null; quantity: string }
+type QuantityUnit = 'kg' | 'rolls' | 'bags' | 'meters'
+type OrderLine = {
+  id: string
+  product_id: string
+  product_code: string
+  product_name?: string | null
+  due_date: string
+  quantity_unit: QuantityUnit
+  quantity_value: string
+}
 type ProductDetailResponse = { product: Product }
+
+type OrderNewDraft = {
+  customerId: string
+  items: OrderLine[]
+  currency: string
+}
+
+function parseOrderNewDraftState(state: unknown): OrderNewDraft | null {
+  const draft = (state as any)?.orderNewDraft
+  if (!draft || typeof draft !== 'object') return null
+  return {
+    customerId: typeof (draft as any)?.customerId === 'string' ? (draft as any).customerId : '',
+    items: Array.isArray((draft as any)?.items) ? ((draft as any).items as OrderLine[]) : [],
+    currency: typeof (draft as any)?.currency === 'string' ? (draft as any).currency : 'AUD',
+  }
+}
 
 export function OrderNewPage() {
   const nav = useNavigate()
   const loc = useLocation()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEditProduct = can(roles, 'PROD_MANAGER')
+  const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [publishing, setPublishing] = useState(false)
 
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
-  const draftKey = 'order_new_draft_v1'
 
-  function loadDraft():
-    | {
-        customerId: string
-        items: OrderItem[]
-        currency: string
-        status: 'confirmed' | 'draft'
-      }
-    | null {
-    try {
-      const raw = sessionStorage.getItem(draftKey)
-      if (!raw) return null
-      const d = JSON.parse(raw) as any
-      return {
-        customerId: typeof d?.customerId === 'string' ? d.customerId : '',
-        items: Array.isArray(d?.items) ? d.items : [],
-        currency: typeof d?.currency === 'string' ? d.currency : 'AUD',
-        status: d?.status === 'confirmed' || d?.status === 'draft' ? d.status : 'confirmed',
-      }
-    } catch {
-      return null
-    }
-  }
+  // We intentionally keep the draft only in-memory. When we navigate away to create/edit
+  // a product, we pass the in-progress order through router state (not storage), so that
+  // "starting a new order" always begins clean.
+  const initialDraftRef = useRef<OrderNewDraft | null>(parseOrderNewDraftState(loc.state))
+  const initialDraft = initialDraftRef.current
 
-  const initialDraft = loadDraft()
   const [customerId, setCustomerId] = useState(initialDraft?.customerId || '')
   const [productId, setProductId] = useState('')
   const [currency, setCurrency] = useState(initialDraft?.currency || 'AUD')
-  const [status, setStatus] = useState<'confirmed' | 'draft'>(initialDraft?.status || 'confirmed')
-  const [items, setItems] = useState<OrderItem[]>(initialDraft?.items || [])
+  const [items, setItems] = useState<OrderLine[]>(initialDraft?.items || [])
 
   // Track the last customerId that the form was "stable" with. This prevents the
   // customer-change reset effect from wiping items during initial draft hydration.
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
-
-  function saveDraft(next?: {
-    customerId: string
-    items: OrderItem[]
-    currency: string
-    status: 'confirmed' | 'draft'
-  }) {
-    try {
-      const payload =
-        next ?? ({
-          customerId,
-          items,
-          currency,
-          status,
-        } as const)
-      if (!payload.customerId && payload.items.length === 0) {
-        sessionStorage.removeItem(draftKey)
-        return
-      }
-      sessionStorage.setItem(draftKey, JSON.stringify({ ...payload, savedAt: Date.now() }))
-    } catch {
-      // ignore draft storage failures
-    }
-  }
+  const orderNewDraftState = useMemo(
+    () => ({
+      orderNewDraft: {
+        customerId,
+        items,
+        currency,
+      },
+    }),
+    [customerId, items, currency]
+  )
 
   useEffect(() => {
     // Allow deep-linking into "New Order for customer X" from Customers page.
@@ -104,11 +97,6 @@ export function OrderNewPage() {
     const pre = qs.get('customerId') || qs.get('customer_id')
     if (!pre) return
     if (pre === customerId && items.length > 0) return
-    try {
-      sessionStorage.removeItem(draftKey)
-    } catch {
-      // ignore
-    }
     setCustomerId(pre)
     setItems([])
     setProducts([])
@@ -128,12 +116,22 @@ export function OrderNewPage() {
     })()
   }, [])
 
-  useEffect(() => {
-    saveDraft()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId, items, currency, status])
+  const canSaveDraft = useMemo(() => {
+    if (!customerId) return false
+    if (saving || publishing) return false
+    if (items.length === 0) return false
+    return items.every((it) => {
+      if (!it.product_id) return false
+      const q = Number(it.quantity_value || '0')
+      return Number.isFinite(q) && q > 0 && !!it.quantity_unit
+    })
+  }, [customerId, items, saving, publishing])
 
-  const canSubmit = useMemo(() => !!(customerId && items.length > 0 && !saving), [customerId, items.length, saving])
+  const canPublishNow = useMemo(() => {
+    if (!canPublish) return false
+    if (!canSaveDraft) return false
+    return items.every((it) => !!it.due_date)
+  }, [canPublish, canSaveDraft, items])
 
   useEffect(() => {
     // Reset dependent fields when customer changes (user-driven).
@@ -205,17 +203,18 @@ export function OrderNewPage() {
 
         // Auto-add to line items using the same logic as the dropdown.
         setItems((prev) => {
-          if (prev.some((it) => it.product_id === p.id)) return prev
           const pv = p.active_version_id || ''
           if (!pv) return prev
           return [
             ...prev,
             {
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               product_id: p.id,
-              product_version_id: pv,
               product_code: p.code,
               product_name: p.description || null,
-              quantity: '1',
+              due_date: '',
+              quantity_unit: 'kg',
+              quantity_value: '1',
             },
           ]
         })
@@ -243,15 +242,16 @@ export function OrderNewPage() {
       return
     }
     setItems((prev) => {
-      if (prev.some((it) => it.product_id === p.id)) return prev
       return [
         ...prev,
         {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           product_id: p.id,
-          product_version_id: pv,
           product_code: p.code,
           product_name: p.description || null,
-          quantity: '1',
+          due_date: '',
+          quantity_unit: 'kg',
+          quantity_value: '1',
         },
       ]
     })
@@ -267,23 +267,47 @@ export function OrderNewPage() {
         body: JSON.stringify({
           customer_id: customerId,
           currency,
-          status,
+          status: 'draft',
           items: items.map((it) => ({
-            product_version_id: it.product_version_id,
-            quantity: Number(it.quantity || '0'),
+            product_id: it.product_id,
+            due_date: it.due_date || null,
+            quantity_unit: it.quantity_unit,
+            quantity_value: Number(it.quantity_value || '0'),
           })),
         }),
       })
-      try {
-        sessionStorage.removeItem(draftKey)
-      } catch {
-        // ignore
-      }
       nav(`/orders/${res.order_id}`)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to create order')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function publishOrder() {
+    setErr(null)
+    setPublishing(true)
+    try {
+      const res = await apiFetch<{ ok: boolean; order_id: string }>('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: customerId,
+          currency,
+          status: 'draft',
+          items: items.map((it) => ({
+            product_id: it.product_id,
+            due_date: it.due_date || null,
+            quantity_unit: it.quantity_unit,
+            quantity_value: Number(it.quantity_value || '0'),
+          })),
+        }),
+      })
+      await apiFetch<any>(`/api/orders/${encodeURIComponent(res.order_id)}/publish`, { method: 'POST' })
+      nav(`/orders/${res.order_id}`)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to publish order')
+    } finally {
+      setPublishing(false)
     }
   }
 
@@ -328,11 +352,10 @@ export function OrderNewPage() {
                 onChange={(e) => {
                   const next = e.target.value
                   if (next === '__new_product__') {
-                    saveDraft()
                     const qs = new URLSearchParams()
                     qs.set('customerId', customerId)
                     qs.set('returnTo', returnTo)
-                    nav(`/products/new?${qs.toString()}`)
+                    nav(`/products/new?${qs.toString()}`, { state: orderNewDraftState })
                     return
                   }
                   setProductId(next)
@@ -361,27 +384,59 @@ export function OrderNewPage() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Code</TableCell>
-                  <TableCell>Name</TableCell>
-                  <TableCell sx={{ width: 140 }}>Quantity</TableCell>
+                  <TableCell>Product</TableCell>
+                  <TableCell sx={{ width: 170 }}>Qty Type</TableCell>
+                  <TableCell sx={{ width: 160 }}>Qty Total</TableCell>
+                  <TableCell sx={{ width: 160 }}>Due Date</TableCell>
                   <TableCell sx={{ width: 200 }}>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {items.map((it) => (
-                  <TableRow key={it.product_id} hover>
-                    <TableCell>{it.product_code}</TableCell>
-                    <TableCell>{it.product_name || '-'}</TableCell>
+                  <TableRow key={it.id} hover>
+                    <TableCell>
+                      <strong>{it.product_code}</strong>
+                      {it.product_name ? <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {it.product_name}</span> : null}
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        select
+                        size="small"
+                        value={it.quantity_unit}
+                        onChange={(e) => {
+                          const v = e.target.value as QuantityUnit
+                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: v } : x)))
+                        }}
+                        sx={{ minWidth: 140 }}
+                      >
+                        <MenuItem value="kg">Total KGs</MenuItem>
+                        <MenuItem value="rolls">No. of Rolls</MenuItem>
+                        <MenuItem value="bags">No. of Bags</MenuItem>
+                        <MenuItem value="meters">Total Meters</MenuItem>
+                      </TextField>
+                    </TableCell>
                     <TableCell>
                       <TextField
                         size="small"
-                        value={it.quantity}
+                        value={it.quantity_value}
                         onChange={(e) => {
                           const v = e.currentTarget.value
                           if (!/^\d*\.?\d*$/.test(v)) return
-                          setItems((prev) => prev.map((x) => (x.product_id === it.product_id ? { ...x, quantity: v } : x)))
+                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_value: v } : x)))
                         }}
                         inputProps={{ inputMode: 'decimal' }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        type="date"
+                        value={it.due_date}
+                        onChange={(e) => {
+                          const v = e.currentTarget.value
+                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, due_date: v } : x)))
+                        }}
+                        InputLabelProps={{ shrink: true }}
                       />
                     </TableCell>
                     <TableCell>
@@ -391,7 +446,7 @@ export function OrderNewPage() {
                           variant="text"
                           component={Link}
                           to={`/products/${it.product_id}`}
-                          onClick={() => saveDraft()}
+                          state={orderNewDraftState}
                         >
                           View
                         </Button>
@@ -401,7 +456,7 @@ export function OrderNewPage() {
                             variant="text"
                             component={Link}
                             to={`/products/${it.product_id}/versions/new?returnTo=${encodeURIComponent(returnTo)}`}
-                            onClick={() => saveDraft()}
+                            state={orderNewDraftState}
                           >
                             Edit (new version)
                           </Button>
@@ -410,7 +465,7 @@ export function OrderNewPage() {
                           size="small"
                           variant="text"
                           color="error"
-                          onClick={() => setItems((prev) => prev.filter((x) => x.product_id !== it.product_id))}
+                          onClick={() => setItems((prev) => prev.filter((x) => x.id !== it.id))}
                         >
                           Remove
                         </Button>
@@ -420,7 +475,7 @@ export function OrderNewPage() {
                 ))}
                 {items.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4}>
+                    <TableCell colSpan={5}>
                       <Typography color="text.secondary">No products added yet.</Typography>
                     </TableCell>
                   </TableRow>
@@ -436,15 +491,15 @@ export function OrderNewPage() {
             onChange={(e) => setCurrency(e.currentTarget.value)}
           />
 
-          <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
-            <MenuItem value="confirmed">confirmed</MenuItem>
-            <MenuItem value="draft">draft</MenuItem>
-          </TextField>
-
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <Button variant="contained" onClick={submit} disabled={!canSubmit}>
-              {saving ? 'Creating…' : 'Create'}
+            <Button variant="contained" onClick={submit} disabled={!canSaveDraft}>
+              {saving ? 'Saving…' : 'Save Draft'}
             </Button>
+            {canPublish && (
+              <Button variant="contained" color="success" onClick={publishOrder} disabled={!canPublishNow}>
+                {publishing ? 'Publishing…' : 'Publish Order'}
+              </Button>
+            )}
             <Button variant="outlined" component={Link} to="/orders">
               Cancel
             </Button>

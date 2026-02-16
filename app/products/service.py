@@ -19,6 +19,16 @@ from app.products.schemas import (
 )
 
 
+def product_code_exists(code: str) -> bool:
+    code_in = (code or "").strip()
+    if not code_in:
+        return False
+    code_l = code_in.lower()
+    with SessionLocal() as db:
+        existing = db.scalar(select(func.count()).select_from(Product).where(func.lower(Product.code) == code_l)) or 0
+        return existing > 0
+
+
 def _ensure_customer_exists(db: Session, customer_id: str) -> None:
     # IDs are stored as String(36) in the DB. We still validate UUID format,
     # but comparisons/PK lookups must use the string value.
@@ -51,8 +61,7 @@ def create_product_with_version(payload: CreateProductRequest, created_by: str) 
             if not ok:
                 raise DomainError(f"Product code must start with {customer_code}-")
         # Ensure unique product code
-        existing = db.scalar(select(func.count()).select_from(Product).where(Product.code == payload.code)) or 0
-        if existing > 0:
+        if product_code_exists(code_in):
             raise DomainError("Product code already exists")
         product = Product(
             code=code_in,

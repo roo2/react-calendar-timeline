@@ -106,6 +106,7 @@ class JobSheet(Base):
     __tablename__ = "job_sheets"
     __table_args__ = (
         UniqueConstraint("job_no", name="uq_job_sheets_job_no"),
+        UniqueConstraint("customer_id", "job_seq", name="uq_job_sheets_customer_seq"),
         Index("ix_job_sheets_customer", "customer_id"),
         Index("ix_job_sheets_product", "product_id"),
         Index("ix_job_sheets_due_date", "due_date"),
@@ -113,6 +114,7 @@ class JobSheet(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    job_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False)
     product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
     product_version_id: Mapped[str] = mapped_column(ForeignKey("product_versions.id", ondelete="RESTRICT"), nullable=False)
@@ -184,17 +186,14 @@ class Order(Base):
 class OrderItem(Base):
     __tablename__ = "order_items"
     __table_args__ = (
-        UniqueConstraint("order_id", "product_version_id", name="uq_order_item_order_version"),
+        UniqueConstraint("order_id", "job_sheet_id", name="uq_order_item_order_job_sheet"),
         Index("ix_order_items_order", "order_id"),
-        Index("ix_order_items_version", "product_version_id"),
+        Index("ix_order_items_job_sheet", "job_sheet_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
-    product_version_id: Mapped[str] = mapped_column(
-        ForeignKey("product_versions.id", ondelete="RESTRICT"), index=True
-    )
-    quantity: Mapped[float] = mapped_column(Numeric(18, 6))
+    job_sheet_id: Mapped[str] = mapped_column(ForeignKey("job_sheets.id", ondelete="RESTRICT"), index=True)
 
     order: Mapped["Order"] = relationship(back_populates="items")
 

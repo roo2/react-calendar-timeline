@@ -19,10 +19,11 @@ import {
 export function OrderShowPage() {
   const { orderId } = useParams()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
-  const canAddJob = can(roles, 'PROD_MANAGER')
+  const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [order, setOrder] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [publishing, setPublishing] = useState(false)
 
   useEffect(() => {
     if (!orderId) return
@@ -54,6 +55,21 @@ export function OrderShowPage() {
   }
   if (!order) return <p>Loading…</p>
 
+  async function onPublish() {
+    if (!orderId) return
+    if (publishing) return
+    try {
+      setPublishing(true)
+      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/publish`, { method: 'POST' })
+      const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+      setOrder(res)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to publish order')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 1 }}>
@@ -65,9 +81,9 @@ export function OrderShowPage() {
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-        {canAddJob && (
-          <Button variant="contained" component={Link} to={`/orders/${order.id}/jobs/new`}>
-            Add Job
+        {canPublish && order.status !== 'confirmed' && (
+          <Button variant="contained" onClick={onPublish} disabled={publishing}>
+            {publishing ? 'Publishing…' : 'Publish Order'}
           </Button>
         )}
         <Button variant="outlined" component={Link} to="/orders">
@@ -79,24 +95,36 @@ export function OrderShowPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
+              <TableCell>Job No</TableCell>
               <TableCell>Product Code</TableCell>
               <TableCell>Product Name</TableCell>
               <TableCell>Version</TableCell>
+              <TableCell>Due Date</TableCell>
               <TableCell>Quantity</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {(order.items || []).map((it: any) => (
               <TableRow key={it.id} hover>
+                <TableCell>{it.job_no || '-'}</TableCell>
                 <TableCell>{it.product_code || '-'}</TableCell>
                 <TableCell>{it.product_name || '-'}</TableCell>
                 <TableCell>{it.version_number != null ? `v${it.version_number}` : '-'}</TableCell>
-                <TableCell>{it.quantity ?? '-'}</TableCell>
+                <TableCell>{it.due_date || '-'}</TableCell>
+                <TableCell>
+                  {it.quantity_value != null ? `${it.quantity_value} ${it.quantity_unit || ''}`.trim() : '-'}
+                </TableCell>
+                <TableCell align="right">
+                  <Button size="small" component={Link} to={`/job-sheets/${it.job_sheet_id}/edit`}>
+                    Edit job sheet
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
             {(order.items || []).length === 0 && (
               <TableRow>
-                <TableCell colSpan={4}>
+                <TableCell colSpan={8}>
                   <Typography color="text.secondary">No products.</Typography>
                 </TableCell>
               </TableRow>
@@ -105,37 +133,6 @@ export function OrderShowPage() {
         </Table>
       </Paper>
 
-      <Paper variant="outlined">
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Job Code</TableCell>
-              <TableCell>Planned Qty</TableCell>
-              <TableCell>Produced Qty</TableCell>
-              <TableCell>Allocated Units</TableCell>
-              <TableCell>Status</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {(order.jobs || []).map((j: any) => (
-              <TableRow key={j.id} hover>
-                <TableCell>{j.job_code}</TableCell>
-                <TableCell>{j.planned_qty}</TableCell>
-                <TableCell>{j.produced_qty}</TableCell>
-                <TableCell>{j.allocated_order_units || '-'}</TableCell>
-                <TableCell>{j.status}</TableCell>
-              </TableRow>
-            ))}
-            {(order.jobs || []).length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5}>
-                  <Typography color="text.secondary">No jobs yet.</Typography>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Paper>
     </Box>
   )
 }

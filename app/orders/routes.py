@@ -15,7 +15,7 @@ from app.orders.schemas import (
 from app.orders import service
 from app.exceptions import DomainError
 from app.db.session import SessionLocal
-from app.db.models.domain import ProductVersion, Product, Customer, OrderItem
+from app.db.models.domain import ProductVersion, Product, Customer, OrderItem, JobSheet
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -83,10 +83,12 @@ async def list_orders(customer_id: str | None = Query(default=None)):
 
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
-async def create_order(payload: CreateOrderRequest):
+async def create_order(payload: CreateOrderRequest, identity=Depends(current_identity)):
     try:
-        o = service.create_order(payload)
-        return {"ok": True, "order_id": o.id}
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
+        o = service.create_order(payload, created_by=created_by)
+        return {"ok": True, "order_id": str(o.id)}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 
@@ -146,24 +148,29 @@ async def show_order(order_id: str):
 
         # attach items
         item_rows = (
-            db.query(OrderItem, ProductVersion, Product)
-            .join(ProductVersion, ProductVersion.id == OrderItem.product_version_id)
+            db.query(OrderItem, JobSheet, ProductVersion, Product)
+            .join(JobSheet, JobSheet.id == OrderItem.job_sheet_id)
+            .join(ProductVersion, ProductVersion.id == JobSheet.product_version_id)
             .join(Product, Product.id == ProductVersion.product_id)
             .filter(OrderItem.order_id == str(o.id))
-            .order_by(Product.code.asc())
+            .order_by(JobSheet.job_seq.asc(), Product.code.asc())
             .all()
         )
         dto.items = [
             {
                 "id": str(oi.id),
+                "job_sheet_id": str(js.id),
+                "job_no": js.job_no,
                 "product_id": str(p.id),
                 "product_code": p.code,
                 "product_name": getattr(p, "description", None),
                 "product_version_id": str(pv.id),
                 "version_number": pv.version_number,
-                "quantity": float(oi.quantity),
+                "due_date": (str(js.due_date.date()) if getattr(js, "due_date", None) is not None else None),
+                "quantity_value": float(js.quantity_value),
+                "quantity_unit": js.quantity_unit,
             }
-            for (oi, pv, p) in item_rows
+            for (oi, js, pv, p) in item_rows
         ]
     return dto
 
@@ -176,6 +183,15 @@ async def create_job(
     try:
         j = service.create_job(order_id, payload)
         return {"ok": True, "job": _job_to_dto(j)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.post("/{order_id}/publish", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def publish_order(order_id: str):
+    try:
+        o = service.publish_order(order_id)
+        return {"ok": True, "order_id": str(o.id), "status": str(o.status)}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 

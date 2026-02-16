@@ -115,6 +115,7 @@ export function makeDefaultSpec(): SpecPayload {
     quality_expectations: {
       flags: [],
       known_issues: null,
+      tolerance_pct: null,
     },
     run_requirements: {
       preferred_extruders: [],
@@ -556,12 +557,16 @@ export function SpecPayloadForm(props: {
             <MenuItem value="Cartons">Cartons</MenuItem>
           </TextField>
 
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
           <TextField
             label="Notes"
             value={identity.notes || ''}
             onChange={(e) => update((d) => (d.identity.notes = e.target.value || null))}
             multiline
             minRows={3}
+            fullWidth
             error={!!errorFor('spec.identity.notes')}
             helperText={errorFor('spec.identity.notes') || ''}
           />
@@ -995,11 +1000,7 @@ export function SpecPayloadForm(props: {
           <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
             Colour Components &amp; Additives (Pct values do not need to sum to 100%.)
           </Typography>
-
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Colour Components
-            </Typography>
             <Table
               size="small"
               sx={{
@@ -1098,9 +1099,6 @@ export function SpecPayloadForm(props: {
 
             <Box sx={{ mt: 2 }} />
 
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Additives
-            </Typography>
             <Table
               size="small"
               sx={{
@@ -1254,7 +1252,7 @@ export function SpecPayloadForm(props: {
             {(printing.side === 'front' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Front print (Ink | Plate)
+                  Front print
                 </Typography>
                 {(inksErr || platesErr) && (
                   <Alert severity="warning" sx={{ mb: 1 }}>
@@ -1314,7 +1312,7 @@ export function SpecPayloadForm(props: {
             {(printing.side === 'back' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Back print (Ink | Plate)
+                  Back print
                 </Typography>
                 {(inksErr || platesErr) && (
                   <Alert severity="warning" sx={{ mb: 1 }}>
@@ -1397,6 +1395,23 @@ export function SpecPayloadForm(props: {
         <Typography variant="h6" sx={{ mb: 2 }}>
           Quality Expectations
         </Typography>
+
+        <Box sx={{ mb: 2, maxWidth: 320 }}>
+          <TextField
+            label="Tolerance (%)"
+            type="number"
+            inputProps={{ min: 0, max: 100, step: 0.1 }}
+            value={quality.tolerance_pct ?? ''}
+            onChange={(e) =>
+              update((d) => {
+                const raw = e.target.value
+                ;(d.quality_expectations as any).tolerance_pct = raw === '' ? null : parseFloat(raw)
+              })
+            }
+            error={!!errorFor('spec.quality_expectations.tolerance_pct')}
+            helperText={errorFor('spec.quality_expectations.tolerance_pct') || 'Numeric percentage tolerance.'}
+          />
+        </Box>
 
         <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
           {[
@@ -1481,7 +1496,7 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
           <TextField
             select
             label="Trim"
@@ -1505,21 +1520,48 @@ export function SpecPayloadForm(props: {
             <MenuItem value="custom">Custom…</MenuItem>
           </TextField>
 
-          {trimSelect === 'custom' ? (
-            <TextField
-              label="Custom trim (%)"
-              type="number"
-              inputProps={{ min: 0, step: 0.1 }}
-              value={identity.trim_pct ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  d.identity.trim_pct = e.target.value ? parseFloat(e.target.value) : null
-                })
-              }
-              error={!!errorFor('spec.identity.trim_pct')}
-              helperText={errorFor('spec.identity.trim_pct') || ''}
-            />
-          ) : null}
+          <TextField
+            label="Custom trim (%)"
+            type="number"
+            inputProps={{ min: 0, step: 0.1 }}
+            value={trimSelect === 'custom' ? (identity.trim_pct ?? '') : ''}
+            onChange={(e) =>
+              update((d) => {
+                d.identity.trim_pct = e.target.value ? parseFloat(e.target.value) : null
+              })
+            }
+            disabled={trimSelect !== 'custom'}
+            error={!!errorFor('spec.identity.trim_pct')}
+            helperText={errorFor('spec.identity.trim_pct') || (trimSelect === 'custom' ? '' : 'Only used when Trim = Custom')}
+          />
+        </Box>
+
+        <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+          <TextField
+            select
+            label="Slit"
+            value={run.slit || 'none'}
+            onChange={(e) => update((d) => (d.run_requirements.slit = e.target.value))}
+            error={!!errorFor('spec.run_requirements.slit')}
+            helperText={errorFor('spec.run_requirements.slit') || ''}
+          >
+            <MenuItem value="none">none</MenuItem>
+            <MenuItem value="one_side">Slit one side</MenuItem>
+            <MenuItem value="both_sides">Slit both sides</MenuItem>
+            <MenuItem value="middle">slit up middle</MenuItem>
+          </TextField>
+          <TextField
+            select
+            label="Treat Inside/Outside"
+            value={run.treat_inside_outside || 'none'}
+            onChange={(e) => update((d) => (d.run_requirements.treat_inside_outside = e.target.value))}
+            error={!!errorFor('spec.run_requirements.treat_inside_outside')}
+            helperText={errorFor('spec.run_requirements.treat_inside_outside') || ''}
+          >
+            <MenuItem value="none">none</MenuItem>
+            <MenuItem value="inside">inside</MenuItem>
+            <MenuItem value="outside">outside</MenuItem>
+          </TextField>
 
           <TextField
             select
@@ -1552,32 +1594,6 @@ export function SpecPayloadForm(props: {
                   </MenuItem>,
                 ]
               : null}
-          </TextField>
-
-          <TextField
-            select
-            label="Slit"
-            value={run.slit || 'none'}
-            onChange={(e) => update((d) => (d.run_requirements.slit = e.target.value))}
-            error={!!errorFor('spec.run_requirements.slit')}
-            helperText={errorFor('spec.run_requirements.slit') || ''}
-          >
-            <MenuItem value="none">none</MenuItem>
-            <MenuItem value="one_side">Slit one side</MenuItem>
-            <MenuItem value="both_sides">Slit both sides</MenuItem>
-            <MenuItem value="middle">slit up middle</MenuItem>
-          </TextField>
-          <TextField
-            select
-            label="Treat Inside/Outside"
-            value={run.treat_inside_outside || 'none'}
-            onChange={(e) => update((d) => (d.run_requirements.treat_inside_outside = e.target.value))}
-            error={!!errorFor('spec.run_requirements.treat_inside_outside')}
-            helperText={errorFor('spec.run_requirements.treat_inside_outside') || ''}
-          >
-            <MenuItem value="none">none</MenuItem>
-            <MenuItem value="inside">inside</MenuItem>
-            <MenuItem value="outside">outside</MenuItem>
           </TextField>
         </Box>
 
@@ -1612,48 +1628,52 @@ export function SpecPayloadForm(props: {
             value={finishMode}
             InputProps={{ readOnly: true }}
             helperText="From Product Identity"
+            disabled
           />
 
-          <TextField
-            select
-            label="Core Type"
-            value={packaging.core_type || '7mm'}
-            onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
-          >
-            {['7mm', '13mm', 'PVC', 'None'].map((v) => (
-              <MenuItem key={v} value={v}>
-                {v}
-              </MenuItem>
-            ))}
-          </TextField>
+          {finishMode === 'Rolls' ? (
+            <TextField
+              select
+              label="Core Type"
+              value={packaging.core_type || '7mm'}
+              onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
+            >
+              {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+                <MenuItem key={v} value={v}>
+                  {v}
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : null}
 
-          <TextField
-            select
-            label="Roll weight billing"
-            value={identity.roll_weight_billing || 'core_included'}
-            onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
-            helperText="How core weight is treated when billing."
-            error={!!errorFor('spec.identity.roll_weight_billing')}
-          >
-            <MenuItem value="core_included">Include core</MenuItem>
-            <MenuItem value="core_off">Exclude core</MenuItem>
-            <MenuItem value="core_half_off">Half core</MenuItem>
-          </TextField>
+          {finishMode === 'Rolls' ? (
+            <TextField
+              select
+              label="Roll weight billing"
+              value={identity.roll_weight_billing || 'core_included'}
+              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
+              helperText="How core weight is treated when billing."
+              error={!!errorFor('spec.identity.roll_weight_billing')}
+            >
+              <MenuItem value="core_included">Include core</MenuItem>
+              <MenuItem value="core_off">Exclude core</MenuItem>
+              <MenuItem value="core_half_off">Half core</MenuItem>
+            </TextField>
+          ) : null}
 
-          <TextField
-            label="Bags per Carton"
-            type="number"
-            inputProps={{ min: 1, step: 1 }}
-            value={packaging.bags_per_carton ?? ''}
-            onChange={(e) =>
-              update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
-            }
-            disabled={finishMode === 'Rolls'}
-            helperText={
-              finishMode === 'Rolls' ? 'Not used for Rolls' : 'Required when Finish Mode = Cartons'
-            }
-            error={!!errorFor('spec.packaging.bags_per_carton')}
-          />
+          {finishMode !== 'Rolls' ? (
+            <TextField
+              label="Bags per Carton"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={packaging.bags_per_carton ?? ''}
+              onChange={(e) =>
+                update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
+              }
+              helperText="Required when Finish Mode = Cartons"
+              error={!!errorFor('spec.packaging.bags_per_carton')}
+            />
+          ) : null}
 
           <TextField
             select

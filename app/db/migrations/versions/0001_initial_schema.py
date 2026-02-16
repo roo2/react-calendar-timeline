@@ -186,6 +186,7 @@ def upgrade() -> None:
         "job_sheets",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("job_no", sa.String(length=64), nullable=False),
+        sa.Column("job_seq", sa.Integer, nullable=False),
         sa.Column(
             "customer_id",
             sa.String(length=36),
@@ -214,6 +215,7 @@ def upgrade() -> None:
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.UniqueConstraint("job_no", name="uq_job_sheets_job_no"),
+        sa.UniqueConstraint("customer_id", "job_seq", name="uq_job_sheets_customer_seq"),
     )
     op.create_index("ix_job_sheets_customer", "job_sheets", ["customer_id"])
     op.create_index("ix_job_sheets_product", "job_sheets", ["product_id"])
@@ -309,16 +311,15 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column(
-            "product_version_id",
+            "job_sheet_id",
             sa.String(length=36),
-            sa.ForeignKey("product_versions.id", ondelete="RESTRICT"),
+            sa.ForeignKey("job_sheets.id", ondelete="RESTRICT"),
             nullable=False,
         ),
-        sa.Column("quantity", sa.Numeric(18, 6), nullable=False),
-        sa.UniqueConstraint("order_id", "product_version_id", name="uq_order_item_order_version"),
+        sa.UniqueConstraint("order_id", "job_sheet_id", name="uq_order_item_order_job_sheet"),
     )
     op.create_index("ix_order_items_order", "order_items", ["order_id"], unique=False)
-    op.create_index("ix_order_items_version", "order_items", ["product_version_id"], unique=False)
+    op.create_index("ix_order_items_job_sheet", "order_items", ["job_sheet_id"], unique=False)
 
     # Jobs (includes allocated_order_units)
     op.create_table(
@@ -803,6 +804,28 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "resin_blends",
+        sa.Column("blend_code", sa.String(length=32), primary_key=True, nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
+    )
+
+    op.create_table(
+        "resin_blend_components",
+        sa.Column(
+            "blend_code",
+            sa.String(length=32),
+            sa.ForeignKey("resin_blends.blend_code", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+        sa.Column("resin_code", sa.String(length=32), primary_key=True, nullable=False),
+        sa.Column("pct", sa.Numeric(6, 2), nullable=False),
+        sa.CheckConstraint("pct >= 0", name="ck_resin_blend_components_pct_nonneg"),
+        sa.CheckConstraint("pct <= 100", name="ck_resin_blend_components_pct_le_100"),
+    )
+    op.create_index("ix_resin_blend_components_blend_code", "resin_blend_components", ["blend_code"])
+
+    op.create_table(
         "additives",
         sa.Column("additive_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
@@ -907,6 +930,9 @@ def downgrade() -> None:
     op.drop_table("inks")
     op.drop_table("colours")
     op.drop_table("additives")
+    op.drop_index("ix_resin_blend_components_blend_code", table_name="resin_blend_components")
+    op.drop_table("resin_blend_components")
+    op.drop_table("resin_blends")
     op.drop_table("resins")
 
     # Auth
@@ -984,7 +1010,7 @@ def downgrade() -> None:
     # Jobs/orders/machines
     op.drop_index("ix_jobs_order", table_name="jobs")
     op.drop_table("jobs")
-    op.drop_index("ix_order_items_version", table_name="order_items")
+    op.drop_index("ix_order_items_job_sheet", table_name="order_items")
     op.drop_index("ix_order_items_order", table_name="order_items")
     op.drop_table("order_items")
     op.drop_index("ix_orders_product_version", table_name="orders")
