@@ -128,6 +128,20 @@ def create_new_version(product_id: str, payload: CreateProductVersionRequest, cr
         return version
 
 
+def update_product_description(product_id: str, description: Optional[str]) -> Product:
+    with SessionLocal() as db:
+        pid = str(uuid.UUID(product_id))
+        product = db.get(Product, pid)
+        if not product:
+            raise DomainError("Product not found")
+        desc = (description or "").strip()
+        product.description = desc or None
+        db.add(product)
+        db.commit()
+        db.refresh(product)
+        return product
+
+
 def create_suggestion(req: OperatorSuggestionRequest, created_by: str) -> OperatorSuggestion:
     with SessionLocal() as db:
         product_id = uuid.UUID(req.product_id) if req.product_id else None

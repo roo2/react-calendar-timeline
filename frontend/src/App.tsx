@@ -30,6 +30,7 @@ import { InventoryTransactionsPage } from './pages/InventoryTransactionsPage'
 import { OrderNewPage } from './pages/OrderNewPage.tsx'
 import { OrderShowPage } from './pages/OrderShowPage.tsx'
 import { OrderAddJobPage } from './pages/OrderAddJobPage.tsx'
+import { OrderEditPage } from './pages/OrderEditPage.tsx'
 import {
   AppBar,
   Box,
@@ -175,6 +176,7 @@ function App() {
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/orders/new" element={<OrderNewPage />} />
               <Route path="/orders/:orderId" element={<OrderShowPage />} />
+              <Route path="/orders/:orderId/edit" element={<OrderEditPage />} />
               <Route path="/orders/:orderId/jobs/new" element={<OrderAddJobPage />} />
               <Route path="/inventory" element={<InventoryPage />} />
               <Route path="/inventory/receive" element={<InventoryReceivePage />} />

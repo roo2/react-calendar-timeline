@@ -58,20 +58,26 @@ async def list_additives():
 
 
 @router.get("/inks", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
-async def list_inks():
+async def list_inks(printer_type: str | None = Query(default=None)):
     with SessionLocal() as db:
-        rows = db.execute(select(Ink.ink_code, Ink.name).order_by(Ink.ink_code.asc())).all()
-        return [{"ink_code": r[0], "name": r[1]} for r in rows]
+        stmt = select(Ink.ink_code, Ink.name, Ink.printer_type).order_by(Ink.ink_code.asc())
+        if printer_type:
+            if printer_type in {"inline", "uteco"}:
+                stmt = stmt.where(Ink.printer_type.in_([printer_type, "both"]))
+            else:
+                stmt = stmt.where(Ink.printer_type == printer_type)
+        rows = db.execute(stmt).all()
+        return [{"ink_code": r[0], "name": r[1], "printer_type": r[2]} for r in rows]
 
 
 @router.get("/plates", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
 async def list_plates(customer_id: str | None = Query(default=None)):
     with SessionLocal() as db:
-        stmt = select(Plate.customer_id, Plate.plate_code, Plate.description).order_by(Plate.plate_code.asc())
+        stmt = select(Plate.customer_id, Plate.plate_code, Plate.description, Plate.cylinder).order_by(Plate.plate_code.asc())
         if customer_id:
             stmt = stmt.where(Plate.customer_id == customer_id)
         rows = db.execute(stmt).all()
         return [
-            {"customer_id": r[0], "plate_code": r[1], "description": r[2]}
+            {"customer_id": r[0], "plate_code": r[1], "description": r[2], "cylinder": r[3]}
             for r in rows
         ]

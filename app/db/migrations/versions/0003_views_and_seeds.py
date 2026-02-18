@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import json
 import uuid
+import os
+import sys
 
 from alembic import op
 import sqlalchemy as sa
+
+# Allow importing app modules when running Alembic from various entrypoints.
+# (Some environments don't put the repo root on sys.path by default.)
+_cwd = os.getcwd()
+if _cwd and _cwd not in sys.path:
+    sys.path.insert(0, _cwd)
+
+from app.db.seed_data.inks_database import INKS as INKS_DB  # noqa: E402
 
 # revision identifiers, used by Alembic.
 revision = "0003_views_and_seeds"
@@ -219,6 +229,26 @@ def upgrade() -> None:
                 "price_per_kg": price_per_kg,
                 "currency": currency,
             },
+        )
+
+    # --- Inks master data ---
+    for row in INKS_DB:
+        code = (row.get("ink_code") or "").strip()
+        name = (row.get("name") or "").strip()
+        ptype = (row.get("printer_type") or "inline").strip()
+        if not code or not name:
+            continue
+        conn.execute(
+            sa.text(
+                """
+                INSERT INTO inks (ink_code, name, printer_type)
+                VALUES (:ink_code, :name, :printer_type)
+                ON CONFLICT (ink_code) DO UPDATE SET
+                  name = excluded.name,
+                  printer_type = excluded.printer_type
+                """
+            ),
+            {"ink_code": code, "name": name, "printer_type": ptype},
         )
 
     # Resin blend presets (SQL equivalent of scripts/seed_resin_blends.py)

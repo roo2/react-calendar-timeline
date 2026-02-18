@@ -57,6 +57,7 @@ type Core = {
 type Ink = {
   ink_code: string
   name: string
+  printer_type: string
 }
 
 type Plate = {
@@ -115,6 +116,7 @@ export function AdminPage() {
 
   const [newInkCode, setNewInkCode] = useState('')
   const [newInkName, setNewInkName] = useState('')
+  const [newInkPrinterType, setNewInkPrinterType] = useState<'inline' | 'uteco' | 'both'>('inline')
 
   const [newPlateCustomerId, setNewPlateCustomerId] = useState('')
   const [newPlateCode, setNewPlateCode] = useState('')
@@ -761,6 +763,7 @@ export function AdminPage() {
                       <TableRow>
                         <TableCell sx={{ width: 200 }}>Ink code</TableCell>
                         <TableCell>Colour name</TableCell>
+                        <TableCell sx={{ width: 140 }}>Printer</TableCell>
                         <TableCell sx={{ width: 140 }} />
                       </TableRow>
                     </TableHead>
@@ -775,6 +778,20 @@ export function AdminPage() {
                         <TableCell>
                           <TextField size="small" fullWidth label="Colour name" value={newInkName} onChange={(e) => setNewInkName(e.target.value)} />
                         </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            select
+                            label="Printer"
+                            value={newInkPrinterType}
+                            onChange={(e) => setNewInkPrinterType(e.target.value as any)}
+                            sx={{ minWidth: 120 }}
+                          >
+                            <MenuItem value="inline">Inline</MenuItem>
+                            <MenuItem value="uteco">Uteco</MenuItem>
+                            <MenuItem value="both">Both</MenuItem>
+                          </TextField>
+                        </TableCell>
                         <TableCell align="right">
                           <Button
                             size="small"
@@ -782,9 +799,10 @@ export function AdminPage() {
                             disabled={!canCreateInk || savingInkCode === newInkCode.trim()}
                             onClick={() => {
                               if (!canCreateInk) return
-                              void saveInk(newInkCode, { name: newInkName.trim() }).then(() => {
+                              void saveInk(newInkCode, { name: newInkName.trim(), printer_type: newInkPrinterType }).then(() => {
                                 setNewInkCode('')
                                 setNewInkName('')
+                                setNewInkPrinterType('inline')
                               })
                             }}
                           >
@@ -1247,8 +1265,9 @@ function InkRow(props: {
 }) {
   const { ink, saving, onSave } = props
   const [name, setName] = useState(ink.name)
+  const [printerType, setPrinterType] = useState<(typeof ink)['printer_type']>(ink.printer_type || 'inline')
 
-  const dirty = name !== ink.name
+  const dirty = name !== ink.name || printerType !== (ink.printer_type || 'inline')
 
   return (
     <TableRow hover>
@@ -1256,12 +1275,19 @@ function InkRow(props: {
       <TableCell>
         <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
       </TableCell>
+      <TableCell>
+        <TextField select size="small" value={printerType} onChange={(e) => setPrinterType(e.target.value as any)}>
+          <MenuItem value="inline">Inline</MenuItem>
+          <MenuItem value="uteco">Uteco</MenuItem>
+          <MenuItem value="both">Both</MenuItem>
+        </TextField>
+      </TableCell>
       <TableCell align="right">
         <Button
           size="small"
           variant="outlined"
           disabled={saving || !dirty || !name.trim()}
-          onClick={() => void onSave(ink.ink_code, { name: name.trim() })}
+          onClick={() => void onSave(ink.ink_code, { name: name.trim(), printer_type: printerType })}
         >
           {saving ? 'Saving…' : 'Save'}
         </Button>

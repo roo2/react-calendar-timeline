@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   Alert,
   Box,
@@ -9,6 +9,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Link as MuiLink,
   MenuItem,
   Paper,
   Stack,
@@ -56,8 +57,8 @@ function ensureSpec(s: any): SpecPayload {
   }
 }
 
-export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string }) {
-  const { mode, jobSheetId } = props
+export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnTo?: string }) {
+  const { mode, jobSheetId, returnTo } = props
   const dispatch = useAppDispatch()
   const nav = useNavigate()
 
@@ -243,7 +244,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string }) {
         })
         const id = res?.job_sheet?.id
         setSaveMsg(`Saved job sheet ${jobNo}.`)
-        if (id) nav(`/job-sheets/${id}`)
+        if (id) nav(returnTo || `/job-sheets/${id}`)
       } else {
         if (!jobSheetId) throw new Error('Missing job sheet id')
         const body: any = {
@@ -259,7 +260,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string }) {
         const id = res?.job_sheet?.id
         const jn = res?.job_sheet?.job_no
         setSaveMsg(`Saved job sheet ${jn || ''}.`)
-        if (id) nav(`/job-sheets/${id}`)
+        if (id) nav(returnTo || `/job-sheets/${id}`)
       }
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
@@ -422,9 +423,21 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string }) {
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Product Spec
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
+            <Typography variant="h6">Product Spec</Typography>
+            {productId ? (
+              <MuiLink
+                component={Link}
+                to={`/products/${productId}`}
+                target="_blank"
+                rel="noreferrer"
+                underline="hover"
+                sx={{ fontSize: '0.875rem' }}
+              >
+                View previous versions
+              </MuiLink>
+            ) : null}
+          </Box>
           <SpecPayloadForm
             customerId={customerId || undefined}
             value={spec}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { Alert, Box, Button, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 
@@ -22,6 +22,8 @@ function fmtQty(v: number, u: string) {
 }
 
 export function JobSheetsPage() {
+  const loc = useLocation()
+  const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
   const [items, setItems] = useState<JobSheetSummary[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -71,7 +73,7 @@ export function JobSheetsPage() {
                 <TableCell sx={{ width: 220 }}>Product</TableCell>
                 <TableCell>Qty</TableCell>
                 <TableCell sx={{ width: 140 }}>Due</TableCell>
-                <TableCell sx={{ width: 140 }}>Actions</TableCell>
+                <TableCell sx={{ width: 200 }}>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -86,9 +88,19 @@ export function JobSheetsPage() {
                   <TableCell>{fmtQty(Number(r.quantity_value || 0), r.quantity_unit)}</TableCell>
                   <TableCell>{r.due_date || '-'}</TableCell>
                   <TableCell>
-                    <Button size="small" variant="outlined" component={Link} to={`/job-sheets/${r.id}`}>
-                      View
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Button size="small" variant="outlined" component={Link} to={`/job-sheets/${r.id}`}>
+                        View
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        component={Link}
+                        to={`/job-sheets/${r.id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
+                      >
+                        Edit
+                      </Button>
+                    </Box>
                   </TableCell>
                 </TableRow>
               ))}

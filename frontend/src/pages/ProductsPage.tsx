@@ -26,6 +26,7 @@ type ProductSummary = {
   description?: string | null
   customer_name?: string | null
   active_version_id?: string | null
+  active_version_number?: number | null
   product_type?: string | null
   pack_mode?: string | null
 }
@@ -33,6 +34,7 @@ type ProductSummary = {
 export function ProductsPage() {
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
+  const isPm = can(roles, 'PROD_MANAGER')
 
   const [q, setQ] = useState('')
   const [items, setItems] = useState<ProductSummary[]>([])
@@ -72,12 +74,13 @@ export function ProductsPage() {
         <form onSubmit={onSubmit}>
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <TextField
+              size="small"
               label="Search"
               placeholder="Search by code"
               value={q}
               onChange={(e) => setQ(e.currentTarget.value)}
             />
-            <Button type="submit" variant="outlined">
+            <Button type="submit" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
               Search
             </Button>
           </Box>
@@ -95,6 +98,8 @@ export function ProductsPage() {
               <TableCell>Description</TableCell>
               <TableCell>Type</TableCell>
               <TableCell>Packing</TableCell>
+              <TableCell sx={{ width: 140 }}>Latest</TableCell>
+              <TableCell sx={{ width: 220 }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -113,6 +118,19 @@ export function ProductsPage() {
                 <TableCell>{p.description || '-'}</TableCell>
                 <TableCell>{p.product_type || '-'}</TableCell>
                 <TableCell>{p.pack_mode || '-'}</TableCell>
+                <TableCell>{p.active_version_number ?? '-'}</TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <MuiLink component={Link} to={`/products/${p.id}`} underline="hover">
+                      Previous versions
+                    </MuiLink>
+                    {isPm ? (
+                      <Button size="small" variant="outlined" component={Link} to={`/products/${p.id}/versions/new`}>
+                        Edit
+                      </Button>
+                    ) : null}
+                  </Box>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

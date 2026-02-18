@@ -54,13 +54,14 @@ export function CustomersPage() {
         <form onSubmit={onSubmit}>
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <TextField
+              size="small"
               label="Search"
               placeholder="Search by name..."
               value={q}
               onChange={(e) => setQ(e.currentTarget.value)}
               sx={{ minWidth: 240 }}
             />
-            <Button type="submit" variant="outlined">
+            <Button type="submit" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
               Search
             </Button>
           </Box>

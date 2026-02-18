@@ -256,9 +256,6 @@
           <option value="None">None</option>
         </select>
       </div>
-      <div>
-        <label><input type="checkbox" id="wrapped"/> Wrapped</label>
-      </div>
     </fieldset>
 
     <fieldset>
@@ -392,8 +389,7 @@
         core_type: document.getElementById('core_type').value,
         core_policy: document.getElementById('core_policy').value,
         bags_per_carton: document.getElementById('bags_per_carton').value ? parseInt(document.getElementById('bags_per_carton').value) : null,
-        pallet_type: document.getElementById('pallet_type').value,
-        wrapped: document.getElementById('wrapped').checked
+        pallet_type: document.getElementById('pallet_type').value
       };
       const spec = {
         identity, dimensions, formulation, printing, quality_expectations, run_requirements, packaging,
@@ -486,7 +482,6 @@
           document.getElementById('core_policy').value = s.packaging.core_policy || 'Include';
           document.getElementById('bags_per_carton').value = s.packaging.bags_per_carton || '';
           document.getElementById('pallet_type').value = s.packaging.pallet_type || 'Chep';
-          document.getElementById('wrapped').checked = !!s.packaging.wrapped;
         }
         if (Array.isArray(s.tool_requirements)) {
           const c = document.getElementById('tool_requirements_rows');

@@ -1,6 +1,6 @@
 import { Autocomplete, TextField } from '@mui/material'
 
-export type InkOption = { ink_code: string; name: string }
+export type InkOption = { ink_code: string; name: string; printer_type?: string }
 
 export function InkSelect(props: {
   options: InkOption[]

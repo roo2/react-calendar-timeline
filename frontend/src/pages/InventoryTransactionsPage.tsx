@@ -151,10 +151,10 @@ export function InventoryTransactionsPage() {
               ))}
             </TextField>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <Button type="submit" variant="outlined">
+              <Button type="submit" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
                 Filter
               </Button>
-              <Button component={Link} to="/inventory" variant="outlined">
+              <Button component={Link} to="/inventory" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
                 Back
               </Button>
             </Box>

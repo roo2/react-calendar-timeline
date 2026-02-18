@@ -103,6 +103,7 @@ class Ink(Base):
 
     ink_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
+    printer_type: Mapped[str] = mapped_column(String(16), default="inline")
 
 
 class Plate(Base):
@@ -115,6 +116,7 @@ class Plate(Base):
     )
     plate_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cylinder: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class PrintingRate(Base):

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
-import { Alert, Box, Button, Paper, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
 import { ProductVersionSummary } from '../components/ProductVersionSummary'
 
 type JobSheetDetail = {
@@ -27,8 +27,18 @@ function fmtQty(v: number, u: string) {
   return `${v} ${unit}`
 }
 
+function qtyTypeLabel(u: string) {
+  if (u === 'kg') return 'Total KGs'
+  if (u === 'rolls') return 'No. of Rolls'
+  if (u === 'bags') return 'No. of Bags'
+  if (u === 'meters') return 'Total Meters'
+  return u
+}
+
 export function JobSheetShowPage() {
   const { jobSheetId } = useParams()
+  const loc = useLocation()
+  const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
   const [data, setData] = useState<JobSheetDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -62,25 +72,50 @@ export function JobSheetShowPage() {
 
   return (
     <Stack spacing={2}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <Box>
-          <Typography variant="h5">Job Sheet {js.job_no}</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Customer: {js.customer_name || '-'} • Product: {js.product_code} • Version: {js.version_number}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Qty: {fmtQty(Number(js.quantity_value || 0), js.quantity_unit)} • Due: {js.due_date || '-'}
-          </Typography>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">Job Sheet</Typography>
+          <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+            <Button
+              component={Link}
+              to={`/job-sheets/${encodeURIComponent(js.id)}/edit?returnTo=${encodeURIComponent(returnTo)}`}
+              variant="contained"
+            >
+              Edit Job Sheet
+            </Button>
+            <Button component={Link} to="/job-sheets" variant="outlined">
+              Back to Job Sheets
+            </Button>
+          </Box>
         </Box>
-        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-          <Button component={Link} to={`/products/${js.product_id}/versions/${js.product_version_id}`} variant="outlined">
-            View Version
-          </Button>
-          <Button component={Link} to="/job-sheets" variant="outlined">
-            Back to Job Sheets
-          </Button>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+          <TextField label="Customer" value={js.customer_name || '-'} InputProps={{ readOnly: true }} disabled />
+          <TextField label="Job No" value={js.job_no || ''} InputProps={{ readOnly: true }} disabled />
+          <TextField label="Due Date" value={js.due_date || '-'} InputProps={{ readOnly: true }} disabled />
         </Box>
-      </Box>
+
+        <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+          <TextField label="Quantity Type" value={js.quantity_unit || ''} InputProps={{ readOnly: true }} disabled />
+          <TextField
+            label={qtyTypeLabel(js.quantity_unit)}
+            value={fmtQty(Number(js.quantity_value || 0), js.quantity_unit)}
+            InputProps={{ readOnly: true }}
+            disabled
+          />
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <TextField
+            label="Product"
+            value={`${js.product_code}${js.product_description ? ` — ${js.product_description}` : ''}`}
+            InputProps={{ readOnly: true }}
+            disabled
+            fullWidth
+            helperText={`Version: ${js.version_number}`}
+          />
+        </Box>
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 1 }}>

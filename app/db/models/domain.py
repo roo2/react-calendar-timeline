@@ -175,7 +175,6 @@ class Order(Base):
     )
     quote_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus, name="order_status"))
-    currency: Mapped[str] = mapped_column(String(3))
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")

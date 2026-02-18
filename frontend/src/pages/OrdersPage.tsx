@@ -25,13 +25,13 @@ type OrderRow = {
   product_code?: string | null
   version_number?: number | null
   item_count?: number | null
-  currency: string
   created_at?: string | null
 }
 
 export function OrdersPage() {
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canCreate = can(roles, 'SALES', 'PROD_MANAGER')
+  const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
 
   const [items, setItems] = useState<OrderRow[]>([])
   const [err, setErr] = useState<string | null>(null)
@@ -69,8 +69,8 @@ export function OrdersPage() {
               <TableCell>Customer</TableCell>
               <TableCell>Product</TableCell>
               <TableCell>Status</TableCell>
-              <TableCell>Currency</TableCell>
               <TableCell>Created</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -88,8 +88,14 @@ export function OrdersPage() {
                     : '-'}
                 </TableCell>
                 <TableCell>{o.status}</TableCell>
-                <TableCell>{o.currency}</TableCell>
                 <TableCell>{o.created_at || ''}</TableCell>
+                <TableCell align="right">
+                  {canEdit && (o.status === 'draft' || o.status === 'confirmed') ? (
+                    <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
+                      Edit
+                    </Button>
+                  ) : null}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

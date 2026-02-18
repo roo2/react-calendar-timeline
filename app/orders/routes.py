@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth.deps import require_roles, allow_roles_any, csrf_protect, current_identity
 from app.orders.schemas import (
     CreateOrderRequest,
+    CreateOrderItemRequest,
     CreateJobRequest,
     OrderListItemDTO,
     OrderDetailDTO,
@@ -35,10 +36,9 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
     return OrderListItemDTO(
         id=o.id,
         code=o.code,
-        status=str(o.status),
+        status=(getattr(o.status, "value", None) or str(o.status)),
         customer_id=o.customer_id,
         product_version_id=o.product_version_id,
-        currency=o.currency,
         customer_name=(o.customer.name if getattr(o, "customer", None) else None),
         item_count=len(getattr(o, "items", []) or []),
         created_at=str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None,
@@ -93,6 +93,26 @@ async def create_order(payload: CreateOrderRequest, identity=Depends(current_ide
         raise HTTPException(status_code=400, detail=e.message)
 
 
+@router.post("/{order_id}/items", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def add_order_item(order_id: str, payload: CreateOrderItemRequest, identity=Depends(current_identity)):
+    try:
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
+        oi = service.add_order_item(order_id, payload, created_by=created_by)
+        return {"ok": True, "order_item_id": str(oi.id)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.delete("/{order_id}/items/{order_item_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def remove_order_item(order_id: str, order_item_id: str):
+    try:
+        service.remove_order_item(order_id, order_item_id)
+        return {"ok": True}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
 @router.get("/bootstrap", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
 async def orders_bootstrap():
     """
@@ -114,7 +134,7 @@ async def orders_bootstrap():
             .all()
         )
     return {
-        "customers": [{"id": c.id, "name": c.name} for c in customers],
+        "customers": [{"id": str(c.id), "name": c.name, "code": getattr(c, "code", None)} for c in customers],
         # legacy field (kept so older clients can still render a version dropdown)
         "versions": [
             {
@@ -191,7 +211,7 @@ async def create_job(
 async def publish_order(order_id: str):
     try:
         o = service.publish_order(order_id)
-        return {"ok": True, "order_id": str(o.id), "status": str(o.status)}
+        return {"ok": True, "order_id": str(o.id), "status": (getattr(o.status, "value", None) or str(o.status))}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 

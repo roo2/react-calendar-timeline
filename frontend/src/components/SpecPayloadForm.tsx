@@ -86,6 +86,7 @@ export function makeDefaultSpec(): SpecPayload {
     },
     dimensions: {
       base_width_mm: 200,
+      width_tolerance_mm: null,
       base_length_mm: null,
       thickness_um: 50,
       geometry: 'Flat',
@@ -103,7 +104,7 @@ export function makeDefaultSpec(): SpecPayload {
     },
     printing: {
       method: 'None',
-      num_colours: 0,
+      num_colours: null,
       print_description: null,
       ink_codes: [],
       plate_codes: [],
@@ -115,7 +116,6 @@ export function makeDefaultSpec(): SpecPayload {
     quality_expectations: {
       flags: [],
       known_issues: null,
-      tolerance_pct: null,
     },
     run_requirements: {
       preferred_extruders: [],
@@ -135,7 +135,6 @@ export function makeDefaultSpec(): SpecPayload {
       core_policy: 'Include',
       bags_per_carton: null,
       pallet_type: 'Chep',
-      wrapped: false,
       notes: null,
     },
     tool_requirements: [],
@@ -147,8 +146,10 @@ export function SpecPayloadForm(props: {
   onChange: (next: SpecPayload) => void
   fieldErrors?: Record<string, string>
   customerId?: string
+  productDescription?: string
+  onProductDescriptionChange?: (next: string) => void
 }) {
-  const { value, onChange, fieldErrors, customerId } = props
+  const { value, onChange, fieldErrors, customerId, productDescription, onProductDescriptionChange } = props
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
@@ -187,6 +188,7 @@ export function SpecPayloadForm(props: {
 
   const printingEnabled = printing.method && printing.method !== 'None'
   const finishMode = identity.finish_mode || 'Rolls'
+  const inkPrinterType = printing.method === 'Inline' ? 'inline' : printing.method === 'Uteco' ? 'uteco' : null
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
@@ -320,7 +322,8 @@ export function SpecPayloadForm(props: {
     void (async () => {
       try {
         setInksErr(null)
-        const rows = await apiFetch<InkOption[]>('/api/rate-cards/inks')
+        const q = inkPrinterType ? `?printer_type=${encodeURIComponent(inkPrinterType)}` : ''
+        const rows = await apiFetch<InkOption[]>(`/api/rate-cards/inks${q}`)
         if (cancelled) return
         setInks(Array.isArray(rows) ? rows : [])
       } catch (e) {
@@ -331,7 +334,7 @@ export function SpecPayloadForm(props: {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [inkPrinterType])
 
   useEffect(() => {
     let cancelled = false
@@ -556,10 +559,19 @@ export function SpecPayloadForm(props: {
             <MenuItem value="Rolls">Rolls</MenuItem>
             <MenuItem value="Cartons">Cartons</MenuItem>
           </TextField>
-
         </Box>
 
         <Box sx={{ mt: 2 }}>
+          {typeof onProductDescriptionChange === 'function' ? (
+            <TextField
+              label="Description"
+              value={productDescription || ''}
+              onChange={(e) => onProductDescriptionChange(e.currentTarget.value)}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+          ) : null}
           <TextField
             label="Notes"
             value={identity.notes || ''}
@@ -569,6 +581,7 @@ export function SpecPayloadForm(props: {
             fullWidth
             error={!!errorFor('spec.identity.notes')}
             helperText={errorFor('spec.identity.notes') || ''}
+            sx={typeof onProductDescriptionChange === 'function' ? { mt: 2 } : undefined}
           />
         </Box>
 
@@ -607,11 +620,13 @@ export function SpecPayloadForm(props: {
                     update((d) => {
                       if (e.target.checked) {
                         if (!d.printing.method || d.printing.method === 'None') d.printing.method = 'Inline'
+                        // Default to showing the Inline "Front print" section immediately.
+                        if (!d.printing.side) d.printing.side = 'front'
                       } else {
                         d.printing.method = 'None'
                         d.printing.side = null
                         d.printing.print_description = null
-                        d.printing.num_colours = 0
+                        d.printing.num_colours = null
                         d.printing.ink_codes = []
                         d.printing.plate_codes = []
                         d.printing.artwork_refs = []
@@ -693,6 +708,19 @@ export function SpecPayloadForm(props: {
                 error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
                 helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
               />
+              <TextField
+                label="Tolerance (mm)"
+                type="number"
+                inputProps={{ min: 0, step: 0.1 }}
+                value={dimensions.width_tolerance_mm ?? ''}
+                onChange={(e) =>
+                  update((d) => {
+                    const raw = e.target.value
+                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
+                  })
+                }
+                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
+              />
             </Box>
           ) : productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold' ? (
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
@@ -711,6 +739,19 @@ export function SpecPayloadForm(props: {
                 required
                 error={!!errorFor('spec.dimensions.base_width_mm')}
                 helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+              />
+              <TextField
+                label="Tolerance (mm)"
+                type="number"
+                inputProps={{ min: 0, step: 0.1 }}
+                value={dimensions.width_tolerance_mm ?? ''}
+                onChange={(e) =>
+                  update((d) => {
+                    const raw = e.target.value
+                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
+                  })
+                }
+                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
               />
             </Box>
           ) : gussetEnabled ? (
@@ -734,9 +775,22 @@ export function SpecPayloadForm(props: {
                 error={!!errorFor('spec.dimensions.gusset_mm')}
                 helperText={errorFor('spec.dimensions.gusset_mm') || ''}
               />
+              <TextField
+                label="Tolerance (mm)"
+                type="number"
+                inputProps={{ min: 0, step: 0.1 }}
+                value={dimensions.width_tolerance_mm ?? ''}
+                onChange={(e) =>
+                  update((d) => {
+                    const raw = e.target.value
+                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
+                  })
+                }
+                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
+              />
             </Box>
           ) : (
-            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2, gridColumn: '1 / -1' }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
               <TextField
                 label="Width (mm)"
                 type="number"
@@ -746,6 +800,19 @@ export function SpecPayloadForm(props: {
                 required
                 error={!!errorFor('spec.dimensions.base_width_mm')}
                 helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+              />
+              <TextField
+                label="Tolerance (mm)"
+                type="number"
+                inputProps={{ min: 0, step: 0.1 }}
+                value={dimensions.width_tolerance_mm ?? ''}
+                onChange={(e) =>
+                  update((d) => {
+                    const raw = e.target.value
+                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
+                  })
+                }
+                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
               />
             </Box>
           )}
@@ -934,7 +1001,7 @@ export function SpecPayloadForm(props: {
                         onChange={(e) =>
                           update((d) => {
                             d.formulation.blend_type = 'Custom'
-                            d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : 0
+                            d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : null
                           })
                         }
                         error={!!errorFor(`spec.formulation.blend[${idx}].pct`) || !!firstErrorForPrefix('spec.formulation.blend')}
@@ -973,7 +1040,7 @@ export function SpecPayloadForm(props: {
                       onClick={() =>
                         update((d) => {
                           d.formulation.blend_type = 'Custom'
-                          d.formulation.blend.push({ resin_code: '', pct: 0 })
+                          d.formulation.blend.push({ resin_code: '', pct: null })
                         })
                       }
                     >
@@ -1140,7 +1207,7 @@ export function SpecPayloadForm(props: {
                             if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
                             d.formulation.additives[idx] = {
                               ...(d.formulation.additives[idx] || {}),
-                              pct: e.target.value ? parseFloat(e.target.value) : 0,
+                              pct: e.target.value ? parseFloat(e.target.value) : null,
                             }
                           })
                         }
@@ -1178,7 +1245,7 @@ export function SpecPayloadForm(props: {
                         update((d) => {
                           if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
                           const defaultCode = additiveOptions[0]?.additive_code || ''
-                          d.formulation.additives.push({ additive_code: defaultCode, pct: 0 })
+                          d.formulation.additives.push({ additive_code: defaultCode, pct: null })
                         })
                       }
                     >
@@ -1396,23 +1463,6 @@ export function SpecPayloadForm(props: {
           Quality Expectations
         </Typography>
 
-        <Box sx={{ mb: 2, maxWidth: 320 }}>
-          <TextField
-            label="Tolerance (%)"
-            type="number"
-            inputProps={{ min: 0, max: 100, step: 0.1 }}
-            value={quality.tolerance_pct ?? ''}
-            onChange={(e) =>
-              update((d) => {
-                const raw = e.target.value
-                ;(d.quality_expectations as any).tolerance_pct = raw === '' ? null : parseFloat(raw)
-              })
-            }
-            error={!!errorFor('spec.quality_expectations.tolerance_pct')}
-            helperText={errorFor('spec.quality_expectations.tolerance_pct') || 'Numeric percentage tolerance.'}
-          />
-        </Box>
-
         <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
           {[
             { id: 'tight_gauge', label: 'Tight gauge tolerance' },
@@ -1496,7 +1546,7 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
           <TextField
             select
             label="Trim"
@@ -1534,9 +1584,7 @@ export function SpecPayloadForm(props: {
             error={!!errorFor('spec.identity.trim_pct')}
             helperText={errorFor('spec.identity.trim_pct') || (trimSelect === 'custom' ? '' : 'Only used when Trim = Custom')}
           />
-        </Box>
 
-        <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
           <TextField
             select
             label="Slit"
@@ -1702,12 +1750,6 @@ export function SpecPayloadForm(props: {
           />
         </Box>
 
-        <Box sx={{ mt: 2 }}>
-          <FormControlLabel
-            control={<Checkbox checked={!!packaging.wrapped} onChange={(e) => update((d) => (d.packaging.wrapped = e.target.checked))} />}
-            label="Wrapped"
-          />
-        </Box>
       </Paper>
 
     </Stack>

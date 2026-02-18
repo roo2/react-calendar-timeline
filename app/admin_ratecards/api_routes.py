@@ -93,20 +93,24 @@ class CoreUpsertRequest(BaseModel):
 class InkDTO(BaseModel):
     ink_code: str
     name: str
+    printer_type: str
 
 
 class InkUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
+    printer_type: str = Field(default="inline", min_length=1, max_length=16)
 
 
 class PlateDTO(BaseModel):
     customer_id: str
     plate_code: str
     description: str | None = None
+    cylinder: str | None = None
 
 
 class PlateUpsertRequest(BaseModel):
     description: str | None = Field(default=None, max_length=255)
+    cylinder: str | None = Field(default=None, max_length=64)
 
 
 @router.get(
@@ -434,7 +438,7 @@ async def upsert_core(core_type: str, payload: CoreUpsertRequest):
 async def list_inks():
     with SessionLocal() as db:
         rows = db.execute(select(Ink).order_by(Ink.ink_code.asc())).scalars().all()
-        return [InkDTO(ink_code=i.ink_code, name=i.name) for i in rows]
+        return [InkDTO(ink_code=i.ink_code, name=i.name, printer_type=getattr(i, "printer_type", "inline") or "inline") for i in rows]
 
 
 @router.put(
@@ -450,15 +454,16 @@ async def upsert_ink(ink_code: str, payload: InkUpsertRequest):
     with SessionLocal.begin() as db:
         row = db.get(Ink, code)
         if not row:
-            row = Ink(ink_code=code, name=payload.name)
+            row = Ink(ink_code=code, name=payload.name, printer_type=(payload.printer_type or "inline"))
             db.add(row)
         else:
             row.name = payload.name
+            row.printer_type = (payload.printer_type or getattr(row, "printer_type", None) or "inline")
 
     with SessionLocal() as db:
         i2 = db.get(Ink, code)
         assert i2 is not None
-        return InkDTO(ink_code=i2.ink_code, name=i2.name)
+        return InkDTO(ink_code=i2.ink_code, name=i2.name, printer_type=getattr(i2, "printer_type", "inline") or "inline")
 
 
 @router.get(
@@ -469,7 +474,7 @@ async def upsert_ink(ink_code: str, payload: InkUpsertRequest):
 async def list_plates():
     with SessionLocal() as db:
         rows = db.execute(select(Plate).order_by(Plate.customer_id.asc(), Plate.plate_code.asc())).scalars().all()
-        return [PlateDTO(customer_id=p.customer_id, plate_code=p.plate_code, description=p.description) for p in rows]
+        return [PlateDTO(customer_id=p.customer_id, plate_code=p.plate_code, description=p.description, cylinder=p.cylinder) for p in rows]
 
 
 @router.put(
@@ -488,13 +493,14 @@ async def upsert_plate(customer_id: str, plate_code: str, payload: PlateUpsertRe
     with SessionLocal.begin() as db:
         row = db.get(Plate, {"customer_id": cid, "plate_code": code})
         if not row:
-            row = Plate(customer_id=cid, plate_code=code, description=payload.description)
+            row = Plate(customer_id=cid, plate_code=code, description=payload.description, cylinder=payload.cylinder)
             db.add(row)
         else:
             row.description = payload.description
+            row.cylinder = payload.cylinder
 
     with SessionLocal() as db:
         p2 = db.get(Plate, {"customer_id": cid, "plate_code": code})
         assert p2 is not None
-        return PlateDTO(customer_id=p2.customer_id, plate_code=p2.plate_code, description=p2.description)
+        return PlateDTO(customer_id=p2.customer_id, plate_code=p2.plate_code, description=p2.description, cylinder=p2.cylinder)
 

@@ -60,6 +60,7 @@ class IdentitySpec(BaseModel):
 
 class DimensionsSpec(BaseModel):
     base_width_mm: int = Field(..., gt=0)
+    width_tolerance_mm: Optional[float] = Field(None, ge=0)
     base_length_mm: Optional[int] = Field(None, gt=0)
     thickness_um: int = Field(..., gt=0)
     geometry: Geometry
@@ -133,7 +134,6 @@ class PrintingSpec(BaseModel):
 class QualityExpectationsSpec(BaseModel):
     flags: List[Literal["tight_gauge", "seal_integrity", "cosmetic", "colour"]] = []
     known_issues: Optional[str] = None
-    tolerance_pct: Optional[float] = Field(None, ge=0, le=100)
 
 
 class RunRequirementsSpec(BaseModel):
@@ -153,7 +153,6 @@ class PackagingSpec(BaseModel):
     core_policy: Literal["Include", "Half", "Exclude"]
     bags_per_carton: Optional[int] = Field(None, gt=0)
     pallet_type: Literal["Chep", "Plain", "Resin", "None"]
-    wrapped: Optional[bool] = False
     notes: Optional[str] = None
 
     @root_validator(skip_on_failure=True)
@@ -223,6 +222,10 @@ class CreateProductRequest(BaseModel):
 
 class CreateProductVersionRequest(BaseModel):
     spec: SpecPayload
+
+
+class UpdateProductRequest(BaseModel):
+    description: Optional[str] = None
 
 
 class OperatorSuggestionRequest(BaseModel):

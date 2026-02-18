@@ -81,6 +81,7 @@ export function ProductVersionSummary(props: { spec: any }) {
   const shorthand = layflatShorthand(spec, layflatMm)
 
   const printed = spec?.printing?.method && spec.printing.method !== 'None'
+  const printMethod = (spec?.printing?.method as string | undefined) || 'None'
   const frontPairs = Array.isArray(spec?.printing?.front_ink_plate) ? spec.printing.front_ink_plate : []
   const backPairs = Array.isArray(spec?.printing?.back_ink_plate) ? spec.printing.back_ink_plate : []
   const fmtPairs = (pairs: any[]) => {
@@ -109,6 +110,15 @@ export function ProductVersionSummary(props: { spec: any }) {
     spec?.run_requirements?.hole_punched ? 'Punched' : null,
   ].filter(Boolean)
 
+  const lengthUnits = (spec?.dimensions?.length_units as string | undefined) || 'mm'
+  const baseLenMm = spec?.dimensions?.base_length_mm
+  const lengthDisplay =
+    baseLenMm == null
+      ? 'Continuous'
+      : lengthUnits === 'M'
+        ? `${(Number(baseLenMm) / 1000).toFixed(3).replace(/\.?0+$/, '')} M`
+        : `${baseLenMm} mm`
+
   return (
     <Stack spacing={2}>
       <SectionCard title="1. Product Identity">
@@ -116,7 +126,7 @@ export function ProductVersionSummary(props: { spec: any }) {
           rows={[
             { k: 'Product Type', v: spec?.identity?.product_type || '-' },
             { k: 'Finish Mode', v: spec?.identity?.finish_mode || '-' },
-            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
+            { k: 'Industry / Compliance Intent', v: fmtList(spec?.identity?.industry_flags) },
             { k: 'Options', v: options.length ? options.join(', ') : '-' },
             { k: 'Notes', v: spec?.identity?.notes || '-' },
           ]}
@@ -128,6 +138,7 @@ export function ProductVersionSummary(props: { spec: any }) {
           rows={[
             { k: 'Geometry', v: spec?.dimensions?.geometry || '-' },
             { k: 'Width', v: `${spec?.dimensions?.base_width_mm ?? '-'} mm` },
+            { k: 'Width tolerance', v: spec?.dimensions?.width_tolerance_mm != null ? `${spec.dimensions.width_tolerance_mm} mm` : '-' },
             {
               k: 'U-Film Left / Right',
               v:
@@ -135,7 +146,8 @@ export function ProductVersionSummary(props: { spec: any }) {
                   ? `${spec?.dimensions?.ufilm_left_width_mm ?? '-'} / ${spec?.dimensions?.ufilm_right_width_mm ?? '-'} mm`
                   : '-',
             },
-            { k: 'Length', v: spec?.dimensions?.base_length_mm != null ? `${spec?.dimensions?.base_length_mm} mm` : 'Continuous' },
+            { k: 'Gusset Return', v: spec?.dimensions?.gusset_mm != null ? `${spec.dimensions.gusset_mm} mm` : '-' },
+            { k: 'Length', v: lengthDisplay },
             { k: 'Thickness/Gauge', v: `${spec?.dimensions?.thickness_um ?? '-'} µm` },
           ]}
         />
@@ -156,9 +168,9 @@ export function ProductVersionSummary(props: { spec: any }) {
       <SectionCard title="3. Materials & Formulation">
         <KVTable
           rows={[
-            { k: 'Blend Type', v: spec?.formulation?.blend_type || 'Custom' },
+            { k: 'Resin Blend', v: spec?.formulation?.blend_type || 'Custom' },
             {
-              k: 'Resin Blend',
+              k: 'Resin Components',
               v:
                 Array.isArray(spec?.formulation?.blend) && spec.formulation.blend.length > 0 ? (
                   <Stack spacing={0.5}>
@@ -212,10 +224,11 @@ export function ProductVersionSummary(props: { spec: any }) {
           rows={[
             { k: 'Method', v: spec?.printing?.method || '-' },
             { k: 'Side', v: printed ? spec?.printing?.side || '-' : '-' },
-            { k: 'Colours', v: printed ? spec?.printing?.num_colours || 0 : '-' },
-            { k: 'Description', v: printed ? spec?.printing?.print_description || '-' : '-' },
-            { k: 'Front Ink/Plate', v: printed ? fmtPairs(frontPairs) : '-' },
-            { k: 'Back Ink/Plate', v: printed ? fmtPairs(backPairs) : '-' },
+            { k: 'Print Description', v: printed ? spec?.printing?.print_description || '-' : '-' },
+            { k: 'Front Ink/Plate', v: printMethod === 'Inline' ? fmtPairs(frontPairs) : '-' },
+            { k: 'Back Ink/Plate', v: printMethod === 'Inline' ? fmtPairs(backPairs) : '-' },
+            { k: 'Ink Codes', v: printMethod === 'Uteco' ? fmtList(spec?.printing?.ink_codes) : '-' },
+            { k: 'Plate Codes', v: printMethod === 'Uteco' ? fmtList(spec?.printing?.plate_codes) : '-' },
           ]}
         />
       </SectionCard>
@@ -224,7 +237,6 @@ export function ProductVersionSummary(props: { spec: any }) {
         <KVTable
           rows={[
             { k: 'Quality Flags', v: fmtList(spec?.quality_expectations?.flags) },
-            { k: 'Industry Flags', v: fmtList(spec?.identity?.industry_flags) },
             { k: 'Known Issues', v: spec?.quality_expectations?.known_issues || '-' },
           ]}
         />
@@ -233,6 +245,7 @@ export function ProductVersionSummary(props: { spec: any }) {
       <SectionCard title="6. Run Requirements">
         <KVTable
           rows={[
+            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
             { k: 'Run Up', v: spec?.run_requirements?.run_up || '-' },
             { k: 'Slit', v: spec?.run_requirements?.slit || '-' },
             { k: 'Treat Inside/Outside', v: spec?.run_requirements?.treat_inside_outside || '-' },
@@ -249,7 +262,6 @@ export function ProductVersionSummary(props: { spec: any }) {
             { k: 'Roll weight billing', v: spec?.identity?.roll_weight_billing || '-' },
             { k: 'Bags per carton', v: spec?.packaging?.bags_per_carton ?? '-' },
             { k: 'Pallet Type', v: spec?.packaging?.pallet_type || '-' },
-            { k: 'Wrapped', v: spec?.packaging?.wrapped ? 'Yes' : 'No' },
             { k: 'Packing Notes', v: spec?.packaging?.notes || '-' },
           ]}
         />

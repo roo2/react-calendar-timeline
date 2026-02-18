@@ -20,7 +20,6 @@ class CreateOrderItemRequest(BaseModel):
 class CreateOrderRequest(BaseModel):
     customer_id: uuid.UUID
     items: List[CreateOrderItemRequest] = []
-    currency: str = Field(min_length=3, max_length=3, default="AUD")
     quote_id: Optional[uuid.UUID] = None  # optional for MVP creation from approved quote
     # Orders are always created as DRAFT; publishing is a separate action.
     status: str = "draft"
@@ -46,7 +45,6 @@ class OrderListItemDTO(BaseModel):
     status: str
     customer_id: uuid.UUID
     product_version_id: Optional[uuid.UUID] = None
-    currency: str
     customer_name: Optional[str] = None
     product_code: Optional[str] = None
     version_number: Optional[int] = None

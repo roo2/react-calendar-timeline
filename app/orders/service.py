@@ -14,10 +14,11 @@ from app.db.models.domain import (
     Job as JobModel,
     Customer,
     ProductVersion,
+    JobSheet,
 )
 from app.db.models.enums import OrderStatus, JobStatus
 from app.exceptions import DomainError
-from app.orders.schemas import CreateOrderRequest, CreateJobRequest
+from app.orders.schemas import CreateOrderRequest, CreateJobRequest, CreateOrderItemRequest
 from app.job_sheets import service as job_sheets_service
 
 
@@ -95,7 +96,6 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
             product_version_id=str(created_job_sheets[0].product_version_id) if created_job_sheets else None,
             quote_id=quote_id,
             status=OrderStatus.DRAFT,
-            currency=payload.currency,
         )
         db.add(order)
         db.flush()
@@ -167,4 +167,80 @@ def publish_order(order_id: str) -> OrderModel:
         db.flush()
         db.refresh(o)
         return o
+
+
+def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: str) -> OrderItemModel:
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be edited")
+
+        due_dt = None
+        if item.due_date is not None:
+            due_dt = datetime.combine(item.due_date, time.min)
+
+        js = job_sheets_service.create_job_sheet_from_product_latest_version(
+            db=db,
+            customer_id=str(o.customer_id),
+            product_id=str(item.product_id),
+            due_date=due_dt,
+            quantity_value=float(item.quantity_value),
+            quantity_unit=str(item.quantity_unit),
+            created_by=created_by or "system",
+        )
+
+        oi = OrderItemModel(order_id=str(o.id), job_sheet_id=str(js.id))
+        db.add(oi)
+
+        # Keep legacy summary pointer populated (first item only).
+        if not getattr(o, "product_version_id", None) and getattr(js, "product_version_id", None):
+            o.product_version_id = str(js.product_version_id)
+            db.add(o)
+
+        db.flush()
+        db.refresh(oi)
+        return oi
+
+
+def remove_order_item(order_id: str, order_item_id: str) -> None:
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+            uuid.UUID(str(order_item_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be edited")
+
+        oi = db.get(OrderItemModel, str(order_item_id))
+        if not oi or str(oi.order_id) != str(o.id):
+            raise DomainError("Order item not found")
+
+        db.delete(oi)
+        db.flush()
+
+        # Recompute legacy summary pointer (best-effort).
+        rows = (
+            db.query(OrderItemModel, JobSheet)
+            .join(JobSheet, JobSheet.id == OrderItemModel.job_sheet_id)
+            .filter(OrderItemModel.order_id == str(o.id))
+            .order_by(JobSheet.job_seq.asc(), JobSheet.id.asc())
+            .all()
+        )
+        if rows:
+            _, js0 = rows[0]
+            o.product_version_id = str(getattr(js0, "product_version_id", None)) if js0 else None
+        else:
+            o.product_version_id = None
+        db.add(o)
+        db.flush()
 

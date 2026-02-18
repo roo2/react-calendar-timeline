@@ -11,6 +11,7 @@ from app.products import service
 from app.products.schemas import (
     CreateProductRequest,
     CreateProductVersionRequest,
+    UpdateProductRequest,
     SpecPayload,
 )
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -31,6 +32,12 @@ def _product_summary(p) -> dict:
     except DetachedInstanceError:
         spec = None
 
+    active_version_number = None
+    try:
+        active_version_number = getattr(getattr(p, "active_version", None), "version_number", None)
+    except DetachedInstanceError:
+        active_version_number = None
+
     identity = spec.get("identity") if isinstance(spec, dict) else None
     packaging = spec.get("packaging") if isinstance(spec, dict) else None
     product_type = identity.get("product_type") if isinstance(identity, dict) else None
@@ -42,6 +49,7 @@ def _product_summary(p) -> dict:
         "description": getattr(p, "description", None),
         "customer_id": p.customer_id,
         "active_version_id": p.active_version_id,
+        "active_version_number": active_version_number,
         "created_at": str(getattr(p, "created_at", "")),
         "customer_name": customer_name,
         "product_type": product_type,
@@ -110,5 +118,14 @@ async def create_product_version(product_id: str, payload: CreateProductVersionR
         created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
         v = service.create_new_version(product_id, payload, created_by=created_by)
         return {"ok": True, "version": _version_summary(v)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.put("/{product_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def update_product(product_id: str, payload: UpdateProductRequest):
+    try:
+        p = service.update_product_description(product_id, payload.description)
+        return {"ok": True, "product": _product_summary(p)}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)

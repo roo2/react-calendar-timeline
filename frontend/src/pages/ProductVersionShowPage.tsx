@@ -81,15 +81,15 @@ export function ProductVersionShowPage() {
           ) : null}
         </Box>
 
-        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+          <MuiLink component={Link} to={`/products/${productId}`} underline="hover" sx={{ alignSelf: 'center' }}>
+            View Previous Versions
+          </MuiLink>
           {isPm && (
             <Button variant="contained" component={Link} to={`/products/${productId}/versions/new`}>
-              Create New Version
+              Edit
             </Button>
           )}
-          <Button variant="outlined" component={Link} to={`/products/${productId}`}>
-            Previous Versions
-          </Button>
           <Button
             variant="outlined"
             component={Link}
@@ -141,14 +141,11 @@ export function ProductVersionShowPage() {
       )}
 
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-        <Button component={Link} to={`/products/${productId}`} variant="outlined">
-          Back to Product
-        </Button>
-        <Button component={Link} to="/products" variant="outlined">
+        <MuiLink component={Link} to="/products" underline="hover" sx={{ alignSelf: 'center' }}>
           Back to Products
-        </Button>
+        </MuiLink>
         <MuiLink component={Link} to={`/products/${productId}`} underline="hover" sx={{ alignSelf: 'center' }}>
-          View product versions
+          View Previous Versions
         </MuiLink>
       </Box>
     </Stack>

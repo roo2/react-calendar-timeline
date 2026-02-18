@@ -54,7 +54,7 @@ export function ProductShowPage() {
   if (!data) return <p>Loading…</p>
 
   const product = data.product
-  const versions = data.versions || []
+  const versions = (data.versions || []).slice().sort((a: any, b: any) => Number(b?.version_number || 0) - Number(a?.version_number || 0))
 
   return (
     <Stack spacing={2}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
@@ -18,8 +18,11 @@ import {
 
 export function OrderShowPage() {
   const { orderId } = useParams()
+  const loc = useLocation()
+  const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
+  const canEdit = canPublish
 
   const [order, setOrder] = useState<any>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -76,14 +79,18 @@ export function OrderShowPage() {
         Order {order.code}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Currency: {order.currency} • Created:{' '}
-        {order.created_at || ''}
+        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Created: {order.created_at || ''}
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-        {canPublish && order.status !== 'confirmed' && (
+        {canPublish && order.status === 'draft' && (
           <Button variant="contained" onClick={onPublish} disabled={publishing}>
             {publishing ? 'Publishing…' : 'Publish Order'}
+          </Button>
+        )}
+        {canEdit && (order.status === 'draft' || order.status === 'confirmed') && (
+          <Button variant="outlined" component={Link} to={`/orders/${encodeURIComponent(order.id)}/edit`}>
+            Edit Order
           </Button>
         )}
         <Button variant="outlined" component={Link} to="/orders">
@@ -116,7 +123,11 @@ export function OrderShowPage() {
                   {it.quantity_value != null ? `${it.quantity_value} ${it.quantity_unit || ''}`.trim() : '-'}
                 </TableCell>
                 <TableCell align="right">
-                  <Button size="small" component={Link} to={`/job-sheets/${it.job_sheet_id}/edit`}>
+                  <Button
+                    size="small"
+                    component={Link}
+                    to={`/job-sheets/${it.job_sheet_id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
+                  >
                     Edit job sheet
                   </Button>
                 </TableCell>

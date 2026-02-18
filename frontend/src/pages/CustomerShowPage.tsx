@@ -31,6 +31,7 @@ export function CustomerShowPage() {
   const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
+  const canEditOrders = canEdit
 
   const entry = useAppSelector((s) => (customerId ? s.customers.detail.byId[customerId] : undefined))
   const customer = entry?.customer || null
@@ -230,6 +231,7 @@ export function CustomerShowPage() {
                 <TableCell>Product</TableCell>
                 <TableCell>Currency</TableCell>
                 <TableCell>Created</TableCell>
+                <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -248,11 +250,18 @@ export function CustomerShowPage() {
                   </TableCell>
                   <TableCell>{o.currency}</TableCell>
                   <TableCell>{o.created_at || ''}</TableCell>
+                  <TableCell align="right">
+                    {canEditOrders && o.status === 'draft' ? (
+                      <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
+                        Edit
+                      </Button>
+                    ) : null}
+                  </TableCell>
                 </TableRow>
               ))}
               {orders.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5}>
+                  <TableCell colSpan={6}>
                     <Typography color="text.secondary">No orders.</Typography>
                   </TableCell>
                 </TableRow>

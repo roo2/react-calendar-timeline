@@ -850,6 +850,7 @@ def upgrade() -> None:
         "inks",
         sa.Column("ink_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("printer_type", sa.String(length=16), nullable=False, server_default=sa.text("'inline'")),
     )
 
     op.create_table(
