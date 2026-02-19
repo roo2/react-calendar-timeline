@@ -81,7 +81,7 @@ def _wait_for_http(url: str, *, timeout_s: float = 20.0) -> None:
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
-        description="Reset local SQLite DB (production.db), create admin/admin, and create one test customer via API."
+        description="Reset local SQLite DB (production.db), create admin/admin, and import customers + print plates from plate-db.tsv."
     )
     p.add_argument(
         "--db-path",
@@ -97,7 +97,12 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--no-api",
         action="store_true",
-        help="Skip starting/pinging the API and skip api_create_customer.py",
+        help="Skip starting/pinging the API and skip importing plate DB data",
+    )
+    p.add_argument(
+        "--plate-db",
+        default=str(Path("scripts") / "plate-db.tsv"),
+        help="Plate database file path relative to repo root (default: scripts/plate-db.tsv)",
     )
     p.add_argument(
         "--no-migrations",
@@ -149,7 +154,7 @@ def main(argv: list[str]) -> int:
     )
 
     if args.no_api:
-        print("Skipping API customer creation (--no-api).")
+        print("Skipping API import (--no-api).")
         return 0
 
     base_url = f"http://127.0.0.1:{args.api_port}"
@@ -181,19 +186,40 @@ def main(argv: list[str]) -> int:
         )
         _wait_for_http(health_url, timeout_s=25.0)
 
-        # Create one test customer via API (assumes admin/admin)
+        plate_db_path = (REPO_ROOT / args.plate_db).resolve()
+        if not plate_db_path.exists():
+            raise RuntimeError(f"Plate DB file not found: {plate_db_path}")
+
+        # Import customers + plates via API (assumes admin/admin)
         _run(
             [
                 py,
-                str(REPO_ROOT / "scripts" / "api_create_customer.py"),
+                str(REPO_ROOT / "scripts" / "api_import_plate_customers.py"),
+                str(plate_db_path),
                 "--base-url",
                 base_url,
                 "--username",
                 "admin",
                 "--password",
                 "admin",
-                "--customer-name",
-                "Rosemount Nursery",
+                "--delimiter",
+                "\\t",
+            ],
+            env=env,
+        )
+        _run(
+            [
+                py,
+                str(REPO_ROOT / "scripts" / "api_import_print_plates.py"),
+                str(plate_db_path),
+                "--base-url",
+                base_url,
+                "--username",
+                "admin",
+                "--password",
+                "admin",
+                "--delimiter",
+                "\\t",
             ],
             env=env,
         )
