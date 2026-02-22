@@ -173,11 +173,22 @@ class Extruder(Base):
     decision_width_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     average_kg_hr: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ave_width: Mapped[float | None] = mapped_column(Numeric(12, 3), nullable=True)
+    cost_per_hr: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("cost_per_hr IS NULL OR cost_per_hr >= 0", name="ck_extruders_cost_per_hr_nonneg"),
+    )
 
 
 class ExtrusionWasteFactor(Base):
     __tablename__ = "extrusion_waste_factors"
 
     factor: Mapped[str] = mapped_column(Text, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True)
     minutes: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        CheckConstraint("length(slug) > 0", name="ck_extrusion_waste_factors_slug_nonempty"),
+        CheckConstraint("minutes >= 0", name="ck_extrusion_waste_factors_minutes_nonneg"),
+    )
 

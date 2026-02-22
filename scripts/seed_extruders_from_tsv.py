@@ -35,6 +35,18 @@ def to_float(v: str) -> float | None:
         return None
 
 
+def to_money(v: str) -> float | None:
+    s = (v or "").strip()
+    if not s:
+        return None
+    # Allow "$40", "$40.50", "40", etc.
+    s = s.replace("$", "").replace(",", "").strip()
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
 FIELD_MAP: dict[str, tuple[str, Any]] = {
     "Model": ("model", lambda x: (x or "").strip() or None),
     "Film Width Min (mm)": ("film_width_min_mm", to_int),
@@ -42,6 +54,7 @@ FIELD_MAP: dict[str, tuple[str, Any]] = {
     "Decision Width (mm)": ("decision_width_mm", to_int),
     "Average (kg/hr)": ("average_kg_hr", to_int),
     "Ave Width": ("ave_width", to_float),
+    "Cost/hr": ("cost_per_hr", to_money),
 }
 
 
@@ -78,16 +91,17 @@ def main() -> None:
                 text(
                     """
                     INSERT INTO extruders
-                    (extruder_code, model, film_width_min_mm, film_width_max_mm, decision_width_mm, average_kg_hr, ave_width)
+                    (extruder_code, model, film_width_min_mm, film_width_max_mm, decision_width_mm, average_kg_hr, ave_width, cost_per_hr)
                     VALUES
-                    (:extruder_code, :model, :film_width_min_mm, :film_width_max_mm, :decision_width_mm, :average_kg_hr, :ave_width)
+                    (:extruder_code, :model, :film_width_min_mm, :film_width_max_mm, :decision_width_mm, :average_kg_hr, :ave_width, :cost_per_hr)
                     ON CONFLICT (extruder_code) DO UPDATE SET
                       model = excluded.model,
                       film_width_min_mm = excluded.film_width_min_mm,
                       film_width_max_mm = excluded.film_width_max_mm,
                       decision_width_mm = excluded.decision_width_mm,
                       average_kg_hr = excluded.average_kg_hr,
-                      ave_width = excluded.ave_width
+                      ave_width = excluded.ave_width,
+                      cost_per_hr = excluded.cost_per_hr
                     """
                 ),
                 {"extruder_code": code, **fields},

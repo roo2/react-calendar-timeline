@@ -4,7 +4,8 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, select
+import re
 
 from app.auth.deps import require_roles, csrf_protect
 from app.db.models.rate_cards import (
@@ -23,6 +24,23 @@ from app.db.session import SessionLocal
 
 
 router = APIRouter(prefix="/api/admin/rate-cards", tags=["admin_ratecards"])
+
+_WASTE_FACTOR_SLUG_OVERRIDES: dict[str, str] = {
+    # Stable slugs for custom logic lookups.
+    "Colour (not clear)": "colour_not_clear",
+    "Simple Job": "simple_job",
+    "Gusset": "gusset",
+    "Non standard Resin": "non_standard_resin",
+}
+
+
+def _slugify_waste_factor(factor: str) -> str:
+    s = (factor or "").strip()
+    if s in _WASTE_FACTOR_SLUG_OVERRIDES:
+        return _WASTE_FACTOR_SLUG_OVERRIDES[s]
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s[:64] if s else "waste_factor"
 
 
 class ResinDTO(BaseModel):
@@ -589,7 +607,16 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
 )
 async def list_extrusion_waste_factors():
     with SessionLocal() as db:
-        rows = db.execute(select(ExtrusionWasteFactor).order_by(ExtrusionWasteFactor.factor.asc())).scalars().all()
+        rows = (
+            db.execute(
+                select(ExtrusionWasteFactor).order_by(
+                    case((ExtrusionWasteFactor.slug == "simple_job", 0), else_=1),
+                    ExtrusionWasteFactor.factor.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
         return [ExtrusionWasteFactorDTO(factor=w.factor, minutes=int(w.minutes)) for w in rows]
 
 
@@ -606,10 +633,12 @@ async def upsert_extrusion_waste_factor(factor: str, payload: ExtrusionWasteFact
     with SessionLocal.begin() as db:
         row = db.get(ExtrusionWasteFactor, key)
         if not row:
-            row = ExtrusionWasteFactor(factor=key, minutes=payload.minutes)
+            row = ExtrusionWasteFactor(factor=key, slug=_slugify_waste_factor(key), minutes=payload.minutes)
             db.add(row)
         else:
             row.minutes = payload.minutes
+            if not getattr(row, "slug", None):
+                row.slug = _slugify_waste_factor(key)
 
     with SessionLocal() as db:
         w2 = db.get(ExtrusionWasteFactor, key)

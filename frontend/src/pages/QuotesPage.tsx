@@ -26,7 +26,14 @@ import { AdditiveSelect, type AdditiveOption } from '../components/AdditiveSelec
 import { defaultRowSx, isDefaultRow } from '../components/DefaultRowTable'
 import { DefaultSelectField } from '../components/DefaultSelectField'
 import { productTypeCanHaveGusset } from '../utils/specCompat'
-import { computeQuickQuotePreview, type QuickQuoteInputs, type QuoteRatebook } from '../utils/quoteCalculator'
+import {
+  computeAppliedExtrusionWasteFactors,
+  computeLayflatWidthMm,
+  computeQuickQuotePreview,
+  type AppliedExtrusionWasteFactor,
+  type QuickQuoteInputs,
+  type QuoteRatebook,
+} from '../utils/quoteCalculator'
 
 function fmtDollars(v: any, dp: number = 2) {
   const n = Number(v)
@@ -91,6 +98,17 @@ function QuotePreview(props: {
                 Cost / kg: {fmtDollars(p.cost_per_kg)}
               </Typography>
             )}
+            {p.cost_breakdown?.extrusion_cost != null && Number(p.cost_breakdown.extrusion_cost) > 0 ? (
+              <Typography variant="body2">
+                Extrusion costs: {fmtDollars(p.cost_breakdown.extrusion_cost)}
+                {p.extrusion_hours != null ? ` (${Number(p.extrusion_hours).toFixed(2)} hr)` : ''}
+              </Typography>
+            ) : null}
+            {Number(p.extrusion_waste_minutes || 0) > 0 ? (
+              <Typography variant="body2">
+                Wasted extrusion minutes: {Math.round(Number(p.extrusion_waste_minutes || 0))} min
+              </Typography>
+            ) : null}
             {finishMode === 'Rolls' && p.kg_per_roll != null && (
               <Typography variant="body2">
                 Weight / Roll: {Number(p.kg_per_roll).toFixed(2)} kg
@@ -126,6 +144,10 @@ function QuotePreview(props: {
                 <TableCell>{fmtDollars(p.cost_breakdown?.material_cost)}</TableCell>
               </TableRow>
               <TableRow>
+                <TableCell>Extrusion</TableCell>
+                <TableCell>{fmtDollars(p.cost_breakdown?.extrusion_cost)}</TableCell>
+              </TableRow>
+              <TableRow>
                 <TableCell>Printing</TableCell>
                 <TableCell>{fmtDollars(p.cost_breakdown?.printing_cost)}</TableCell>
               </TableRow>
@@ -157,6 +179,12 @@ function QuotePreview(props: {
                 <TableCell sx={{ fontWeight: 600 }}>Suggested price</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>{fmtDollars(p.final_price)}</TableCell>
               </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Suggested price / kg</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>
+                  {Number(p.totals_kg || 0) > 0 ? fmtDollars(Number(p.final_price || 0) / Number(p.totals_kg || 1)) : '—'}
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </>
@@ -177,7 +205,7 @@ export function QuotesPage() {
   // Quantity
   const [qtyType, setQtyType] = useState<'units' | 'kg'>('kg')
   const [qtyTotal, setQtyTotal] = useState('')
-  const [qtyRolls, setQtyRolls] = useState('1')
+  const [qtyRolls, setQtyRolls] = useState('')
 
   // Product identity
   const [productType, setProductType] = useState('Bag')
@@ -442,6 +470,7 @@ export function QuotesPage() {
       gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
       length_units: lengthUnits,
       trim_pct: trimPct,
+      resin_blend_code: resinBlendCode,
 
       blend,
       // If resin blends aren't loaded (or code not found), fall back to a resin_code
@@ -503,6 +532,40 @@ export function QuotesPage() {
     widthMmNum,
   ])
 
+  const layflatWidthMm = useMemo(() => {
+    try {
+      return computeLayflatWidthMm({
+        product_type: productType,
+        geometry: derivedGeometry,
+        base_width_mm: widthMmNum,
+        gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
+        ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
+        ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+      })
+    } catch {
+      return 0
+    }
+  }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isUFilm, productType, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
+
+  const selectedExtruder = useMemo(() => {
+    const extruders = Array.isArray(ratebook?.extruders) ? ratebook!.extruders : []
+    if (!extruders.length || !(layflatWidthMm > 0)) return { extruder: null as any, helperText: '' }
+
+    const usable = extruders
+      .filter((e) => e && typeof e.decision_width_mm === 'number' && Number.isFinite(e.decision_width_mm))
+      .map((e) => ({ ...e, decision_width_mm: Number(e.decision_width_mm) }))
+      .sort((a, b) => (a.decision_width_mm! - b.decision_width_mm!) || String(a.extruder_code).localeCompare(String(b.extruder_code)))
+
+    const firstFit = usable.find((e) => (e.decision_width_mm ?? 0) >= layflatWidthMm) || null
+    if (firstFit) return { extruder: firstFit, helperText: `Auto-selected for layflat ${Math.round(layflatWidthMm)}mm.` }
+
+    const fallback = usable.length ? usable[usable.length - 1] : null
+    return {
+      extruder: fallback,
+      helperText: fallback ? `No extruder can handle layflat ${Math.round(layflatWidthMm)}mm (showing largest available).` : 'No extruders available.',
+    }
+  }, [layflatWidthMm, ratebook])
+
   const calcInputs: QuickQuoteInputs = useMemo(
     () => ({
       requested_margin: Number(calcPayload.requested_margin || 0),
@@ -516,11 +579,13 @@ export function QuotesPage() {
       continuous_roll: !!calcPayload.continuous_roll,
       gusset_mm: calcPayload.gusset_mm != null ? Number(calcPayload.gusset_mm) : null,
       trim_pct: calcPayload.trim_pct != null ? Number(calcPayload.trim_pct) : null,
+      resin_blend_code: calcPayload.resin_blend_code != null ? String(calcPayload.resin_blend_code) : null,
       print_method: calcPayload.print_method,
       num_colours: Number(calcPayload.num_colours || 0),
       finish_mode: calcPayload.finish_mode,
       core_type: calcPayload.core_type,
       roll_weight_billing: calcPayload.roll_weight_billing != null ? calcPayload.roll_weight_billing : null,
+      extruder_code: selectedExtruder.extruder?.extruder_code || null,
       colour_components: calcPayload.colour_components,
       additives: calcPayload.additives,
       blend: calcPayload.blend,
@@ -529,6 +594,30 @@ export function QuotesPage() {
     }),
     [calcPayload],
   )
+
+  const appliedExtrusionWasteFactors: AppliedExtrusionWasteFactor[] = useMemo(() => {
+    if (!ratebook) return []
+    try {
+      return computeAppliedExtrusionWasteFactors(calcInputs, ratebook)
+    } catch {
+      return []
+    }
+  }, [calcInputs, ratebook])
+
+  function wasteFactorLabel(slug: string): string {
+    switch (slug) {
+      case 'simple_job':
+        return 'Simple Job'
+      case 'non_standard_resin':
+        return 'Non standard resin'
+      case 'colour_not_clear':
+        return 'Colour (not clear)'
+      case 'gusset':
+        return 'Gusset'
+      default:
+        return slug
+    }
+  }
 
   const lastPayloadKeyRef = useRef<string>('')
 
@@ -545,6 +634,7 @@ export function QuotesPage() {
       continuous_roll: !!payload.continuous_roll,
       gusset_mm: payload.gusset_mm != null ? Number(payload.gusset_mm) : null,
       trim_pct: payload.trim_pct != null ? Number(payload.trim_pct) : null,
+      resin_blend_code: payload.resin_blend_code != null ? String(payload.resin_blend_code) : null,
       print_method: payload.print_method,
       num_colours: Number(payload.num_colours || 0),
       finish_mode: payload.finish_mode,
@@ -566,6 +656,7 @@ export function QuotesPage() {
     const payload = payloadOverride || calcPayload
     try {
       const inputs = payloadOverride ? payloadToInputs(payload) : calcInputs
+      if (payloadOverride) inputs.extruder_code = selectedExtruder.extruder?.extruder_code || null
       const res = computeQuickQuotePreview(inputs, ratebook)
       setQuickPreview(res)
     } catch (e) {
@@ -928,6 +1019,52 @@ export function QuotesPage() {
                   <TextField label="Number of Colours" type="number" value={numColours} onChange={(e) => setNumColours(e.target.value)} />
                 ) : null}
               </Box>
+            </Paper>
+
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Extrusion
+              </Typography>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+                <TextField
+                  label="Extruder (for estimate)"
+                  value={
+                    selectedExtruder.extruder
+                      ? `${selectedExtruder.extruder.extruder_code}. Decision Width: ${selectedExtruder.extruder.decision_width_mm ?? '—'}. Average output: ${
+                          selectedExtruder.extruder.average_kg_hr ?? '—'
+                        } kg/hr`
+                      : ''
+                  }
+                  placeholder={ratebook?.extruders ? 'No suitable extruder' : 'Loading…'}
+                  InputProps={{ readOnly: true }}
+                  disabled
+                  helperText={selectedExtruder.helperText}
+                />
+              </Box>
+
+              {appliedExtrusionWasteFactors.length ? (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Applied waste factors
+                  </Typography>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Factor</TableCell>
+                        <TableCell align="right">Minutes</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {appliedExtrusionWasteFactors.map((f) => (
+                        <TableRow key={f.slug}>
+                          <TableCell>{wasteFactorLabel(f.slug)}</TableCell>
+                          <TableCell align="right">{Math.round(Number(f.minutes || 0))}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              ) : null}
             </Paper>
 
             <Paper variant="outlined" sx={{ p: 2 }}>

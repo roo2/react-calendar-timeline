@@ -9,6 +9,8 @@ from app.db.models.rate_cards import (
     Colour,
     ConversionRate,
     Core,
+    Extruder,
+    ExtrusionWasteFactor,
     Ink,
     Plate,
     PrintingRate,
@@ -105,6 +107,15 @@ async def get_ratebook():
         additives = db.execute(select(Additive.additive_code, Additive.price_per_kg)).all()
         colours = db.execute(select(Colour.colour_code, Colour.price_per_kg)).all()
         cores = db.execute(select(Core.core_type, Core.cost_per_meter, Core.kg_per_meter)).all()
+        extruders = db.execute(
+            select(
+                Extruder.extruder_code,
+                Extruder.model,
+                Extruder.decision_width_mm,
+                Extruder.average_kg_hr,
+                Extruder.cost_per_hr,
+            ).order_by(Extruder.decision_width_mm.asc().nulls_last(), Extruder.extruder_code.asc())
+        ).all()
         printing_rates = db.execute(
             select(
                 PrintingRate.method,
@@ -125,6 +136,9 @@ async def get_ratebook():
             )
         ).all()
         waste_adders = db.execute(select(WasteAdder.condition, WasteAdder.waste_minutes)).all()
+        extrusion_waste_factors = db.execute(
+            select(ExtrusionWasteFactor.slug, ExtrusionWasteFactor.minutes).order_by(ExtrusionWasteFactor.factor.asc())
+        ).all()
 
     # Model assumptions (kept consistent with quote_engine defaults):
     # - setup_cost is treated as 1 unit per minute
@@ -162,6 +176,16 @@ async def get_ratebook():
             str(ct): {"cost_per_meter": float(cpm), "kg_per_meter": float(kpm)}
             for ct, cpm, kpm in cores
         },
+        "extruders": [
+            {
+                "extruder_code": str(code),
+                "model": (str(model) if model is not None else None),
+                "decision_width_mm": (int(dw) if dw is not None else None),
+                "average_kg_hr": (int(avg) if avg is not None else None),
+                "cost_per_hr": (float(cph) if cph is not None else None),
+            }
+            for code, model, dw, avg, cph in extruders
+        ],
         "printing_rates": out_printing,
         "conversion_rates": [
             {
@@ -175,5 +199,6 @@ async def get_ratebook():
             for min_g, max_g, min_l, max_l, bph, setup_m in conversion_rates
         ],
         "waste_adders": [{"condition": str(c), "waste_minutes": int(m or 0)} for c, m in waste_adders],
+        "extrusion_waste_factors": [{"slug": str(slug), "minutes": int(m or 0)} for slug, m in extrusion_waste_factors],
         "extrusion_throughput_kg_per_hr": 0,
     }

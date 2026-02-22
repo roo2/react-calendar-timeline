@@ -878,12 +878,16 @@ def upgrade() -> None:
         sa.Column("decision_width_mm", sa.Integer(), nullable=True),
         sa.Column("average_kg_hr", sa.Integer(), nullable=True),
         sa.Column("ave_width", sa.Numeric(12, 3), nullable=True),
+        sa.Column("cost_per_hr", sa.Numeric(12, 4), nullable=True),
+        sa.CheckConstraint("cost_per_hr IS NULL OR cost_per_hr >= 0", name="ck_extruders_cost_per_hr_nonneg"),
     )
 
     op.create_table(
         "extrusion_waste_factors",
         sa.Column("factor", sa.Text(), primary_key=True),
+        sa.Column("slug", sa.String(length=64), nullable=False, unique=True),
         sa.Column("minutes", sa.Integer(), nullable=False),
+        sa.CheckConstraint("length(slug) > 0", name="ck_extrusion_waste_factors_slug_nonempty"),
         sa.CheckConstraint("minutes >= 0", name="ck_extrusion_waste_factors_minutes_nonneg"),
     )
 

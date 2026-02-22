@@ -3,6 +3,13 @@ export type QuoteRatebook = {
   additives_price_per_kg: Record<string, number>
   colours: Record<string, { price_per_kg: number }>
   cores: Record<string, { cost_per_meter: number; kg_per_meter: number }>
+  extruders?: Array<{
+    extruder_code: string
+    model: string | null
+    decision_width_mm: number | null
+    average_kg_hr: number | null
+    cost_per_hr: number | null
+  }>
   printing_rates: Record<
     string,
     { method: string; cost_per_1000m: number; setup_cost: number; setup_minutes: number; minimum_charge: number; duplex_supported: boolean }
@@ -16,6 +23,7 @@ export type QuoteRatebook = {
     setup_minutes: number
   }>
   waste_adders: Array<{ condition: string; waste_minutes: number }>
+  extrusion_waste_factors?: Array<{ slug: string; minutes: number }>
   extrusion_throughput_kg_per_hr: number
 }
 
@@ -31,11 +39,13 @@ export type QuickQuoteInputs = {
   continuous_roll: boolean
   gusset_mm: number | null
   trim_pct: number | null
+  resin_blend_code?: string | null
   print_method: 'None' | 'Inline' | 'Uteco'
   num_colours: number
   finish_mode: 'Rolls' | 'Cartons'
   core_type: string | null
   roll_weight_billing?: 'core_included' | 'core_off' | 'core_half_off' | null
+  extruder_code?: string | null
   opaque?: boolean
   colour_components?: Array<{ colour_code: string; strength_pct: number | null }>
   additives?: Array<{ additive_code: string; pct: number | null }>
@@ -53,8 +63,11 @@ export type QuotePreview = {
   kg_per_roll: number | null
   m_per_roll: number | null
   cost_per_kg: number | null
+  extrusion_hours: number | null
+  extrusion_waste_minutes: number
   cost_breakdown: {
     material_cost: number
+    extrusion_cost: number
     printing_cost: number
     conversion_cost: number
     core_cost: number
@@ -126,8 +139,21 @@ function computeLayflatMm(spec: {
     const r = Number(spec.ufilm_right_width_mm || 0)
     return w + l + r
   }
-  if (geom === 'gusset') return w + 2 * g
+  // For gusset, treat gusset_mm as the total additional layflat width.
+  // e.g. width 200 + gusset 100 => layflat 300.
+  if (geom === 'gusset') return w + g
   return w
+}
+
+export function computeLayflatWidthMm(spec: {
+  product_type: string
+  geometry: string
+  base_width_mm: number
+  gusset_mm: number | null
+  ufilm_left_width_mm?: number | null
+  ufilm_right_width_mm?: number | null
+}): number {
+  return computeLayflatMm(spec)
 }
 
 function pickConversionRate(ratebook: QuoteRatebook, gaugeUm: number, lengthMm: number): (typeof ratebook.conversion_rates)[number] | null {
@@ -255,6 +281,48 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
   }
 }
 
+export type AppliedExtrusionWasteFactor = {
+  slug: string
+  minutes: number
+}
+
+function buildExtrusionWasteCfg(ratebook: QuoteRatebook): Map<string, number> {
+  const m = new Map<string, number>()
+  for (const w of Array.isArray(ratebook.extrusion_waste_factors) ? ratebook.extrusion_waste_factors : []) {
+    const slug = String((w as any)?.slug || '').trim()
+    const mins = Number((w as any)?.minutes || 0)
+    if (slug) m.set(slug, Math.max(0, mins))
+  }
+  return m
+}
+
+export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): AppliedExtrusionWasteFactor[] {
+  const cfg = buildExtrusionWasteCfg(ratebook)
+
+  // Custom waste factor logic (minutes configurable in DB):
+  // - simple_job: always applies
+  // - colour_not_clear: any colour component means not clear
+  // - gusset: gusseted geometry
+  // - non_standard_resin: any additives OR resin blend other than default
+  const hasAnyColour =
+    Array.isArray(inputs.colour_components) && inputs.colour_components.some((c) => (Number(c?.strength_pct || 0) || 0) > 0)
+  const hasGusset = String(inputs.geometry || '').toLowerCase() === 'gusset' && Number(inputs.gusset_mm || 0) > 0
+  const hasAnyAdditives = Array.isArray(inputs.additives) && inputs.additives.some((a) => (Number(a?.pct || 0) || 0) > 0)
+  const blendCode = (inputs.resin_blend_code || '').trim()
+  const isNonStandardResin = hasAnyAdditives || (blendCode !== '' && blendCode !== 'LD')
+
+  const out: AppliedExtrusionWasteFactor[] = []
+
+  // Always applies
+  out.push({ slug: 'simple_job', minutes: cfg.get('simple_job') || 0 })
+
+  if (hasAnyColour) out.push({ slug: 'colour_not_clear', minutes: cfg.get('colour_not_clear') || 0 })
+  if (hasGusset) out.push({ slug: 'gusset', minutes: cfg.get('gusset') || 0 })
+  if (isNonStandardResin) out.push({ slug: 'non_standard_resin', minutes: cfg.get('non_standard_resin') || 0 })
+
+  return out
+}
+
 export function computeRollMetrics(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): Pick<QuotePreview, 'kg_per_roll' | 'm_per_roll'> {
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
   return { kg_per_roll: d.kgPerRoll, m_per_roll: d.mPerRoll }
@@ -327,6 +395,26 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const materialCostPerKg = denom > 0 ? (resinBaseCostPerKg + colourNumerator + additivesNumerator) / denom : 0
   const materialCost = materialCostPerKg * derivedTotalKg
 
+  const appliedExtrusionWasteFactors = computeAppliedExtrusionWasteFactors(inputs, ratebook)
+  const extrusionExtraMinutes = appliedExtrusionWasteFactors.reduce((acc, f) => acc + Number(f.minutes || 0), 0)
+
+  // Extrusion cost (runtime only, estimate):
+  // hours = plastic_kg / average_kg_hr
+  // cost = hours * cost_per_hr
+  let extrusionHours: number | null = null
+  let extrusionCost = 0
+  if (inputs.extruder_code && Array.isArray(ratebook.extruders) && derivedTotalKg > 0) {
+    const ex = ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))
+    const avg = ex?.average_kg_hr != null ? Number(ex.average_kg_hr) : null
+    const cph = ex?.cost_per_hr != null ? Number(ex.cost_per_hr) : null
+    if (avg != null && avg > 0 && cph != null && cph >= 0) {
+      const baseHours = derivedTotalKg / avg
+      const extraHours = extrusionExtraMinutes > 0 ? extrusionExtraMinutes / 60 : 0
+      extrusionHours = baseHours + extraHours
+      extrusionCost = extrusionHours * cph
+    }
+  }
+
   // Printing
   const pm = inputs.print_method === 'Inline' ? 'inline' : inputs.print_method === 'Uteco' ? 'uteco' : 'none'
   let printingCost = 0
@@ -362,15 +450,26 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   }
 
   // Waste
-  const wasteMinutes = (Array.isArray(ratebook.waste_adders) ? ratebook.waste_adders : []).reduce((acc, w) => acc + Number(w?.waste_minutes || 0), 0)
+  // Waste represents *material wasted* during extrusion.
+  // Extrusion waste factors add BOTH:
+  // - time (handled above via extrusionExtraMinutes -> extrusionHours)
+  // - wasted material (handled here via wasteKg -> wasteCost)
+  const baseWasteAdderMinutes = (Array.isArray(ratebook.waste_adders) ? ratebook.waste_adders : []).reduce(
+    (acc, w) => acc + Number(w?.waste_minutes || 0),
+    0,
+  )
+  const wasteMinutes = baseWasteAdderMinutes + extrusionExtraMinutes
   let wasteCost = 0
-  const throughput = Number(ratebook.extrusion_throughput_kg_per_hr || 0)
+  const throughput =
+    inputs.extruder_code && Array.isArray(ratebook.extruders)
+      ? Number(ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))?.average_kg_hr || 0)
+      : Number(ratebook.extrusion_throughput_kg_per_hr || 0)
   if (wasteMinutes > 0 && throughput > 0 && materialCostPerKg > 0) {
     const wasteKg = (wasteMinutes / 60) * throughput
     wasteCost = wasteKg * materialCostPerKg
   }
 
-  const totalCost = materialCost + printingCost + conversionCost + coreCost + wasteCost
+  const totalCost = materialCost + extrusionCost + printingCost + conversionCost + coreCost + wasteCost
   const finalPrice = margin < 1 ? totalCost / (1 - margin) : totalCost
   const unitPrice = units != null ? finalPrice / units : null
   const costPerKg = derivedTotalKg > 0 ? totalCost / derivedTotalKg : null
@@ -385,8 +484,11 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     kg_per_roll: kgPerRoll,
     m_per_roll: mPerRoll,
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
+    extrusion_hours: extrusionHours,
+    extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
     cost_breakdown: {
       material_cost: roundMoney(materialCost),
+      extrusion_cost: roundMoney(extrusionCost),
       printing_cost: roundMoney(printingCost),
       conversion_cost: roundMoney(conversionCost),
       core_cost: roundMoney(coreCost),

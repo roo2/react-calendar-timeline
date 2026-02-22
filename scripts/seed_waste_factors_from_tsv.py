@@ -6,6 +6,33 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
+_SLUG_OVERRIDES: dict[str, str] = {
+    "Colour (not clear)": "colour_not_clear",
+    "Simple Job": "simple_job",
+    "Gusset": "gusset",
+    "Non standard Resin": "non_standard_resin",
+}
+
+
+def slugify_factor(factor: str) -> str:
+    s = (factor or "").strip()
+    if s in _SLUG_OVERRIDES:
+        return _SLUG_OVERRIDES[s]
+    s = s.lower()
+    out = []
+    prev_us = False
+    for ch in s:
+        ok = ("a" <= ch <= "z") or ("0" <= ch <= "9")
+        if ok:
+            out.append(ch)
+            prev_us = False
+        else:
+            if not prev_us:
+                out.append("_")
+                prev_us = True
+    slug = "".join(out).strip("_")
+    return (slug[:64] if slug else "waste_factor")
+
 
 def get_db_url() -> str:
     env_url = os.getenv("DATABASE_URL")
@@ -26,7 +53,7 @@ def main() -> None:
         raise RuntimeError("TSV appears empty")
 
     # First row is a header; skip it.
-    data: list[tuple[str, int]] = []
+    data: list[tuple[str, str, int]] = []
     for r in rows[1:]:
         if not r:
             continue
@@ -38,21 +65,22 @@ def main() -> None:
             mins = int(float(mins_s))
         except Exception:
             continue
-        data.append((factor, mins))
+        data.append((factor, slugify_factor(factor), mins))
 
     engine = create_engine(get_db_url(), future=True)
     with engine.begin() as conn:
-        for factor, mins in data:
+        for factor, slug, mins in data:
             conn.execute(
                 text(
                     """
-                    INSERT INTO extrusion_waste_factors (factor, minutes)
-                    VALUES (:factor, :minutes)
+                    INSERT INTO extrusion_waste_factors (factor, slug, minutes)
+                    VALUES (:factor, :slug, :minutes)
                     ON CONFLICT (factor) DO UPDATE SET
+                      slug = excluded.slug,
                       minutes = excluded.minutes
                     """
                 ),
-                {"factor": factor, "minutes": mins},
+                {"factor": factor, "slug": slug, "minutes": mins},
             )
 
     print(f"Seeded/updated {len(data)} extrusion waste factors from {tsv_path.name}")
