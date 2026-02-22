@@ -56,7 +56,6 @@ type CustomerDetail = {
   tax_id?: string | null
   payment_terms?: string | null
   credit_limit?: number | null
-  currency_preference: string
   notes?: string | null
   internal_notes?: string | null
   contacts: any[]
@@ -142,7 +141,6 @@ export function CustomerUpsertPage() {
 
   const [paymentTerms, setPaymentTerms] = useState('')
   const [creditLimit, setCreditLimit] = useState('')
-  const [currencyPreference, setCurrencyPreference] = useState('AUD')
   const [notes, setNotes] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
 
@@ -208,7 +206,6 @@ export function CustomerUpsertPage() {
 
     setPaymentTerms(c.payment_terms || '')
     setCreditLimit(c.credit_limit != null ? String(c.credit_limit) : '')
-    setCurrencyPreference(c.currency_preference || 'AUD')
     setNotes(c.notes || '')
     setInternalNotes(c.internal_notes || '')
 
@@ -244,7 +241,6 @@ export function CustomerUpsertPage() {
         } satisfies DeliveryPrefs,
         payment_terms: paymentTerms || null,
         credit_limit: creditLimit ? Number(creditLimit) : null,
-        currency_preference: currencyPreference,
         notes: notes || null,
         internal_notes: internalNotes || null,
       }
@@ -636,15 +632,6 @@ export function CustomerUpsertPage() {
               value={creditLimit}
               onChange={(e) => setCreditLimit(e.currentTarget.value)}
             />
-            <TextField
-              select
-              label="Currency Preference"
-              value={currencyPreference}
-              onChange={(e) => setCurrencyPreference(e.target.value as string)}
-            >
-              <MenuItem value="AUD">AUD</MenuItem>
-              <MenuItem value="USD">USD</MenuItem>
-            </TextField>
             <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} multiline minRows={3} />
             <TextField label="Internal Notes" value={internalNotes} onChange={(e) => setInternalNotes(e.currentTarget.value)} multiline minRows={3} />
           </Box>

@@ -86,7 +86,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const [newProductOpen, setNewProductOpen] = useState(false)
   const [newProductCode, setNewProductCode] = useState('')
-  const [newProductDescription, setNewProductDescription] = useState('')
   const [newProductSpec, setNewProductSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [newProductCodeExists, setNewProductCodeExists] = useState(false)
   const lastAutoNewProductPrefixRef = useRef<string>('')
@@ -138,7 +137,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   function closeNewProductModal() {
     setNewProductOpen(false)
     setNewProductCode('')
-    setNewProductDescription('')
     setNewProductSpec(makeDefaultSpec())
     setNewProductCodeExists(false)
     lastAutoNewProductPrefixRef.current = ''
@@ -251,7 +249,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           data: {
             customer_id: customerId,
             code: newProductCode.trim(),
-            description: newProductDescription.trim() ? newProductDescription.trim() : null,
             spec: newProductSpec,
           },
         }),
@@ -836,11 +833,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         ? `Suggested format: ${customerCode}-XXXX`
                         : undefined
                 }
-              />
-              <TextField
-                label="Description"
-                value={newProductDescription}
-                onChange={(e) => setNewProductDescription(e.target.value)}
               />
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>

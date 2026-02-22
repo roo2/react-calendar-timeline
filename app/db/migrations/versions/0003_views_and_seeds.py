@@ -200,26 +200,25 @@ def upgrade() -> None:
     # NOTE: resin_blends schema is created in the initial migration; seeds live here.
 
     resins_seed = [
-        # resin_code, name, density, price_per_kg, currency
-        ("Q1018H", "Linear", 0.001848, 1.98, "AUD"),
-        ("FD0270", "Sanofi", 0.001848, 2.26, "AUD"),
-        ("FD0274", "Light G", 0.001848, 2.29, "AUD"),
-        ("FE8004", "Med G", 0.001848, 2.28, "AUD"),
-        ("FE3000", "Heavy G", 0.001848, 2.28, "AUD"),
-        ("S199F", "H/D", 0.001924, 2.06, "AUD"),
-        ("1018RA", "Metallizine", 0.001848, 2.21, "AUD"),
+        # resin_code, name, density, price_per_kg
+        ("Q1018H", "Linear", 0.001848, 1.98),
+        ("FD0270", "Sanofi", 0.001848, 2.26),
+        ("FD0274", "Light G", 0.001848, 2.29),
+        ("FE8004", "Med G", 0.001848, 2.28),
+        ("FE3000", "Heavy G", 0.001848, 2.28),
+        ("S199F", "H/D", 0.001924, 2.06),
+        ("1018RA", "Metallizine", 0.001848, 2.21),
     ]
-    for resin_code, name, density, price_per_kg, currency in resins_seed:
+    for resin_code, name, density, price_per_kg in resins_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO resins (resin_code, name, density, price_per_kg, currency)
-                VALUES (:resin_code, :name, :density, :price_per_kg, :currency)
+                INSERT INTO resins (resin_code, name, density, price_per_kg)
+                VALUES (:resin_code, :name, :density, :price_per_kg)
                 ON CONFLICT (resin_code) DO UPDATE SET
                   name = excluded.name,
                   density = excluded.density,
-                  price_per_kg = excluded.price_per_kg,
-                  currency = excluded.currency
+                  price_per_kg = excluded.price_per_kg
                 """
             ),
             {
@@ -227,7 +226,6 @@ def upgrade() -> None:
                 "name": name,
                 "density": density,
                 "price_per_kg": price_per_kg,
-                "currency": currency,
             },
         )
 
@@ -295,22 +293,21 @@ def upgrade() -> None:
         )
 
     additives_seed = [
-        # additive_code, name, price_per_kg, category, notes
-        ("ANTI_BLOCK", "Anti Block", 3.5, "process", None),
-        ("ANTI_STATIC", "Anti Static", 7.7, "process", None),
-        ("SLIP", "Slip", 6.4, "process", None),
-        ("UV", "UV", 13.4, "process", None),
+        # additive_code, name, price_per_kg, notes
+        ("ANTI_BLOCK", "Anti Block", 3.5, None),
+        ("ANTI_STATIC", "Anti Static", 7.7, None),
+        ("SLIP", "Slip", 6.4, None),
+        ("UV", "UV", 13.4, None),
     ]
-    for additive_code, name, price_per_kg, category, notes in additives_seed:
+    for additive_code, name, price_per_kg, notes in additives_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO additives (additive_code, name, price_per_kg, category, notes)
-                VALUES (:additive_code, :name, :price_per_kg, :category, :notes)
+                INSERT INTO additives (additive_code, name, price_per_kg, notes)
+                VALUES (:additive_code, :name, :price_per_kg, :notes)
                 ON CONFLICT (additive_code) DO UPDATE SET
                   name = excluded.name,
                   price_per_kg = excluded.price_per_kg,
-                  category = excluded.category,
                   notes = excluded.notes
                 """
             ),
@@ -318,70 +315,64 @@ def upgrade() -> None:
                 "additive_code": additive_code,
                 "name": name,
                 "price_per_kg": price_per_kg,
-                "category": category,
                 "notes": notes,
             },
         )
 
     colours_seed = [
-        # colour_code, name, price_per_kg, opacity_multiplier, currency
-        ("WHITE", "White", 5.8, 0.0, "AUD"),
-        ("BLACK", "Black", 4.5, 0.0, "AUD"),
-        ("SILVER", "Silver", 19.88, 0.0, "AUD"),
-        ("GREY", "Grey", 14.5, 0.0, "AUD"),
-        ("BLUE", "Blue", 5.7, 0.0, "AUD"),
-        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0, 0.0, "AUD"),
-        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86, 0.0, "AUD"),
-        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1, 0.0, "AUD"),
-        ("YELLOW", "Yellow", 20.33, 0.0, "AUD"),
-        ("SIGNET_YELLOW", "Signet Yellow", 17.33, 0.0, "AUD"),
-        ("GREEN", "Green", 14.69, 0.0, "AUD"),
-        ("ORANGE", "Orange", 19.55, 0.0, "AUD"),
-        ("RED", "Red", 19.02, 0.0, "AUD"),
-        ("PURPLE", "Purple", 17.23, 0.0, "AUD"),
-        ("BROWN", "Brown", 19.42, 0.0, "AUD"),
-        ("PINK", "Pink", 32.29, 0.0, "AUD"),
-        ("OTHER", "Other", 25.0, 0.0, "AUD"),
+        # colour_code, name, price_per_kg
+        ("WHITE", "White", 5.8),
+        ("BLACK", "Black", 4.5),
+        ("SILVER", "Silver", 19.88),
+        ("GREY", "Grey", 14.5),
+        ("BLUE", "Blue", 5.7),
+        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0),
+        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86),
+        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1),
+        ("YELLOW", "Yellow", 20.33),
+        ("SIGNET_YELLOW", "Signet Yellow", 17.33),
+        ("GREEN", "Green", 14.69),
+        ("ORANGE", "Orange", 19.55),
+        ("RED", "Red", 19.02),
+        ("PURPLE", "Purple", 17.23),
+        ("BROWN", "Brown", 19.42),
+        ("PINK", "Pink", 32.29),
+        ("OTHER", "Other", 25.0),
     ]
-    for colour_code, name, price_per_kg, opacity_multiplier, currency in colours_seed:
+    for colour_code, name, price_per_kg in colours_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO colours (colour_code, name, price_per_kg, opacity_multiplier, currency)
-                VALUES (:colour_code, :name, :price_per_kg, :opacity_multiplier, :currency)
+                INSERT INTO colours (colour_code, name, price_per_kg)
+                VALUES (:colour_code, :name, :price_per_kg)
                 ON CONFLICT (colour_code) DO UPDATE SET
                   name = excluded.name,
-                  price_per_kg = excluded.price_per_kg,
-                  opacity_multiplier = excluded.opacity_multiplier,
-                  currency = excluded.currency
+                  price_per_kg = excluded.price_per_kg
                 """
             ),
             {
                 "colour_code": colour_code,
                 "name": name,
                 "price_per_kg": price_per_kg,
-                "opacity_multiplier": opacity_multiplier,
-                "currency": currency,
             },
         )
 
     cores_seed = [
-        # core_type, description, cost_per_meter, kg_per_meter, currency
-        ("13mm", "13mm core", 4.65040650406504, 2.92682926829268, "AUD"),
-        ("7mm", "7mm core", 2.15454545454545, 1.44545454545455, "AUD"),
-        ("PVC", "PVC core", 3.62251655629139, 0.728476821192053, "AUD"),
+        # core_type, description, cost_per_meter, kg_per_meter
+        ("13mm", "13mm core", 4.65040650406504, 2.92682926829268),
+        ("7mm", "7mm core", 2.15454545454545, 1.44545454545455),
+        ("PVC", "PVC core", 3.62251655629139, 0.728476821192053),
     ]
-    for core_type, description, cost_per_meter, kg_per_meter, currency in cores_seed:
+    for core_type, description, cost_per_meter, kg_per_meter in cores_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO cores (core_type, description, cost_per_meter, kg_per_meter, currency)
-                VALUES (:core_type, :description, :cost_per_meter, :kg_per_meter, :currency)
+                INSERT INTO cores (core_type, description, cost_per_meter, kg_per_meter)
+                VALUES (:core_type, :description, :cost_per_meter, :kg_per_meter)
                 ON CONFLICT (core_type) DO UPDATE SET
                   description = excluded.description,
                   cost_per_meter = excluded.cost_per_meter,
-                  kg_per_meter = excluded.kg_per_meter,
-                  currency = excluded.currency
+                  kg_per_meter = excluded.kg_per_meter
                 """
             ),
             {
@@ -389,7 +380,6 @@ def upgrade() -> None:
                 "description": description,
                 "cost_per_meter": cost_per_meter,
                 "kg_per_meter": kg_per_meter,
-                "currency": currency,
             },
         )
 

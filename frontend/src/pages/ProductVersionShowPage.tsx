@@ -63,6 +63,7 @@ export function ProductVersionShowPage() {
   const product = productData.product
   const version = versionData.version
   const routing = versionData.routing || { operations: [], warnings: [] }
+  const desc = (version?.description as string | null | undefined) || (product?.description as string | null | undefined)
 
   return (
     <Stack spacing={2}>
@@ -74,9 +75,9 @@ export function ProductVersionShowPage() {
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             Customer: {product.customer_name || '-'} • Created by: {version.created_by} • Created at: {version.created_at || '-'}
           </Typography>
-          {product.description ? (
+          {desc ? (
             <Typography variant="body2" color="text.secondary">
-              Description: {product.description}
+              Description: {desc}
             </Typography>
           ) : null}
         </Box>

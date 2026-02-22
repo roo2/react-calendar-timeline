@@ -17,7 +17,6 @@ def _customer_summary(c) -> dict:
         "code": getattr(c, "code", None),
         "name": c.name,
         "status": c.status,
-        "currency_preference": c.currency_preference,
     }
 
 

@@ -7,7 +7,6 @@ type Status = 'idle' | 'loading' | 'succeeded' | 'failed'
 export type CreateProductPayload = {
   customer_id: string
   code: string
-  description?: string | null
   spec: any
 }
 

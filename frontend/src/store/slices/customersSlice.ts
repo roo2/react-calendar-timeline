@@ -7,7 +7,6 @@ export type CustomerSummary = {
   code: string
   name: string
   status: string
-  currency_preference: string
 }
 
 export type CustomerDetail = {
@@ -19,7 +18,6 @@ export type CustomerDetail = {
   tax_id?: string | null
   payment_terms?: string | null
   credit_limit?: number | null
-  currency_preference: string
   notes?: string | null
   internal_notes?: string | null
   contacts: any[]
@@ -40,7 +38,6 @@ export type CustomerUpsertPayload = {
   delivery_preferences: any
   payment_terms: string | null
   credit_limit: number | null
-  currency_preference: string
   notes: string | null
   internal_notes: string | null
 }

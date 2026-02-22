@@ -1,0 +1,401 @@
+export type QuoteRatebook = {
+  resins: Record<string, { price_per_kg: number; density: number }>
+  additives_price_per_kg: Record<string, number>
+  colours: Record<string, { price_per_kg: number }>
+  cores: Record<string, { cost_per_meter: number; kg_per_meter: number }>
+  printing_rates: Record<
+    string,
+    { method: string; cost_per_1000m: number; setup_cost: number; setup_minutes: number; minimum_charge: number; duplex_supported: boolean }
+  >
+  conversion_rates: Array<{
+    min_gauge_um: number
+    max_gauge_um: number
+    min_length_mm: number
+    max_length_mm: number
+    bags_per_hour: number
+    setup_minutes: number
+  }>
+  waste_adders: Array<{ condition: string; waste_minutes: number }>
+  extrusion_throughput_kg_per_hr: number
+}
+
+export type QuickQuoteInputs = {
+  requested_margin: number
+  product_type: string
+  geometry: 'Flat' | 'Gusset'
+  base_width_mm: number
+  ufilm_left_width_mm?: number | null
+  ufilm_right_width_mm?: number | null
+  thickness_um: number
+  base_length_mm: number
+  continuous_roll: boolean
+  gusset_mm: number | null
+  trim_pct: number | null
+  print_method: 'None' | 'Inline' | 'Uteco'
+  num_colours: number
+  finish_mode: 'Rolls' | 'Cartons'
+  core_type: string | null
+  roll_weight_billing?: 'core_included' | 'core_off' | 'core_half_off' | null
+  opaque?: boolean
+  colour_components?: Array<{ colour_code: string; strength_pct: number | null }>
+  additives?: Array<{ additive_code: string; pct: number | null }>
+  blend?: Array<{ resin_code: string; pct: number }>
+  resin_code?: string | null
+  quantity: { units?: number; total_kg?: number; total_m?: number; rolls?: number }
+}
+
+export type QuotePreview = {
+  kg_per_unit: number | null
+  units_per_roll: number | null
+  totals_kg: number | null
+  totals_units: number | null
+  yield_m_per_kg: number | null
+  kg_per_roll: number | null
+  m_per_roll: number | null
+  cost_per_kg: number | null
+  cost_breakdown: {
+    material_cost: number
+    printing_cost: number
+    conversion_cost: number
+    core_cost: number
+    waste_cost: number
+  }
+  total_cost: number
+  margin: number
+  final_price: number
+  unit_price: number | null
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
+}
+
+function toNum(v: unknown): number | null {
+  if (v == null) return null
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (typeof v === 'string') {
+    const s = v.trim()
+    if (!s) return null
+    const n = Number(s)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function roundMoney(n: number): number {
+  // 2dp half-up-ish with float guard
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+function mmToM(mm: number): number {
+  return mm / 1000
+}
+
+function umToM(um: number): number {
+  return um / 1_000_000
+}
+
+function blendDensity(blend: Array<{ resin_code: string; pct: number; density: number }>): number {
+  if (!blend.length) return 920
+  const total = blend.reduce((acc, r) => acc + Number(r.pct || 0), 0)
+  if (Math.abs(total - 100) > 0.01) {
+    // Best-effort: normalize
+    return blend.reduce((acc, r) => acc + Number(r.density || 920) * (Number(r.pct || 0) / Math.max(total || 1, 1)), 0)
+  }
+  return blend.reduce((acc, r) => acc + Number(r.density || 920) * (Number(r.pct || 0) / 100), 0)
+}
+
+function computeLayflatMm(spec: {
+  product_type: string
+  geometry: string
+  base_width_mm: number
+  gusset_mm: number | null
+  ufilm_left_width_mm?: number | null
+  ufilm_right_width_mm?: number | null
+}): number {
+  const pt = String(spec.product_type || '')
+  const geom = String(spec.geometry || '').toLowerCase()
+  const w = Number(spec.base_width_mm || 0)
+  const g = Number(spec.gusset_mm || 0)
+  // Mirror SpecPayloadForm rules:
+  // - Centerfold layflat = 0.5 * base width
+  // - U-Film layflat = middle width + left + right
+  if (pt === 'Centerfold' || geom === 'centrefold' || geom === 'centre_fold' || geom === 'centerfold') return 0.5 * w
+  if (pt === 'U-Film') {
+    const l = Number(spec.ufilm_left_width_mm || 0)
+    const r = Number(spec.ufilm_right_width_mm || 0)
+    return w + l + r
+  }
+  if (geom === 'gusset') return w + 2 * g
+  return w
+}
+
+function pickConversionRate(ratebook: QuoteRatebook, gaugeUm: number, lengthMm: number): (typeof ratebook.conversion_rates)[number] | null {
+  const g = Number(gaugeUm || 0)
+  const l = Number(lengthMm || 0)
+  const rows = Array.isArray(ratebook.conversion_rates) ? ratebook.conversion_rates : []
+  return (
+    rows.find((r) => g >= r.min_gauge_um && g <= r.max_gauge_um && l >= r.min_length_mm && l <= r.max_length_mm) ||
+    rows[0] ||
+    null
+  )
+}
+
+function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: QuoteRatebook) {
+  const units = typeof inputs.quantity.units === 'number' && inputs.quantity.units > 0 ? Math.round(inputs.quantity.units) : null
+  const totalKgN = toNum((inputs.quantity as any).total_kg)
+  const totalMN = toNum((inputs.quantity as any).total_m)
+  const rollsN = toNum((inputs.quantity as any).rolls)
+  const totalKgReq = totalKgN != null && totalKgN > 0 ? totalKgN : null
+  const totalMReq = totalMN != null && totalMN > 0 ? totalMN : null
+  const rolls = rollsN != null && rollsN > 0 ? Math.round(rollsN) : null
+
+  const layflatMm = computeLayflatMm({
+    product_type: inputs.product_type,
+    geometry: inputs.geometry,
+    base_width_mm: inputs.base_width_mm,
+    gusset_mm: inputs.gusset_mm,
+    ufilm_left_width_mm: inputs.ufilm_left_width_mm,
+    ufilm_right_width_mm: inputs.ufilm_right_width_mm,
+  })
+
+  const unitLengthMm = inputs.continuous_roll ? null : Number(inputs.base_length_mm || 0)
+  const effectiveLenM = inputs.continuous_roll ? 1 : mmToM(unitLengthMm || 0)
+  const areaPerUnitM2 = effectiveLenM * mmToM(layflatMm)
+
+  // Build blend with densities
+  const blendIn =
+    Array.isArray(inputs.blend) && inputs.blend.length ? inputs.blend : inputs.resin_code ? [{ resin_code: inputs.resin_code, pct: 100 }] : []
+  const blend = blendIn
+    .map((c) => {
+      const code = String((c as any).resin_code || '').trim()
+      const pct = Number((c as any).pct || 0)
+      const r = ratebook.resins?.[code]
+      // NOTE: resin density in DB/API is stored as kg/cm^3 (e.g. LDPE ~ 0.00092).
+      // Convert to kg/m^3: 1 cm^3 = 1e-6 m^3 => multiply by 1e6.
+      const density = r?.density != null ? Number(r.density) * 1_000_000 : 920
+      return { resin_code: code, pct, density }
+    })
+    .filter((c) => c.resin_code && c.pct > 0)
+
+  const density = blendDensity(blend)
+  const thicknessM = umToM(Number(inputs.thickness_um || 0))
+  const kgPerM2 = density * thicknessM
+  const kgPerUnit = areaPerUnitM2 * kgPerM2
+
+  // Yield: meters per kg (m/kg), based on kg per linear meter of film.
+  // kg_per_m = kg_per_m2 * width_m
+  const kgPerLinearM = kgPerM2 * mmToM(layflatMm)
+  const yieldMPerKg = kgPerLinearM > 0 ? 1 / kgPerLinearM : null
+
+  // If quoting by total KG in Rolls mode, adjust "plastic produced" by core billing.
+  // The input total_kg is treated as the billed weight; plastic weight is reduced by core weight
+  // when billing includes the core (fully or partially).
+  let totalKgReqPlastic: number | null = totalKgReq
+  if (
+    inputs.finish_mode === 'Rolls' &&
+    totalKgReq != null &&
+    inputs.core_type &&
+    rolls != null &&
+    rolls > 0 &&
+    layflatMm > 0 &&
+    inputs.roll_weight_billing &&
+    inputs.roll_weight_billing !== 'core_off'
+  ) {
+    const core = ratebook.cores?.[inputs.core_type]
+    if (core && Number(core.kg_per_meter || 0) > 0) {
+      const coreMeters = rolls * mmToM(layflatMm)
+      const coreKg = coreMeters * Number(core.kg_per_meter || 0)
+      const frac = inputs.roll_weight_billing === 'core_half_off' ? 0.5 : 1
+      totalKgReqPlastic = Math.max(0, totalKgReq - frac * coreKg)
+    }
+  }
+
+  const derivedTotalKg =
+    totalKgReqPlastic != null
+      ? totalKgReqPlastic
+      : totalMReq != null && kgPerLinearM > 0
+        ? totalMReq * kgPerLinearM
+        : units != null
+          ? kgPerUnit * units
+          : 0
+  let derivedTotalM = totalMReq != null ? totalMReq : derivedTotalKg > 0 && kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
+  let trimmedTotalKg = derivedTotalKg
+
+  // Trim reduces the job length (and therefore material) irrespective of how the length was derived.
+  // Example: 5% trim of 10000m => 9500m.
+  const trimPct = inputs.trim_pct != null && Number.isFinite(Number(inputs.trim_pct)) ? Number(inputs.trim_pct) : null
+  if (trimPct != null && trimPct > 0 && derivedTotalM > 0) {
+    const trimFactor = clamp(1 - trimPct / 100, 0, 1)
+    derivedTotalM = derivedTotalM * trimFactor
+    trimmedTotalKg = trimmedTotalKg * trimFactor
+  }
+
+  const webLengthM = derivedTotalM
+
+  const canComputeRollStats = rolls != null && rolls > 0 && kgPerLinearM > 0 && trimmedTotalKg > 0 && derivedTotalM > 0
+  const kgPerRoll = canComputeRollStats ? trimmedTotalKg / rolls : null
+  const mPerRoll = canComputeRollStats ? derivedTotalM / rolls : null
+
+  return {
+    units,
+    rolls,
+    layflatMm,
+    blend,
+    density,
+    kgPerM2,
+    kgPerUnit,
+    kgPerLinearM,
+    yieldMPerKg,
+    derivedTotalKg: trimmedTotalKg,
+    derivedTotalM,
+    webLengthM,
+    kgPerRoll,
+    mPerRoll,
+  }
+}
+
+export function computeRollMetrics(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): Pick<QuotePreview, 'kg_per_roll' | 'm_per_roll'> {
+  const d = computeDerivedGeometryAndTotals(inputs, ratebook)
+  return { kg_per_roll: d.kgPerRoll, m_per_roll: d.mPerRoll }
+}
+
+export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): QuotePreview {
+  const margin = clamp(Number(inputs.requested_margin || 0), 0, 0.999)
+  const d = computeDerivedGeometryAndTotals(inputs, ratebook)
+  const units = d.units
+  const rolls = d.rolls
+  const layflatMm = d.layflatMm
+  const blend = d.blend
+  const kgPerUnit = d.kgPerUnit
+  const yieldMPerKg = d.yieldMPerKg
+  const derivedTotalKg = d.derivedTotalKg
+  const webLengthM = d.webLengthM
+  const kgPerRoll = d.kgPerRoll
+  const mPerRoll = d.mPerRoll
+
+  // Material cost per kg
+  // Batching rule:
+  // - Resin blend totals 100%
+  // - Colours/additives are added on top (e.g. +2% additive => 102% total)
+  // So effective $/kg of compound is normalized by (1 + extras).
+  const resinBaseCostPerKg =
+    blend.length === 0
+      ? 0
+      : blend.reduce((acc, c) => {
+          const price = Number(ratebook.resins?.[c.resin_code]?.price_per_kg ?? 0)
+          return acc + price * (c.pct / 100)
+        }, 0)
+
+  const colourRows = (Array.isArray(inputs.colour_components) ? inputs.colour_components : [])
+    .map((c) => ({
+      code: String(c?.colour_code || '').trim(),
+      strengthPct: c?.strength_pct != null ? Number(c.strength_pct) : null,
+    }))
+    .filter((c) => c.code && c.strengthPct != null && Number(c.strengthPct) > 0)
+
+  const { colourNumerator, colourExtraFrac } = colourRows.reduce(
+    (acc, c) => {
+      const price = Number(ratebook.colours?.[c.code]?.price_per_kg ?? 0)
+      const strengthFrac = Number(c.strengthPct || 0) / 100
+      const extraFrac = strengthFrac
+      return {
+        colourNumerator: acc.colourNumerator + price * extraFrac,
+        colourExtraFrac: acc.colourExtraFrac + extraFrac,
+      }
+    },
+    { colourNumerator: 0, colourExtraFrac: 0 },
+  )
+
+  const additiveRows = (Array.isArray(inputs.additives) ? inputs.additives : [])
+    .map((a) => ({ code: String(a?.additive_code || '').trim(), pct: a?.pct != null ? Number(a.pct) : null }))
+    .filter((a) => a.code && a.pct != null && Number(a.pct) > 0)
+
+  const { additivesNumerator, additivesExtraFrac } = additiveRows.reduce(
+    (acc, a) => {
+      const price = Number(ratebook.additives_price_per_kg?.[a.code] ?? 0)
+      const pctFrac = Number(a.pct || 0) / 100
+      return {
+        additivesNumerator: acc.additivesNumerator + price * pctFrac,
+        additivesExtraFrac: acc.additivesExtraFrac + pctFrac,
+      }
+    },
+    { additivesNumerator: 0, additivesExtraFrac: 0 },
+  )
+
+  const denom = 1 + colourExtraFrac + additivesExtraFrac
+  const materialCostPerKg = denom > 0 ? (resinBaseCostPerKg + colourNumerator + additivesNumerator) / denom : 0
+  const materialCost = materialCostPerKg * derivedTotalKg
+
+  // Printing
+  const pm = inputs.print_method === 'Inline' ? 'inline' : inputs.print_method === 'Uteco' ? 'uteco' : 'none'
+  let printingCost = 0
+  if (pm !== 'none') {
+    const rate = ratebook.printing_rates?.[pm]
+    const setupBase = Number(rate?.setup_cost ?? 0)
+    const setup = setupBase + (inputs.num_colours > 0 ? (inputs.num_colours - 1) * (setupBase / 2) : 0)
+    const rateCost = (webLengthM / 1000) * Number(rate?.cost_per_1000m ?? 0)
+    const minCharge = Number(rate?.minimum_charge ?? 0)
+    printingCost = Math.max(setup + rateCost, minCharge)
+  }
+
+  // Conversion (only for cartons)
+  let conversionCost = 0
+  if (inputs.finish_mode === 'Cartons' && units != null) {
+    const conv = pickConversionRate(ratebook, Number(inputs.thickness_um || 0), Number(inputs.base_length_mm || 0))
+    if (conv) {
+      const bpm = Number(conv.bags_per_hour || 0) / 60
+      const minutes = (units / Math.max(bpm || 1e-9, 1e-9)) + Number(conv.setup_minutes || 0)
+      conversionCost = minutes * 1
+    }
+  }
+
+  // Core cost (only for rolls):
+  // cores are cut to film width, so meters of core used = rolls * width_m.
+  let coreCost = 0
+  if (inputs.finish_mode === 'Rolls' && inputs.core_type && rolls != null && rolls > 0 && layflatMm > 0) {
+    const c = ratebook.cores?.[inputs.core_type]
+    if (c) {
+      const coreMeters = rolls * mmToM(layflatMm)
+      coreCost = Number(c.cost_per_meter || 0) * coreMeters
+    }
+  }
+
+  // Waste
+  const wasteMinutes = (Array.isArray(ratebook.waste_adders) ? ratebook.waste_adders : []).reduce((acc, w) => acc + Number(w?.waste_minutes || 0), 0)
+  let wasteCost = 0
+  const throughput = Number(ratebook.extrusion_throughput_kg_per_hr || 0)
+  if (wasteMinutes > 0 && throughput > 0 && materialCostPerKg > 0) {
+    const wasteKg = (wasteMinutes / 60) * throughput
+    wasteCost = wasteKg * materialCostPerKg
+  }
+
+  const totalCost = materialCost + printingCost + conversionCost + coreCost + wasteCost
+  const finalPrice = margin < 1 ? totalCost / (1 - margin) : totalCost
+  const unitPrice = units != null ? finalPrice / units : null
+  const costPerKg = derivedTotalKg > 0 ? totalCost / derivedTotalKg : null
+
+  return {
+    kg_per_unit: units != null ? kgPerUnit : null,
+    units_per_roll: null,
+    totals_kg: derivedTotalKg,
+    totals_units: units,
+    // Do not clamp/round yield; let the UI format it.
+    yield_m_per_kg: yieldMPerKg,
+    kg_per_roll: kgPerRoll,
+    m_per_roll: mPerRoll,
+    cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
+    cost_breakdown: {
+      material_cost: roundMoney(materialCost),
+      printing_cost: roundMoney(printingCost),
+      conversion_cost: roundMoney(conversionCost),
+      core_cost: roundMoney(coreCost),
+      waste_cost: roundMoney(wasteCost),
+    },
+    total_cost: roundMoney(totalCost),
+    margin,
+    final_price: roundMoney(finalPrice),
+    unit_price: unitPrice != null ? roundMoney(unitPrice) : null,
+  }
+}
+

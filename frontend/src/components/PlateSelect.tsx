@@ -19,7 +19,15 @@ export function PlateSelect(props: {
       getOptionLabel={(o) => (o.description ? `${o.plate_code} — ${o.description}` : o.plate_code)}
       isOptionEqualToValue={(a, b) => a.plate_code === b.plate_code}
       onChange={(_e, v) => onChangeCode(v?.plate_code || '')}
-      renderInput={(params) => <TextField {...params} label={label || 'Plate'} error={error} helperText={helperText} />}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label || 'Plate'}
+          error={error}
+          helperText={helperText ?? ' '}
+          FormHelperTextProps={{ sx: { minHeight: 20 } }}
+        />
+      )}
     />
   )
 }

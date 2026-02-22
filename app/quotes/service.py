@@ -72,11 +72,9 @@ def _map_ratebook(rb: dict[str, Any]) -> RateBook:
         for item in rb.get("waste_adders", [])
     ]
     return RateBook(
-        currency=rb.get("currency", "AUD"),
         resins_price_per_kg={k: Decimal(str(v)) for k, v in rb.get("resins_price_per_kg", {}).items()},
         additives_price_per_kg={k: Decimal(str(v)) for k, v in rb.get("additives_price_per_kg", {}).items()},
         colours_price_per_kg={k: Decimal(str(v)) for k, v in rb.get("colours_price_per_kg", {}).items()},
-        colours_opaque_multiplier={k: Decimal(str(v)) for k, v in rb.get("colours_opaque_multiplier", {}).items()},
         printing_rates=printing_rates,
         conversion_rate=conversion,
         waste_adders=waste_adders,
@@ -93,12 +91,11 @@ def calculate_preview(
     Orchestrates map → compute → map. Pure; providers injected by the route for testability.
     """
     product_version = product_service.get_version(req.product_version_id)
-    ratebook_payload = ratecard_service.get_ratebook(currency=req.currency)
+    ratebook_payload = ratecard_service.get_ratebook()
     spec = _map_spec(product_version)
     ratebook = _map_ratebook(ratebook_payload)
     # Invoke pure calculator
     result: QuotePreviewResult = preview_quote(
-        currency=req.currency,
         spec=spec,
         ratebook=ratebook,
         req=req.quantity,  # type: ignore[arg-type]
@@ -106,7 +103,6 @@ def calculate_preview(
     )
     # Map to API schema (structures align closely)
     return ApiQuotePreviewResult(
-        currency=result.currency,
         kg_per_unit=result.kg_per_unit,
         units_per_roll=result.units_per_roll,
         totals_kg=result.totals_kg,
@@ -134,22 +130,55 @@ def quick_calculate_preview(
     Looks up resin density from rate cards table.
     """
     # Map quick fields → SpecDTO
-    density = Decimal("0.92")  # default LDPE-like density
-    if req.resin_code:
-        try:
+    blend_components: list[ResinComponent] = []
+    try:
+        resin_items = []
+        if getattr(req, "blend", None):
+            resin_items = [(c.resin_code, Decimal(str(c.pct))) for c in (req.blend or []) if getattr(c, "resin_code", None)]
+        elif req.resin_code:
+            resin_items = [(req.resin_code, Decimal("100"))]
+
+        if resin_items:
+            codes = [code for code, _pct in resin_items]
+            density_map: dict[str, Decimal] = {}
             with SessionLocal() as db:
-                row = db.execute(select(ResinModel.density).where(ResinModel.resin_code == req.resin_code)).first()
-                if row and row[0] is not None:
-                    density = Decimal(str(row[0]))
-        except Exception:
-            pass
-    blend_components = []
-    if req.resin_code:
-        blend_components.append(ResinComponent(code=req.resin_code, pct=Decimal("100"), density=density))
-    # Additives map (single optional)
-    additives = {}
-    if req.additive_code and req.additive_pct is not None:
+                for rc, den in db.execute(select(ResinModel.resin_code, ResinModel.density).where(ResinModel.resin_code.in_(codes))).all():
+                    if den is not None:
+                        # Resin densities are stored as kg/cm^3 in DB; quote engine expects kg/m^3.
+                        density_map[str(rc)] = Decimal(str(den)) * Decimal("1000000")
+            for code, pct in resin_items:
+                density = density_map.get(code, Decimal("920"))
+                blend_components.append(ResinComponent(code=code, pct=pct, density=density))
+    except Exception:
+        # Best-effort: default density and fall back to single-resin legacy path
+        if req.resin_code:
+            blend_components = [ResinComponent(code=req.resin_code, pct=Decimal("100"), density=Decimal("920"))]
+
+    # Additives map (list preferred; fall back to legacy single optional)
+    additives: dict[str, Decimal] = {}
+    if getattr(req, "additives", None):
+        for a in req.additives or []:
+            code = (getattr(a, "additive_code", "") or "").strip()
+            if not code:
+                continue
+            pct = getattr(a, "pct", None)
+            if pct is None:
+                continue
+            additives[code] = Decimal(str(pct))
+    elif req.additive_code and req.additive_pct is not None:
         additives[req.additive_code] = Decimal(str(req.additive_pct))
+
+    # Colours: engine supports a single colour; use first row if provided, else legacy fields.
+    colour_code = req.colour_code or None
+    colour_strength_pct = req.colour_strength_pct
+    if getattr(req, "colour_components", None):
+        for c in req.colour_components or []:
+            cc = (getattr(c, "colour_code", "") or "").strip()
+            if not cc:
+                continue
+            colour_code = cc
+            colour_strength_pct = getattr(c, "strength_pct", None)
+            break
 
     spec = SpecDTO(
         product_type=req.product_type,
@@ -166,23 +195,21 @@ def quick_calculate_preview(
         opacity_pct=Decimal("1") if req.opaque else None,
         duplex_print=False,
         blend=blend_components,
-        colour_code=req.colour_code or None,
-        colour_strength_pct=Decimal(str(req.colour_strength_pct)) if req.colour_strength_pct is not None else None,
+        colour_code=colour_code,
+        colour_strength_pct=Decimal(str(colour_strength_pct)) if colour_strength_pct is not None else None,
         additives=additives,
         finish_mode=req.finish_mode.value if hasattr(req.finish_mode, "value") else str(req.finish_mode),
     )
 
-    ratebook_payload = ratecard_service.get_ratebook(currency=req.currency)
+    ratebook_payload = ratecard_service.get_ratebook()
     ratebook = _map_ratebook(ratebook_payload)
     result: QuotePreviewResult = preview_quote(
-        currency=req.currency,
         spec=spec,
         ratebook=ratebook,
         req=req.quantity,  # type: ignore[arg-type]
         margin=req.requested_margin,
     )
     return ApiQuotePreviewResult(
-        currency=result.currency,
         kg_per_unit=result.kg_per_unit,
         units_per_roll=result.units_per_roll,
         totals_kg=result.totals_kg,

@@ -55,7 +55,6 @@ class Customer(Base):
     delivery_preferences: Mapped[dict] = mapped_column(JSON, default=dict)
     payment_terms: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     credit_limit: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
-    currency_preference: Mapped[str] = mapped_column(String(3), default="AUD")
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     internal_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())

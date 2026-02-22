@@ -19,7 +19,15 @@ export function ResinSelect(props: {
       getOptionLabel={(o) => `${o.resin_code} — ${o.name}`}
       isOptionEqualToValue={(a, b) => a.resin_code === b.resin_code}
       onChange={(_e, v) => onChangeCode(v?.resin_code || '')}
-      renderInput={(params) => <TextField {...params} label={label || 'Resin'} error={error} helperText={helperText} />}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label || 'Resin'}
+          error={error}
+          helperText={helperText ?? ' '}
+          FormHelperTextProps={{ sx: { minHeight: 20 } }}
+        />
+      )}
     />
   )
 }

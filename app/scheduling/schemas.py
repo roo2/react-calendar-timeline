@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MachineQueueItemDTO(BaseModel):
@@ -17,12 +17,11 @@ class MachineQueueItemDTO(BaseModel):
 
 class ToolConflictDTO(BaseModel):
 	tool_type_code: str
-	from_: Optional[datetime] = None
+	from_: Optional[datetime] = Field(default=None, alias="from")
 	to: Optional[datetime] = None
 	reason: str
 
-	class Config:
-		fields = {"from_": "from"}
+	model_config = ConfigDict(populate_by_name=True)
 
 
 class LaneDTO(BaseModel):

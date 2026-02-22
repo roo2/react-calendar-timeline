@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from enum import Enum
 
@@ -13,7 +13,6 @@ class QuantityRequest(BaseModel):
 
 class QuoteCalculateRequest(BaseModel):
     product_version_id: int | str
-    currency: str = "AUD"
     quantity: QuantityRequest
     requested_margin: Decimal = Decimal("0.2")
 
@@ -32,7 +31,6 @@ class CostBreakdown(BaseModel):
 
 
 class QuotePreviewResult(BaseModel):
-    currency: str
     kg_per_unit: Optional[Decimal] = None
     units_per_roll: Optional[Decimal] = None
     totals_kg: Optional[Decimal] = None
@@ -62,6 +60,21 @@ class QuickFinishMode(str, Enum):
     cartons = "Cartons"
 
 
+class QuickBlendComponent(BaseModel):
+    resin_code: str
+    pct: Decimal
+
+
+class QuickColourComponent(BaseModel):
+    colour_code: str
+    strength_pct: Optional[Decimal] = None
+
+
+class QuickAdditiveComponent(BaseModel):
+    additive_code: str
+    pct: Optional[Decimal] = None
+
+
 class QuickQuoteCalculateRequest(BaseModel):
     # Dimensions (essential)
     product_type: str
@@ -71,20 +84,31 @@ class QuickQuoteCalculateRequest(BaseModel):
     continuous_roll: bool = False
     base_length_mm: Optional[int] = None
     gusset_mm: Optional[int] = None
+    length_units: Optional[str] = None
+    trim_pct: Optional[Decimal] = None
     # Materials (optional)
     resin_code: Optional[str] = None
+    blend: List[QuickBlendComponent] = []
     colour_code: Optional[str] = None
     colour_strength_pct: Optional[Decimal] = None
+    colour_components: List[QuickColourComponent] = []
     opaque: bool = False
     additive_code: Optional[str] = None
     additive_pct: Optional[Decimal] = None
+    additives: List[QuickAdditiveComponent] = []
     # Printing (optional)
     print_method: QuickPrintMethod = QuickPrintMethod.none
     num_colours: Optional[int] = 0
     # Packaging (optional)
     finish_mode: QuickFinishMode = QuickFinishMode.rolls
     core_type: Optional[str] = None
+    roll_weight_billing: Optional[str] = None
+    bags_per_carton: Optional[int] = None
+    pallet_type: Optional[str] = None
+    # Run requirements (optional; kept for future Product/Job Sheet compatibility)
+    inline_perforation: Optional[bool] = None
+    inline_seal: Optional[bool] = None
+    hole_punched: Optional[bool] = None
     # Quantity & Pricing (essential)
     quantity: QuantityRequest
-    currency: str = "AUD"
     requested_margin: Decimal = Decimal("0.2")

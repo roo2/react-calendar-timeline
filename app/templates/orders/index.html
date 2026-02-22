@@ -13,7 +13,6 @@
         <th>Customer</th>
         <th>Product</th>
         <th>Status</th>
-        <th>Currency</th>
         <th>Created</th>
       </tr>
     </thead>
@@ -27,7 +26,6 @@
         <td>
           <span class="badge {{ o.status.value if o.status else '' }}">{{ o.status.value if o.status else o.status }}</span>
         </td>
-        <td>{{ o.currency }}</td>
         <td>{{ o.created_at }}</td>
       </tr>
     {% endfor %}

@@ -12,6 +12,12 @@ from urllib.request import urlopen
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+CREATE_ADMIN_SCRIPT = (REPO_ROOT / "scripts" / "create_admin.py").resolve()
+IMPORT_PLATE_CUSTOMERS_SCRIPT = (REPO_ROOT / "scripts" / "api_import_plate_customers.py").resolve()
+IMPORT_PRINT_PLATES_SCRIPT = (REPO_ROOT / "scripts" / "api_import_print_plates.py").resolve()
+SEED_EXTRUDERS_SCRIPT = (REPO_ROOT / "scripts" / "seed_extruders_from_tsv.py").resolve()
+SEED_WASTE_FACTORS_SCRIPT = (REPO_ROOT / "scripts" / "seed_waste_factors_from_tsv.py").resolve()
+
 
 def _can_import(module: str, python_exe: str) -> bool:
     try:
@@ -137,11 +143,17 @@ def main(argv: list[str]) -> int:
     if not args.no_migrations:
         _run([py, "-m", "alembic", "upgrade", "head"], env=env)
 
+        # Seed non-ratecard admin master data from TSVs.
+        _run([py, str(SEED_EXTRUDERS_SCRIPT)], env=env)
+        _run([py, str(SEED_WASTE_FACTORS_SCRIPT)], env=env)
+    else:
+        print("Skipping TSV seeds (--no-migrations).")
+
     # Create/update admin user (admin/admin)
     _run(
         [
             py,
-            str(REPO_ROOT / "scripts" / "create_admin.py"),
+            str(CREATE_ADMIN_SCRIPT),
             "--username",
             "admin",
             "--password",
@@ -194,7 +206,7 @@ def main(argv: list[str]) -> int:
         _run(
             [
                 py,
-                str(REPO_ROOT / "scripts" / "api_import_plate_customers.py"),
+                str(IMPORT_PLATE_CUSTOMERS_SCRIPT),
                 str(plate_db_path),
                 "--base-url",
                 base_url,
@@ -210,7 +222,7 @@ def main(argv: list[str]) -> int:
         _run(
             [
                 py,
-                str(REPO_ROOT / "scripts" / "api_import_print_plates.py"),
+                str(IMPORT_PRINT_PLATES_SCRIPT),
                 str(plate_db_path),
                 "--base-url",
                 base_url,

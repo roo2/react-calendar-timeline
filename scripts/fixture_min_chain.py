@@ -120,7 +120,6 @@ def main() -> None:
                 "product_version_id": product_version_id,
                 "quote_id": None,
                 "status": "confirmed",
-                "currency": "AUD",
                 "created_at": now,
             },
         )

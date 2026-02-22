@@ -13,9 +13,8 @@ class Resin(Base):
 
     resin_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
-    density: Mapped[float] = mapped_column(Numeric(6, 4))
+    density: Mapped[float] = mapped_column(Numeric(12, 6))
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
-    currency: Mapped[str] = mapped_column(String(3))
 
     __table_args__ = (
         CheckConstraint("density > 0", name="ck_resins_density_positive"),
@@ -62,7 +61,6 @@ class Additive(Base):
     additive_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
-    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (CheckConstraint("price_per_kg >= 0", name="ck_additives_price_nonneg"),)
@@ -74,12 +72,9 @@ class Colour(Base):
     colour_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
-    opacity_multiplier: Mapped[float] = mapped_column(Numeric(6, 3), default=0)
-    currency: Mapped[str] = mapped_column(String(3))
 
     __table_args__ = (
         CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),
-        CheckConstraint("opacity_multiplier >= 0", name="ck_colours_opacity_nonneg"),
     )
 
 
@@ -90,7 +85,6 @@ class Core(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost_per_meter: Mapped[float] = mapped_column(Numeric(12, 4))
     kg_per_meter: Mapped[float] = mapped_column(Numeric(12, 4))
-    currency: Mapped[str] = mapped_column(String(3))
 
     __table_args__ = (
         CheckConstraint("cost_per_meter >= 0", name="ck_cores_cost_nonneg"),
@@ -168,4 +162,22 @@ class WasteAdder(Base):
         CheckConstraint("waste_minutes >= 0", name="ck_waste_minutes_nonneg"),
     )
 
+
+class Extruder(Base):
+    __tablename__ = "extruders"
+
+    extruder_code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    film_width_min_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    film_width_max_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    decision_width_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    average_kg_hr: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ave_width: Mapped[float | None] = mapped_column(Numeric(12, 3), nullable=True)
+
+
+class ExtrusionWasteFactor(Base):
+    __tablename__ = "extrusion_waste_factors"
+
+    factor: Mapped[str] = mapped_column(Text, primary_key=True)
+    minutes: Mapped[int] = mapped_column(Integer)
 

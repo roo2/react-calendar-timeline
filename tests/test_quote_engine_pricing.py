@@ -30,11 +30,9 @@ def make_spec():
 
 def make_ratebook():
     return RateBook(
-        currency="AUD",
         resins_price_per_kg={"LD": Decimal("1.50")},
         additives_price_per_kg={"SLIP": Decimal("3.00")},
         colours_price_per_kg={"RED": Decimal("10.00")},
-        colours_opaque_multiplier={"RED": Decimal("0.10")},
         printing_rates={
             "uteco": PrintingRate(method="uteco", cost_per_1000m=Decimal("5.00"), setup_cost=Decimal("50.00"), minimum_charge=Decimal("60.00")),
             "inline": PrintingRate(method="inline", cost_per_1000m=Decimal("2.50")),
@@ -55,7 +53,7 @@ def test_preview_quote_simple_totals():
     spec = make_spec()
     ratebook = make_ratebook()
     req = QuantityRequest(units=1000)
-    result = preview_quote(currency="AUD", spec=spec, ratebook=ratebook, req=req, margin=Decimal("0.20"))
+    result = preview_quote(spec=spec, ratebook=ratebook, req=req, margin=Decimal("0.20"))
     assert result.total_cost > 0
     assert result.final_price > result.total_cost  # margin applied
     assert result.unit_price is not None

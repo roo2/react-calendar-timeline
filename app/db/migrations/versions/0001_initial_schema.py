@@ -101,9 +101,6 @@ def upgrade() -> None:
         sa.Column("delivery_preferences", sa.JSON, nullable=False, server_default=sa.text("'{}'")),
         sa.Column("payment_terms", sa.String(length=255), nullable=True),
         sa.Column("credit_limit", sa.Numeric(18, 2), nullable=True),
-        sa.Column(
-            "currency_preference", sa.String(length=3), nullable=False, server_default=sa.text("'AUD'")
-        ),
         sa.Column("notes", sa.Text, nullable=True),
         sa.Column("internal_notes", sa.Text, nullable=True),
         sa.Column(
@@ -288,7 +285,6 @@ def upgrade() -> None:
         ),
         sa.Column("quote_id", sa.String(length=36), nullable=True),
         sa.Column("status", sa.Enum(name="order_status", native_enum=False), nullable=False),
-        sa.Column("currency", sa.String(length=3), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -796,9 +792,8 @@ def upgrade() -> None:
         "resins",
         sa.Column("resin_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("density", sa.Numeric(6, 4), nullable=False),
+        sa.Column("density", sa.Numeric(12, 6), nullable=False),
         sa.Column("price_per_kg", sa.Numeric(12, 4), nullable=False),
-        sa.Column("currency", sa.String(length=3), nullable=False),
         sa.CheckConstraint("density > 0", name="ck_resins_density_positive"),
         sa.CheckConstraint("price_per_kg >= 0", name="ck_resins_price_nonneg"),
     )
@@ -830,7 +825,6 @@ def upgrade() -> None:
         sa.Column("additive_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("price_per_kg", sa.Numeric(12, 4), nullable=False),
-        sa.Column("category", sa.String(length=64), nullable=True),
         sa.Column("notes", sa.Text, nullable=True),
         sa.CheckConstraint("price_per_kg >= 0", name="ck_additives_price_nonneg"),
     )
@@ -840,10 +834,7 @@ def upgrade() -> None:
         sa.Column("colour_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("price_per_kg", sa.Numeric(12, 4), nullable=False),
-        sa.Column("opacity_multiplier", sa.Numeric(6, 3), nullable=False, server_default=sa.text("0")),
-        sa.Column("currency", sa.String(length=3), nullable=False),
         sa.CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),
-        sa.CheckConstraint("opacity_multiplier >= 0", name="ck_colours_opacity_nonneg"),
     )
 
     op.create_table(
@@ -864,6 +855,7 @@ def upgrade() -> None:
         ),
         sa.Column("plate_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("description", sa.String(length=255), nullable=True),
+        sa.Column("cylinder", sa.String(length=64), nullable=True),
     )
     op.create_index("ix_plates_customer_id", "plates", ["customer_id"])
 
@@ -873,9 +865,26 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, nullable=True),
         sa.Column("cost_per_meter", sa.Numeric(12, 4), nullable=False),
         sa.Column("kg_per_meter", sa.Numeric(12, 4), nullable=False),
-        sa.Column("currency", sa.String(length=3), nullable=False),
         sa.CheckConstraint("cost_per_meter >= 0", name="ck_cores_cost_nonneg"),
         sa.CheckConstraint("kg_per_meter >= 0", name="ck_cores_kg_nonneg"),
+    )
+
+    op.create_table(
+        "extruders",
+        sa.Column("extruder_code", sa.String(length=16), primary_key=True),
+        sa.Column("model", sa.String(length=64), nullable=True),
+        sa.Column("film_width_min_mm", sa.Integer(), nullable=True),
+        sa.Column("film_width_max_mm", sa.Integer(), nullable=True),
+        sa.Column("decision_width_mm", sa.Integer(), nullable=True),
+        sa.Column("average_kg_hr", sa.Integer(), nullable=True),
+        sa.Column("ave_width", sa.Numeric(12, 3), nullable=True),
+    )
+
+    op.create_table(
+        "extrusion_waste_factors",
+        sa.Column("factor", sa.Text(), primary_key=True),
+        sa.Column("minutes", sa.Integer(), nullable=False),
+        sa.CheckConstraint("minutes >= 0", name="ck_extrusion_waste_factors_minutes_nonneg"),
     )
 
     op.create_table(
@@ -925,6 +934,8 @@ def downgrade() -> None:
     op.drop_table("waste_adders")
     op.drop_table("conversion_rates")
     op.drop_table("printing_rates")
+    op.drop_table("extrusion_waste_factors")
+    op.drop_table("extruders")
     op.drop_table("cores")
     op.drop_index("ix_plates_customer_id", table_name="plates")
     op.drop_table("plates")

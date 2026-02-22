@@ -216,7 +216,6 @@ class SpecPayload(BaseModel):
 class CreateProductRequest(BaseModel):
     customer_id: str
     code: str
-    description: Optional[str] = None
     spec: SpecPayload
 
 

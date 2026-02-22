@@ -7,7 +7,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from app.auth.deps import require_roles, csrf_protect
-from app.db.models.rate_cards import Additive, Colour, Core, Ink, Plate, Resin, ResinBlend, ResinBlendComponent
+from app.db.models.rate_cards import (
+    Additive,
+    Colour,
+    Core,
+    Extruder,
+    ExtrusionWasteFactor,
+    Ink,
+    Plate,
+    Resin,
+    ResinBlend,
+    ResinBlendComponent,
+)
 from app.db.session import SessionLocal
 
 
@@ -19,14 +30,12 @@ class ResinDTO(BaseModel):
     name: str
     density: float
     price_per_kg: float
-    currency: str
 
 
 class ResinUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     density: float = Field(..., gt=0)
     price_per_kg: float = Field(..., ge=0)
-    currency: str = Field(..., min_length=3, max_length=3)
 
 
 class ResinBlendComponentDTO(BaseModel):
@@ -49,14 +58,12 @@ class AdditiveDTO(BaseModel):
     additive_code: str
     name: str
     price_per_kg: float
-    category: str | None = None
     notes: str | None = None
 
 
 class AdditiveUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     price_per_kg: float = Field(..., ge=0)
-    category: str | None = Field(default=None, max_length=64)
     notes: str | None = None
 
 
@@ -64,15 +71,11 @@ class ColourDTO(BaseModel):
     colour_code: str
     name: str
     price_per_kg: float
-    opacity_multiplier: float
-    currency: str
 
 
 class ColourUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     price_per_kg: float = Field(..., ge=0)
-    opacity_multiplier: float = Field(default=0, ge=0)
-    currency: str = Field(..., min_length=3, max_length=3)
 
 
 class CoreDTO(BaseModel):
@@ -80,14 +83,12 @@ class CoreDTO(BaseModel):
     description: str | None = None
     cost_per_meter: float
     kg_per_meter: float
-    currency: str
 
 
 class CoreUpsertRequest(BaseModel):
     description: str | None = None
     cost_per_meter: float = Field(..., ge=0)
     kg_per_meter: float = Field(..., ge=0)
-    currency: str = Field(..., min_length=3, max_length=3)
 
 
 class InkDTO(BaseModel):
@@ -113,6 +114,34 @@ class PlateUpsertRequest(BaseModel):
     cylinder: str | None = Field(default=None, max_length=64)
 
 
+class ExtruderDTO(BaseModel):
+    extruder_code: str
+    model: str | None = None
+    film_width_min_mm: int | None = None
+    film_width_max_mm: int | None = None
+    decision_width_mm: int | None = None
+    average_kg_hr: int | None = None
+    ave_width: float | None = None
+
+
+class ExtruderUpsertRequest(BaseModel):
+    model: str | None = Field(default=None, max_length=64)
+    film_width_min_mm: int | None = None
+    film_width_max_mm: int | None = None
+    decision_width_mm: int | None = None
+    average_kg_hr: int | None = None
+    ave_width: float | None = None
+
+
+class ExtrusionWasteFactorDTO(BaseModel):
+    factor: str
+    minutes: int
+
+
+class ExtrusionWasteFactorUpsertRequest(BaseModel):
+    minutes: int = Field(..., ge=0)
+
+
 @router.get(
     "/resins",
     response_model=List[ResinDTO],
@@ -127,7 +156,6 @@ async def list_resins():
                 name=r.name,
                 density=float(r.density),
                 price_per_kg=float(r.price_per_kg),
-                currency=r.currency,
             )
             for r in rows
         ]
@@ -147,14 +175,13 @@ async def upsert_resin(resin_code: str, payload: ResinUpsertRequest):
         r = db.get(Resin, code)
         created = False
         if not r:
-            r = Resin(resin_code=code, name=payload.name, density=payload.density, price_per_kg=payload.price_per_kg, currency=payload.currency)
+            r = Resin(resin_code=code, name=payload.name, density=payload.density, price_per_kg=payload.price_per_kg)
             db.add(r)
             created = True
         else:
             r.name = payload.name
             r.density = payload.density
             r.price_per_kg = payload.price_per_kg
-            r.currency = payload.currency
 
     # Re-read for consistent serialization
     with SessionLocal() as db:
@@ -169,7 +196,6 @@ async def upsert_resin(resin_code: str, payload: ResinUpsertRequest):
             name=r2.name,
             density=float(r2.density),
             price_per_kg=float(r2.price_per_kg),
-            currency=r2.currency,
         )
 
 
@@ -266,7 +292,6 @@ async def list_additives():
                 additive_code=a.additive_code,
                 name=a.name,
                 price_per_kg=float(a.price_per_kg),
-                category=a.category,
                 notes=a.notes,
             )
             for a in rows
@@ -290,14 +315,12 @@ async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
                 additive_code=code,
                 name=payload.name,
                 price_per_kg=payload.price_per_kg,
-                category=payload.category,
                 notes=payload.notes,
             )
             db.add(a)
         else:
             a.name = payload.name
             a.price_per_kg = payload.price_per_kg
-            a.category = payload.category
             a.notes = payload.notes
 
     with SessionLocal() as db:
@@ -307,7 +330,6 @@ async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
             additive_code=a2.additive_code,
             name=a2.name,
             price_per_kg=float(a2.price_per_kg),
-            category=a2.category,
             notes=a2.notes,
         )
 
@@ -325,8 +347,6 @@ async def list_colours():
                 colour_code=c.colour_code,
                 name=c.name,
                 price_per_kg=float(c.price_per_kg),
-                opacity_multiplier=float(c.opacity_multiplier),
-                currency=c.currency,
             )
             for c in rows
         ]
@@ -349,15 +369,11 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
                 colour_code=code,
                 name=payload.name,
                 price_per_kg=payload.price_per_kg,
-                opacity_multiplier=payload.opacity_multiplier,
-                currency=payload.currency,
             )
             db.add(c)
         else:
             c.name = payload.name
             c.price_per_kg = payload.price_per_kg
-            c.opacity_multiplier = payload.opacity_multiplier
-            c.currency = payload.currency
 
     with SessionLocal() as db:
         c2 = db.get(Colour, code)
@@ -366,8 +382,6 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
             colour_code=c2.colour_code,
             name=c2.name,
             price_per_kg=float(c2.price_per_kg),
-            opacity_multiplier=float(c2.opacity_multiplier),
-            currency=c2.currency,
         )
 
 
@@ -385,7 +399,6 @@ async def list_cores():
                 description=c.description,
                 cost_per_meter=float(c.cost_per_meter),
                 kg_per_meter=float(c.kg_per_meter),
-                currency=c.currency,
             )
             for c in rows
         ]
@@ -409,14 +422,12 @@ async def upsert_core(core_type: str, payload: CoreUpsertRequest):
                 description=payload.description,
                 cost_per_meter=payload.cost_per_meter,
                 kg_per_meter=payload.kg_per_meter,
-                currency=payload.currency,
             )
             db.add(c)
         else:
             c.description = payload.description
             c.cost_per_meter = payload.cost_per_meter
             c.kg_per_meter = payload.kg_per_meter
-            c.currency = payload.currency
 
     with SessionLocal() as db:
         c2 = db.get(Core, code)
@@ -426,7 +437,6 @@ async def upsert_core(core_type: str, payload: CoreUpsertRequest):
             description=c2.description,
             cost_per_meter=float(c2.cost_per_meter),
             kg_per_meter=float(c2.kg_per_meter),
-            currency=c2.currency,
         )
 
 
@@ -503,4 +513,106 @@ async def upsert_plate(customer_id: str, plate_code: str, payload: PlateUpsertRe
         p2 = db.get(Plate, {"customer_id": cid, "plate_code": code})
         assert p2 is not None
         return PlateDTO(customer_id=p2.customer_id, plate_code=p2.plate_code, description=p2.description, cylinder=p2.cylinder)
+
+
+@router.get(
+    "/extruders",
+    response_model=List[ExtruderDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_extruders():
+    with SessionLocal() as db:
+        rows = (
+            db.execute(
+                select(Extruder).order_by(
+                    Extruder.decision_width_mm.desc(),
+                    Extruder.extruder_code.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            ExtruderDTO(
+                extruder_code=e.extruder_code,
+                model=e.model,
+                film_width_min_mm=e.film_width_min_mm,
+                film_width_max_mm=e.film_width_max_mm,
+                decision_width_mm=e.decision_width_mm,
+                average_kg_hr=e.average_kg_hr,
+                ave_width=float(e.ave_width) if e.ave_width is not None else None,
+            )
+            for e in rows
+        ]
+
+
+@router.put(
+    "/extruders/{extruder_code}",
+    response_model=ExtruderDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
+    code = (extruder_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="extruder_code is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(Extruder, code)
+        if not row:
+            row = Extruder(extruder_code=code)
+            db.add(row)
+        row.model = payload.model
+        row.film_width_min_mm = payload.film_width_min_mm
+        row.film_width_max_mm = payload.film_width_max_mm
+        row.decision_width_mm = payload.decision_width_mm
+        row.average_kg_hr = payload.average_kg_hr
+        row.ave_width = payload.ave_width
+
+    with SessionLocal() as db:
+        e2 = db.get(Extruder, code)
+        assert e2 is not None
+        return ExtruderDTO(
+            extruder_code=e2.extruder_code,
+            model=e2.model,
+            film_width_min_mm=e2.film_width_min_mm,
+            film_width_max_mm=e2.film_width_max_mm,
+            decision_width_mm=e2.decision_width_mm,
+            average_kg_hr=e2.average_kg_hr,
+            ave_width=float(e2.ave_width) if e2.ave_width is not None else None,
+        )
+
+
+@router.get(
+    "/extrusion-waste-factors",
+    response_model=List[ExtrusionWasteFactorDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_extrusion_waste_factors():
+    with SessionLocal() as db:
+        rows = db.execute(select(ExtrusionWasteFactor).order_by(ExtrusionWasteFactor.factor.asc())).scalars().all()
+        return [ExtrusionWasteFactorDTO(factor=w.factor, minutes=int(w.minutes)) for w in rows]
+
+
+@router.put(
+    "/extrusion-waste-factors/{factor}",
+    response_model=ExtrusionWasteFactorDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_extrusion_waste_factor(factor: str, payload: ExtrusionWasteFactorUpsertRequest):
+    key = (factor or "").strip()
+    if not key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="factor is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(ExtrusionWasteFactor, key)
+        if not row:
+            row = ExtrusionWasteFactor(factor=key, minutes=payload.minutes)
+            db.add(row)
+        else:
+            row.minutes = payload.minutes
+
+    with SessionLocal() as db:
+        w2 = db.get(ExtrusionWasteFactor, key)
+        assert w2 is not None
+        return ExtrusionWasteFactorDTO(factor=w2.factor, minutes=int(w2.minutes))
 

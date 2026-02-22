@@ -9,7 +9,7 @@ try:
 except Exception:  # pragma: no cover
     _EmailType = str  # type: ignore[assignment]
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ContactInput(BaseModel):
@@ -88,7 +88,6 @@ class CustomerCreateRequest(BaseModel):
     delivery_preferences: Optional[DeliveryPreferencesInput] = Field(None, description="Delivery preferences")
     payment_terms: Optional[str] = Field(None, description="Payment terms (e.g., 'Net 30')")
     credit_limit: Optional[float] = Field(None, ge=0, description="Credit limit")
-    currency_preference: str = Field("AUD", description="Currency preference: AUD, USD, etc.")
     notes: Optional[str] = Field(None, description="General notes about the customer")
     internal_notes: Optional[str] = Field(None, description="Internal notes (not visible to customer)")
 
@@ -98,13 +97,6 @@ class CustomerCreateRequest(BaseModel):
         if v not in ["Active", "Inactive", "Archived"]:
             raise ValueError("Status must be 'Active', 'Inactive', or 'Archived'")
         return v
-
-    @field_validator("currency_preference")
-    @classmethod
-    def validate_currency(cls, v: str) -> str:
-        if len(v) != 3:
-            raise ValueError("Currency preference must be a 3-letter code (e.g., AUD, USD)")
-        return v.upper()
 
     @field_validator("code")
     @classmethod
@@ -152,10 +144,8 @@ class CustomerResponse(BaseModel):
     delivery_preferences: dict
     payment_terms: Optional[str] = None
     credit_limit: Optional[float] = None
-    currency_preference: str
     notes: Optional[str] = None
     internal_notes: Optional[str] = None
     created_at: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

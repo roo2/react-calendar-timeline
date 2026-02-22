@@ -24,9 +24,8 @@ class _ProductStub:
 
 
 class _RatecardStub:
-    def get_ratebook(self, currency: str):
+    def get_ratebook(self):
         return {
-            "currency": currency,
             "resins_price_per_kg": {"LD": "1.50"},
             "printing_rates": {"none": {"cost_per_1000m": "0"}},
             "conversion_rate": {"bags_per_minute": "200", "setup_minutes": "0"},
@@ -43,14 +42,13 @@ def test_quotes_calculate_htmx_partial():
     client = TestClient(app)
     payload = {
         "product_version_id": 1,
-        "currency": "AUD",
         "quantity": {"units": 1000},
         "requested_margin": "0.2",
     }
     resp = client.post("/api/quotes/calculate", json=payload, headers={"x-csrf-token": "t"})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["currency"] == "AUD"
+    assert "currency" not in data
     assert "cost_breakdown" in data
     assert "final_price" in data
 

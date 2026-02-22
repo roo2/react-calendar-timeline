@@ -41,7 +41,6 @@ def lookup_colour_cost_per_kg(
     colour_code: Optional[str],
     strength_pct: Optional[Decimal],
     ratebook: RateBook,
-    opaque_multiplier_enabled: bool = False,
 ) -> Decimal:
     if not colour_code or strength_pct is None:
         return Decimal("0")
@@ -49,9 +48,6 @@ def lookup_colour_cost_per_kg(
     if price is None:
         raise MissingRateError(f"Missing colour price for code={colour_code}")
     base = price * (strength_pct / Decimal("100"))
-    if opaque_multiplier_enabled:
-        mult = ratebook.colours_opaque_multiplier.get(colour_code, Decimal("0"))
-        base += price * mult
     return base
 
 
@@ -65,6 +61,49 @@ def lookup_additives_cost_per_kg(additives: dict[str, Decimal], ratebook: RateBo
             raise MissingRateError(f"Missing additive price for code={code}")
         total += price * (pct / Decimal("100"))
     return total
+
+
+def lookup_compound_material_cost_per_kg(
+    components: list[ResinComponent],
+    colour_code: Optional[str],
+    strength_pct: Optional[Decimal],
+    additives: dict[str, Decimal],
+    ratebook: RateBook,
+) -> Decimal:
+    """
+    Compound batching rule:
+    - Resin blend totals 100%
+    - Colours/additives are added on top (e.g. +2% additive => 102% total)
+    So effective $/kg of compound is normalized by (1 + extras).
+    """
+    resin_base = lookup_resin_price_per_kg(components, ratebook) if components else Decimal("0")
+
+    colour_extra = Decimal("0")
+    colour_num = Decimal("0")
+    if colour_code and strength_pct is not None:
+        price = ratebook.colours_price_per_kg.get(colour_code)
+        if price is None:
+            raise MissingRateError(f"Missing colour price for code={colour_code}")
+        strength_frac = strength_pct / Decimal("100")
+        colour_extra = strength_frac
+        colour_num = price * colour_extra
+
+    additives_extra = Decimal("0")
+    additives_num = Decimal("0")
+    for code, pct in (additives or {}).items():
+        if pct is None:
+            continue
+        price = ratebook.additives_price_per_kg.get(code)
+        if price is None:
+            raise MissingRateError(f"Missing additive price for code={code}")
+        pct_frac = pct / Decimal("100")
+        additives_extra += pct_frac
+        additives_num += price * pct_frac
+
+    denom = Decimal("1") + colour_extra + additives_extra
+    if denom <= 0:
+        return Decimal("0")
+    return (resin_base + colour_num + additives_num) / denom
 
 
 def select_printing_rate(method: PrintMethod, ratebook: RateBook) -> PrintingRate:

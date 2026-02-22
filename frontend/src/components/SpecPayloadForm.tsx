@@ -23,6 +23,7 @@ import { ColourSelect, type ColourOption } from './ColourSelect'
 import { AdditiveSelect, type AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
+import { computeProductDescriptionFromSpec } from '../utils/productDescription'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -146,10 +147,8 @@ export function SpecPayloadForm(props: {
   onChange: (next: SpecPayload) => void
   fieldErrors?: Record<string, string>
   customerId?: string
-  productDescription?: string
-  onProductDescriptionChange?: (next: string) => void
 }) {
-  const { value, onChange, fieldErrors, customerId, productDescription, onProductDescriptionChange } = props
+  const { value, onChange, fieldErrors, customerId } = props
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
@@ -562,16 +561,15 @@ export function SpecPayloadForm(props: {
         </Box>
 
         <Box sx={{ mt: 2 }}>
-          {typeof onProductDescriptionChange === 'function' ? (
-            <TextField
-              label="Description"
-              value={productDescription || ''}
-              onChange={(e) => onProductDescriptionChange(e.currentTarget.value)}
-              multiline
-              minRows={2}
-              fullWidth
-            />
-          ) : null}
+          <TextField
+            label="Description (computed)"
+            value={computeProductDescriptionFromSpec(spec)}
+            multiline
+            minRows={2}
+            fullWidth
+            InputProps={{ readOnly: true }}
+            helperText="Computed from Product Version spec."
+          />
           <TextField
             label="Notes"
             value={identity.notes || ''}
@@ -581,7 +579,7 @@ export function SpecPayloadForm(props: {
             fullWidth
             error={!!errorFor('spec.identity.notes')}
             helperText={errorFor('spec.identity.notes') || ''}
-            sx={typeof onProductDescriptionChange === 'function' ? { mt: 2 } : undefined}
+            sx={{ mt: 2 }}
           />
         </Box>
 
@@ -934,11 +932,18 @@ export function SpecPayloadForm(props: {
                     d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
                   })
                 }}
+                sx={
+                  (formulation.blend_type || 'Custom') === 'LD'
+                    ? {
+                        '& .MuiSelect-select': { color: 'text.secondary' },
+                      }
+                    : undefined
+                }
               >
                 <MenuItem value="Custom">Custom</MenuItem>
                 {resinBlends.map((b) => (
                   <MenuItem key={b.blend_code} value={b.blend_code}>
-                    {b.name}
+                    {b.blend_code === 'LD' ? 'House Blend' : b.name}
                   </MenuItem>
                 ))}
                 {(() => {
@@ -1318,9 +1323,23 @@ export function SpecPayloadForm(props: {
           <Box sx={{ mt: 2 }}>
             {(printing.side === 'front' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Front print
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
+                  <Typography variant="subtitle1">Front print</Typography>
+                  <Button
+                    type="button"
+                    size="small"
+                    variant="outlined"
+                    onClick={() =>
+                      update((d) => {
+                        ensureFixedInkPlateRows(d)
+                        d.printing.front_ink_plate = Array.from({ length: 4 }, () => ({ ink_code: '', plate_code: '' }))
+                        syncLegacyInkPlateFromPairs(d)
+                      })
+                    }
+                  >
+                    Clear
+                  </Button>
+                </Box>
                 {(inksErr || platesErr) && (
                   <Alert severity="warning" sx={{ mb: 1 }}>
                     {inksErr || platesErr}
@@ -1378,9 +1397,23 @@ export function SpecPayloadForm(props: {
 
             {(printing.side === 'back' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Back print
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
+                  <Typography variant="subtitle1">Back print</Typography>
+                  <Button
+                    type="button"
+                    size="small"
+                    variant="outlined"
+                    onClick={() =>
+                      update((d) => {
+                        ensureFixedInkPlateRows(d)
+                        d.printing.back_ink_plate = Array.from({ length: 4 }, () => ({ ink_code: '', plate_code: '' }))
+                        syncLegacyInkPlateFromPairs(d)
+                      })
+                    }
+                  >
+                    Clear
+                  </Button>
+                </Box>
                 {(inksErr || platesErr) && (
                   <Alert severity="warning" sx={{ mb: 1 }}>
                     {inksErr || platesErr}

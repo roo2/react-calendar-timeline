@@ -42,11 +42,12 @@ def _product_summary(p) -> dict:
     packaging = spec.get("packaging") if isinstance(spec, dict) else None
     product_type = identity.get("product_type") if isinstance(identity, dict) else None
     pack_mode = packaging.get("pack_mode") if isinstance(packaging, dict) else None
+    computed_desc = service.compute_product_description(spec) if isinstance(spec, dict) else None
 
     return {
         "id": p.id,
         "code": p.code,
-        "description": getattr(p, "description", None),
+        "description": computed_desc or getattr(p, "description", None),
         "customer_id": p.customer_id,
         "active_version_id": p.active_version_id,
         "active_version_number": active_version_number,
@@ -65,6 +66,7 @@ def _version_summary(v) -> dict:
         "created_by": v.created_by,
         "created_at": str(getattr(v, "created_at", "")),
         "spec_payload": v.spec_payload,
+        "description": service.compute_product_description(v.spec_payload) if isinstance(v.spec_payload, dict) else None,
     }
 
 

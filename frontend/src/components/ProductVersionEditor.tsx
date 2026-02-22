@@ -39,7 +39,6 @@ export function ProductVersionEditor(props: {
 
   const [data, setData] = useState<any>(null)
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
-  const [description, setDescription] = useState<string>('')
   const [loadErr, setLoadErr] = useState<string | null>(null)
 
   const upsert = useAppSelector((s) => s.products.newVersion)
@@ -60,7 +59,6 @@ export function ProductVersionEditor(props: {
         setData(res)
 
         const product = res.product
-        setDescription(product?.description || '')
         const versions = res.versions || []
         const activeId = product?.active_version_id
         const active = activeId ? versions.find((v: any) => v.id === activeId) : null
@@ -79,15 +77,6 @@ export function ProductVersionEditor(props: {
     e.preventDefault()
     if (!canSubmit) return
     try {
-      const curDesc = (data?.product?.description || '').trim()
-      const nextDesc = (description || '').trim()
-      if (nextDesc !== curDesc) {
-        const saved = await apiFetch<any>(`/api/products/${encodeURIComponent(productId)}`, {
-          method: 'PUT',
-          body: JSON.stringify({ description: nextDesc || null }),
-        })
-        setData((cur: any) => (cur ? { ...cur, product: { ...(cur.product || {}), ...(saved?.product || {}) } } : cur))
-      }
       const res = await dispatch(createProductVersion({ productId, spec })).unwrap()
       const vid = res?.versionId as string | undefined
       if (onDone) {
@@ -152,8 +141,6 @@ export function ProductVersionEditor(props: {
             onChange={setSpec}
             fieldErrors={fieldErrors}
             customerId={product?.customer_id || undefined}
-            productDescription={description}
-            onProductDescriptionChange={setDescription}
           />
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>

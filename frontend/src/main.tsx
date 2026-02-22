@@ -12,6 +12,18 @@ const theme = createTheme({
     mode: 'light',
     primary: { main: '#2563eb' },
   },
+  components: {
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          // Disable the default hover background across the app.
+          '&.MuiTableRow-hover:hover': {
+            backgroundColor: 'inherit',
+          },
+        },
+      },
+    },
+  },
 })
 
 function GlobalWheelGuard() {

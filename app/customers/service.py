@@ -54,7 +54,6 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             delivery_preferences=delivery_prefs,
             payment_terms=payload.payment_terms,
             credit_limit=payload.credit_limit,
-            currency_preference=payload.currency_preference,
             notes=payload.notes,
             internal_notes=payload.internal_notes,
         )
@@ -92,7 +91,6 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         customer.delivery_preferences = delivery_prefs
         customer.payment_terms = payload.payment_terms
         customer.credit_limit = payload.credit_limit
-        customer.currency_preference = payload.currency_preference
         customer.notes = payload.notes
         customer.internal_notes = payload.internal_notes
         

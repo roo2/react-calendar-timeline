@@ -32,7 +32,7 @@ def get_product_service():
 
 def get_ratecard_service():
     class _Stub:
-        def get_ratebook(self, currency: str):
+        def get_ratebook(self):
             raise NotImplementedError("RateCardService.get_ratebook not implemented")
     return _Stub()
 
@@ -94,8 +94,8 @@ async def quotes_bootstrap(identity=Depends(current_identity)):
         resins = [{"code": r[0], "name": r[1]} for r in db.execute(select(Resin.resin_code, Resin.name).order_by(Resin.resin_code)).all()]
         colours = [{"code": c[0], "name": c[1]} for c in db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.colour_code)).all()]
         additives = [
-            {"code": a[0], "name": a[1], "category": a[2] or ""}
-            for a in db.execute(select(Additive.additive_code, Additive.name, Additive.category).order_by(Additive.category, Additive.additive_code)).all()
+            {"code": a[0], "name": a[1]}
+            for a in db.execute(select(Additive.additive_code, Additive.name).order_by(Additive.additive_code)).all()
         ]
         cores = [{"type": c[0], "description": c[1] or ""} for c in db.execute(select(Core.core_type, Core.description).order_by(Core.core_type)).all()]
 

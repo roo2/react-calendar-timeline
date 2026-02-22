@@ -22,7 +22,6 @@ type OrderRow = {
   product_code?: string | null
   version_number?: number | null
   item_count?: number | null
-  currency: string
   created_at?: string | null
 }
 
@@ -93,7 +92,7 @@ export function CustomerShowPage() {
             {customer.name}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Code: {customer.code} • Status: {customer.status} • Currency: {customer.currency_preference}
+            Code: {customer.code} • Status: {customer.status}
           </Typography>
         </Box>
         {canEdit && (
@@ -156,10 +155,6 @@ export function CustomerShowPage() {
               <p style={{ margin: '4px 0 0' }}>${customer.credit_limit.toFixed(2)}</p>
             </div>
           )}
-          <div>
-            <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Currency Preference</strong>
-            <p style={{ margin: '4px 0 0' }}>{customer.currency_preference}</p>
-          </div>
         </div>
         {customer.notes && (
           <div style={{ marginTop: 16 }}>
@@ -229,7 +224,6 @@ export function CustomerShowPage() {
                 <TableCell>Code</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Product</TableCell>
-                <TableCell>Currency</TableCell>
                 <TableCell>Created</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -248,7 +242,6 @@ export function CustomerShowPage() {
                       ? `${o.product_code}${o.version_number != null ? ` v${o.version_number}` : ''}${o.item_count && o.item_count > 1 ? ` (+${o.item_count - 1})` : ''}`
                       : '-'}
                   </TableCell>
-                  <TableCell>{o.currency}</TableCell>
                   <TableCell>{o.created_at || ''}</TableCell>
                   <TableCell align="right">
                     {canEditOrders && o.status === 'draft' ? (
@@ -261,7 +254,7 @@ export function CustomerShowPage() {
               ))}
               {orders.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={5}>
                     <Typography color="text.secondary">No orders.</Typography>
                   </TableCell>
                 </TableRow>

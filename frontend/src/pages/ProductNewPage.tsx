@@ -31,7 +31,6 @@ export function ProductNewPage() {
 
   const [customerId, setCustomerId] = useState('')
   const [code, setCode] = useState('')
-  const [description, setDescription] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [codeExists, setCodeExists] = useState(false)
   const lastAutoPrefixRef = useRef<string>('')
@@ -123,7 +122,6 @@ export function ProductNewPage() {
           data: {
             customer_id: customerId,
             code,
-            description: description.trim() ? description.trim() : null,
             spec,
           },
         }),
@@ -226,16 +224,6 @@ export function ProductNewPage() {
                 error={!!fieldErrors['code'] || codeExists || (customerId ? !codePrefixOk : false)}
               />
 
-              <TextField
-                label="Description"
-                value={description}
-                onChange={(e) => {
-                  setDescription(e.currentTarget.value)
-                  dispatch(clearCreateFieldError('description'))
-                }}
-                helperText={fieldErrors['description'] || 'Short human-readable label (e.g. “Milk powder liner, natural, roll”)'}
-                error={!!fieldErrors['description']}
-              />
             </Box>
           </Paper>
 

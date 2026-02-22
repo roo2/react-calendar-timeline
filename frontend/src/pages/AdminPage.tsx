@@ -22,7 +22,6 @@ type Resin = {
   name: string
   density: number
   price_per_kg: number
-  currency: string
 }
 
 type ResinBlend = {
@@ -35,15 +34,12 @@ type Additive = {
   additive_code: string
   name: string
   price_per_kg: number
-  category?: string | null
 }
 
 type Colour = {
   colour_code: string
   name: string
   price_per_kg: number
-  opacity_multiplier: number
-  currency: string
 }
 
 type Core = {
@@ -51,7 +47,6 @@ type Core = {
   description?: string | null
   cost_per_meter: number
   kg_per_meter: number
-  currency: string
 }
 
 type Ink = {
@@ -66,6 +61,21 @@ type Plate = {
   description?: string | null
 }
 
+type Extruder = {
+  extruder_code: string
+  model?: string | null
+  film_width_min_mm?: number | null
+  film_width_max_mm?: number | null
+  decision_width_mm?: number | null
+  average_kg_hr?: number | null
+  ave_width?: number | null
+}
+
+type ExtrusionWasteFactor = {
+  factor: string
+  minutes: number
+}
+
 type CustomerSummary = {
   id: string
   code?: string | null
@@ -77,6 +87,8 @@ export function AdminPage() {
   const [additives, setAdditives] = useState<Additive[]>([])
   const [colours, setColours] = useState<Colour[]>([])
   const [cores, setCores] = useState<Core[]>([])
+  const [extruders, setExtruders] = useState<Extruder[]>([])
+  const [extrusionWasteFactors, setExtrusionWasteFactors] = useState<ExtrusionWasteFactor[]>([])
   const [inks, setInks] = useState<Ink[]>([])
   const [plates, setPlates] = useState<Plate[]>([])
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
@@ -86,6 +98,8 @@ export function AdminPage() {
   const [savingAdditiveCode, setSavingAdditiveCode] = useState<string | null>(null)
   const [savingColourCode, setSavingColourCode] = useState<string | null>(null)
   const [savingCoreType, setSavingCoreType] = useState<string | null>(null)
+  const [savingExtruderCode, setSavingExtruderCode] = useState<string | null>(null)
+  const [savingExtrusionWasteFactor, setSavingExtrusionWasteFactor] = useState<string | null>(null)
   const [savingInkCode, setSavingInkCode] = useState<string | null>(null)
   const [savingPlateKey, setSavingPlateKey] = useState<string | null>(null)
   const [resinBlends, setResinBlends] = useState<ResinBlend[]>([])
@@ -95,24 +109,19 @@ export function AdminPage() {
   const [newName, setNewName] = useState('')
   const [newDensity, setNewDensity] = useState<number | ''>('')
   const [newPrice, setNewPrice] = useState<number | ''>('')
-  const [newCurrency, setNewCurrency] = useState('AUD')
 
   const [newAdditiveCode, setNewAdditiveCode] = useState('')
   const [newAdditiveName, setNewAdditiveName] = useState('')
   const [newAdditivePrice, setNewAdditivePrice] = useState<number | ''>('')
-  const [newAdditiveCategory, setNewAdditiveCategory] = useState('process')
 
   const [newColourCode, setNewColourCode] = useState('')
   const [newColourName, setNewColourName] = useState('')
   const [newColourPrice, setNewColourPrice] = useState<number | ''>('')
-  const [newColourOpacity, setNewColourOpacity] = useState<number | ''>(0)
-  const [newColourCurrency, setNewColourCurrency] = useState('AUD')
 
   const [newCoreType, setNewCoreType] = useState('')
   const [newCoreDescription, setNewCoreDescription] = useState('')
   const [newCoreCostPerM, setNewCoreCostPerM] = useState<number | ''>('')
   const [newCoreKgPerM, setNewCoreKgPerM] = useState<number | ''>('')
-  const [newCoreCurrency, setNewCoreCurrency] = useState('AUD')
 
   const [newInkCode, setNewInkCode] = useState('')
   const [newInkName, setNewInkName] = useState('')
@@ -121,6 +130,10 @@ export function AdminPage() {
   const [newPlateCustomerId, setNewPlateCustomerId] = useState('')
   const [newPlateCode, setNewPlateCode] = useState('')
   const [newPlateDescription, setNewPlateDescription] = useState('')
+
+  const [newExtruderCode, setNewExtruderCode] = useState('')
+  const [newWasteFactor, setNewWasteFactor] = useState('')
+  const [newWasteMinutes, setNewWasteMinutes] = useState('')
 
   const [newBlendCode, setNewBlendCode] = useState('')
   const [newBlendName, setNewBlendName] = useState('')
@@ -138,26 +151,20 @@ export function AdminPage() {
   )
 
   const canCreate = useMemo(() => {
-    return !!newCode.trim() && !!newName.trim() && newDensity !== '' && newPrice !== '' && !!newCurrency.trim()
-  }, [newCode, newCurrency, newDensity, newName, newPrice])
+    return !!newCode.trim() && !!newName.trim() && newDensity !== '' && newPrice !== ''
+  }, [newCode, newDensity, newName, newPrice])
 
   const canCreateAdditive = useMemo(() => {
     return !!newAdditiveCode.trim() && !!newAdditiveName.trim() && newAdditivePrice !== ''
   }, [newAdditiveCode, newAdditiveName, newAdditivePrice])
 
   const canCreateColour = useMemo(() => {
-    return (
-      !!newColourCode.trim() &&
-      !!newColourName.trim() &&
-      newColourPrice !== '' &&
-      newColourOpacity !== '' &&
-      !!newColourCurrency.trim()
-    )
-  }, [newColourCode, newColourCurrency, newColourName, newColourOpacity, newColourPrice])
+    return !!newColourCode.trim() && !!newColourName.trim() && newColourPrice !== ''
+  }, [newColourCode, newColourName, newColourPrice])
 
   const canCreateCore = useMemo(() => {
-    return !!newCoreType.trim() && newCoreCostPerM !== '' && newCoreKgPerM !== '' && !!newCoreCurrency.trim()
-  }, [newCoreCostPerM, newCoreCurrency, newCoreKgPerM, newCoreType])
+    return !!newCoreType.trim() && newCoreCostPerM !== '' && newCoreKgPerM !== ''
+  }, [newCoreCostPerM, newCoreKgPerM, newCoreType])
 
   const canCreateInk = useMemo(() => {
     return !!newInkCode.trim() && !!newInkName.trim()
@@ -194,6 +201,10 @@ export function AdminPage() {
         setColours(cols)
         const cs = await apiFetch<Core[]>('/api/admin/rate-cards/cores')
         setCores(cs)
+        const ex = await apiFetch<Extruder[]>('/api/admin/rate-cards/extruders')
+        setExtruders(ex)
+        const wf = await apiFetch<ExtrusionWasteFactor[]>('/api/admin/rate-cards/extrusion-waste-factors')
+        setExtrusionWasteFactors(wf)
         const inkRows = await apiFetch<Ink[]>('/api/admin/rate-cards/inks')
         setInks(inkRows)
         const plateRows = await apiFetch<Plate[]>('/api/admin/rate-cards/plates')
@@ -330,6 +341,60 @@ export function AdminPage() {
     }
   }
 
+  async function saveExtruder(code: string, patch: Omit<Extruder, 'extruder_code'>) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingExtruderCode(trimmed)
+      const saved = await apiFetch<Extruder>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      })
+      setExtruders((cur) => {
+        const idx = cur.findIndex((e) => e.extruder_code === saved.extruder_code)
+        const sortFn = (a: Extruder, b: Extruder) => {
+          const aw = a.decision_width_mm == null ? -Infinity : Number(a.decision_width_mm)
+          const bw = b.decision_width_mm == null ? -Infinity : Number(b.decision_width_mm)
+          if (bw !== aw) return bw - aw
+          return String(a.extruder_code).localeCompare(String(b.extruder_code))
+        }
+        if (idx === -1) return [...cur, saved].sort(sortFn)
+        const next = cur.slice()
+        next[idx] = saved
+        return next.sort(sortFn)
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save extruder')
+    } finally {
+      setSavingExtruderCode(null)
+    }
+  }
+
+  async function saveExtrusionWasteFactor(factor: string, patch: Omit<ExtrusionWasteFactor, 'factor'>) {
+    const trimmed = factor.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingExtrusionWasteFactor(trimmed)
+      const saved = await apiFetch<ExtrusionWasteFactor>(`/api/admin/rate-cards/extrusion-waste-factors/${encodeURIComponent(trimmed)}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      })
+      setExtrusionWasteFactors((cur) => {
+        const idx = cur.findIndex((w) => w.factor === saved.factor)
+        if (idx === -1) return [...cur, saved].sort((a, b) => a.factor.localeCompare(b.factor))
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save waste factor')
+    } finally {
+      setSavingExtrusionWasteFactor(null)
+    }
+  }
+
   async function saveInk(code: string, patch: Omit<Ink, 'ink_code'>) {
     const trimmed = code.trim()
     if (!trimmed) return
@@ -390,7 +455,12 @@ export function AdminPage() {
   }
 
   return (
-    <Box>
+    <Box
+      sx={{
+        '& .MuiTableCell-root': { px: 1, py: 0.5 },
+        '& .MuiTextField-root .MuiInputBase-input': { px: 1, py: 1 },
+      }}
+    >
       <Typography variant="h5" sx={{ mb: 2 }}>
         Admin
       </Typography>
@@ -420,7 +490,6 @@ export function AdminPage() {
                     <TableCell>Name</TableCell>
                     <TableCell sx={{ width: 140 }}>Density</TableCell>
                     <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
-                    <TableCell sx={{ width: 120 }}>Currency</TableCell>
                     <TableCell sx={{ width: 140 }} />
                   </TableRow>
                 </TableHead>
@@ -439,8 +508,7 @@ export function AdminPage() {
                       <TextField
                         size="small"
                         label="Density"
-                        type="number"
-                        inputProps={{ step: 0.0001, min: 0 }}
+                        inputProps={{ inputMode: 'decimal' }}
                         value={newDensity}
                         onChange={(e) => setNewDensity(e.target.value ? parseFloat(e.target.value) : '')}
                       />
@@ -449,14 +517,10 @@ export function AdminPage() {
                       <TextField
                         size="small"
                         label="Price / kg"
-                        type="number"
-                        inputProps={{ step: 0.0001, min: 0 }}
+                        inputProps={{ inputMode: 'decimal' }}
                         value={newPrice}
                         onChange={(e) => setNewPrice(e.target.value ? parseFloat(e.target.value) : '')}
                       />
-                    </TableCell>
-                    <TableCell>
-                      <TextField size="small" label="Currency" value={newCurrency} onChange={(e) => setNewCurrency(e.target.value)} />
                     </TableCell>
                     <TableCell align="right">
                       <Button
@@ -469,13 +533,11 @@ export function AdminPage() {
                             name: newName.trim(),
                             density: Number(newDensity),
                             price_per_kg: Number(newPrice),
-                            currency: newCurrency.trim().toUpperCase(),
                           }).then(() => {
                             setNewCode('')
                             setNewName('')
                             setNewDensity('')
                             setNewPrice('')
-                            setNewCurrency('AUD')
                           })
                         }}
                       >
@@ -507,7 +569,6 @@ export function AdminPage() {
                     <TableCell sx={{ width: 180 }}>Code</TableCell>
                     <TableCell>Name</TableCell>
                     <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
-                    <TableCell sx={{ width: 180 }}>Category</TableCell>
                     <TableCell sx={{ width: 140 }} />
                   </TableRow>
                 </TableHead>
@@ -526,14 +587,10 @@ export function AdminPage() {
                       <TextField
                         size="small"
                         label="Price / kg"
-                        type="number"
-                        inputProps={{ step: 0.0001, min: 0 }}
+                        inputProps={{ inputMode: 'decimal' }}
                         value={newAdditivePrice}
                         onChange={(e) => setNewAdditivePrice(e.target.value ? parseFloat(e.target.value) : '')}
                       />
-                    </TableCell>
-                    <TableCell>
-                      <TextField size="small" label="Category" value={newAdditiveCategory} onChange={(e) => setNewAdditiveCategory(e.target.value)} />
                     </TableCell>
                     <TableCell align="right">
                       <Button
@@ -545,12 +602,10 @@ export function AdminPage() {
                           void saveAdditive(newAdditiveCode, {
                             name: newAdditiveName.trim(),
                             price_per_kg: Number(newAdditivePrice),
-                            category: newAdditiveCategory.trim() ? newAdditiveCategory.trim() : null,
                           }).then(() => {
                             setNewAdditiveCode('')
                             setNewAdditiveName('')
                             setNewAdditivePrice('')
-                            setNewAdditiveCategory('process')
                           })
                         }}
                       >
@@ -582,8 +637,6 @@ export function AdminPage() {
                     <TableCell sx={{ width: 180 }}>Code</TableCell>
                     <TableCell>Name</TableCell>
                     <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
-                    <TableCell sx={{ width: 160 }}>Opacity mult</TableCell>
-                    <TableCell sx={{ width: 120 }}>Currency</TableCell>
                     <TableCell sx={{ width: 140 }} />
                   </TableRow>
                 </TableHead>
@@ -602,24 +655,10 @@ export function AdminPage() {
                       <TextField
                         size="small"
                         label="Price / kg"
-                        type="number"
-                        inputProps={{ step: 0.0001, min: 0 }}
+                        inputProps={{ inputMode: 'decimal' }}
                         value={newColourPrice}
                         onChange={(e) => setNewColourPrice(e.target.value ? parseFloat(e.target.value) : '')}
                       />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        label="Opacity mult"
-                        type="number"
-                        inputProps={{ step: 0.001, min: 0 }}
-                        value={newColourOpacity}
-                        onChange={(e) => setNewColourOpacity(e.target.value ? parseFloat(e.target.value) : '')}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField size="small" label="Currency" value={newColourCurrency} onChange={(e) => setNewColourCurrency(e.target.value)} />
                     </TableCell>
                     <TableCell align="right">
                       <Button
@@ -631,14 +670,10 @@ export function AdminPage() {
                           void saveColour(newColourCode, {
                             name: newColourName.trim(),
                             price_per_kg: Number(newColourPrice),
-                            opacity_multiplier: Number(newColourOpacity),
-                            currency: newColourCurrency.trim().toUpperCase(),
                           }).then(() => {
                             setNewColourCode('')
                             setNewColourName('')
                             setNewColourPrice('')
-                            setNewColourOpacity(0)
-                            setNewColourCurrency('AUD')
                           })
                         }}
                       >
@@ -736,6 +771,138 @@ export function AdminPage() {
               </Stack>
             )}
             </Box>
+          </Stack>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Extrusion
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Master data for extrusion planning and waste.
+              </Typography>
+            </Box>
+
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              Extruders
+            </Typography>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              {loading ? (
+                <Typography color="text.secondary">Loading…</Typography>
+              ) : (
+                <Table size="small" sx={{ width: '100%' }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ width: 110 }}>Code</TableCell>
+                      <TableCell sx={{ width: 120 }}>Model</TableCell>
+                      <TableCell sx={{ width: 110 }}>W min</TableCell>
+                      <TableCell sx={{ width: 110 }}>W max</TableCell>
+                      <TableCell sx={{ width: 130 }}>Decision W</TableCell>
+                      <TableCell sx={{ width: 140 }}>Avg (kg/hr)</TableCell>
+                      <TableCell sx={{ width: 110 }}>Ave W</TableCell>
+                      <TableCell sx={{ width: 140 }} />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {extruders.map((e) => (
+                      <ExtruderRow key={e.extruder_code} extruder={e} saving={savingExtruderCode === e.extruder_code} onSave={saveExtruder} />
+                    ))}
+                    <TableRow>
+                      <TableCell>
+                        <TextField size="small" label="Code" value={newExtruderCode} onChange={(ev) => setNewExtruderCode(ev.target.value)} />
+                      </TableCell>
+                      <TableCell colSpan={6}>
+                        <Typography variant="body2" color="text.secondary">
+                          Add by code, then edit fields in-row.
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={!newExtruderCode.trim() || savingExtruderCode === newExtruderCode.trim()}
+                          onClick={() => {
+                            const code = newExtruderCode.trim()
+                            if (!code) return
+                            void saveExtruder(code, {}).then(() => setNewExtruderCode(''))
+                          }}
+                        >
+                          Add extruder
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              )}
+            </Paper>
+
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              Extrusion waste factors
+            </Typography>
+
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              {loading ? (
+                <Typography color="text.secondary">Loading…</Typography>
+              ) : (
+                <Table size="small" sx={{ width: '100%' }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ width: 320 }}>Factor</TableCell>
+                      <TableCell sx={{ width: 160 }}>Minutes</TableCell>
+                      <TableCell sx={{ width: 140 }} />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {extrusionWasteFactors.map((w) => (
+                      <ExtrusionWasteFactorRow
+                        key={w.factor}
+                        wasteFactor={w}
+                        saving={savingExtrusionWasteFactor === w.factor}
+                        onSave={saveExtrusionWasteFactor}
+                      />
+                    ))}
+                    <TableRow>
+                      <TableCell>
+                        <TextField size="small" label="Factor" value={newWasteFactor} onChange={(ev) => setNewWasteFactor(ev.target.value)} />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Minutes"
+                          inputProps={{ inputMode: 'numeric' }}
+                          value={newWasteMinutes}
+                          onChange={(ev) => setNewWasteMinutes(ev.target.value)}
+                        />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={
+                            !newWasteFactor.trim() ||
+                            !newWasteMinutes.trim() ||
+                            savingExtrusionWasteFactor === newWasteFactor.trim()
+                          }
+                          onClick={() => {
+                            const f = newWasteFactor.trim()
+                            const m = Number(newWasteMinutes)
+                            if (!f || !Number.isFinite(m) || m < 0) return
+                            void saveExtrusionWasteFactor(f, { minutes: Math.round(m) }).then(() => {
+                              setNewWasteFactor('')
+                              setNewWasteMinutes('')
+                            })
+                          }}
+                        >
+                          Add factor
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              )}
+            </Paper>
           </Stack>
         </Paper>
 
@@ -933,7 +1100,6 @@ export function AdminPage() {
                       <TableCell>Description</TableCell>
                       <TableCell sx={{ width: 170 }}>Cost / m</TableCell>
                       <TableCell sx={{ width: 170 }}>Kg / m</TableCell>
-                      <TableCell sx={{ width: 120 }}>Currency</TableCell>
                       <TableCell sx={{ width: 140 }} />
                     </TableRow>
                   </TableHead>
@@ -958,8 +1124,7 @@ export function AdminPage() {
                         <TextField
                           size="small"
                           label="Cost / m"
-                          type="number"
-                          inputProps={{ step: 0.0001, min: 0 }}
+                          inputProps={{ inputMode: 'decimal' }}
                           value={newCoreCostPerM}
                           onChange={(e) => setNewCoreCostPerM(e.target.value ? parseFloat(e.target.value) : '')}
                         />
@@ -968,14 +1133,10 @@ export function AdminPage() {
                         <TextField
                           size="small"
                           label="Kg / m"
-                          type="number"
-                          inputProps={{ step: 0.0001, min: 0 }}
+                          inputProps={{ inputMode: 'decimal' }}
                           value={newCoreKgPerM}
                           onChange={(e) => setNewCoreKgPerM(e.target.value ? parseFloat(e.target.value) : '')}
                         />
-                      </TableCell>
-                      <TableCell>
-                        <TextField size="small" label="Currency" value={newCoreCurrency} onChange={(e) => setNewCoreCurrency(e.target.value)} />
                       </TableCell>
                       <TableCell align="right">
                         <Button
@@ -988,13 +1149,11 @@ export function AdminPage() {
                               description: newCoreDescription.trim() ? newCoreDescription.trim() : null,
                               cost_per_meter: Number(newCoreCostPerM),
                               kg_per_meter: Number(newCoreKgPerM),
-                              currency: newCoreCurrency.trim().toUpperCase(),
                             }).then(() => {
                               setNewCoreType('')
                               setNewCoreDescription('')
                               setNewCoreCostPerM('')
                               setNewCoreKgPerM('')
-                              setNewCoreCurrency('AUD')
                             })
                           }}
                         >
@@ -1022,13 +1181,8 @@ function ResinRow(props: {
   const [name, setName] = useState(resin.name)
   const [density, setDensity] = useState<number | ''>(resin.density)
   const [price, setPrice] = useState<number | ''>(resin.price_per_kg)
-  const [currency, setCurrency] = useState(resin.currency)
 
-  const dirty =
-    name !== resin.name ||
-    density !== resin.density ||
-    price !== resin.price_per_kg ||
-    currency !== resin.currency
+  const dirty = name !== resin.name || density !== resin.density || price !== resin.price_per_kg
 
   return (
     <TableRow hover>
@@ -1039,8 +1193,7 @@ function ResinRow(props: {
       <TableCell>
         <TextField
           size="small"
-          type="number"
-          inputProps={{ step: 0.0001, min: 0 }}
+          inputProps={{ inputMode: 'decimal' }}
           value={density}
           onChange={(e) => setDensity(e.target.value ? parseFloat(e.target.value) : '')}
         />
@@ -1048,26 +1201,21 @@ function ResinRow(props: {
       <TableCell>
         <TextField
           size="small"
-          type="number"
-          inputProps={{ step: 0.0001, min: 0 }}
+          inputProps={{ inputMode: 'decimal' }}
           value={price}
           onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')}
         />
-      </TableCell>
-      <TableCell>
-        <TextField size="small" value={currency} onChange={(e) => setCurrency(e.target.value)} />
       </TableCell>
       <TableCell align="right">
         <Button
           size="small"
           variant="outlined"
-          disabled={saving || !dirty || !name.trim() || density === '' || price === '' || !currency.trim()}
+          disabled={saving || !dirty || !name.trim() || density === '' || price === ''}
           onClick={() =>
             void onSave(resin.resin_code, {
               name: name.trim(),
               density: Number(density),
               price_per_kg: Number(price),
-              currency: currency.trim().toUpperCase(),
             })
           }
         >
@@ -1086,9 +1234,8 @@ function AdditiveRow(props: {
   const { additive, saving, onSave } = props
   const [name, setName] = useState(additive.name)
   const [price, setPrice] = useState<number | ''>(additive.price_per_kg)
-  const [category, setCategory] = useState(additive.category || '')
 
-  const dirty = name !== additive.name || price !== additive.price_per_kg || category !== (additive.category || '')
+  const dirty = name !== additive.name || price !== additive.price_per_kg
 
   return (
     <TableRow hover>
@@ -1099,14 +1246,10 @@ function AdditiveRow(props: {
       <TableCell>
         <TextField
           size="small"
-          type="number"
-          inputProps={{ step: 0.0001, min: 0 }}
+          inputProps={{ inputMode: 'decimal' }}
           value={price}
           onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')}
         />
-      </TableCell>
-      <TableCell>
-        <TextField size="small" value={category} onChange={(e) => setCategory(e.target.value)} />
       </TableCell>
       <TableCell align="right">
         <Button
@@ -1117,7 +1260,6 @@ function AdditiveRow(props: {
             void onSave(additive.additive_code, {
               name: name.trim(),
               price_per_kg: Number(price),
-              category: category.trim() ? category.trim() : null,
             })
           }
         >
@@ -1136,14 +1278,8 @@ function ColourRow(props: {
   const { colour, saving, onSave } = props
   const [name, setName] = useState(colour.name)
   const [price, setPrice] = useState<number | ''>(colour.price_per_kg)
-  const [opacity, setOpacity] = useState<number | ''>(colour.opacity_multiplier)
-  const [currency, setCurrency] = useState(colour.currency)
 
-  const dirty =
-    name !== colour.name ||
-    price !== colour.price_per_kg ||
-    opacity !== colour.opacity_multiplier ||
-    currency !== colour.currency
+  const dirty = name !== colour.name || price !== colour.price_per_kg
 
   return (
     <TableRow hover>
@@ -1154,35 +1290,20 @@ function ColourRow(props: {
       <TableCell>
         <TextField
           size="small"
-          type="number"
-          inputProps={{ step: 0.0001, min: 0 }}
+          inputProps={{ inputMode: 'decimal' }}
           value={price}
           onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')}
         />
-      </TableCell>
-      <TableCell>
-        <TextField
-          size="small"
-          type="number"
-          inputProps={{ step: 0.001, min: 0 }}
-          value={opacity}
-          onChange={(e) => setOpacity(e.target.value ? parseFloat(e.target.value) : '')}
-        />
-      </TableCell>
-      <TableCell>
-        <TextField size="small" value={currency} onChange={(e) => setCurrency(e.target.value)} />
       </TableCell>
       <TableCell align="right">
         <Button
           size="small"
           variant="outlined"
-          disabled={saving || !dirty || !name.trim() || price === '' || opacity === '' || !currency.trim()}
+          disabled={saving || !dirty || !name.trim() || price === ''}
           onClick={() =>
             void onSave(colour.colour_code, {
               name: name.trim(),
               price_per_kg: Number(price),
-              opacity_multiplier: Number(opacity),
-              currency: currency.trim().toUpperCase(),
             })
           }
         >
@@ -1202,13 +1323,8 @@ function CoreRow(props: {
   const [description, setDescription] = useState(core.description || '')
   const [cost, setCost] = useState<number | ''>(core.cost_per_meter)
   const [kg, setKg] = useState<number | ''>(core.kg_per_meter)
-  const [currency, setCurrency] = useState(core.currency)
 
-  const dirty =
-    description !== (core.description || '') ||
-    cost !== core.cost_per_meter ||
-    kg !== core.kg_per_meter ||
-    currency !== core.currency
+  const dirty = description !== (core.description || '') || cost !== core.cost_per_meter || kg !== core.kg_per_meter
 
   return (
     <TableRow hover>
@@ -1219,8 +1335,7 @@ function CoreRow(props: {
       <TableCell>
         <TextField
           size="small"
-          type="number"
-          inputProps={{ step: 0.0001, min: 0 }}
+          inputProps={{ inputMode: 'decimal' }}
           value={cost}
           onChange={(e) => setCost(e.target.value ? parseFloat(e.target.value) : '')}
         />
@@ -1228,28 +1343,121 @@ function CoreRow(props: {
       <TableCell>
         <TextField
           size="small"
-          type="number"
-          inputProps={{ step: 0.0001, min: 0 }}
+          inputProps={{ inputMode: 'decimal' }}
           value={kg}
           onChange={(e) => setKg(e.target.value ? parseFloat(e.target.value) : '')}
         />
-      </TableCell>
-      <TableCell>
-        <TextField size="small" value={currency} onChange={(e) => setCurrency(e.target.value)} />
       </TableCell>
       <TableCell align="right">
         <Button
           size="small"
           variant="outlined"
-          disabled={saving || !dirty || cost === '' || kg === '' || !currency.trim()}
+          disabled={saving || !dirty || cost === '' || kg === ''}
           onClick={() =>
             void onSave(core.core_type, {
               description: description.trim() ? description.trim() : null,
               cost_per_meter: Number(cost),
               kg_per_meter: Number(kg),
-              currency: currency.trim().toUpperCase(),
             })
           }
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function ExtruderRow(props: {
+  extruder: Extruder
+  saving: boolean
+  onSave: (code: string, patch: Omit<Extruder, 'extruder_code'>) => Promise<void>
+}) {
+  const { extruder, saving, onSave } = props
+  const [model, setModel] = useState(extruder.model || '')
+  const [wMin, setWMin] = useState<number | ''>(extruder.film_width_min_mm ?? '')
+  const [wMax, setWMax] = useState<number | ''>(extruder.film_width_max_mm ?? '')
+  const [wDec, setWDec] = useState<number | ''>(extruder.decision_width_mm ?? '')
+  const [avg, setAvg] = useState<number | ''>(extruder.average_kg_hr ?? '')
+  const [aveWidth, setAveWidth] = useState<number | ''>(extruder.ave_width ?? '')
+
+  const dirty =
+    model !== (extruder.model || '') ||
+    wMin !== (extruder.film_width_min_mm ?? '') ||
+    wMax !== (extruder.film_width_max_mm ?? '') ||
+    wDec !== (extruder.decision_width_mm ?? '') ||
+    avg !== (extruder.average_kg_hr ?? '') ||
+    aveWidth !== (extruder.ave_width ?? '')
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{extruder.extruder_code}</TableCell>
+      <TableCell>
+        <TextField size="small" value={model} onChange={(e) => setModel(e.target.value)} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={wMin} onChange={(e) => setWMin(e.target.value ? parseInt(e.target.value, 10) : '')} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={wMax} onChange={(e) => setWMax(e.target.value ? parseInt(e.target.value, 10) : '')} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={wDec} onChange={(e) => setWDec(e.target.value ? parseInt(e.target.value, 10) : '')} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={avg} onChange={(e) => setAvg(e.target.value ? parseInt(e.target.value, 10) : '')} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={aveWidth} onChange={(e) => setAveWidth(e.target.value ? parseFloat(e.target.value) : '')} />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty}
+          onClick={() =>
+            void onSave(extruder.extruder_code, {
+              model: model.trim() ? model.trim() : null,
+              film_width_min_mm: wMin === '' ? null : Number(wMin),
+              film_width_max_mm: wMax === '' ? null : Number(wMax),
+              decision_width_mm: wDec === '' ? null : Number(wDec),
+              average_kg_hr: avg === '' ? null : Number(avg),
+              ave_width: aveWidth === '' ? null : Number(aveWidth),
+            })
+          }
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function ExtrusionWasteFactorRow(props: {
+  wasteFactor: ExtrusionWasteFactor
+  saving: boolean
+  onSave: (factor: string, patch: Omit<ExtrusionWasteFactor, 'factor'>) => Promise<void>
+}) {
+  const { wasteFactor, saving, onSave } = props
+  const [minutes, setMinutes] = useState<number | ''>(wasteFactor.minutes)
+  const dirty = minutes !== wasteFactor.minutes
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{wasteFactor.factor}</TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'numeric' }}
+          value={minutes}
+          onChange={(e) => setMinutes(e.target.value ? parseInt(e.target.value, 10) : '')}
+        />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || minutes === '' || Number(minutes) < 0}
+          onClick={() => void onSave(wasteFactor.factor, { minutes: Number(minutes) })}
         >
           {saving ? 'Saving…' : 'Save'}
         </Button>
@@ -1414,8 +1622,7 @@ function BlendComponentsEditor(props: {
             <TextField
               size="small"
               label="Pct"
-              type="number"
-              inputProps={{ min: 0, step: 0.01 }}
+              inputProps={{ inputMode: 'decimal' }}
               value={c.pct}
               onChange={(e) =>
                 onChange(

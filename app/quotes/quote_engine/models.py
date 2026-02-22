@@ -5,7 +5,6 @@ from typing import Literal, Optional, Sequence
 from pydantic import BaseModel, Field, validator
 
 
-Currency = Literal["AUD", "USD"]
 PrintMethod = Literal["none", "inline", "uteco"]
 Geometry = Literal["flat", "gusset", "bottom_gusset", "centre_fold"]
 GoodOrScrap = Literal["good", "scrap"]
@@ -88,11 +87,9 @@ class CoreCost(BaseModel):
 
 
 class RateBook(BaseModel):
-    currency: Currency = "AUD"
     resins_price_per_kg: dict[str, Decimal] = Field(default_factory=dict)
     additives_price_per_kg: dict[str, Decimal] = Field(default_factory=dict)
     colours_price_per_kg: dict[str, Decimal] = Field(default_factory=dict)
-    colours_opaque_multiplier: dict[str, Decimal] = Field(default_factory=dict)
     core: Optional[CoreCost] = None
     printing_rates: dict[str, PrintingRate] = Field(default_factory=dict)  # key = method
     conversion_rate: Optional[ConversionRate] = None
@@ -130,7 +127,6 @@ class QuantityRequest(BaseModel):
 
 class QuoteCalculateRequestDTO(BaseModel):
     product_version_id: int
-    currency: Currency = "AUD"
     quantity: QuantityRequest
     requested_margin: Decimal = Decimal("0.2")  # 20% default unless overridden
 
@@ -144,7 +140,6 @@ class CostBreakdown(BaseModel):
 
 
 class QuotePreviewResult(BaseModel):
-    currency: Currency
     kg_per_unit: Optional[Decimal] = None
     units_per_roll: Optional[Decimal] = None
     totals_kg: Optional[Decimal] = None

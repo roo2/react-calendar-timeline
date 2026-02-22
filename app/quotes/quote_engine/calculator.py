@@ -17,6 +17,7 @@ from .models import (
 )
 from .selectors import (
     blend_density,
+    lookup_compound_material_cost_per_kg,
     lookup_resin_price_per_kg,
     lookup_colour_cost_per_kg,
     lookup_additives_cost_per_kg,
@@ -61,7 +62,7 @@ def compute_dimensions(spec: SpecDTO) -> Dimensions:
     area_per_unit_m2 = effective_length_m * _mm_to_m(layflat_mm)
 
     # Mass per unit: kg/m2 = density * thickness_m
-    density = blend_density(list(spec.blend)) if spec.blend else Decimal("0.92")  # default LDPE density ~0.92
+    density = blend_density(list(spec.blend)) if spec.blend else Decimal("920")  # default LDPE density ~920 kg/m3
     thickness_m = _um_to_m(spec.thickness_um)
     kg_per_m2 = density * thickness_m
     kg_per_unit = area_per_unit_m2 * kg_per_m2
@@ -76,9 +77,15 @@ def compute_dimensions(spec: SpecDTO) -> Dimensions:
 
 def compute_material_costs(spec: SpecDTO, dims: Dimensions, ratebook: RateBook, quantity_units: Optional[int], total_kg: Optional[Decimal]) -> MaterialBreakdown:
     resin_cost_per_kg = lookup_resin_price_per_kg(list(spec.blend), ratebook) if spec.blend else Decimal("0")
-    colour_cost_per_kg = lookup_colour_cost_per_kg(spec.colour_code, spec.colour_strength_pct, ratebook, opaque_multiplier_enabled=bool(spec.opacity_pct and spec.opacity_pct > 0))
+    colour_cost_per_kg = lookup_colour_cost_per_kg(spec.colour_code, spec.colour_strength_pct, ratebook)
     additives_cost_per_kg = lookup_additives_cost_per_kg(spec.additives, ratebook)
-    material_cost_per_kg = resin_cost_per_kg + colour_cost_per_kg + additives_cost_per_kg
+    material_cost_per_kg = lookup_compound_material_cost_per_kg(
+        components=list(spec.blend),
+        colour_code=spec.colour_code,
+        strength_pct=spec.colour_strength_pct,
+        additives=spec.additives,
+        ratebook=ratebook,
+    )
 
     if total_kg is not None:
         kg_total = total_kg
@@ -160,7 +167,6 @@ def derive_totals_from_request(dims: Dimensions, req: QuantityRequest) -> tuple[
 
 
 def price_and_totals(
-    currency: str,
     dims: Dimensions,
     material: MaterialBreakdown,
     printing: PrintingBreakdown,
@@ -179,7 +185,6 @@ def price_and_totals(
     unit_price = (final_price / Decimal(units)) if units else None
 
     return QuotePreviewResult(
-        currency=currency,  # type: ignore
         kg_per_unit=dims.kg_per_unit if units else None,
         units_per_roll=None,
         totals_kg=material.kg_total,
@@ -198,7 +203,7 @@ def price_and_totals(
     )
 
 
-def preview_quote(currency: str, spec: SpecDTO, ratebook: RateBook, req: QuantityRequest, margin: Decimal) -> QuotePreviewResult:
+def preview_quote(spec: SpecDTO, ratebook: RateBook, req: QuantityRequest, margin: Decimal) -> QuotePreviewResult:
     dims = compute_dimensions(spec)
     units, total_kg, total_m = derive_totals_from_request(dims, req)
     material = compute_material_costs(spec, dims, ratebook, units, total_kg)
@@ -211,7 +216,6 @@ def preview_quote(currency: str, spec: SpecDTO, ratebook: RateBook, req: Quantit
         material_cost_per_kg = material.total_material_cost / material.kg_total
     waste = compute_waste(material_cost_per_kg, ratebook)
     return price_and_totals(
-        currency=currency,
         dims=dims,
         material=material,
         printing=printing,
