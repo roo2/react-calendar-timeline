@@ -17,6 +17,7 @@ IMPORT_PLATE_CUSTOMERS_SCRIPT = (REPO_ROOT / "scripts" / "api_import_plate_custo
 IMPORT_PRINT_PLATES_SCRIPT = (REPO_ROOT / "scripts" / "api_import_print_plates.py").resolve()
 SEED_EXTRUDERS_SCRIPT = (REPO_ROOT / "scripts" / "seed_extruders_from_tsv.py").resolve()
 SEED_WASTE_FACTORS_SCRIPT = (REPO_ROOT / "scripts" / "seed_waste_factors_from_tsv.py").resolve()
+SEED_PRINTING_PRICING_SCRIPT = (REPO_ROOT / "scripts" / "seed_printing_pricing_from_tsv.py").resolve()
 
 
 def _can_import(module: str, python_exe: str) -> bool:
@@ -146,6 +147,7 @@ def main(argv: list[str]) -> int:
         # Seed non-ratecard admin master data from TSVs.
         _run([py, str(SEED_EXTRUDERS_SCRIPT)], env=env)
         _run([py, str(SEED_WASTE_FACTORS_SCRIPT)], env=env)
+        _run([py, str(SEED_PRINTING_PRICING_SCRIPT)], env=env)
     else:
         print("Skipping TSV seeds (--no-migrations).")
 

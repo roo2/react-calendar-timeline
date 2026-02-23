@@ -10,6 +10,15 @@ export type QuoteRatebook = {
     average_kg_hr: number | null
     cost_per_hr: number | null
   }>
+  printing_pricing_tiers?: Array<{
+    method: 'inline' | 'uteco'
+    max_print_width_mm: number
+    num_colours: number
+    min_meters: number
+    min_charge: number | null
+    setup_fee: number | null
+    cost_per_1000m: number
+  }>
   printing_rates: Record<
     string,
     { method: string; cost_per_1000m: number; setup_cost: number; setup_minutes: number; minimum_charge: number; duplex_supported: boolean }
@@ -65,6 +74,7 @@ export type QuotePreview = {
   cost_per_kg: number | null
   extrusion_hours: number | null
   extrusion_waste_minutes: number
+  printing_unavailable_reason?: string | null
   cost_breakdown: {
     material_cost: number
     extrusion_cost: number
@@ -418,13 +428,44 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // Printing
   const pm = inputs.print_method === 'Inline' ? 'inline' : inputs.print_method === 'Uteco' ? 'uteco' : 'none'
   let printingCost = 0
+  let printingUnavailableReason: string | null = null
   if (pm !== 'none') {
-    const rate = ratebook.printing_rates?.[pm]
-    const setupBase = Number(rate?.setup_cost ?? 0)
-    const setup = setupBase + (inputs.num_colours > 0 ? (inputs.num_colours - 1) * (setupBase / 2) : 0)
-    const rateCost = (webLengthM / 1000) * Number(rate?.cost_per_1000m ?? 0)
-    const minCharge = Number(rate?.minimum_charge ?? 0)
-    printingCost = Math.max(setup + rateCost, minCharge)
+    const printWidthMm = Number(inputs.base_width_mm || 0)
+    const numColours = Math.max(0, Math.round(Number(inputs.num_colours || 0)))
+
+    // numColours === 0 is treated as "printing disabled" (no error; cost is 0).
+    if (!Number.isFinite(numColours) || numColours < 1) {
+      // no-op
+    } else if (!Number.isFinite(printWidthMm) || printWidthMm <= 0) {
+      printingUnavailableReason = 'Printing unavailable: base width is required'
+    } else if (pm === 'inline' && printWidthMm > 1000 && numColours > 1) {
+      printingUnavailableReason = 'Printing unavailable: Inline over 1000mm supports single colour only'
+    } else {
+      const tiers = Array.isArray(ratebook.printing_pricing_tiers) ? ratebook.printing_pricing_tiers : []
+      const tier = tiers
+        .filter((t) => t.method === pm && t.num_colours === numColours && t.max_print_width_mm >= printWidthMm)
+        .sort((a, b) => a.max_print_width_mm - b.max_print_width_mm)[0]
+
+      if (!tier) {
+        printingUnavailableReason =
+          pm === 'uteco' && printWidthMm > 1200
+            ? 'Printing unavailable: Uteco max print width is 1200mm'
+            : pm === 'inline' && printWidthMm > 1400
+              ? 'Printing unavailable: Inline max print width is 1400mm'
+              : 'Printing unavailable: no pricing tier configured for this width/colour'
+      } else if (webLengthM < Number(tier.min_meters || 0)) {
+        printingUnavailableReason = `Printing unavailable: below minimum length (${Number(tier.min_meters || 0)}m)`
+      } else {
+        const rateCost = (webLengthM / 1000) * Number(tier.cost_per_1000m || 0)
+        if (pm === 'inline') {
+          const minCharge = Number(tier.min_charge ?? 0)
+          printingCost = Math.max(minCharge, rateCost)
+        } else {
+          const setupFee = Number(tier.setup_fee ?? 0)
+          printingCost = setupFee + rateCost
+        }
+      }
+    }
   }
 
   // Conversion (only for cartons)
@@ -486,6 +527,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
     extrusion_hours: extrusionHours,
     extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
+    printing_unavailable_reason: printingUnavailableReason,
     cost_breakdown: {
       material_cost: roundMoney(materialCost),
       extrusion_cost: roundMoney(extrusionCost),

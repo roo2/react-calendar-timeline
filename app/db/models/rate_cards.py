@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, CheckConstraint, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 
@@ -127,6 +127,30 @@ class PrintingRate(Base):
         CheckConstraint("min_meters >= 0", name="ck_printing_rates_min_m_ge0"),
         CheckConstraint("cost_per_1000m >= 0", name="ck_printing_rates_cost_nonneg"),
         CheckConstraint("setup_minutes >= 0", name="ck_printing_rates_setup_nonneg"),
+    )
+
+
+class PrintingPricingTier(Base):
+    __tablename__ = "printing_pricing_tiers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    method: Mapped[str] = mapped_column(String(16))
+    max_print_width_mm: Mapped[int] = mapped_column(Integer)
+    num_colours: Mapped[int] = mapped_column(Integer)
+    min_meters: Mapped[int] = mapped_column(Integer)
+    min_charge: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    setup_fee: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    cost_per_1000m: Mapped[float] = mapped_column(Numeric(12, 4))
+
+    __table_args__ = (
+        UniqueConstraint("method", "max_print_width_mm", "num_colours", name="uq_printing_pricing_tier"),
+        CheckConstraint("method IN ('inline','uteco')", name="ck_print_tier_method"),
+        CheckConstraint("max_print_width_mm > 0", name="ck_print_tier_max_width_pos"),
+        CheckConstraint("num_colours >= 1", name="ck_print_tier_num_colours_ge1"),
+        CheckConstraint("min_meters >= 0", name="ck_print_tier_min_m_ge0"),
+        CheckConstraint("min_charge IS NULL OR min_charge >= 0", name="ck_print_tier_min_charge_nonneg"),
+        CheckConstraint("setup_fee IS NULL OR setup_fee >= 0", name="ck_print_tier_setup_fee_nonneg"),
+        CheckConstraint("cost_per_1000m >= 0", name="ck_print_tier_cost_nonneg"),
     )
 
 

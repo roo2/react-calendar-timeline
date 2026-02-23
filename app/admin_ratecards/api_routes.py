@@ -16,6 +16,7 @@ from app.db.models.rate_cards import (
     ExtrusionWasteFactor,
     Ink,
     Plate,
+    PrintingPricingTier,
     Resin,
     ResinBlend,
     ResinBlendComponent,
@@ -158,6 +159,23 @@ class ExtrusionWasteFactorDTO(BaseModel):
 
 class ExtrusionWasteFactorUpsertRequest(BaseModel):
     minutes: int = Field(..., ge=0)
+
+
+class PrintingPricingTierDTO(BaseModel):
+    method: str
+    max_print_width_mm: int
+    num_colours: int
+    min_meters: int
+    min_charge: float | None = None
+    setup_fee: float | None = None
+    cost_per_1000m: float
+
+
+class PrintingPricingTierUpsertRequest(BaseModel):
+    min_meters: int = Field(..., ge=0)
+    min_charge: float | None = Field(default=None, ge=0)
+    setup_fee: float | None = Field(default=None, ge=0)
+    cost_per_1000m: float = Field(..., ge=0)
 
 
 @router.get(
@@ -644,4 +662,99 @@ async def upsert_extrusion_waste_factor(factor: str, payload: ExtrusionWasteFact
         w2 = db.get(ExtrusionWasteFactor, key)
         assert w2 is not None
         return ExtrusionWasteFactorDTO(factor=w2.factor, minutes=int(w2.minutes))
+
+
+@router.get(
+    "/printing-pricing-tiers",
+    response_model=List[PrintingPricingTierDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_printing_pricing_tiers():
+    with SessionLocal() as db:
+        rows = (
+            db.execute(
+                select(PrintingPricingTier).order_by(
+                    PrintingPricingTier.method.asc(),
+                    PrintingPricingTier.max_print_width_mm.asc(),
+                    PrintingPricingTier.num_colours.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            PrintingPricingTierDTO(
+                method=str(r.method),
+                max_print_width_mm=int(r.max_print_width_mm),
+                num_colours=int(r.num_colours),
+                min_meters=int(r.min_meters),
+                min_charge=float(r.min_charge) if r.min_charge is not None else None,
+                setup_fee=float(r.setup_fee) if r.setup_fee is not None else None,
+                cost_per_1000m=float(r.cost_per_1000m),
+            )
+            for r in rows
+        ]
+
+
+@router.put(
+    "/printing-pricing-tiers/{method}/{max_print_width_mm}/{num_colours}",
+    response_model=PrintingPricingTierDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_printing_pricing_tier(
+    method: str,
+    max_print_width_mm: int,
+    num_colours: int,
+    payload: PrintingPricingTierUpsertRequest,
+):
+    m = (method or "").strip().lower()
+    if m not in {"inline", "uteco"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="method must be inline or uteco")
+    if max_print_width_mm <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_print_width_mm must be > 0")
+    if num_colours < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="num_colours must be >= 1")
+
+    with SessionLocal.begin() as db:
+        row = (
+            db.execute(
+                select(PrintingPricingTier).where(
+                    PrintingPricingTier.method == m,
+                    PrintingPricingTier.max_print_width_mm == max_print_width_mm,
+                    PrintingPricingTier.num_colours == num_colours,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if not row:
+            row = PrintingPricingTier(method=m, max_print_width_mm=max_print_width_mm, num_colours=num_colours)
+            db.add(row)
+        row.min_meters = payload.min_meters
+        row.min_charge = payload.min_charge
+        row.setup_fee = payload.setup_fee
+        row.cost_per_1000m = payload.cost_per_1000m
+
+    with SessionLocal() as db:
+        r2 = (
+            db.execute(
+                select(PrintingPricingTier).where(
+                    PrintingPricingTier.method == m,
+                    PrintingPricingTier.max_print_width_mm == max_print_width_mm,
+                    PrintingPricingTier.num_colours == num_colours,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert r2 is not None
+        return PrintingPricingTierDTO(
+            method=str(r2.method),
+            max_print_width_mm=int(r2.max_print_width_mm),
+            num_colours=int(r2.num_colours),
+            min_meters=int(r2.min_meters),
+            min_charge=float(r2.min_charge) if r2.min_charge is not None else None,
+            setup_fee=float(r2.setup_fee) if r2.setup_fee is not None else None,
+            cost_per_1000m=float(r2.cost_per_1000m),
+        )
 

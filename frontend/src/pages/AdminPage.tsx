@@ -61,6 +61,16 @@ type Plate = {
   description?: string | null
 }
 
+type PrintingPricingTier = {
+  method: 'inline' | 'uteco'
+  max_print_width_mm: number
+  num_colours: number
+  min_meters: number
+  min_charge?: number | null
+  setup_fee?: number | null
+  cost_per_1000m: number
+}
+
 type Extruder = {
   extruder_code: string
   model?: string | null
@@ -91,6 +101,7 @@ export function AdminPage() {
   const [extrusionWasteFactors, setExtrusionWasteFactors] = useState<ExtrusionWasteFactor[]>([])
   const [inks, setInks] = useState<Ink[]>([])
   const [plates, setPlates] = useState<Plate[]>([])
+  const [printingPricingTiers, setPrintingPricingTiers] = useState<PrintingPricingTier[]>([])
   const [customers, setCustomers] = useState<CustomerSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -102,6 +113,7 @@ export function AdminPage() {
   const [savingExtrusionWasteFactor, setSavingExtrusionWasteFactor] = useState<string | null>(null)
   const [savingInkCode, setSavingInkCode] = useState<string | null>(null)
   const [savingPlateKey, setSavingPlateKey] = useState<string | null>(null)
+  const [savingPrintingTierKey, setSavingPrintingTierKey] = useState<string | null>(null)
   const [resinBlends, setResinBlends] = useState<ResinBlend[]>([])
   const [savingBlendCode, setSavingBlendCode] = useState<string | null>(null)
 
@@ -209,6 +221,8 @@ export function AdminPage() {
         setInks(inkRows)
         const plateRows = await apiFetch<Plate[]>('/api/admin/rate-cards/plates')
         setPlates(plateRows)
+        const pt = await apiFetch<PrintingPricingTier[]>('/api/admin/rate-cards/printing-pricing-tiers')
+        setPrintingPricingTiers(pt)
         const custRes = await apiFetch<{ items: CustomerSummary[] }>('/api/customers')
         setCustomers(custRes.items || [])
         const blends = await apiFetch<ResinBlend[]>('/api/admin/rate-cards/resin-blends')
@@ -451,6 +465,41 @@ export function AdminPage() {
       setErr(e instanceof Error ? e.message : 'Failed to save plate')
     } finally {
       setSavingPlateKey(null)
+    }
+  }
+
+  async function savePrintingPricingTier(
+    key: { method: string; max_print_width_mm: number; num_colours: number },
+    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>,
+  ) {
+    const m = (key.method || '').trim().toLowerCase()
+    if (!m) return
+    try {
+      setErr(null)
+      const k = `${m}:${key.max_print_width_mm}:${key.num_colours}`
+      setSavingPrintingTierKey(k)
+      const saved = await apiFetch<PrintingPricingTier>(
+        `/api/admin/rate-cards/printing-pricing-tiers/${encodeURIComponent(m)}/${encodeURIComponent(String(key.max_print_width_mm))}/${encodeURIComponent(
+          String(key.num_colours),
+        )}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(patch),
+        },
+      )
+      setPrintingPricingTiers((cur) => {
+        const idx = cur.findIndex(
+          (t) => t.method === saved.method && t.max_print_width_mm === saved.max_print_width_mm && t.num_colours === saved.num_colours,
+        )
+        if (idx === -1) return [...cur, saved].sort((a, b) => a.method.localeCompare(b.method) || a.max_print_width_mm - b.max_print_width_mm || a.num_colours - b.num_colours)
+        const next = cur.slice()
+        next[idx] = saved
+        return next
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save printing tier')
+    } finally {
+      setSavingPrintingTierKey(null)
     }
   }
 
@@ -915,6 +964,42 @@ export function AdminPage() {
               <Typography variant="body2" color="text.secondary">
                 Configure inks and customer plate libraries used by inline printing setup.
               </Typography>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                Printing pricing tiers
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                {loading ? (
+                  <Typography color="text.secondary">Loading…</Typography>
+                ) : (
+                  <Table size="small" sx={{ width: '100%' }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: 90 }}>Method</TableCell>
+                        <TableCell sx={{ width: 110 }}>Max width</TableCell>
+                        <TableCell sx={{ width: 90 }}>Colours</TableCell>
+                        <TableCell sx={{ width: 120 }}>Min meters</TableCell>
+                        <TableCell sx={{ width: 140 }}>Min charge</TableCell>
+                        <TableCell sx={{ width: 140 }}>Setup fee</TableCell>
+                        <TableCell sx={{ width: 140 }}>$ / 1000m</TableCell>
+                        <TableCell sx={{ width: 140 }} />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {printingPricingTiers.map((t) => (
+                        <PrintingPricingTierRow
+                          key={`${t.method}:${t.max_print_width_mm}:${t.num_colours}`}
+                          tier={t}
+                          saving={savingPrintingTierKey === `${t.method}:${t.max_print_width_mm}:${t.num_colours}`}
+                          onSave={savePrintingPricingTier}
+                        />
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </Paper>
             </Box>
 
             <Box>
@@ -1458,6 +1543,92 @@ function ExtrusionWasteFactorRow(props: {
           variant="outlined"
           disabled={saving || !dirty || minutes === '' || Number(minutes) < 0}
           onClick={() => void onSave(wasteFactor.factor, { minutes: Number(minutes) })}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function PrintingPricingTierRow(props: {
+  tier: PrintingPricingTier
+  saving: boolean
+  onSave: (
+    key: { method: string; max_print_width_mm: number; num_colours: number },
+    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>,
+  ) => Promise<void>
+}) {
+  const { tier, saving, onSave } = props
+  const [minMeters, setMinMeters] = useState<number | ''>(tier.min_meters)
+  const [minCharge, setMinCharge] = useState<number | ''>(tier.min_charge ?? '')
+  const [setupFee, setSetupFee] = useState<number | ''>(tier.setup_fee ?? '')
+  const [rate, setRate] = useState<number | ''>(tier.cost_per_1000m)
+
+  const isInline = tier.method === 'inline'
+  const isUteco = tier.method === 'uteco'
+
+  const dirty =
+    minMeters !== tier.min_meters ||
+    (isInline ? minCharge !== (tier.min_charge ?? '') : false) ||
+    (isUteco ? setupFee !== (tier.setup_fee ?? '') : false) ||
+    rate !== tier.cost_per_1000m
+
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{tier.method}</TableCell>
+      <TableCell>{tier.max_print_width_mm}</TableCell>
+      <TableCell>{tier.num_colours}</TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'numeric', min: 0, step: 1 }}
+          value={minMeters}
+          onChange={(e) => setMinMeters(e.target.value ? parseInt(e.target.value, 10) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }}
+          value={isInline ? minCharge : ''}
+          disabled={!isInline}
+          onChange={(e) => setMinCharge(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }}
+          value={isUteco ? setupFee : ''}
+          disabled={!isUteco}
+          onChange={(e) => setSetupFee(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }}
+          value={rate}
+          onChange={(e) => setRate(e.target.value ? parseFloat(e.target.value) : '')}
+        />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || minMeters === '' || rate === ''}
+          onClick={() =>
+            void onSave(
+              { method: tier.method, max_print_width_mm: tier.max_print_width_mm, num_colours: tier.num_colours },
+              {
+                min_meters: Number(minMeters),
+                min_charge: isInline ? (minCharge === '' ? null : Number(minCharge)) : null,
+                setup_fee: isUteco ? (setupFee === '' ? null : Number(setupFee)) : null,
+                cost_per_1000m: Number(rate),
+              },
+            )
+          }
         >
           {saving ? 'Saving…' : 'Save'}
         </Button>

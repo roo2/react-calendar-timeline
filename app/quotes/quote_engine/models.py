@@ -70,6 +70,16 @@ class PrintingRate(BaseModel):
     duplex_supported: bool = True
 
 
+class PrintingPricingTier(BaseModel):
+    method: Literal["inline", "uteco"]
+    max_print_width_mm: int = Field(..., gt=0)
+    num_colours: int = Field(..., ge=1)
+    min_meters: int = Field(..., ge=0)
+    min_charge: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
+    setup_fee: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
+    cost_per_1000m: Decimal = Field(..., ge=Decimal("0"))
+
+
 class ConversionRate(BaseModel):
     bags_per_minute: Decimal
     roll_change_penalty_minutes: Decimal = Decimal("0")
@@ -92,6 +102,7 @@ class RateBook(BaseModel):
     colours_price_per_kg: dict[str, Decimal] = Field(default_factory=dict)
     core: Optional[CoreCost] = None
     printing_rates: dict[str, PrintingRate] = Field(default_factory=dict)  # key = method
+    printing_pricing_tiers: list[PrintingPricingTier] = Field(default_factory=list)
     conversion_rate: Optional[ConversionRate] = None
     waste_adders: list[WasteAdder] = Field(default_factory=list)
     extrusion_throughput_kg_per_hr: Decimal = Decimal("0")  # used for waste calc

@@ -22,6 +22,7 @@ from .selectors import (
     lookup_colour_cost_per_kg,
     lookup_additives_cost_per_kg,
     select_printing_rate,
+    select_printing_pricing_tier,
     select_conversion_rate,
 )
 
@@ -109,6 +110,41 @@ def compute_printing_cost(spec: SpecDTO, web_length_m: Decimal, ratebook: RateBo
     if spec.print_method == "none":
         return PrintingBreakdown(enabled=False, method="none", total_cost=Decimal("0"), setup_cost=Decimal("0"), rate_cost=Decimal("0"))
 
+    # Prefer tiered pricing if configured (per-width/per-colour; includes min-length gating).
+    if ratebook.printing_pricing_tiers:
+        tier = select_printing_pricing_tier(
+            method=spec.print_method,
+            print_width_mm=spec.base_width_mm,
+            num_colours=int(spec.num_colours or 0),
+            web_length_m=web_length_m,
+            ratebook=ratebook,
+        )
+        if not tier:
+            return PrintingBreakdown(
+                enabled=False,
+                method=spec.print_method,
+                total_cost=Decimal("0"),
+                setup_cost=Decimal("0"),
+                rate_cost=Decimal("0"),
+            )
+
+        rate_cost = (web_length_m / Decimal("1000")) * tier.cost_per_1000m
+        if tier.method == "inline":
+            min_charge = tier.min_charge or Decimal("0")
+            total = max(min_charge, rate_cost)
+            setup_cost = Decimal("0")
+        else:
+            setup_cost = tier.setup_fee or Decimal("0")
+            total = setup_cost + rate_cost
+        return PrintingBreakdown(
+            enabled=True,
+            method=spec.print_method,
+            total_cost=total,
+            setup_cost=setup_cost,
+            rate_cost=rate_cost,
+        )
+
+    # Fallback to legacy single-row printing_rates.
     rate = select_printing_rate(spec.print_method, ratebook)
     setup = rate.setup_cost
     # Scale setup by colour count as a simple heuristic (can be refined)
@@ -118,13 +154,7 @@ def compute_printing_cost(spec: SpecDTO, web_length_m: Decimal, ratebook: RateBo
     rate_cost = (web_length_m / Decimal("1000")) * rate.cost_per_1000m
     total = max(setup + rate_cost, rate.minimum_charge)
 
-    return PrintingBreakdown(
-        enabled=True,
-        method=spec.print_method,
-        total_cost=total,
-        setup_cost=setup,
-        rate_cost=rate_cost,
-    )
+    return PrintingBreakdown(enabled=True, method=spec.print_method, total_cost=total, setup_cost=setup, rate_cost=rate_cost)
 
 
 def compute_conversion_cost(spec: SpecDTO, quantity_units: Optional[int], ratebook: RateBook) -> ConversionBreakdown:

@@ -6,6 +6,7 @@ from .models import (
     ResinComponent,
     RateBook,
     PrintingRate,
+    PrintingPricingTier,
     ConversionRate,
     PrintMethod,
 )
@@ -113,6 +114,33 @@ def select_printing_rate(method: PrintMethod, ratebook: RateBook) -> PrintingRat
     if rate is None:
         raise MissingRateError(f"Missing printing rate for method={method}")
     return rate
+
+
+def select_printing_pricing_tier(
+    *,
+    method: PrintMethod,
+    print_width_mm: Decimal,
+    num_colours: int,
+    web_length_m: Decimal,
+    ratebook: RateBook,
+) -> Optional[PrintingPricingTier]:
+    if method not in {"inline", "uteco"}:
+        return None
+    if num_colours < 1:
+        return None
+    if print_width_mm <= 0:
+        return None
+    if method == "inline" and print_width_mm > 1000 and num_colours > 1:
+        return None
+
+    tiers = [t for t in (ratebook.printing_pricing_tiers or []) if t.method == method and t.num_colours == num_colours and t.max_print_width_mm >= int(print_width_mm)]
+    if not tiers:
+        return None
+    tiers.sort(key=lambda t: t.max_print_width_mm)
+    tier = tiers[0]
+    if web_length_m < Decimal(str(tier.min_meters)):
+        return None
+    return tier
 
 
 def select_conversion_rate(ratebook: RateBook) -> ConversionRate:

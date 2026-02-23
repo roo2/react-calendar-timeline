@@ -253,6 +253,7 @@ export function QuotesPage() {
   const [quickMargin, setQuickMargin] = useState('0.20')
   const [quickPreview, setQuickPreview] = useState<any>(null)
   const [calcLoading, setCalcLoading] = useState(false)
+  const [printingError, setPrintingError] = useState<string | null>(null)
 
   const showNumColours = printMethod && printMethod !== 'None'
   const canHaveGusset = productTypeCanHaveGusset(productType)
@@ -389,7 +390,7 @@ export function QuotesPage() {
     thicknessUmNum > 0 &&
     baseLengthMm > 0 &&
     (!(canHaveGusset && flagGusset) || gussetReturnMmNum > 0) &&
-    (!flagPrinted || (printMethod !== 'None' && Number(numColours || 0) >= 1)) &&
+    (!flagPrinted || (printMethod !== 'None' && (Number(numColours || 0) >= 1 || !!printingError))) &&
     (finishMode !== 'Cartons' || Number(bagsPerCarton || 0) >= 1)
 
   const missingForCalc = useMemo(() => {
@@ -403,7 +404,7 @@ export function QuotesPage() {
     if (!(baseLengthMm > 0)) missing.push('Length')
     if (canHaveGusset && flagGusset && !(gussetReturnMmNum > 0)) missing.push('Gusset Return')
     if (flagPrinted && !(printMethod !== 'None')) missing.push('Print Method')
-    if (flagPrinted && showNumColours && !(Number(numColours || 0) >= 1)) missing.push('No. Colours')
+    if (flagPrinted && showNumColours && !(Number(numColours || 0) >= 1) && !printingError) missing.push('No. Colours')
     if (finishMode === 'Cartons' && !(Number(bagsPerCarton || 0) >= 1)) missing.push('Bags/Carton')
     return missing
   }, [
@@ -417,6 +418,7 @@ export function QuotesPage() {
     isUFilm,
     numColours,
     printMethod,
+    printingError,
     qtyKgNum,
     qtyType,
     qtyUnitsNum,
@@ -684,6 +686,24 @@ export function QuotesPage() {
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canCalculate, calcPayload, ratebook])
+
+  useEffect(() => {
+    const reason = quickPreview?.printing_unavailable_reason ? String(quickPreview.printing_unavailable_reason) : null
+    if (reason) {
+      setPrintingError(reason)
+      if (numColours !== '0') setNumColours('0')
+    }
+  }, [quickPreview?.printing_unavailable_reason, numColours])
+
+  useEffect(() => {
+    if (!flagPrinted || printMethod === 'None') {
+      setPrintingError(null)
+      return
+    }
+    if (Number(numColours || 0) >= 1 && quickPreview && !quickPreview?.printing_unavailable_reason) {
+      setPrintingError(null)
+    }
+  }, [flagPrinted, numColours, printMethod, quickPreview, quickPreview?.printing_unavailable_reason])
 
   return (
     <Stack spacing={2}>
@@ -1016,9 +1036,20 @@ export function QuotesPage() {
                   ))}
                 </DefaultSelectField>
                 {showNumColours ? (
-                  <TextField label="Number of Colours" type="number" value={numColours} onChange={(e) => setNumColours(e.target.value)} />
+                  <TextField
+                    label="Number of Colours"
+                    type="number"
+                    value={numColours}
+                    onChange={(e) => setNumColours(e.target.value)}
+                    disabled={!!printingError}
+                  />
                 ) : null}
               </Box>
+              {printingError ? (
+                <Alert severity="warning" sx={{ mt: 2 }}>
+                  {printingError}
+                </Alert>
+              ) : null}
             </Paper>
 
             <Paper variant="outlined" sx={{ p: 2 }}>

@@ -8,6 +8,7 @@ from app.quotes.quote_engine.models import (
     ResinComponent,
     RateBook,
     PrintingRate,
+    PrintingPricingTier,
     ConversionRate,
     WasteAdder,
     QuotePreviewResult,
@@ -71,11 +72,28 @@ def _map_ratebook(rb: dict[str, Any]) -> RateBook:
         WasteAdder(condition=item.get("condition", ""), waste_minutes=Decimal(str(item["waste_minutes"])))
         for item in rb.get("waste_adders", [])
     ]
+    printing_pricing_tiers = []
+    for t in rb.get("printing_pricing_tiers", []) or []:
+        try:
+            printing_pricing_tiers.append(
+                PrintingPricingTier(
+                    method=str(t.get("method", "")).strip().lower(),
+                    max_print_width_mm=int(t.get("max_print_width_mm", 0)),
+                    num_colours=int(t.get("num_colours", 0)),
+                    min_meters=int(t.get("min_meters", 0)),
+                    min_charge=Decimal(str(t.get("min_charge"))) if t.get("min_charge") is not None else None,
+                    setup_fee=Decimal(str(t.get("setup_fee"))) if t.get("setup_fee") is not None else None,
+                    cost_per_1000m=Decimal(str(t.get("cost_per_1000m", "0"))),
+                )
+            )
+        except Exception:
+            continue
     return RateBook(
         resins_price_per_kg={k: Decimal(str(v)) for k, v in rb.get("resins_price_per_kg", {}).items()},
         additives_price_per_kg={k: Decimal(str(v)) for k, v in rb.get("additives_price_per_kg", {}).items()},
         colours_price_per_kg={k: Decimal(str(v)) for k, v in rb.get("colours_price_per_kg", {}).items()},
         printing_rates=printing_rates,
+        printing_pricing_tiers=printing_pricing_tiers,
         conversion_rate=conversion,
         waste_adders=waste_adders,
         extrusion_throughput_kg_per_hr=Decimal(str(rb.get("extrusion_throughput_kg_per_hr", "0"))),

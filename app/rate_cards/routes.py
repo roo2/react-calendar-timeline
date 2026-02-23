@@ -14,6 +14,7 @@ from app.db.models.rate_cards import (
     Ink,
     Plate,
     PrintingRate,
+    PrintingPricingTier,
     Resin,
     ResinBlend,
     ResinBlendComponent,
@@ -125,6 +126,21 @@ async def get_ratebook():
                 PrintingRate.duplex_supported,
             )
         ).all()
+        printing_pricing_tiers = db.execute(
+            select(
+                PrintingPricingTier.method,
+                PrintingPricingTier.max_print_width_mm,
+                PrintingPricingTier.num_colours,
+                PrintingPricingTier.min_meters,
+                PrintingPricingTier.min_charge,
+                PrintingPricingTier.setup_fee,
+                PrintingPricingTier.cost_per_1000m,
+            ).order_by(
+                PrintingPricingTier.method.asc(),
+                PrintingPricingTier.max_print_width_mm.asc(),
+                PrintingPricingTier.num_colours.asc(),
+            )
+        ).all()
         conversion_rates = db.execute(
             select(
                 ConversionRate.min_gauge_um,
@@ -187,6 +203,18 @@ async def get_ratebook():
             for code, model, dw, avg, cph in extruders
         ],
         "printing_rates": out_printing,
+        "printing_pricing_tiers": [
+            {
+                "method": str(method),
+                "max_print_width_mm": int(max_w),
+                "num_colours": int(nc),
+                "min_meters": int(min_m),
+                "min_charge": (float(min_charge) if min_charge is not None else None),
+                "setup_fee": (float(setup_fee) if setup_fee is not None else None),
+                "cost_per_1000m": float(cost_1000m),
+            }
+            for method, max_w, nc, min_m, min_charge, setup_fee, cost_1000m in printing_pricing_tiers
+        ],
         "conversion_rates": [
             {
                 "min_gauge_um": int(min_g),

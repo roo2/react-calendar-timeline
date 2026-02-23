@@ -892,6 +892,26 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "printing_pricing_tiers",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("method", sa.String(length=16), nullable=False),
+        sa.Column("max_print_width_mm", sa.Integer(), nullable=False),
+        sa.Column("num_colours", sa.Integer(), nullable=False),
+        sa.Column("min_meters", sa.Integer(), nullable=False),
+        sa.Column("min_charge", sa.Numeric(12, 4), nullable=True),
+        sa.Column("setup_fee", sa.Numeric(12, 4), nullable=True),
+        sa.Column("cost_per_1000m", sa.Numeric(12, 4), nullable=False),
+        sa.UniqueConstraint("method", "max_print_width_mm", "num_colours", name="uq_printing_pricing_tier"),
+        sa.CheckConstraint("method IN ('inline','uteco')", name="ck_print_tier_method"),
+        sa.CheckConstraint("max_print_width_mm > 0", name="ck_print_tier_max_width_pos"),
+        sa.CheckConstraint("num_colours >= 1", name="ck_print_tier_num_colours_ge1"),
+        sa.CheckConstraint("min_meters >= 0", name="ck_print_tier_min_m_ge0"),
+        sa.CheckConstraint("min_charge IS NULL OR min_charge >= 0", name="ck_print_tier_min_charge_nonneg"),
+        sa.CheckConstraint("setup_fee IS NULL OR setup_fee >= 0", name="ck_print_tier_setup_fee_nonneg"),
+        sa.CheckConstraint("cost_per_1000m >= 0", name="ck_print_tier_cost_nonneg"),
+    )
+
+    op.create_table(
         "printing_rates",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("method", sa.Enum(name="printing_method", native_enum=False), nullable=False),
@@ -938,6 +958,7 @@ def downgrade() -> None:
     op.drop_table("waste_adders")
     op.drop_table("conversion_rates")
     op.drop_table("printing_rates")
+    op.drop_table("printing_pricing_tiers")
     op.drop_table("extrusion_waste_factors")
     op.drop_table("extruders")
     op.drop_table("cores")
