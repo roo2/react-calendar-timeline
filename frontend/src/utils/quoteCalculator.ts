@@ -89,6 +89,61 @@ export type QuotePreview = {
   unit_price: number | null
 }
 
+export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): { printing_cost: number; printing_unavailable_reason: string | null } {
+  const d = computeDerivedGeometryAndTotals(inputs, ratebook)
+  const webLengthM = d.webLengthM
+  if (!(webLengthM > 0)) return { printing_cost: 0, printing_unavailable_reason: null }
+
+  const pm = inputs.print_method === 'Inline' ? 'inline' : inputs.print_method === 'Uteco' ? 'uteco' : 'none'
+  let printingCost = 0
+  let printingUnavailableReason: string | null = null
+
+  if (pm !== 'none') {
+    const printWidthMm = Number(inputs.base_width_mm || 0)
+    const numColours = Math.max(0, Math.round(Number(inputs.num_colours || 0)))
+
+    // numColours === 0 is treated as "printing disabled" (no error; cost is 0).
+    if (!Number.isFinite(numColours) || numColours < 1) {
+      // no-op
+    } else if (!Number.isFinite(printWidthMm) || printWidthMm <= 0) {
+      printingUnavailableReason = 'Printing unavailable: base width is required'
+    } else if (pm === 'inline' && printWidthMm > 1000 && numColours > 1) {
+      printingUnavailableReason = 'Printing unavailable: Inline over 1000mm supports single colour only'
+    } else {
+      const tiers = Array.isArray(ratebook.printing_pricing_tiers) ? ratebook.printing_pricing_tiers : []
+      const tier = tiers
+        .filter((t) => t.method === pm && t.num_colours === numColours && t.max_print_width_mm >= printWidthMm)
+        .sort((a, b) => a.max_print_width_mm - b.max_print_width_mm)[0]
+
+      if (!tier) {
+        printingUnavailableReason =
+          pm === 'uteco' && printWidthMm > 1200
+            ? 'Printing unavailable: Uteco max print width is 1200mm'
+            : pm === 'inline' && printWidthMm > 1400
+              ? 'Printing unavailable: Inline max print width is 1400mm'
+              : 'Printing unavailable: no pricing tier configured for this width/colour'
+      } else if (webLengthM < Number(tier.min_meters || 0)) {
+        printingUnavailableReason = `Printing unavailable: below minimum length (${Number(tier.min_meters || 0)}m)`
+      } else {
+        const rateCost = (webLengthM / 1000) * Number(tier.cost_per_1000m || 0)
+        if (pm === 'inline') {
+          const minCharge = Number(tier.min_charge ?? 0)
+          printingCost = Math.max(minCharge, rateCost)
+        } else {
+          const setupFee = Number(tier.setup_fee ?? 0)
+          printingCost = setupFee + rateCost
+        }
+      }
+    }
+  }
+
+  return { printing_cost: printingCost, printing_unavailable_reason: printingUnavailableReason }
+}
+
+export function computePrintingUnavailableReason(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): string | null {
+  return computePrinting(inputs, ratebook).printing_unavailable_reason
+}
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
@@ -348,7 +403,6 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const kgPerUnit = d.kgPerUnit
   const yieldMPerKg = d.yieldMPerKg
   const derivedTotalKg = d.derivedTotalKg
-  const webLengthM = d.webLengthM
   const kgPerRoll = d.kgPerRoll
   const mPerRoll = d.mPerRoll
 
@@ -425,48 +479,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     }
   }
 
-  // Printing
-  const pm = inputs.print_method === 'Inline' ? 'inline' : inputs.print_method === 'Uteco' ? 'uteco' : 'none'
-  let printingCost = 0
-  let printingUnavailableReason: string | null = null
-  if (pm !== 'none') {
-    const printWidthMm = Number(inputs.base_width_mm || 0)
-    const numColours = Math.max(0, Math.round(Number(inputs.num_colours || 0)))
-
-    // numColours === 0 is treated as "printing disabled" (no error; cost is 0).
-    if (!Number.isFinite(numColours) || numColours < 1) {
-      // no-op
-    } else if (!Number.isFinite(printWidthMm) || printWidthMm <= 0) {
-      printingUnavailableReason = 'Printing unavailable: base width is required'
-    } else if (pm === 'inline' && printWidthMm > 1000 && numColours > 1) {
-      printingUnavailableReason = 'Printing unavailable: Inline over 1000mm supports single colour only'
-    } else {
-      const tiers = Array.isArray(ratebook.printing_pricing_tiers) ? ratebook.printing_pricing_tiers : []
-      const tier = tiers
-        .filter((t) => t.method === pm && t.num_colours === numColours && t.max_print_width_mm >= printWidthMm)
-        .sort((a, b) => a.max_print_width_mm - b.max_print_width_mm)[0]
-
-      if (!tier) {
-        printingUnavailableReason =
-          pm === 'uteco' && printWidthMm > 1200
-            ? 'Printing unavailable: Uteco max print width is 1200mm'
-            : pm === 'inline' && printWidthMm > 1400
-              ? 'Printing unavailable: Inline max print width is 1400mm'
-              : 'Printing unavailable: no pricing tier configured for this width/colour'
-      } else if (webLengthM < Number(tier.min_meters || 0)) {
-        printingUnavailableReason = `Printing unavailable: below minimum length (${Number(tier.min_meters || 0)}m)`
-      } else {
-        const rateCost = (webLengthM / 1000) * Number(tier.cost_per_1000m || 0)
-        if (pm === 'inline') {
-          const minCharge = Number(tier.min_charge ?? 0)
-          printingCost = Math.max(minCharge, rateCost)
-        } else {
-          const setupFee = Number(tier.setup_fee ?? 0)
-          printingCost = setupFee + rateCost
-        }
-      }
-    }
-  }
+  const { printing_cost: printingCost, printing_unavailable_reason: printingUnavailableReason } = computePrinting(inputs, ratebook)
 
   // Conversion (only for cartons)
   let conversionCost = 0

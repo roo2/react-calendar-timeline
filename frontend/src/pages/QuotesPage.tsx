@@ -29,6 +29,7 @@ import { productTypeCanHaveGusset } from '../utils/specCompat'
 import {
   computeAppliedExtrusionWasteFactors,
   computeLayflatWidthMm,
+  computePrintingUnavailableReason,
   computeQuickQuotePreview,
   type AppliedExtrusionWasteFactor,
   type QuickQuoteInputs,
@@ -242,6 +243,7 @@ export function QuotesPage() {
   // Printing
   const [printMethod, setPrintMethod] = useState<'None' | 'Inline' | 'Uteco'>('None')
   const [numColours, setNumColours] = useState('')
+  const [desiredNumColours, setDesiredNumColours] = useState('')
 
   // Packaging
   const [coreType, setCoreType] = useState('7mm')
@@ -333,10 +335,12 @@ export function QuotesPage() {
     if (!next) {
       setPrintMethod('None')
       setNumColours('')
+      setDesiredNumColours('')
       return
     }
     if (printMethod === 'None') setPrintMethod('Inline')
     if (!numColours) setNumColours('1')
+    if (!desiredNumColours) setDesiredNumColours('1')
   }
 
   function onChangePrintMethod(next: 'None' | 'Inline' | 'Uteco') {
@@ -345,9 +349,11 @@ export function QuotesPage() {
     setFlagPrinted(enabled)
     if (!enabled) {
       setNumColours('')
+      setDesiredNumColours('')
       return
     }
     if (!numColours) setNumColours('1')
+    if (!desiredNumColours) setDesiredNumColours('1')
   }
 
   const trimPct: number | null = useMemo(() => {
@@ -687,23 +693,34 @@ export function QuotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canCalculate, calcPayload, ratebook])
 
-  useEffect(() => {
-    const reason = quickPreview?.printing_unavailable_reason ? String(quickPreview.printing_unavailable_reason) : null
-    if (reason) {
-      setPrintingError(reason)
-      if (numColours !== '0') setNumColours('0')
+  const printingErrorComputed: string | null = useMemo(() => {
+    if (!ratebook) return null
+    if (!flagPrinted || printMethod === 'None') return null
+    const desired = Number(desiredNumColours || 0)
+    if (!Number.isFinite(desired) || desired < 1) return null
+    const inputsForPrint: QuickQuoteInputs = {
+      ...calcInputs,
+      print_method: printMethod,
+      num_colours: desired,
     }
-  }, [quickPreview?.printing_unavailable_reason, numColours])
+    return computePrintingUnavailableReason(inputsForPrint, ratebook)
+  }, [calcInputs, desiredNumColours, flagPrinted, printMethod, ratebook])
 
   useEffect(() => {
-    if (!flagPrinted || printMethod === 'None') {
-      setPrintingError(null)
+    if (printingErrorComputed) {
+      setPrintingError(printingErrorComputed)
+      if (numColours !== '0') setNumColours('0')
       return
     }
-    if (Number(numColours || 0) >= 1 && quickPreview && !quickPreview?.printing_unavailable_reason) {
-      setPrintingError(null)
+
+    setPrintingError(null)
+
+    // If the error cleared, restore the user's desired value so printing resumes automatically.
+    if (flagPrinted && printMethod !== 'None') {
+      const desired = desiredNumColours.trim()
+      if (numColours === '0' && Number(desired || 0) >= 1) setNumColours(desired)
     }
-  }, [flagPrinted, numColours, printMethod, quickPreview, quickPreview?.printing_unavailable_reason])
+  }, [desiredNumColours, flagPrinted, numColours, printMethod, printingErrorComputed])
 
   return (
     <Stack spacing={2}>
@@ -1040,7 +1057,10 @@ export function QuotesPage() {
                     label="Number of Colours"
                     type="number"
                     value={numColours}
-                    onChange={(e) => setNumColours(e.target.value)}
+                    onChange={(e) => {
+                      setNumColours(e.target.value)
+                      setDesiredNumColours(e.target.value)
+                    }}
                     disabled={!!printingError}
                   />
                 ) : null}
