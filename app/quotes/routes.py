@@ -10,9 +10,10 @@ from app.quotes.schemas import QuoteCalculateRequest, QuickQuoteCalculateRequest
 from app.quotes.service import calculate_preview as svc_calculate_preview, quick_calculate_preview as svc_quick_calc
 from app.db.session import SessionLocal
 from sqlalchemy import select
-from app.db.models.domain import Product, ProductVersion, Customer
+from app.db.models.domain import Product, ProductVersion, Customer, Machine
 from app.db.models.rate_cards import Resin, Colour, Additive, Core
 from app.products.schemas import ProductType, Geometry, PrintMethod, FinishMode
+from app.db.models.enums import MachineType
 
 router = APIRouter(prefix="/api/quotes", tags=["quotes"])
 
@@ -66,6 +67,7 @@ async def quotes_bootstrap(identity=Depends(current_identity)):
     colours: list[dict] = []
     additives: list[dict] = []
     cores: list[dict] = []
+    extruders: list[dict] = []
     enums = {
         "product_types": [pt.value for pt in ProductType],
         "geometries": [g.value for g in Geometry],
@@ -99,11 +101,27 @@ async def quotes_bootstrap(identity=Depends(current_identity)):
         ]
         cores = [{"type": c[0], "description": c[1] or ""} for c in db.execute(select(Core.core_type, Core.description).order_by(Core.core_type)).all()]
 
+        for code, cap in db.execute(
+            select(Machine.code, Machine.capability)
+            .where(Machine.active.is_(True))
+            .where(Machine.type == MachineType.EXTRUDER)
+            .order_by(Machine.code.asc())
+        ).all():
+            cap = cap or {}
+            extruders.append(
+                {
+                    "code": code,
+                    "width_range_mm": cap.get("width_range_mm"),
+                    "gauge_range_um": cap.get("gauge_range_um"),
+                }
+            )
+
     return {
         "product_versions": product_versions,
         "resins": resins,
         "colours": colours,
         "additives": additives,
         "cores": cores,
+        "extruders": extruders,
         **enums,
     }

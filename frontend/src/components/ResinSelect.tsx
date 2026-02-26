@@ -8,9 +8,10 @@ export function ResinSelect(props: {
   label?: string
   error?: boolean
   helperText?: string
+  reserveHelperTextSpace?: boolean
   onChangeCode: (nextCode: string) => void
 }) {
-  const { options, valueCode, label, error, helperText, onChangeCode } = props
+  const { options, valueCode, label, error, helperText, reserveHelperTextSpace = true, onChangeCode } = props
   return (
     <Autocomplete
       size="small"
@@ -24,8 +25,8 @@ export function ResinSelect(props: {
           {...params}
           label={label || 'Resin'}
           error={error}
-          helperText={helperText ?? ' '}
-          FormHelperTextProps={{ sx: { minHeight: 20 } }}
+          helperText={helperText !== undefined ? helperText : reserveHelperTextSpace ? ' ' : undefined}
+          FormHelperTextProps={reserveHelperTextSpace ? { sx: { minHeight: 20 } } : undefined}
         />
       )}
     />

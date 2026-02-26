@@ -1,5 +1,5 @@
 import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { useAppDispatch, useAppSelector } from './store/hooks'
 import { fetchMe, logout } from './store/slices/authSlice'
 import { can, isSysAdmin as isSysAdminRole } from './auth/permissions'
@@ -12,7 +12,7 @@ import { CustomersPage } from './pages/CustomersPage'
 import { ProductsPage } from './pages/ProductsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SchedulePage } from './pages/SchedulePage'
-import { AdminPage } from './pages/AdminPage.tsx'
+import { AdminLayout } from './pages/admin/AdminLayout'
 import { JobSheetNewPage } from './pages/JobSheetNewPage.tsx'
 import { JobSheetsPage } from './pages/JobSheetsPage.tsx'
 import { JobSheetShowPage } from './pages/JobSheetShowPage.tsx'
@@ -40,6 +40,19 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material'
+
+const ResinsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ResinsAdminPage')).ResinsAdminPage }))
+const ExtrusionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ExtrusionAdminPage')).ExtrusionAdminPage }))
+const PrintingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PrintingAdminPage')).PrintingAdminPage }))
+const CoresAdminPage = lazy(async () => ({ default: (await import('./pages/admin/CoresAdminPage')).CoresAdminPage }))
+
+function PageLoading() {
+  return (
+    <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
+      <Typography color="text.secondary">Loading…</Typography>
+    </Box>
+  )
+}
 
 function RequireAuth() {
   const auth = useAppSelector((s) => s.auth)
@@ -188,7 +201,44 @@ function App() {
               <Route path="/job-sheets/:jobSheetId" element={<JobSheetShowPage />} />
               <Route path="/job-sheets/:jobSheetId/edit" element={<JobSheetEditPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
-              <Route path="/admin" element={<AdminPage />} />
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route index element={<Navigate to="resins" replace />} />
+                <Route
+                  path="resins"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <ResinsAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route path="additives" element={<Navigate to="../resins" replace />} />
+                <Route path="colours" element={<Navigate to="../resins" replace />} />
+                <Route path="resin-blends" element={<Navigate to="../resins" replace />} />
+                <Route
+                  path="extrusion"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <ExtrusionAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="printing"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <PrintingAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="cores"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <CoresAdminPage />
+                    </Suspense>
+                  }
+                />
+              </Route>
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>

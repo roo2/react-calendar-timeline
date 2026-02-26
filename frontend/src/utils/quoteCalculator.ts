@@ -41,11 +41,15 @@ export type QuickQuoteInputs = {
   product_type: string
   geometry: 'Flat' | 'Gusset'
   base_width_mm: number
+  run_up?: number | null
   ufilm_left_width_mm?: number | null
   ufilm_right_width_mm?: number | null
   thickness_um: number
   base_length_mm: number
   continuous_roll: boolean
+  inline_perforation?: boolean
+  inline_seal?: boolean
+  hole_punched?: boolean
   gusset_mm: number | null
   trim_pct: number | null
   resin_blend_code?: string | null
@@ -187,6 +191,7 @@ function computeLayflatMm(spec: {
   product_type: string
   geometry: string
   base_width_mm: number
+  run_up?: number | null
   gusset_mm: number | null
   ufilm_left_width_mm?: number | null
   ufilm_right_width_mm?: number | null
@@ -195,9 +200,13 @@ function computeLayflatMm(spec: {
   const geom = String(spec.geometry || '').toLowerCase()
   const w = Number(spec.base_width_mm || 0)
   const g = Number(spec.gusset_mm || 0)
+  const ru = Number(spec.run_up || 0)
   // Mirror SpecPayloadForm rules:
   // - Centerfold layflat = 0.5 * base width
   // - U-Film layflat = middle width + left + right
+  // Quote-only override:
+  // - Sheet/Centerfold can use Run Up, where layflat = product_width * run_up
+  if ((pt === 'Sheet' || pt === 'Centerfold') && Number.isFinite(ru) && ru > 0) return w * ru
   if (pt === 'Centerfold' || geom === 'centrefold' || geom === 'centre_fold' || geom === 'centerfold') return 0.5 * w
   if (pt === 'U-Film') {
     const l = Number(spec.ufilm_left_width_mm || 0)
@@ -214,6 +223,7 @@ export function computeLayflatWidthMm(spec: {
   product_type: string
   geometry: string
   base_width_mm: number
+  run_up?: number | null
   gusset_mm: number | null
   ufilm_left_width_mm?: number | null
   ufilm_right_width_mm?: number | null
@@ -245,6 +255,7 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
     product_type: inputs.product_type,
     geometry: inputs.geometry,
     base_width_mm: inputs.base_width_mm,
+    run_up: (inputs as any).run_up ?? null,
     gusset_mm: inputs.gusset_mm,
     ufilm_left_width_mm: inputs.ufilm_left_width_mm,
     ufilm_right_width_mm: inputs.ufilm_right_width_mm,
@@ -351,6 +362,14 @@ export type AppliedExtrusionWasteFactor = {
   minutes: number
 }
 
+function computeExtrusionWasteMinutes(applied: AppliedExtrusionWasteFactor[]): number {
+  const base = applied.find((f) => f.slug === 'simple_job')?.minutes ?? 0
+  const parallel = applied
+    .filter((f) => f.slug !== 'simple_job')
+    .reduce((acc, f) => Math.max(acc, Number(f.minutes || 0)), 0)
+  return Math.max(0, Number(base || 0)) + Math.max(0, Number(parallel || 0))
+}
+
 function buildExtrusionWasteCfg(ratebook: QuoteRatebook): Map<string, number> {
   const m = new Map<string, number>()
   for (const w of Array.isArray(ratebook.extrusion_waste_factors) ? ratebook.extrusion_waste_factors : []) {
@@ -366,24 +385,38 @@ export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ra
 
   // Custom waste factor logic (minutes configurable in DB):
   // - simple_job: always applies
-  // - colour_not_clear: any colour component means not clear
   // - gusset: gusseted geometry
-  // - non_standard_resin: any additives OR resin blend other than default
+  // - non_standard_resin_or_colour: any colour OR additives OR resin blend other than default
+   // - complex_set_up_print_or_perforation: printing OR any conversion flags that complicate setup
   const hasAnyColour =
     Array.isArray(inputs.colour_components) && inputs.colour_components.some((c) => (Number(c?.strength_pct || 0) || 0) > 0)
   const hasGusset = String(inputs.geometry || '').toLowerCase() === 'gusset' && Number(inputs.gusset_mm || 0) > 0
   const hasAnyAdditives = Array.isArray(inputs.additives) && inputs.additives.some((a) => (Number(a?.pct || 0) || 0) > 0)
   const blendCode = (inputs.resin_blend_code || '').trim()
-  const isNonStandardResin = hasAnyAdditives || (blendCode !== '' && blendCode !== 'LD')
+  const isNonStandardBlend = blendCode !== '' && blendCode !== 'LD'
+  const isNonStandardResinOrColour = hasAnyColour || hasAnyAdditives || isNonStandardBlend
+  const hasPrinting = String(inputs.print_method || 'None') !== 'None' && Number(inputs.num_colours || 0) > 0
+  const hasAnyComplexConversion = !!inputs.inline_perforation || !!inputs.inline_seal || !!inputs.hole_punched
+  const hasComplexSetup = hasPrinting || hasAnyComplexConversion
 
   const out: AppliedExtrusionWasteFactor[] = []
 
   // Always applies
   out.push({ slug: 'simple_job', minutes: cfg.get('simple_job') || 0 })
 
-  if (hasAnyColour) out.push({ slug: 'colour_not_clear', minutes: cfg.get('colour_not_clear') || 0 })
   if (hasGusset) out.push({ slug: 'gusset', minutes: cfg.get('gusset') || 0 })
-  if (isNonStandardResin) out.push({ slug: 'non_standard_resin', minutes: cfg.get('non_standard_resin') || 0 })
+  if (hasComplexSetup) {
+    out.push({
+      slug: 'complex_set_up_print_or_perforation',
+      minutes: cfg.get('complex_set_up_print_or_perforation') || 0,
+    })
+  }
+  if (isNonStandardResinOrColour) {
+    const combined =
+      cfg.get('non_standard_resin_or_colour') ??
+      Math.max(cfg.get('non_standard_resin') || 0, cfg.get('colour_not_clear') || 0)
+    out.push({ slug: 'non_standard_resin_or_colour', minutes: combined || 0 })
+  }
 
   return out
 }
@@ -460,7 +493,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const materialCost = materialCostPerKg * derivedTotalKg
 
   const appliedExtrusionWasteFactors = computeAppliedExtrusionWasteFactors(inputs, ratebook)
-  const extrusionExtraMinutes = appliedExtrusionWasteFactors.reduce((acc, f) => acc + Number(f.minutes || 0), 0)
+  const extrusionExtraMinutes = computeExtrusionWasteMinutes(appliedExtrusionWasteFactors)
 
   // Extrusion cost (runtime only, estimate):
   // hours = plastic_kg / average_kg_hr
@@ -529,7 +562,9 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const costPerKg = derivedTotalKg > 0 ? totalCost / derivedTotalKg : null
 
   return {
-    kg_per_unit: units != null ? kgPerUnit : null,
+    // This is a geometric/material property (for discrete products), not dependent on the quote quantity type.
+    // Keep it available even when quoting by KG/meters/rolls, so the UI can show "kg / 1000 products".
+    kg_per_unit: inputs.continuous_roll ? null : kgPerUnit,
     units_per_roll: null,
     totals_kg: derivedTotalKg,
     totals_units: units,

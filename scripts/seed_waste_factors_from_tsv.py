@@ -11,6 +11,7 @@ _SLUG_OVERRIDES: dict[str, str] = {
     "Simple Job": "simple_job",
     "Gusset": "gusset",
     "Non standard Resin": "non_standard_resin",
+    "Non standard Resin or Colour": "non_standard_resin_or_colour",
 }
 
 

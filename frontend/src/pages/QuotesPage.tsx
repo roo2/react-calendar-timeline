@@ -80,29 +80,29 @@ function QuotePreview(props: {
       ) : (
         <>
           <Box sx={{ mt: 1 }}>
-            <Typography variant="body2">
-              Total cost: {fmtDollars(p.total_cost)}
-            </Typography>
-            <Typography variant="body2">
-              Final price (with margin {Math.round(Number(p.margin) * 100)}%):{' '}
-              <strong>
-                {fmtDollars(p.final_price)}
-              </strong>
-            </Typography>
-            {p.yield_m_per_kg != null && (
-              <Typography variant="body2">
-                Yield: {Number(p.yield_m_per_kg).toFixed(2)} m / kg
-              </Typography>
-            )}
+            {(() => {
+              const kgPerUnit =
+                p.kg_per_unit != null
+                  ? Number(p.kg_per_unit)
+                  : Number(p.totals_units || 0) > 0 && p.totals_kg != null
+                    ? Number(p.totals_kg) / Number(p.totals_units || 1)
+                    : null
+              const kgPer1000 = kgPerUnit != null && Number.isFinite(kgPerUnit) ? kgPerUnit * 1000 : null
+              if (kgPer1000 == null || !Number.isFinite(kgPer1000)) return null
+              return (
+                <Typography variant="body2">
+                  Yield estimate: {kgPer1000.toFixed(2)} kg / 1000 products
+                </Typography>
+              )
+            })()}
             {p.cost_per_kg != null && (
               <Typography variant="body2">
                 Cost / kg: {fmtDollars(p.cost_per_kg)}
               </Typography>
             )}
-            {p.cost_breakdown?.extrusion_cost != null && Number(p.cost_breakdown.extrusion_cost) > 0 ? (
+            {p.extrusion_hours != null ? (
               <Typography variant="body2">
-                Extrusion costs: {fmtDollars(p.cost_breakdown.extrusion_cost)}
-                {p.extrusion_hours != null ? ` (${Number(p.extrusion_hours).toFixed(2)} hr)` : ''}
+                Extrusion time: {Number(p.extrusion_hours).toFixed(2)} hr
               </Typography>
             ) : null}
             {Number(p.extrusion_waste_minutes || 0) > 0 ? (
@@ -226,6 +226,7 @@ export function QuotesPage() {
   const [length, setLength] = useState('')
   const [thicknessUm, setThicknessUm] = useState('')
   const [trimPctText, setTrimPctText] = useState<string>('')
+  const [runUp, setRunUp] = useState<number>(1)
 
   // Materials
   const [resinBlends, setResinBlends] = useState<ResinBlendPreset[]>([])
@@ -389,6 +390,18 @@ export function QuotesPage() {
   const qtyKgNum = Number(qtyTotal || 0)
   const qtyRollsNum = Math.round(Number(qtyRolls || 0))
 
+  const showRunUp = !isUFilm && (productType === 'Sheet' || productType === 'Centerfold')
+  const runUpOptions: number[] = productType === 'Centerfold' ? [1, 2] : productType === 'Sheet' ? [2, 4, 6] : [1]
+
+  useEffect(() => {
+    if (!showRunUp) {
+      if (runUp !== 1) setRunUp(1)
+      return
+    }
+    if (!runUpOptions.includes(runUp)) setRunUp(runUpOptions[0] || 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productType, showRunUp])
+
   const canCalculate =
     (qtyType === 'units' ? Number(qtyTotal || 0) > 0 : !!qtyTotal) &&
     widthMmNum > 0 &&
@@ -470,6 +483,7 @@ export function QuotesPage() {
       product_type: productType,
       geometry: derivedGeometry,
       base_width_mm: widthMmNum,
+      run_up: showRunUp ? runUp : null,
       ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
       ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
       thickness_um: thicknessUmNum,
@@ -532,9 +546,11 @@ export function QuotesPage() {
     resinBlends,
     rollWeightBilling,
     showNumColours,
+    showRunUp,
     thicknessUmNum,
     trimPct,
     productType,
+    runUp,
     ufilmLeftWidthMmNum,
     ufilmRightWidthMmNum,
     widthMmNum,
@@ -546,6 +562,7 @@ export function QuotesPage() {
         product_type: productType,
         geometry: derivedGeometry,
         base_width_mm: widthMmNum,
+        run_up: showRunUp ? runUp : null,
         gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
         ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
         ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
@@ -553,7 +570,7 @@ export function QuotesPage() {
     } catch {
       return 0
     }
-  }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isUFilm, productType, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
+  }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isUFilm, productType, runUp, showRunUp, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
 
   const selectedExtruder = useMemo(() => {
     const extruders = Array.isArray(ratebook?.extruders) ? ratebook!.extruders : []
@@ -580,11 +597,15 @@ export function QuotesPage() {
       product_type: calcPayload.product_type,
       geometry: calcPayload.geometry,
       base_width_mm: Number(calcPayload.base_width_mm || 0),
+      run_up: calcPayload.run_up != null ? Number(calcPayload.run_up) : null,
       ufilm_left_width_mm: calcPayload.ufilm_left_width_mm != null ? Number(calcPayload.ufilm_left_width_mm) : null,
       ufilm_right_width_mm: calcPayload.ufilm_right_width_mm != null ? Number(calcPayload.ufilm_right_width_mm) : null,
       thickness_um: Number(calcPayload.thickness_um || 0),
       base_length_mm: Number(calcPayload.base_length_mm || 0),
       continuous_roll: !!calcPayload.continuous_roll,
+      inline_perforation: !!calcPayload.inline_perforation,
+      inline_seal: !!calcPayload.inline_seal,
+      hole_punched: !!calcPayload.hole_punched,
       gusset_mm: calcPayload.gusset_mm != null ? Number(calcPayload.gusset_mm) : null,
       trim_pct: calcPayload.trim_pct != null ? Number(calcPayload.trim_pct) : null,
       resin_blend_code: calcPayload.resin_blend_code != null ? String(calcPayload.resin_blend_code) : null,
@@ -616,6 +637,10 @@ export function QuotesPage() {
     switch (slug) {
       case 'simple_job':
         return 'Simple Job'
+      case 'complex_set_up_print_or_perforation':
+        return 'Complex Set up (Print or Perforation)'
+      case 'non_standard_resin_or_colour':
+        return 'Non standard Resin or Colour'
       case 'non_standard_resin':
         return 'Non standard resin'
       case 'colour_not_clear':
@@ -640,6 +665,9 @@ export function QuotesPage() {
       thickness_um: Number(payload.thickness_um || 0),
       base_length_mm: Number(payload.base_length_mm || 0),
       continuous_roll: !!payload.continuous_roll,
+      inline_perforation: !!payload.inline_perforation,
+      inline_seal: !!payload.inline_seal,
+      hole_punched: !!payload.hole_punched,
       gusset_mm: payload.gusset_mm != null ? Number(payload.gusset_mm) : null,
       trim_pct: payload.trim_pct != null ? Number(payload.trim_pct) : null,
       resin_blend_code: payload.resin_blend_code != null ? String(payload.resin_blend_code) : null,
@@ -819,22 +847,58 @@ export function QuotesPage() {
                     <TextField label="Right Width (mm)" type="number" value={ufilmRightWidthMm} onChange={(e) => setUfilmRightWidthMm(e.target.value)} />
                   </Box>
                 ) : (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-                    <TextField label="Width (mm)" type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
-                    {canHaveGusset && flagGusset ? (
-                      <TextField
-                        label="Gusset Return (mm)"
-                        type="number"
-                        value={gussetReturnMm}
-                        onChange={(e) => setGussetReturnMm(e.target.value)}
-                      />
-                    ) : null}
-                  </Box>
-                )}
+                  <Stack spacing={2}>
+                    {showRunUp ? (
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                          gap: 2,
+                        }}
+                      >
+                        <TextField
+                          label="Product Width (mm)"
+                          type="number"
+                          value={widthMm}
+                          onChange={(e) => setWidthMm(e.target.value)}
+                        />
+                        <DefaultSelectField
+                          label="Run Up"
+                          value={String(runUp)}
+                          defaultValue={String(runUpOptions[0] || 1)}
+                          onChange={(e) => setRunUp(Number(e.target.value || 1))}
+                        >
+                          {runUpOptions.map((v) => (
+                            <MenuItem key={v} value={String(v)}>
+                              {v} up
+                            </MenuItem>
+                          ))}
+                        </DefaultSelectField>
+                        <TextField
+                          label="Layflat Width (mm)"
+                          value={layflatWidthMm > 0 ? Math.round(layflatWidthMm) : ''}
+                          InputProps={{ readOnly: true }}
+                          disabled
+                        />
+                      </Box>
+                    ) : (
+                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+                        <TextField label="Width (mm)" type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
+                      </Box>
+                    )}
 
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
-                  <TextField label="Thickness / Gauge (µm)" type="number" value={thicknessUm} onChange={(e) => setThicknessUm(e.target.value)} />
-                </Box>
+                    {canHaveGusset && flagGusset ? (
+                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+                        <TextField
+                          label="Gusset Return (mm)"
+                          type="number"
+                          value={gussetReturnMm}
+                          onChange={(e) => setGussetReturnMm(e.target.value)}
+                        />
+                      </Box>
+                    ) : null}
+                  </Stack>
+                )}
 
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                   <DefaultSelectField label="Length Units" value={lengthUnits} defaultValue="mm" onChange={(e) => setLengthUnits(e.target.value as any)}>
@@ -842,6 +906,13 @@ export function QuotesPage() {
                     <MenuItem value="m">m</MenuItem>
                   </DefaultSelectField>
                   <TextField label="Length" type="number" value={length} onChange={(e) => setLength(e.target.value)} />
+                </Box>
+
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
+                  <TextField label="Thickness / Gauge (µm)" type="number" value={thicknessUm} onChange={(e) => setThicknessUm(e.target.value)} />
+                </Box>
+
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
                   <TextField
                     label="Trim (%)"
                     type="number"
@@ -1209,7 +1280,16 @@ export function QuotesPage() {
 
         {/* Desktop sticky panel */}
         {!isMobile ? (
-          <Box sx={{ width: 380, flex: '0 0 auto', position: 'sticky', top: 16, alignSelf: 'flex-start' }}>
+          <Box
+            sx={{
+              width: 380,
+              flex: '0 0 auto',
+              position: 'sticky',
+              // Account for the fixed app bar (56px xs, 64px sm+) plus a small gap.
+              top: { xs: 72, sm: 80 },
+              alignSelf: 'flex-start',
+            }}
+          >
             <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} />
           </Box>
         ) : null}

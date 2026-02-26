@@ -126,9 +126,9 @@ def main(argv: list[str]) -> int:
     shm_path = db_path.with_suffix(db_path.suffix + "-shm")
     journal_path = db_path.with_suffix(db_path.suffix + "-journal")
 
-    # Ensure we use the same default local DB as env.example unless caller overrides.
+    # Force local DB, regardless of caller shell env (prevents invalid/remote DATABASE_URL breaking reset).
     env = os.environ.copy()
-    env.setdefault("DATABASE_URL", f"sqlite+pysqlite:///{db_path}")
+    env["DATABASE_URL"] = f"sqlite+pysqlite:///{db_path}"
 
     print(f"DB file: {db_path}")
     if db_path.exists():

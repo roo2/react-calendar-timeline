@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Alert,
   Box,
@@ -16,6 +16,14 @@ import {
 } from '@mui/material'
 import { apiFetch } from '../api/client'
 import { ResinSelect, type ResinOption } from '../components/ResinSelect'
+
+function AdminDataTable(props: { children: ReactNode }) {
+  return (
+    <Table size="small" sx={{ width: '100%' }}>
+      {props.children}
+    </Table>
+  )
+}
 
 type Resin = {
   resin_code: string
@@ -144,6 +152,21 @@ export function AdminPage() {
   const [newPlateDescription, setNewPlateDescription] = useState('')
 
   const [newExtruderCode, setNewExtruderCode] = useState('')
+  const [newExtruderModel, setNewExtruderModel] = useState('')
+  const [newExtruderWMin, setNewExtruderWMin] = useState<number | ''>('')
+  const [newExtruderWMax, setNewExtruderWMax] = useState<number | ''>('')
+  const [newExtruderDecisionW, setNewExtruderDecisionW] = useState<number | ''>('')
+  const [newExtruderAvgKgHr, setNewExtruderAvgKgHr] = useState<number | ''>('')
+  const [newExtruderAveW, setNewExtruderAveW] = useState<number | ''>('')
+
+  const [newPrintingTierMethod, setNewPrintingTierMethod] = useState<'inline' | 'uteco'>('inline')
+  const [newPrintingTierMaxWidthMm, setNewPrintingTierMaxWidthMm] = useState<number | ''>('')
+  const [newPrintingTierNumColours, setNewPrintingTierNumColours] = useState<number | ''>('')
+  const [newPrintingTierMinMeters, setNewPrintingTierMinMeters] = useState<number | ''>('')
+  const [newPrintingTierMinCharge, setNewPrintingTierMinCharge] = useState<number | ''>('')
+  const [newPrintingTierSetupFee, setNewPrintingTierSetupFee] = useState<number | ''>('')
+  const [newPrintingTierRate1000, setNewPrintingTierRate1000] = useState<number | ''>('')
+
   const [newWasteFactor, setNewWasteFactor] = useState('')
   const [newWasteMinutes, setNewWasteMinutes] = useState('')
 
@@ -152,6 +175,10 @@ export function AdminPage() {
   const [newBlendComponents, setNewBlendComponents] = useState<Array<{ resin_code: string; pct: number | '' }>>([
     { resin_code: '', pct: 100 },
   ])
+
+  function confirmDelete(label: string) {
+    return window.confirm(`Delete ${label}? This cannot be undone.`)
+  }
 
   const resinOptions: ResinOption[] = useMemo(
     () =>
@@ -185,6 +212,34 @@ export function AdminPage() {
   const canCreatePlate = useMemo(() => {
     return !!newPlateCustomerId.trim() && !!newPlateCode.trim()
   }, [newPlateCode, newPlateCustomerId])
+
+  const canCreateExtruder = useMemo(() => {
+    return !!newExtruderCode.trim()
+  }, [newExtruderCode])
+
+  const canCreatePrintingTier = useMemo(() => {
+    return (
+      !!newPrintingTierMethod &&
+      newPrintingTierMaxWidthMm !== '' &&
+      Number(newPrintingTierMaxWidthMm) > 0 &&
+      newPrintingTierNumColours !== '' &&
+      Number(newPrintingTierNumColours) >= 1 &&
+      newPrintingTierMinMeters !== '' &&
+      Number(newPrintingTierMinMeters) >= 0 &&
+      newPrintingTierRate1000 !== '' &&
+      Number(newPrintingTierRate1000) >= 0 &&
+      (newPrintingTierMethod !== 'inline' || (newPrintingTierMinCharge !== '' && Number(newPrintingTierMinCharge) >= 0)) &&
+      (newPrintingTierMethod !== 'uteco' || (newPrintingTierSetupFee !== '' && Number(newPrintingTierSetupFee) >= 0))
+    )
+  }, [
+    newPrintingTierMaxWidthMm,
+    newPrintingTierMethod,
+    newPrintingTierMinCharge,
+    newPrintingTierMinMeters,
+    newPrintingTierNumColours,
+    newPrintingTierRate1000,
+    newPrintingTierSetupFee,
+  ])
 
   const canCreateBlend = useMemo(() => {
     if (!newBlendCode.trim() || !newBlendName.trim()) return false
@@ -259,6 +314,22 @@ export function AdminPage() {
     }
   }
 
+  async function deleteResin(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`resin '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingCode(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/resins/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setResins((cur) => cur.filter((r) => r.resin_code !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete resin')
+    } finally {
+      setSavingCode(null)
+    }
+  }
+
   async function saveBlend(code: string, patch: Omit<ResinBlend, 'blend_code'>) {
     const trimmed = code.trim()
     if (!trimmed) return
@@ -278,6 +349,22 @@ export function AdminPage() {
       })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin blend')
+    } finally {
+      setSavingBlendCode(null)
+    }
+  }
+
+  async function deleteBlend(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`resin blend '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingBlendCode(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setResinBlends((cur) => cur.filter((b) => b.blend_code !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete resin blend')
     } finally {
       setSavingBlendCode(null)
     }
@@ -307,6 +394,22 @@ export function AdminPage() {
     }
   }
 
+  async function deleteAdditive(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`additive '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingAdditiveCode(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setAdditives((cur) => cur.filter((a) => a.additive_code !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete additive')
+    } finally {
+      setSavingAdditiveCode(null)
+    }
+  }
+
   async function saveColour(code: string, patch: Omit<Colour, 'colour_code'>) {
     const trimmed = code.trim()
     if (!trimmed) return
@@ -331,6 +434,22 @@ export function AdminPage() {
     }
   }
 
+  async function deleteColour(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`colour '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingColourCode(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setColours((cur) => cur.filter((c) => c.colour_code !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete colour')
+    } finally {
+      setSavingColourCode(null)
+    }
+  }
+
   async function saveCore(coreType: string, patch: Omit<Core, 'core_type'>) {
     const trimmed = coreType.trim()
     if (!trimmed) return
@@ -350,6 +469,22 @@ export function AdminPage() {
       })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save core')
+    } finally {
+      setSavingCoreType(null)
+    }
+  }
+
+  async function deleteCore(coreType: string) {
+    const trimmed = coreType.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`core '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingCoreType(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setCores((cur) => cur.filter((c) => c.core_type !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete core')
     } finally {
       setSavingCoreType(null)
     }
@@ -385,6 +520,22 @@ export function AdminPage() {
     }
   }
 
+  async function deleteExtruder(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`extruder '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingExtruderCode(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setExtruders((cur) => cur.filter((e) => e.extruder_code !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete extruder')
+    } finally {
+      setSavingExtruderCode(null)
+    }
+  }
+
   async function saveExtrusionWasteFactor(factor: string, patch: Omit<ExtrusionWasteFactor, 'factor'>) {
     const trimmed = factor.trim()
     if (!trimmed) return
@@ -409,6 +560,22 @@ export function AdminPage() {
     }
   }
 
+  async function deleteExtrusionWasteFactor(factor: string) {
+    const trimmed = factor.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`waste factor '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingExtrusionWasteFactor(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/extrusion-waste-factors/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setExtrusionWasteFactors((cur) => cur.filter((w) => w.factor !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete waste factor')
+    } finally {
+      setSavingExtrusionWasteFactor(null)
+    }
+  }
+
   async function saveInk(code: string, patch: Omit<Ink, 'ink_code'>) {
     const trimmed = code.trim()
     if (!trimmed) return
@@ -428,6 +595,22 @@ export function AdminPage() {
       })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save ink')
+    } finally {
+      setSavingInkCode(null)
+    }
+  }
+
+  async function deleteInk(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`ink '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingInkCode(trimmed)
+      await apiFetch<void>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
+      setInks((cur) => cur.filter((i) => i.ink_code !== trimmed))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete ink')
     } finally {
       setSavingInkCode(null)
     }
@@ -468,6 +651,27 @@ export function AdminPage() {
     }
   }
 
+  async function deletePlate(customerId: string, plateCode: string) {
+    const cid = customerId.trim()
+    const code = plateCode.trim()
+    const key = `${cid}__${code}`
+    if (!cid || !code) return
+    if (!confirmDelete(`plate '${code}' for customer '${customersById.get(cid)?.code || cid}'`)) return
+    try {
+      setErr(null)
+      setSavingPlateKey(key)
+      await apiFetch<void>(
+        `/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`,
+        { method: 'DELETE' },
+      )
+      setPlates((cur) => cur.filter((p) => !(p.customer_id === cid && p.plate_code === code)))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete plate')
+    } finally {
+      setSavingPlateKey(null)
+    }
+  }
+
   async function savePrintingPricingTier(
     key: { method: string; max_print_width_mm: number; num_colours: number },
     patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>,
@@ -503,6 +707,30 @@ export function AdminPage() {
     }
   }
 
+  async function deletePrintingPricingTier(key: { method: string; max_print_width_mm: number; num_colours: number }) {
+    const m = (key.method || '').trim().toLowerCase()
+    if (!m) return
+    const k = `${m}:${key.max_print_width_mm}:${key.num_colours}`
+    if (!confirmDelete(`printing tier '${k}'`)) return
+    try {
+      setErr(null)
+      setSavingPrintingTierKey(k)
+      await apiFetch<void>(
+        `/api/admin/rate-cards/printing-pricing-tiers/${encodeURIComponent(m)}/${encodeURIComponent(String(key.max_print_width_mm))}/${encodeURIComponent(
+          String(key.num_colours),
+        )}`,
+        { method: 'DELETE' },
+      )
+      setPrintingPricingTiers((cur) =>
+        cur.filter((t) => !(t.method === m && t.max_print_width_mm === key.max_print_width_mm && t.num_colours === key.num_colours)),
+      )
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete printing tier')
+    } finally {
+      setSavingPrintingTierKey(null)
+    }
+  }
+
   return (
     <Box
       sx={{
@@ -532,7 +760,7 @@ export function AdminPage() {
             {loading ? (
               <Typography color="text.secondary">Loading…</Typography>
             ) : (
-              <Table size="small">
+              <AdminDataTable>
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ width: 140 }}>Code</TableCell>
@@ -544,7 +772,13 @@ export function AdminPage() {
                 </TableHead>
                 <TableBody>
                   {resins.map((r) => (
-                    <ResinRow key={r.resin_code} resin={r} saving={savingCode === r.resin_code} onSave={saveResin} />
+                    <ResinRow
+                      key={r.resin_code}
+                      resin={r}
+                      saving={savingCode === r.resin_code}
+                      onSave={saveResin}
+                      onDelete={deleteResin}
+                    />
                   ))}
                   <TableRow>
                     <TableCell>
@@ -595,7 +829,7 @@ export function AdminPage() {
                     </TableCell>
                   </TableRow>
                 </TableBody>
-              </Table>
+              </AdminDataTable>
             )}
           </Paper>
 
@@ -612,7 +846,7 @@ export function AdminPage() {
             {loading ? (
               <Typography color="text.secondary">Loading…</Typography>
             ) : (
-              <Table size="small">
+              <AdminDataTable>
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ width: 180 }}>Code</TableCell>
@@ -623,7 +857,13 @@ export function AdminPage() {
                 </TableHead>
                 <TableBody>
                   {additives.map((a) => (
-                    <AdditiveRow key={a.additive_code} additive={a} saving={savingAdditiveCode === a.additive_code} onSave={saveAdditive} />
+                    <AdditiveRow
+                      key={a.additive_code}
+                      additive={a}
+                      saving={savingAdditiveCode === a.additive_code}
+                      onSave={saveAdditive}
+                      onDelete={deleteAdditive}
+                    />
                   ))}
                   <TableRow>
                     <TableCell>
@@ -663,7 +903,7 @@ export function AdminPage() {
                     </TableCell>
                   </TableRow>
                 </TableBody>
-              </Table>
+              </AdminDataTable>
             )}
           </Paper>
 
@@ -680,7 +920,7 @@ export function AdminPage() {
             {loading ? (
               <Typography color="text.secondary">Loading…</Typography>
             ) : (
-              <Table size="small">
+              <AdminDataTable>
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ width: 180 }}>Code</TableCell>
@@ -691,7 +931,13 @@ export function AdminPage() {
                 </TableHead>
                 <TableBody>
                   {colours.map((c) => (
-                    <ColourRow key={c.colour_code} colour={c} saving={savingColourCode === c.colour_code} onSave={saveColour} />
+                    <ColourRow
+                      key={c.colour_code}
+                      colour={c}
+                      saving={savingColourCode === c.colour_code}
+                      onSave={saveColour}
+                      onDelete={deleteColour}
+                    />
                   ))}
                   <TableRow>
                     <TableCell>
@@ -731,7 +977,7 @@ export function AdminPage() {
                     </TableCell>
                   </TableRow>
                 </TableBody>
-              </Table>
+              </AdminDataTable>
             )}
           </Paper>
 
@@ -746,78 +992,68 @@ export function AdminPage() {
             {loading ? (
               <Typography color="text.secondary">Loading…</Typography>
             ) : (
-              <Stack spacing={2}>
-                {resinBlends.map((b) => (
-                  <ResinBlendListItem
-                    key={b.blend_code}
-                    blend={b}
-                    saving={savingBlendCode === b.blend_code}
-                    onSave={saveBlend}
-                    resinOptions={resinOptions}
-                  />
-                ))}
-
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                    Add blend
-                  </Typography>
-
-                  <Box
-                    sx={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                      gap: 2,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <TextField
-                      size="small"
-                      label="Blend code"
-                      value={newBlendCode}
-                      onChange={(e) => setNewBlendCode(e.target.value)}
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <AdminDataTable>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ width: 180 }}>Code</TableCell>
+                      <TableCell>Name</TableCell>
+                      <TableCell>Components</TableCell>
+                      <TableCell sx={{ width: 180 }} />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {resinBlends.map((b) => (
+                      <ResinBlendRow
+                        key={b.blend_code}
+                        blend={b}
+                        saving={savingBlendCode === b.blend_code}
+                        onSave={saveBlend}
+                        onDelete={deleteBlend}
+                        resinOptions={resinOptions}
+                      />
+                    ))}
+                    <ResinBlendRow
+                      key="__new__"
+                      blend={{
+                        blend_code: newBlendCode,
+                        name: newBlendName,
+                        components: newBlendComponents
+                          .filter((c) => c.resin_code.trim() && c.pct !== '')
+                          .map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct) || 0 })),
+                      }}
+                      saving={savingBlendCode === newBlendCode.trim()}
+                      resinOptions={resinOptions}
+                      isNewRow
+                      canSave={canCreateBlend}
+                      onChangeNew={(next) => {
+                        setNewBlendCode(next.blend_code)
+                        setNewBlendName(next.name)
+                        setNewBlendComponents(
+                          (next.components || []).map((c) => ({ resin_code: c.resin_code, pct: c.pct === 0 ? '' : c.pct })),
+                        )
+                      }}
+                      onSave={() =>
+                        saveBlend(newBlendCode, {
+                          name: newBlendName.trim(),
+                          components: newBlendComponents
+                            .filter((c) => c.resin_code.trim() && c.pct !== '')
+                            .map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct) })),
+                        }).then(() => {
+                          setNewBlendCode('')
+                          setNewBlendName('')
+                          setNewBlendComponents([{ resin_code: '', pct: 100 }])
+                        })
+                      }
+                      onDelete={async () => {
+                        setNewBlendCode('')
+                        setNewBlendName('')
+                        setNewBlendComponents([{ resin_code: '', pct: 100 }])
+                      }}
                     />
-                    <TextField size="small" label="Name" value={newBlendName} onChange={(e) => setNewBlendName(e.target.value)} />
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <Button
-                        size="small"
-                        variant="contained"
-                        disabled={!canCreateBlend || savingBlendCode === newBlendCode.trim()}
-                        onClick={() => {
-                          if (!canCreateBlend) return
-                          void saveBlend(newBlendCode, {
-                            name: newBlendName.trim(),
-                            components: newBlendComponents
-                              .filter((c) => c.resin_code.trim() && c.pct !== '')
-                              .map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct) })),
-                          }).then(() => {
-                            setNewBlendCode('')
-                            setNewBlendName('')
-                            setNewBlendComponents([{ resin_code: '', pct: 100 }])
-                          })
-                        }}
-                      >
-                        Add blend
-                      </Button>
-                    </Box>
-                  </Box>
-
-                  <BlendComponentsEditor components={newBlendComponents} onChange={setNewBlendComponents} resinOptions={resinOptions} />
-                  {!!newBlendCode.trim() && !!newBlendName.trim() && (
-                    <Typography
-                      variant="caption"
-                      color={canCreateBlend ? 'text.secondary' : 'error'}
-                      sx={{ display: 'block', mt: 1 }}
-                    >
-                      Total:{' '}
-                      {newBlendComponents
-                        .filter((c) => c.resin_code.trim() && c.pct !== '')
-                        .reduce((acc, c) => acc + Number(c.pct || 0), 0)
-                        .toFixed(2)}
-                      % {canCreateBlend ? '(OK)' : '(must sum to 100%)'}
-                    </Typography>
-                  )}
-                </Paper>
-              </Stack>
+                  </TableBody>
+                </AdminDataTable>
+              </Paper>
             )}
             </Box>
           </Stack>
@@ -841,7 +1077,7 @@ export function AdminPage() {
               {loading ? (
                 <Typography color="text.secondary">Loading…</Typography>
               ) : (
-                <Table size="small" sx={{ width: '100%' }}>
+                <AdminDataTable>
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ width: 110 }}>Code</TableCell>
@@ -856,26 +1092,90 @@ export function AdminPage() {
                   </TableHead>
                   <TableBody>
                     {extruders.map((e) => (
-                      <ExtruderRow key={e.extruder_code} extruder={e} saving={savingExtruderCode === e.extruder_code} onSave={saveExtruder} />
+                      <ExtruderRow
+                        key={e.extruder_code}
+                        extruder={e}
+                        saving={savingExtruderCode === e.extruder_code}
+                        onSave={saveExtruder}
+                        onDelete={deleteExtruder}
+                      />
                     ))}
                     <TableRow>
                       <TableCell>
                         <TextField size="small" label="Code" value={newExtruderCode} onChange={(ev) => setNewExtruderCode(ev.target.value)} />
                       </TableCell>
-                      <TableCell colSpan={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Add by code, then edit fields in-row.
-                        </Typography>
+                      <TableCell>
+                        <TextField size="small" label="Model" value={newExtruderModel} onChange={(e) => setNewExtruderModel(e.target.value)} />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="W min"
+                          inputProps={{ inputMode: 'numeric' }}
+                          value={newExtruderWMin}
+                          onChange={(e) => setNewExtruderWMin(e.target.value ? parseInt(e.target.value, 10) : '')}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="W max"
+                          inputProps={{ inputMode: 'numeric' }}
+                          value={newExtruderWMax}
+                          onChange={(e) => setNewExtruderWMax(e.target.value ? parseInt(e.target.value, 10) : '')}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Decision W"
+                          inputProps={{ inputMode: 'numeric' }}
+                          value={newExtruderDecisionW}
+                          onChange={(e) => setNewExtruderDecisionW(e.target.value ? parseInt(e.target.value, 10) : '')}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Avg"
+                          inputProps={{ inputMode: 'numeric' }}
+                          value={newExtruderAvgKgHr}
+                          onChange={(e) => setNewExtruderAvgKgHr(e.target.value ? parseInt(e.target.value, 10) : '')}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Ave W"
+                          inputProps={{ inputMode: 'decimal' }}
+                          value={newExtruderAveW}
+                          onChange={(e) => setNewExtruderAveW(e.target.value ? parseFloat(e.target.value) : '')}
+                        />
                       </TableCell>
                       <TableCell align="right">
                         <Button
                           size="small"
                           variant="outlined"
-                          disabled={!newExtruderCode.trim() || savingExtruderCode === newExtruderCode.trim()}
+                          disabled={!canCreateExtruder || savingExtruderCode === newExtruderCode.trim()}
                           onClick={() => {
                             const code = newExtruderCode.trim()
                             if (!code) return
-                            void saveExtruder(code, {}).then(() => setNewExtruderCode(''))
+                            void saveExtruder(code, {
+                              model: newExtruderModel.trim() ? newExtruderModel.trim() : null,
+                              film_width_min_mm: newExtruderWMin === '' ? null : Number(newExtruderWMin),
+                              film_width_max_mm: newExtruderWMax === '' ? null : Number(newExtruderWMax),
+                              decision_width_mm: newExtruderDecisionW === '' ? null : Number(newExtruderDecisionW),
+                              average_kg_hr: newExtruderAvgKgHr === '' ? null : Number(newExtruderAvgKgHr),
+                              ave_width: newExtruderAveW === '' ? null : Number(newExtruderAveW),
+                            }).then(() => {
+                              setNewExtruderCode('')
+                              setNewExtruderModel('')
+                              setNewExtruderWMin('')
+                              setNewExtruderWMax('')
+                              setNewExtruderDecisionW('')
+                              setNewExtruderAvgKgHr('')
+                              setNewExtruderAveW('')
+                            })
                           }}
                         >
                           Add extruder
@@ -883,7 +1183,7 @@ export function AdminPage() {
                       </TableCell>
                     </TableRow>
                   </TableBody>
-                </Table>
+                </AdminDataTable>
               )}
             </Paper>
 
@@ -895,7 +1195,7 @@ export function AdminPage() {
               {loading ? (
                 <Typography color="text.secondary">Loading…</Typography>
               ) : (
-                <Table size="small" sx={{ width: '100%' }}>
+                <AdminDataTable>
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ width: 320 }}>Factor</TableCell>
@@ -910,6 +1210,7 @@ export function AdminPage() {
                         wasteFactor={w}
                         saving={savingExtrusionWasteFactor === w.factor}
                         onSave={saveExtrusionWasteFactor}
+                        onDelete={deleteExtrusionWasteFactor}
                       />
                     ))}
                     <TableRow>
@@ -949,7 +1250,7 @@ export function AdminPage() {
                       </TableCell>
                     </TableRow>
                   </TableBody>
-                </Table>
+                </AdminDataTable>
               )}
             </Paper>
           </Stack>
@@ -974,7 +1275,7 @@ export function AdminPage() {
                 {loading ? (
                   <Typography color="text.secondary">Loading…</Typography>
                 ) : (
-                  <Table size="small" sx={{ width: '100%' }}>
+                  <AdminDataTable>
                     <TableHead>
                       <TableRow>
                         <TableCell sx={{ width: 90 }}>Method</TableCell>
@@ -994,10 +1295,112 @@ export function AdminPage() {
                           tier={t}
                           saving={savingPrintingTierKey === `${t.method}:${t.max_print_width_mm}:${t.num_colours}`}
                           onSave={savePrintingPricingTier}
+                          onDelete={deletePrintingPricingTier}
                         />
                       ))}
+                      <TableRow>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            select
+                            label="Method"
+                            value={newPrintingTierMethod}
+                            onChange={(e) => setNewPrintingTierMethod(e.target.value as any)}
+                            sx={{ minWidth: 80 }}
+                          >
+                            <MenuItem value="inline">inline</MenuItem>
+                            <MenuItem value="uteco">uteco</MenuItem>
+                          </TextField>
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            label="Max width"
+                            inputProps={{ inputMode: 'numeric' }}
+                            value={newPrintingTierMaxWidthMm}
+                            onChange={(e) => setNewPrintingTierMaxWidthMm(e.target.value ? parseInt(e.target.value, 10) : '')}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            label="Colours"
+                            inputProps={{ inputMode: 'numeric' }}
+                            value={newPrintingTierNumColours}
+                            onChange={(e) => setNewPrintingTierNumColours(e.target.value ? parseInt(e.target.value, 10) : '')}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            label="Min meters"
+                            inputProps={{ inputMode: 'numeric' }}
+                            value={newPrintingTierMinMeters}
+                            onChange={(e) => setNewPrintingTierMinMeters(e.target.value ? parseInt(e.target.value, 10) : '')}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            label="Min charge"
+                            inputProps={{ inputMode: 'decimal' }}
+                            value={newPrintingTierMethod === 'inline' ? newPrintingTierMinCharge : ''}
+                            disabled={newPrintingTierMethod !== 'inline'}
+                            onChange={(e) => setNewPrintingTierMinCharge(e.target.value ? parseFloat(e.target.value) : '')}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            label="Setup fee"
+                            inputProps={{ inputMode: 'decimal' }}
+                            value={newPrintingTierMethod === 'uteco' ? newPrintingTierSetupFee : ''}
+                            disabled={newPrintingTierMethod !== 'uteco'}
+                            onChange={(e) => setNewPrintingTierSetupFee(e.target.value ? parseFloat(e.target.value) : '')}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <TextField
+                            size="small"
+                            label="$ / 1000m"
+                            inputProps={{ inputMode: 'decimal' }}
+                            value={newPrintingTierRate1000}
+                            onChange={(e) => setNewPrintingTierRate1000(e.target.value ? parseFloat(e.target.value) : '')}
+                          />
+                        </TableCell>
+                        <TableCell align="right">
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={!canCreatePrintingTier || savingPrintingTierKey === `${newPrintingTierMethod}:${newPrintingTierMaxWidthMm}:${newPrintingTierNumColours}`}
+                            onClick={() => {
+                              if (!canCreatePrintingTier) return
+                              const maxW = Number(newPrintingTierMaxWidthMm)
+                              const nc = Number(newPrintingTierNumColours)
+                              void savePrintingPricingTier(
+                                { method: newPrintingTierMethod, max_print_width_mm: maxW, num_colours: nc },
+                                {
+                                  min_meters: Number(newPrintingTierMinMeters),
+                                  min_charge: newPrintingTierMethod === 'inline' ? Number(newPrintingTierMinCharge) : null,
+                                  setup_fee: newPrintingTierMethod === 'uteco' ? Number(newPrintingTierSetupFee) : null,
+                                  cost_per_1000m: Number(newPrintingTierRate1000),
+                                },
+                              ).then(() => {
+                                setNewPrintingTierMaxWidthMm('')
+                                setNewPrintingTierNumColours('')
+                                setNewPrintingTierMinMeters('')
+                                setNewPrintingTierMinCharge('')
+                                setNewPrintingTierSetupFee('')
+                                setNewPrintingTierRate1000('')
+                              })
+                            }}
+                          >
+                            Add tier
+                          </Button>
+                        </TableCell>
+                      </TableRow>
                     </TableBody>
-                  </Table>
+                  </AdminDataTable>
                 )}
               </Paper>
             </Box>
@@ -1010,7 +1413,7 @@ export function AdminPage() {
                 {loading ? (
                   <Typography color="text.secondary">Loading…</Typography>
                 ) : (
-                  <Table size="small">
+                  <AdminDataTable>
                     <TableHead>
                       <TableRow>
                         <TableCell sx={{ width: 200 }}>Ink code</TableCell>
@@ -1021,7 +1424,13 @@ export function AdminPage() {
                     </TableHead>
                     <TableBody>
                       {inks.map((i) => (
-                        <InkRow key={i.ink_code} ink={i} saving={savingInkCode === i.ink_code} onSave={saveInk} />
+                        <InkRow
+                          key={i.ink_code}
+                          ink={i}
+                          saving={savingInkCode === i.ink_code}
+                          onSave={saveInk}
+                          onDelete={deleteInk}
+                        />
                       ))}
                       <TableRow>
                         <TableCell>
@@ -1063,7 +1472,7 @@ export function AdminPage() {
                         </TableCell>
                       </TableRow>
                     </TableBody>
-                  </Table>
+                  </AdminDataTable>
                 )}
               </Paper>
             </Box>
@@ -1076,7 +1485,7 @@ export function AdminPage() {
                 {loading ? (
                   <Typography color="text.secondary">Loading…</Typography>
                 ) : (
-                  <Table size="small">
+                  <AdminDataTable>
                     <TableHead>
                       <TableRow>
                         <TableCell sx={{ width: 220 }}>Customer code</TableCell>
@@ -1100,6 +1509,7 @@ export function AdminPage() {
                             customerCode={customersById.get(p.customer_id)?.code || ''}
                             saving={savingPlateKey === `${p.customer_id}__${p.plate_code}`}
                             onSave={savePlate}
+                            onDelete={deletePlate}
                           />
                         ))}
                       <TableRow>
@@ -1156,7 +1566,7 @@ export function AdminPage() {
                         </TableCell>
                       </TableRow>
                     </TableBody>
-                  </Table>
+                  </AdminDataTable>
                 )}
               </Paper>
             </Box>
@@ -1178,7 +1588,7 @@ export function AdminPage() {
               {loading ? (
                 <Typography color="text.secondary">Loading…</Typography>
               ) : (
-                <Table size="small">
+                <AdminDataTable>
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ width: 140 }}>Type</TableCell>
@@ -1190,7 +1600,13 @@ export function AdminPage() {
                   </TableHead>
                   <TableBody>
                     {cores.map((c) => (
-                      <CoreRow key={c.core_type} core={c} saving={savingCoreType === c.core_type} onSave={saveCore} />
+                      <CoreRow
+                        key={c.core_type}
+                        core={c}
+                        saving={savingCoreType === c.core_type}
+                        onSave={saveCore}
+                        onDelete={deleteCore}
+                      />
                     ))}
                     <TableRow>
                       <TableCell>
@@ -1247,7 +1663,7 @@ export function AdminPage() {
                       </TableCell>
                     </TableRow>
                   </TableBody>
-                </Table>
+                </AdminDataTable>
               )}
             </Paper>
           </Stack>
@@ -1261,8 +1677,9 @@ function ResinRow(props: {
   resin: Resin
   saving: boolean
   onSave: (code: string, patch: Omit<Resin, 'resin_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
 }) {
-  const { resin, saving, onSave } = props
+  const { resin, saving, onSave, onDelete } = props
   const [name, setName] = useState(resin.name)
   const [density, setDensity] = useState<number | ''>(resin.density)
   const [price, setPrice] = useState<number | ''>(resin.price_per_kg)
@@ -1292,20 +1709,25 @@ function ResinRow(props: {
         />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || !name.trim() || density === '' || price === ''}
-          onClick={() =>
-            void onSave(resin.resin_code, {
-              name: name.trim(),
-              density: Number(density),
-              price_per_kg: Number(price),
-            })
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || !name.trim() || density === '' || price === ''}
+            onClick={() =>
+              void onSave(resin.resin_code, {
+                name: name.trim(),
+                density: Number(density),
+                price_per_kg: Number(price),
+              })
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(resin.resin_code)}>
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1315,8 +1737,9 @@ function AdditiveRow(props: {
   additive: Additive
   saving: boolean
   onSave: (code: string, patch: Omit<Additive, 'additive_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
 }) {
-  const { additive, saving, onSave } = props
+  const { additive, saving, onSave, onDelete } = props
   const [name, setName] = useState(additive.name)
   const [price, setPrice] = useState<number | ''>(additive.price_per_kg)
 
@@ -1337,19 +1760,24 @@ function AdditiveRow(props: {
         />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || !name.trim() || price === ''}
-          onClick={() =>
-            void onSave(additive.additive_code, {
-              name: name.trim(),
-              price_per_kg: Number(price),
-            })
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || !name.trim() || price === ''}
+            onClick={() =>
+              void onSave(additive.additive_code, {
+                name: name.trim(),
+                price_per_kg: Number(price),
+              })
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(additive.additive_code)}>
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1359,8 +1787,9 @@ function ColourRow(props: {
   colour: Colour
   saving: boolean
   onSave: (code: string, patch: Omit<Colour, 'colour_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
 }) {
-  const { colour, saving, onSave } = props
+  const { colour, saving, onSave, onDelete } = props
   const [name, setName] = useState(colour.name)
   const [price, setPrice] = useState<number | ''>(colour.price_per_kg)
 
@@ -1381,19 +1810,24 @@ function ColourRow(props: {
         />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || !name.trim() || price === ''}
-          onClick={() =>
-            void onSave(colour.colour_code, {
-              name: name.trim(),
-              price_per_kg: Number(price),
-            })
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || !name.trim() || price === ''}
+            onClick={() =>
+              void onSave(colour.colour_code, {
+                name: name.trim(),
+                price_per_kg: Number(price),
+              })
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(colour.colour_code)}>
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1403,8 +1837,9 @@ function CoreRow(props: {
   core: Core
   saving: boolean
   onSave: (coreType: string, patch: Omit<Core, 'core_type'>) => Promise<void>
+  onDelete: (coreType: string) => Promise<void>
 }) {
-  const { core, saving, onSave } = props
+  const { core, saving, onSave, onDelete } = props
   const [description, setDescription] = useState(core.description || '')
   const [cost, setCost] = useState<number | ''>(core.cost_per_meter)
   const [kg, setKg] = useState<number | ''>(core.kg_per_meter)
@@ -1434,20 +1869,25 @@ function CoreRow(props: {
         />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || cost === '' || kg === ''}
-          onClick={() =>
-            void onSave(core.core_type, {
-              description: description.trim() ? description.trim() : null,
-              cost_per_meter: Number(cost),
-              kg_per_meter: Number(kg),
-            })
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || cost === '' || kg === ''}
+            onClick={() =>
+              void onSave(core.core_type, {
+                description: description.trim() ? description.trim() : null,
+                cost_per_meter: Number(cost),
+                kg_per_meter: Number(kg),
+              })
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(core.core_type)}>
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1457,8 +1897,9 @@ function ExtruderRow(props: {
   extruder: Extruder
   saving: boolean
   onSave: (code: string, patch: Omit<Extruder, 'extruder_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
 }) {
-  const { extruder, saving, onSave } = props
+  const { extruder, saving, onSave, onDelete } = props
   const [model, setModel] = useState(extruder.model || '')
   const [wMin, setWMin] = useState<number | ''>(extruder.film_width_min_mm ?? '')
   const [wMax, setWMax] = useState<number | ''>(extruder.film_width_max_mm ?? '')
@@ -1496,23 +1937,34 @@ function ExtruderRow(props: {
         <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={aveWidth} onChange={(e) => setAveWidth(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty}
-          onClick={() =>
-            void onSave(extruder.extruder_code, {
-              model: model.trim() ? model.trim() : null,
-              film_width_min_mm: wMin === '' ? null : Number(wMin),
-              film_width_max_mm: wMax === '' ? null : Number(wMax),
-              decision_width_mm: wDec === '' ? null : Number(wDec),
-              average_kg_hr: avg === '' ? null : Number(avg),
-              ave_width: aveWidth === '' ? null : Number(aveWidth),
-            })
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty}
+            onClick={() =>
+              void onSave(extruder.extruder_code, {
+                model: model.trim() ? model.trim() : null,
+                film_width_min_mm: wMin === '' ? null : Number(wMin),
+                film_width_max_mm: wMax === '' ? null : Number(wMax),
+                decision_width_mm: wDec === '' ? null : Number(wDec),
+                average_kg_hr: avg === '' ? null : Number(avg),
+                ave_width: aveWidth === '' ? null : Number(aveWidth),
+              })
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            disabled={saving}
+            onClick={() => void onDelete(extruder.extruder_code)}
+          >
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1522,8 +1974,9 @@ function ExtrusionWasteFactorRow(props: {
   wasteFactor: ExtrusionWasteFactor
   saving: boolean
   onSave: (factor: string, patch: Omit<ExtrusionWasteFactor, 'factor'>) => Promise<void>
+  onDelete: (factor: string) => Promise<void>
 }) {
-  const { wasteFactor, saving, onSave } = props
+  const { wasteFactor, saving, onSave, onDelete } = props
   const [minutes, setMinutes] = useState<number | ''>(wasteFactor.minutes)
   const dirty = minutes !== wasteFactor.minutes
   return (
@@ -1538,14 +1991,25 @@ function ExtrusionWasteFactorRow(props: {
         />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || minutes === '' || Number(minutes) < 0}
-          onClick={() => void onSave(wasteFactor.factor, { minutes: Number(minutes) })}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || minutes === '' || Number(minutes) < 0}
+            onClick={() => void onSave(wasteFactor.factor, { minutes: Number(minutes) })}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            disabled={saving}
+            onClick={() => void onDelete(wasteFactor.factor)}
+          >
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1558,8 +2022,9 @@ function PrintingPricingTierRow(props: {
     key: { method: string; max_print_width_mm: number; num_colours: number },
     patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>,
   ) => Promise<void>
+  onDelete: (key: { method: string; max_print_width_mm: number; num_colours: number }) => Promise<void>
 }) {
-  const { tier, saving, onSave } = props
+  const { tier, saving, onSave, onDelete } = props
   const [minMeters, setMinMeters] = useState<number | ''>(tier.min_meters)
   const [minCharge, setMinCharge] = useState<number | ''>(tier.min_charge ?? '')
   const [setupFee, setSetupFee] = useState<number | ''>(tier.setup_fee ?? '')
@@ -1614,24 +2079,35 @@ function PrintingPricingTierRow(props: {
         />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || minMeters === '' || rate === ''}
-          onClick={() =>
-            void onSave(
-              { method: tier.method, max_print_width_mm: tier.max_print_width_mm, num_colours: tier.num_colours },
-              {
-                min_meters: Number(minMeters),
-                min_charge: isInline ? (minCharge === '' ? null : Number(minCharge)) : null,
-                setup_fee: isUteco ? (setupFee === '' ? null : Number(setupFee)) : null,
-                cost_per_1000m: Number(rate),
-              },
-            )
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || minMeters === '' || rate === ''}
+            onClick={() =>
+              void onSave(
+                { method: tier.method, max_print_width_mm: tier.max_print_width_mm, num_colours: tier.num_colours },
+                {
+                  min_meters: Number(minMeters),
+                  min_charge: isInline ? (minCharge === '' ? null : Number(minCharge)) : null,
+                  setup_fee: isUteco ? (setupFee === '' ? null : Number(setupFee)) : null,
+                  cost_per_1000m: Number(rate),
+                },
+              )
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            disabled={saving}
+            onClick={() => void onDelete({ method: tier.method, max_print_width_mm: tier.max_print_width_mm, num_colours: tier.num_colours })}
+          >
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1641,8 +2117,9 @@ function InkRow(props: {
   ink: Ink
   saving: boolean
   onSave: (code: string, patch: Omit<Ink, 'ink_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
 }) {
-  const { ink, saving, onSave } = props
+  const { ink, saving, onSave, onDelete } = props
   const [name, setName] = useState(ink.name)
   const [printerType, setPrinterType] = useState<(typeof ink)['printer_type']>(ink.printer_type || 'inline')
 
@@ -1662,14 +2139,19 @@ function InkRow(props: {
         </TextField>
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty || !name.trim()}
-          onClick={() => void onSave(ink.ink_code, { name: name.trim(), printer_type: printerType })}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || !name.trim()}
+            onClick={() => void onSave(ink.ink_code, { name: name.trim(), printer_type: printerType })}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(ink.ink_code)}>
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
@@ -1680,8 +2162,9 @@ function PlateRow(props: {
   customerCode: string
   saving: boolean
   onSave: (customerId: string, plateCode: string, patch: Omit<Plate, 'customer_id' | 'plate_code'>) => Promise<void>
+  onDelete: (customerId: string, plateCode: string) => Promise<void>
 }) {
-  const { plate, customerCode, saving, onSave } = props
+  const { plate, customerCode, saving, onSave, onDelete } = props
   const [description, setDescription] = useState(plate.description || '')
 
   const dirty = description !== (plate.description || '')
@@ -1694,34 +2177,59 @@ function PlateRow(props: {
         <TextField size="small" fullWidth value={description} onChange={(e) => setDescription(e.target.value)} />
       </TableCell>
       <TableCell align="right">
-        <Button
-          size="small"
-          variant="outlined"
-          disabled={saving || !dirty}
-          onClick={() =>
-            void onSave(plate.customer_id, plate.plate_code, {
-              description: description.trim() ? description.trim() : null,
-            })
-          }
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty}
+            onClick={() =>
+              void onSave(plate.customer_id, plate.plate_code, {
+                description: description.trim() ? description.trim() : null,
+              })
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            disabled={saving}
+            onClick={() => void onDelete(plate.customer_id, plate.plate_code)}
+          >
+            Delete
+          </Button>
+        </Stack>
       </TableCell>
     </TableRow>
   )
 }
 
-function ResinBlendListItem(props: {
+function ResinBlendRow(props: {
   blend: ResinBlend
   saving: boolean
-  onSave: (code: string, patch: Omit<ResinBlend, 'blend_code'>) => Promise<void>
   resinOptions: ResinOption[]
+  onSave: (code: string, patch: Omit<ResinBlend, 'blend_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
+  isNewRow?: boolean
+  canSave?: boolean
+  onChangeNew?: (next: ResinBlend) => void
 }) {
-  const { blend, saving, onSave, resinOptions } = props
+  const { blend, saving, resinOptions, onSave, onDelete, isNewRow, canSave, onChangeNew } = props
+  const [expanded, setExpanded] = useState(false)
+
   const [name, setName] = useState(blend.name)
   const [components, setComponents] = useState<Array<{ resin_code: string; pct: number | '' }>>(
     (blend.components || []).map((c) => ({ resin_code: c.resin_code, pct: c.pct })),
   )
+
+  useEffect(() => {
+    if (!isNewRow) {
+      setName(blend.name)
+      setComponents((blend.components || []).map((c) => ({ resin_code: c.resin_code, pct: c.pct })))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blend.blend_code])
 
   const sum = components
     .filter((c) => c.resin_code.trim() && c.pct !== '')
@@ -1731,40 +2239,114 @@ function ResinBlendListItem(props: {
     name !== blend.name ||
     JSON.stringify(components) !== JSON.stringify((blend.components || []).map((c) => ({ resin_code: c.resin_code, pct: c.pct })))
 
-  const canSave =
+  const canSaveExisting =
     !!name.trim() &&
     components.filter((c) => c.resin_code.trim() && c.pct !== '').length > 0 &&
     Math.abs(sum - 100) < 0.01
 
-  return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Box sx={{ display: 'grid', gridTemplateColumns: '180px 1fr 140px', gap: 2, alignItems: 'center' }}>
-        <TextField size="small" label="Code" value={blend.blend_code} InputProps={{ readOnly: true }} />
-        <TextField size="small" label="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={saving || !dirty || !canSave}
-            onClick={() =>
-              void onSave(blend.blend_code, {
-                name: name.trim(),
-                components: components
-                  .filter((c) => c.resin_code.trim() && c.pct !== '')
-                  .map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct) })),
-              })
-            }
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </Box>
-      </Box>
+  const canSaveRow = isNewRow ? !!canSave : canSaveExisting
 
-      <BlendComponentsEditor components={components} onChange={setComponents} resinOptions={resinOptions} />
-      <Typography variant="caption" color={Math.abs(sum - 100) < 0.01 ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 1 }}>
-        Total: {sum.toFixed(2)}% {Math.abs(sum - 100) < 0.01 ? '(OK)' : '(must sum to 100%)'}
-      </Typography>
-    </Paper>
+  const componentSummary = components
+    .filter((c) => c.resin_code.trim() && c.pct !== '')
+    .map((c) => `${c.resin_code.trim()} ${Number(c.pct || 0).toFixed(0)}%`)
+    .join(', ')
+
+  function updateNew(next: Partial<ResinBlend>) {
+    if (!onChangeNew) return
+    onChangeNew({
+      blend_code: next.blend_code ?? blend.blend_code,
+      name: next.name ?? name,
+      components:
+        next.components ??
+        components
+          .filter((c) => c.resin_code.trim() && c.pct !== '')
+          .map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct || 0) })),
+    })
+  }
+
+  return (
+    <>
+      <TableRow hover>
+        <TableCell sx={{ fontFamily: 'monospace' }}>
+          {isNewRow ? (
+            <TextField
+              size="small"
+              label="Code"
+              value={blend.blend_code}
+              onChange={(e) => updateNew({ blend_code: e.target.value })}
+            />
+          ) : (
+            blend.blend_code
+          )}
+        </TableCell>
+        <TableCell>
+          <TextField
+            size="small"
+            fullWidth
+            label={isNewRow ? 'Name' : undefined}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (isNewRow) updateNew({ name: e.target.value })
+            }}
+          />
+        </TableCell>
+        <TableCell>
+          <Typography variant="body2" color="text.secondary">
+            {componentSummary || '—'}
+          </Typography>
+        </TableCell>
+        <TableCell align="right">
+          <Stack direction="row" spacing={1} justifyContent="flex-end">
+            <Button size="small" variant="outlined" disabled={saving} onClick={() => setExpanded((v) => !v)}>
+              {expanded ? 'Hide' : 'Details'}
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={saving || !dirty || !canSaveRow || !name.trim()}
+              onClick={() =>
+                void onSave(blend.blend_code, {
+                  name: name.trim(),
+                  components: components
+                    .filter((c) => c.resin_code.trim() && c.pct !== '')
+                    .map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct) })),
+                })
+              }
+            >
+              {saving ? 'Saving…' : isNewRow ? 'Add' : 'Save'}
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              disabled={saving}
+              onClick={() => void onDelete(blend.blend_code)}
+            >
+              {isNewRow ? 'Clear' : 'Delete'}
+            </Button>
+          </Stack>
+        </TableCell>
+      </TableRow>
+
+      {expanded ? (
+        <TableRow>
+          <TableCell colSpan={4}>
+            <BlendComponentsEditor
+              components={components}
+              onChange={(next) => {
+                setComponents(next)
+                if (isNewRow) updateNew({ components: next.filter((c) => c.resin_code.trim() && c.pct !== '').map((c) => ({ resin_code: c.resin_code.trim(), pct: Number(c.pct || 0) })) })
+              }}
+              resinOptions={resinOptions}
+            />
+            <Typography variant="caption" color={Math.abs(sum - 100) < 0.01 ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 1 }}>
+              Total: {sum.toFixed(2)}% {Math.abs(sum - 100) < 0.01 ? '(OK)' : '(must sum to 100%)'}
+            </Typography>
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </>
   )
 }
 
@@ -1785,6 +2367,7 @@ function BlendComponentsEditor(props: {
             <ResinSelect
               options={resinOptions}
               valueCode={c.resin_code}
+              reserveHelperTextSpace={false}
               onChangeCode={(nextCode) =>
                 onChange(components.map((x, i) => (i === idx ? { ...x, resin_code: nextCode } : x)))
               }

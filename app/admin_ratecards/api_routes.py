@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import case, delete, select
+from sqlalchemy.exc import IntegrityError
 import re
 
 from app.auth.deps import require_roles, csrf_protect
@@ -32,6 +33,7 @@ _WASTE_FACTOR_SLUG_OVERRIDES: dict[str, str] = {
     "Simple Job": "simple_job",
     "Gusset": "gusset",
     "Non standard Resin": "non_standard_resin",
+    "Non standard Resin or Colour": "non_standard_resin_or_colour",
 }
 
 
@@ -235,6 +237,26 @@ async def upsert_resin(resin_code: str, payload: ResinUpsertRequest):
         )
 
 
+@router.delete(
+    "/resins/{resin_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_resin(resin_code: str):
+    code = (resin_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="resin_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Resin, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="resin not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete resin (in use)")
+
+
+
 @router.get(
     "/resin-blends",
     response_model=List[ResinBlendDTO],
@@ -315,6 +337,26 @@ async def upsert_resin_blend(blend_code: str, payload: ResinBlendUpsertRequest):
         )
 
 
+@router.delete(
+    "/resin-blends/{blend_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_resin_blend(blend_code: str):
+    code = (blend_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="blend_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            b = db.get(ResinBlend, code)
+            if not b:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="resin blend not found")
+            db.execute(delete(ResinBlendComponent).where(ResinBlendComponent.blend_code == code))
+            db.delete(b)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete resin blend (in use)")
+
+
 @router.get(
     "/additives",
     response_model=List[AdditiveDTO],
@@ -370,6 +412,26 @@ async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
         )
 
 
+@router.delete(
+    "/additives/{additive_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_additive(additive_code: str):
+    code = (additive_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="additive_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Additive, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="additive not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete additive (in use)")
+
+
+
 @router.get(
     "/colours",
     response_model=List[ColourDTO],
@@ -419,6 +481,26 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
             name=c2.name,
             price_per_kg=float(c2.price_per_kg),
         )
+
+
+@router.delete(
+    "/colours/{colour_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_colour(colour_code: str):
+    code = (colour_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="colour_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Colour, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="colour not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete colour (in use)")
+
 
 
 @router.get(
@@ -476,6 +558,26 @@ async def upsert_core(core_type: str, payload: CoreUpsertRequest):
         )
 
 
+@router.delete(
+    "/cores/{core_type}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_core(core_type: str):
+    code = (core_type or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="core_type is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Core, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="core not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete core (in use)")
+
+
+
 @router.get(
     "/inks",
     response_model=List[InkDTO],
@@ -510,6 +612,26 @@ async def upsert_ink(ink_code: str, payload: InkUpsertRequest):
         i2 = db.get(Ink, code)
         assert i2 is not None
         return InkDTO(ink_code=i2.ink_code, name=i2.name, printer_type=getattr(i2, "printer_type", "inline") or "inline")
+
+
+@router.delete(
+    "/inks/{ink_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_ink(ink_code: str):
+    code = (ink_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ink_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Ink, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ink not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete ink (in use)")
+
 
 
 @router.get(
@@ -549,6 +671,29 @@ async def upsert_plate(customer_id: str, plate_code: str, payload: PlateUpsertRe
         p2 = db.get(Plate, {"customer_id": cid, "plate_code": code})
         assert p2 is not None
         return PlateDTO(customer_id=p2.customer_id, plate_code=p2.plate_code, description=p2.description, cylinder=p2.cylinder)
+
+
+@router.delete(
+    "/plates/{customer_id}/{plate_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_plate(customer_id: str, plate_code: str):
+    cid = (customer_id or "").strip()
+    code = (plate_code or "").strip()
+    if not cid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="customer_id is required")
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="plate_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Plate, {"customer_id": cid, "plate_code": code})
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="plate not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete plate (in use)")
+
 
 
 @router.get(
@@ -618,6 +763,26 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
         )
 
 
+@router.delete(
+    "/extruders/{extruder_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_extruder(extruder_code: str):
+    code = (extruder_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="extruder_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Extruder, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="extruder not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete extruder (in use)")
+
+
+
 @router.get(
     "/extrusion-waste-factors",
     response_model=List[ExtrusionWasteFactorDTO],
@@ -662,6 +827,26 @@ async def upsert_extrusion_waste_factor(factor: str, payload: ExtrusionWasteFact
         w2 = db.get(ExtrusionWasteFactor, key)
         assert w2 is not None
         return ExtrusionWasteFactorDTO(factor=w2.factor, minutes=int(w2.minutes))
+
+
+@router.delete(
+    "/extrusion-waste-factors/{factor}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_extrusion_waste_factor(factor: str):
+    key = (factor or "").strip()
+    if not key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="factor is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(ExtrusionWasteFactor, key)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="waste factor not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete waste factor (in use)")
+
 
 
 @router.get(
@@ -757,4 +942,37 @@ async def upsert_printing_pricing_tier(
             setup_fee=float(r2.setup_fee) if r2.setup_fee is not None else None,
             cost_per_1000m=float(r2.cost_per_1000m),
         )
+
+
+@router.delete(
+    "/printing-pricing-tiers/{method}/{max_print_width_mm}/{num_colours}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_printing_pricing_tier(method: str, max_print_width_mm: int, num_colours: int):
+    m = (method or "").strip().lower()
+    if m not in {"inline", "uteco"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="method must be inline or uteco")
+    if max_print_width_mm <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_print_width_mm must be > 0")
+    if num_colours < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="num_colours must be >= 1")
+    try:
+        with SessionLocal.begin() as db:
+            row = (
+                db.execute(
+                    select(PrintingPricingTier).where(
+                        PrintingPricingTier.method == m,
+                        PrintingPricingTier.max_print_width_mm == max_print_width_mm,
+                        PrintingPricingTier.num_colours == num_colours,
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="printing tier not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete printing tier (in use)")
 
