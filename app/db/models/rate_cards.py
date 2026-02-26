@@ -175,6 +175,44 @@ class ConversionRate(Base):
     )
 
 
+class ConversionSpeed(Base):
+    __tablename__ = "conversion_speeds"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    min_gauge_um: Mapped[int] = mapped_column(Integer)
+    max_gauge_um: Mapped[int] = mapped_column(Integer)
+    min_length_mm: Mapped[int] = mapped_column(Integer)
+    max_length_mm: Mapped[int] = mapped_column(Integer)
+    bags_per_minute: Mapped[float] = mapped_column(Numeric(12, 4))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "min_gauge_um",
+            "max_gauge_um",
+            "min_length_mm",
+            "max_length_mm",
+            name="uq_conversion_speed_range",
+        ),
+        CheckConstraint("min_gauge_um >= 0", name="ck_conv_speed_min_gauge_ge0"),
+        CheckConstraint("max_gauge_um >= min_gauge_um", name="ck_conv_speed_gauge_range"),
+        CheckConstraint("min_length_mm >= 0", name="ck_conv_speed_min_len_ge0"),
+        CheckConstraint("max_length_mm >= min_length_mm", name="ck_conv_speed_len_range"),
+        CheckConstraint("bags_per_minute > 0", name="ck_conv_speed_bpm_pos"),
+    )
+
+
+class ConversionFactor(Base):
+    __tablename__ = "conversion_factors"
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    value: Mapped[float] = mapped_column(Numeric(12, 4))
+
+    __table_args__ = (
+        CheckConstraint("length(slug) > 0", name="ck_conversion_factors_slug_nonempty"),
+    )
+
+
 class WasteAdder(Base):
     __tablename__ = "waste_adders"
 

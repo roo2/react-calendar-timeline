@@ -7,11 +7,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import case, delete, select
 from sqlalchemy.exc import IntegrityError
 import re
+import uuid
 
 from app.auth.deps import require_roles, csrf_protect
 from app.db.models.rate_cards import (
     Additive,
     Colour,
+    ConversionFactor,
+    ConversionSpeed,
     Core,
     Extruder,
     ExtrusionWasteFactor,
@@ -110,6 +113,29 @@ class CoreUpsertRequest(BaseModel):
     description: str | None = None
     cost_per_meter: float = Field(..., ge=0)
     kg_per_meter: float = Field(..., ge=0)
+
+
+class ConversionSpeedDTO(BaseModel):
+    min_gauge_um: int
+    max_gauge_um: int
+    min_length_mm: int
+    max_length_mm: int
+    bags_per_minute: float
+
+
+class ConversionSpeedUpsertRequest(BaseModel):
+    bags_per_minute: float = Field(..., gt=0)
+
+
+class ConversionFactorDTO(BaseModel):
+    slug: str
+    name: str
+    value: float
+
+
+class ConversionFactorUpsertRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    value: float
 
 
 class InkDTO(BaseModel):
@@ -576,6 +602,187 @@ async def delete_core(core_type: str):
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete core (in use)")
 
+
+
+@router.get(
+    "/conversion-speeds",
+    response_model=List[ConversionSpeedDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_conversion_speeds():
+    with SessionLocal() as db:
+        rows = (
+            db.execute(
+                select(ConversionSpeed).order_by(
+                    ConversionSpeed.min_gauge_um.asc(),
+                    ConversionSpeed.max_gauge_um.asc(),
+                    ConversionSpeed.min_length_mm.asc(),
+                    ConversionSpeed.max_length_mm.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            ConversionSpeedDTO(
+                min_gauge_um=r.min_gauge_um,
+                max_gauge_um=r.max_gauge_um,
+                min_length_mm=r.min_length_mm,
+                max_length_mm=r.max_length_mm,
+                bags_per_minute=float(r.bags_per_minute),
+            )
+            for r in rows
+        ]
+
+
+@router.put(
+    "/conversion-speeds/{min_gauge_um}/{max_gauge_um}/{min_length_mm}/{max_length_mm}",
+    response_model=ConversionSpeedDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_conversion_speed(
+    min_gauge_um: int,
+    max_gauge_um: int,
+    min_length_mm: int,
+    max_length_mm: int,
+    payload: ConversionSpeedUpsertRequest,
+):
+    if min_gauge_um < 0 or max_gauge_um < 0 or min_length_mm < 0 or max_length_mm < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ranges must be >= 0")
+    if max_gauge_um < min_gauge_um:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_gauge_um must be >= min_gauge_um")
+    if max_length_mm < min_length_mm:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_length_mm must be >= min_length_mm")
+
+    with SessionLocal.begin() as db:
+        row = (
+            db.execute(
+                select(ConversionSpeed).where(
+                    ConversionSpeed.min_gauge_um == min_gauge_um,
+                    ConversionSpeed.max_gauge_um == max_gauge_um,
+                    ConversionSpeed.min_length_mm == min_length_mm,
+                    ConversionSpeed.max_length_mm == max_length_mm,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if not row:
+            row = ConversionSpeed(
+                id=str(uuid.uuid4()),
+                min_gauge_um=min_gauge_um,
+                max_gauge_um=max_gauge_um,
+                min_length_mm=min_length_mm,
+                max_length_mm=max_length_mm,
+                bags_per_minute=payload.bags_per_minute,
+            )
+            db.add(row)
+        else:
+            row.bags_per_minute = payload.bags_per_minute
+
+    with SessionLocal() as db:
+        row2 = (
+            db.execute(
+                select(ConversionSpeed).where(
+                    ConversionSpeed.min_gauge_um == min_gauge_um,
+                    ConversionSpeed.max_gauge_um == max_gauge_um,
+                    ConversionSpeed.min_length_mm == min_length_mm,
+                    ConversionSpeed.max_length_mm == max_length_mm,
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert row2 is not None
+        return ConversionSpeedDTO(
+            min_gauge_um=row2.min_gauge_um,
+            max_gauge_um=row2.max_gauge_um,
+            min_length_mm=row2.min_length_mm,
+            max_length_mm=row2.max_length_mm,
+            bags_per_minute=float(row2.bags_per_minute),
+        )
+
+
+@router.delete(
+    "/conversion-speeds/{min_gauge_um}/{max_gauge_um}/{min_length_mm}/{max_length_mm}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_conversion_speed(min_gauge_um: int, max_gauge_um: int, min_length_mm: int, max_length_mm: int):
+    try:
+        with SessionLocal.begin() as db:
+            row = (
+                db.execute(
+                    select(ConversionSpeed).where(
+                        ConversionSpeed.min_gauge_um == min_gauge_um,
+                        ConversionSpeed.max_gauge_um == max_gauge_um,
+                        ConversionSpeed.min_length_mm == min_length_mm,
+                        ConversionSpeed.max_length_mm == max_length_mm,
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversion speed not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete conversion speed (in use)")
+
+
+@router.get(
+    "/conversion-factors",
+    response_model=List[ConversionFactorDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_conversion_factors():
+    with SessionLocal() as db:
+        rows = db.execute(select(ConversionFactor).order_by(ConversionFactor.slug.asc())).scalars().all()
+        return [ConversionFactorDTO(slug=r.slug, name=r.name, value=float(r.value)) for r in rows]
+
+
+@router.put(
+    "/conversion-factors/{slug}",
+    response_model=ConversionFactorDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_conversion_factor(slug: str, payload: ConversionFactorUpsertRequest):
+    s = (slug or "").strip()
+    if not s:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="slug is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(ConversionFactor, s)
+        if not row:
+            row = ConversionFactor(slug=s, name=payload.name, value=payload.value)
+            db.add(row)
+        else:
+            row.name = payload.name
+            row.value = payload.value
+
+    with SessionLocal() as db:
+        r2 = db.get(ConversionFactor, s)
+        assert r2 is not None
+        return ConversionFactorDTO(slug=r2.slug, name=r2.name, value=float(r2.value))
+
+
+@router.delete(
+    "/conversion-factors/{slug}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_conversion_factor(slug: str):
+    s = (slug or "").strip()
+    if not s:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="slug is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(ConversionFactor, s)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversion factor not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete conversion factor (in use)")
 
 
 @router.get(

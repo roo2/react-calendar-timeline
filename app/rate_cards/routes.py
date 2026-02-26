@@ -7,7 +7,8 @@ from app.auth.deps import allow_roles_any
 from app.db.models.rate_cards import (
     Additive,
     Colour,
-    ConversionRate,
+    ConversionFactor,
+    ConversionSpeed,
     Core,
     Extruder,
     ExtrusionWasteFactor,
@@ -141,16 +142,16 @@ async def get_ratebook():
                 PrintingPricingTier.num_colours.asc(),
             )
         ).all()
-        conversion_rates = db.execute(
+        conversion_speeds = db.execute(
             select(
-                ConversionRate.min_gauge_um,
-                ConversionRate.max_gauge_um,
-                ConversionRate.min_length_mm,
-                ConversionRate.max_length_mm,
-                ConversionRate.bags_per_hour,
-                ConversionRate.setup_minutes,
+                ConversionSpeed.min_gauge_um,
+                ConversionSpeed.max_gauge_um,
+                ConversionSpeed.min_length_mm,
+                ConversionSpeed.max_length_mm,
+                ConversionSpeed.bags_per_minute,
             )
         ).all()
+        conversion_factors = db.execute(select(ConversionFactor.slug, ConversionFactor.value)).all()
         waste_adders = db.execute(select(WasteAdder.condition, WasteAdder.waste_minutes)).all()
         extrusion_waste_factors = db.execute(
             select(ExtrusionWasteFactor.slug, ExtrusionWasteFactor.minutes).order_by(ExtrusionWasteFactor.factor.asc())
@@ -215,17 +216,17 @@ async def get_ratebook():
             }
             for method, max_w, nc, min_m, min_charge, setup_fee, cost_1000m in printing_pricing_tiers
         ],
-        "conversion_rates": [
+        "conversion_speeds": [
             {
                 "min_gauge_um": int(min_g),
                 "max_gauge_um": int(max_g),
                 "min_length_mm": int(min_l),
                 "max_length_mm": int(max_l),
-                "bags_per_hour": int(bph),
-                "setup_minutes": int(setup_m or 0),
+                "bags_per_minute": float(bpm),
             }
-            for min_g, max_g, min_l, max_l, bph, setup_m in conversion_rates
+            for min_g, max_g, min_l, max_l, bpm in conversion_speeds
         ],
+        "conversion_factors": {str(slug): float(v) for slug, v in conversion_factors},
         "waste_adders": [{"condition": str(c), "waste_minutes": int(m or 0)} for c, m in waste_adders],
         "extrusion_waste_factors": [{"slug": str(slug), "minutes": int(m or 0)} for slug, m in extrusion_waste_factors],
         "extrusion_throughput_kg_per_hr": 0,

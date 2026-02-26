@@ -942,6 +942,36 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "conversion_speeds",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("min_gauge_um", sa.Integer, nullable=False),
+        sa.Column("max_gauge_um", sa.Integer, nullable=False),
+        sa.Column("min_length_mm", sa.Integer, nullable=False),
+        sa.Column("max_length_mm", sa.Integer, nullable=False),
+        sa.Column("bags_per_minute", sa.Numeric(12, 4), nullable=False),
+        sa.UniqueConstraint(
+            "min_gauge_um",
+            "max_gauge_um",
+            "min_length_mm",
+            "max_length_mm",
+            name="uq_conversion_speed_range",
+        ),
+        sa.CheckConstraint("min_gauge_um >= 0", name="ck_conv_speed_min_gauge_ge0"),
+        sa.CheckConstraint("max_gauge_um >= min_gauge_um", name="ck_conv_speed_gauge_range"),
+        sa.CheckConstraint("min_length_mm >= 0", name="ck_conv_speed_min_len_ge0"),
+        sa.CheckConstraint("max_length_mm >= min_length_mm", name="ck_conv_speed_len_range"),
+        sa.CheckConstraint("bags_per_minute > 0", name="ck_conv_speed_bpm_pos"),
+    )
+
+    op.create_table(
+        "conversion_factors",
+        sa.Column("slug", sa.String(length=64), primary_key=True),
+        sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("value", sa.Numeric(12, 4), nullable=False),
+        sa.CheckConstraint("length(slug) > 0", name="ck_conversion_factors_slug_nonempty"),
+    )
+
+    op.create_table(
         "waste_adders",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("condition", sa.Text, nullable=False, unique=True),
@@ -956,6 +986,8 @@ def downgrade() -> None:
 
     # Rate cards
     op.drop_table("waste_adders")
+    op.drop_table("conversion_factors")
+    op.drop_table("conversion_speeds")
     op.drop_table("conversion_rates")
     op.drop_table("printing_rates")
     op.drop_table("printing_pricing_tiers")

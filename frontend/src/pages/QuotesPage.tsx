@@ -125,6 +125,23 @@ function QuotePreview(props: {
                 Unit price: {fmtDollars(p.unit_price, 4)}
               </Typography>
             )}
+            {p.cartons != null && (
+              <Typography variant="body2">
+                Cartons: {Number(p.cartons)}
+                {p.kg_per_carton != null ? ` (${Number(p.kg_per_carton).toFixed(2)} kg/carton)` : ''}
+              </Typography>
+            )}
+            {p.conversion_minutes_total != null && (
+              <Typography variant="body2">
+                Conversion time: {Number(p.conversion_minutes_total).toFixed(1)} min
+                {p.conversion_minutes_run != null && p.conversion_minutes_roll_changes != null
+                  ? ` (run ${Number(p.conversion_minutes_run).toFixed(1)} + roll changes ${Number(p.conversion_minutes_roll_changes).toFixed(1)})`
+                  : ''}
+              </Typography>
+            )}
+            {p.carton_cost_total != null && Number(p.carton_cost_total || 0) > 0 && (
+              <Typography variant="body2">Carton cost: {fmtDollars(p.carton_cost_total)}</Typography>
+            )}
           </Box>
 
           <Divider sx={{ my: 2 }} />
@@ -572,24 +589,32 @@ export function QuotesPage() {
     }
   }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isUFilm, productType, runUp, showRunUp, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
 
+  const extruderDecisionWidthMm = useMemo(() => {
+    // For U-Film, use the middle width as the "decision width" (per SpecPayloadForm behavior).
+    return isUFilm ? widthMmNum : layflatWidthMm
+  }, [isUFilm, layflatWidthMm, widthMmNum])
+
   const selectedExtruder = useMemo(() => {
     const extruders = Array.isArray(ratebook?.extruders) ? ratebook!.extruders : []
-    if (!extruders.length || !(layflatWidthMm > 0)) return { extruder: null as any, helperText: '' }
+    if (!extruders.length || !(extruderDecisionWidthMm > 0)) return { extruder: null as any, helperText: '' }
 
     const usable = extruders
       .filter((e) => e && typeof e.decision_width_mm === 'number' && Number.isFinite(e.decision_width_mm))
       .map((e) => ({ ...e, decision_width_mm: Number(e.decision_width_mm) }))
       .sort((a, b) => (a.decision_width_mm! - b.decision_width_mm!) || String(a.extruder_code).localeCompare(String(b.extruder_code)))
 
-    const firstFit = usable.find((e) => (e.decision_width_mm ?? 0) >= layflatWidthMm) || null
-    if (firstFit) return { extruder: firstFit, helperText: `Auto-selected for layflat ${Math.round(layflatWidthMm)}mm.` }
+    const widthLabel = isUFilm ? 'middle width' : 'layflat'
+    const firstFit = usable.find((e) => (e.decision_width_mm ?? 0) >= extruderDecisionWidthMm) || null
+    if (firstFit) return { extruder: firstFit, helperText: `Auto-selected for ${widthLabel} ${Math.round(extruderDecisionWidthMm)}mm.` }
 
     const fallback = usable.length ? usable[usable.length - 1] : null
     return {
       extruder: fallback,
-      helperText: fallback ? `No extruder can handle layflat ${Math.round(layflatWidthMm)}mm (showing largest available).` : 'No extruders available.',
+      helperText: fallback
+        ? `No extruder can handle ${widthLabel} ${Math.round(extruderDecisionWidthMm)}mm (showing largest available).`
+        : 'No extruders available.',
     }
-  }, [layflatWidthMm, ratebook])
+  }, [extruderDecisionWidthMm, isUFilm, ratebook])
 
   const calcInputs: QuickQuoteInputs = useMemo(
     () => ({
@@ -612,6 +637,7 @@ export function QuotesPage() {
       print_method: calcPayload.print_method,
       num_colours: Number(calcPayload.num_colours || 0),
       finish_mode: calcPayload.finish_mode,
+      bags_per_carton: calcPayload.bags_per_carton != null ? Number(calcPayload.bags_per_carton) : null,
       core_type: calcPayload.core_type,
       roll_weight_billing: calcPayload.roll_weight_billing != null ? calcPayload.roll_weight_billing : null,
       extruder_code: selectedExtruder.extruder?.extruder_code || null,
@@ -674,6 +700,7 @@ export function QuotesPage() {
       print_method: payload.print_method,
       num_colours: Number(payload.num_colours || 0),
       finish_mode: payload.finish_mode,
+      bags_per_carton: payload.bags_per_carton != null ? Number(payload.bags_per_carton) : null,
       core_type: payload.core_type,
       roll_weight_billing: payload.roll_weight_billing != null ? payload.roll_weight_billing : null,
       colour_components: payload.colour_components,
@@ -882,12 +909,26 @@ export function QuotesPage() {
                         />
                       </Box>
                     ) : (
-                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: isMobile ? '1fr' : canHaveGusset && flagGusset ? 'repeat(2, minmax(0, 1fr))' : 'minmax(240px, 1fr)',
+                          gap: 2,
+                        }}
+                      >
                         <TextField label="Width (mm)" type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
+                        {canHaveGusset && flagGusset ? (
+                          <TextField
+                            label="Gusset Return (mm)"
+                            type="number"
+                            value={gussetReturnMm}
+                            onChange={(e) => setGussetReturnMm(e.target.value)}
+                          />
+                        ) : null}
                       </Box>
                     )}
 
-                    {canHaveGusset && flagGusset ? (
+                    {showRunUp && canHaveGusset && flagGusset ? (
                       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                         <TextField
                           label="Gusset Return (mm)"
@@ -964,7 +1005,18 @@ export function QuotesPage() {
                         <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
                           <TableCell sx={{ width: '55%' }}>
                             {isWhite ? (
-                              <TextField size="small" label="Colour" value="WHITE (Opaque)" disabled fullWidth />
+                              <TextField
+                                size="small"
+                                label="Colour"
+                                value="WHITE (Opaque)"
+                                disabled
+                                fullWidth
+                                sx={{
+                                  // Keep this non-editable, but make the text a bit darker so it doesn't read as "fully disabled".
+                                  '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: 'rgba(0,0,0,0.72)' },
+                                  '& .MuiInputLabel-root.Mui-disabled': { color: 'rgba(0,0,0,0.6)' },
+                                }}
+                              />
                             ) : (
                               <ColourSelect
                                 options={colourOptions}

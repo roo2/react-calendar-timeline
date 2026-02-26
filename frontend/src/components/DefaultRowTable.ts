@@ -9,7 +9,7 @@ function norm(v: unknown): string {
 /**
  * Generic "default row" detector for table-based forms.
  * When a row matches the provided default row (after light normalization),
- * callers can render it with a soft grey background to signal "unchanged".
+ * callers can render it with a subtle tinted background to signal "unchanged".
  */
 export function isDefaultRow<T extends Record<string, unknown>>(row: T, defaults: T): boolean {
   const keys = new Set([...Object.keys(row), ...Object.keys(defaults)])
@@ -21,6 +21,6 @@ export function isDefaultRow<T extends Record<string, unknown>>(row: T, defaults
 
 export function defaultRowSx(isDefault: boolean): SxProps {
   // Apply to cells for consistent visuals across MUI table variants.
-  return isDefault ? { '& td': { bgcolor: 'action.hover' } } : {}
+  return isDefault ? { '& td': { bgcolor: '#FFFDE7' } } : {}
 }
 

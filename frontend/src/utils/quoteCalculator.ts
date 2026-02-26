@@ -23,14 +23,14 @@ export type QuoteRatebook = {
     string,
     { method: string; cost_per_1000m: number; setup_cost: number; setup_minutes: number; minimum_charge: number; duplex_supported: boolean }
   >
-  conversion_rates: Array<{
+  conversion_speeds?: Array<{
     min_gauge_um: number
     max_gauge_um: number
     min_length_mm: number
     max_length_mm: number
-    bags_per_hour: number
-    setup_minutes: number
+    bags_per_minute: number
   }>
+  conversion_factors?: Record<string, number>
   waste_adders: Array<{ condition: string; waste_minutes: number }>
   extrusion_waste_factors?: Array<{ slug: string; minutes: number }>
   extrusion_throughput_kg_per_hr: number
@@ -56,6 +56,7 @@ export type QuickQuoteInputs = {
   print_method: 'None' | 'Inline' | 'Uteco'
   num_colours: number
   finish_mode: 'Rolls' | 'Cartons'
+  bags_per_carton?: number | null
   core_type: string | null
   roll_weight_billing?: 'core_included' | 'core_off' | 'core_half_off' | null
   extruder_code?: string | null
@@ -72,12 +73,17 @@ export type QuotePreview = {
   units_per_roll: number | null
   totals_kg: number | null
   totals_units: number | null
-  yield_m_per_kg: number | null
   kg_per_roll: number | null
   m_per_roll: number | null
   cost_per_kg: number | null
   extrusion_hours: number | null
   extrusion_waste_minutes: number
+  conversion_minutes_total?: number | null
+  conversion_minutes_run?: number | null
+  conversion_minutes_roll_changes?: number | null
+  cartons?: number | null
+  kg_per_carton?: number | null
+  carton_cost_total?: number | null
   printing_unavailable_reason?: string | null
   cost_breakdown: {
     material_cost: number
@@ -231,10 +237,14 @@ export function computeLayflatWidthMm(spec: {
   return computeLayflatMm(spec)
 }
 
-function pickConversionRate(ratebook: QuoteRatebook, gaugeUm: number, lengthMm: number): (typeof ratebook.conversion_rates)[number] | null {
+function pickConversionSpeed(
+  ratebook: QuoteRatebook,
+  gaugeUm: number,
+  lengthMm: number,
+): (NonNullable<typeof ratebook.conversion_speeds>[number]) | null {
   const g = Number(gaugeUm || 0)
   const l = Number(lengthMm || 0)
-  const rows = Array.isArray(ratebook.conversion_rates) ? ratebook.conversion_rates : []
+  const rows = Array.isArray(ratebook.conversion_speeds) ? ratebook.conversion_speeds : []
   return (
     rows.find((r) => g >= r.min_gauge_um && g <= r.max_gauge_um && l >= r.min_length_mm && l <= r.max_length_mm) ||
     rows[0] ||
@@ -242,8 +252,14 @@ function pickConversionRate(ratebook: QuoteRatebook, gaugeUm: number, lengthMm: 
   )
 }
 
+function convFactor(ratebook: QuoteRatebook, slug: string, fallback = 0): number {
+  const v = (ratebook as any)?.conversion_factors?.[slug]
+  const n = Number(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
 function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: QuoteRatebook) {
-  const units = typeof inputs.quantity.units === 'number' && inputs.quantity.units > 0 ? Math.round(inputs.quantity.units) : null
+  const unitsIn = typeof inputs.quantity.units === 'number' && inputs.quantity.units > 0 ? Math.round(inputs.quantity.units) : null
   const totalKgN = toNum((inputs.quantity as any).total_kg)
   const totalMN = toNum((inputs.quantity as any).total_m)
   const rollsN = toNum((inputs.quantity as any).rolls)
@@ -285,10 +301,7 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
   const kgPerM2 = density * thicknessM
   const kgPerUnit = areaPerUnitM2 * kgPerM2
 
-  // Yield: meters per kg (m/kg), based on kg per linear meter of film.
-  // kg_per_m = kg_per_m2 * width_m
   const kgPerLinearM = kgPerM2 * mmToM(layflatMm)
-  const yieldMPerKg = kgPerLinearM > 0 ? 1 / kgPerLinearM : null
 
   // If quoting by total KG in Rolls mode, adjust "plastic produced" by core billing.
   // The input total_kg is treated as the billed weight; plastic weight is reduced by core weight
@@ -318,8 +331,8 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
       ? totalKgReqPlastic
       : totalMReq != null && kgPerLinearM > 0
         ? totalMReq * kgPerLinearM
-        : units != null
-          ? kgPerUnit * units
+        : unitsIn != null
+          ? kgPerUnit * unitsIn
           : 0
   let derivedTotalM = totalMReq != null ? totalMReq : derivedTotalKg > 0 && kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
   let trimmedTotalKg = derivedTotalKg
@@ -335,6 +348,14 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
 
   const webLengthM = derivedTotalM
 
+  // If the user is quoting cartons by KG/meters, we can still estimate the number of bags.
+  const units =
+    unitsIn != null
+      ? unitsIn
+      : inputs.finish_mode === 'Cartons' && !inputs.continuous_roll && kgPerUnit > 0 && trimmedTotalKg > 0
+        ? Math.max(0, Math.round(trimmedTotalKg / kgPerUnit))
+        : null
+
   const canComputeRollStats = rolls != null && rolls > 0 && kgPerLinearM > 0 && trimmedTotalKg > 0 && derivedTotalM > 0
   const kgPerRoll = canComputeRollStats ? trimmedTotalKg / rolls : null
   const mPerRoll = canComputeRollStats ? derivedTotalM / rolls : null
@@ -348,7 +369,6 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
     kgPerM2,
     kgPerUnit,
     kgPerLinearM,
-    yieldMPerKg,
     derivedTotalKg: trimmedTotalKg,
     derivedTotalM,
     webLengthM,
@@ -434,7 +454,6 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const layflatMm = d.layflatMm
   const blend = d.blend
   const kgPerUnit = d.kgPerUnit
-  const yieldMPerKg = d.yieldMPerKg
   const derivedTotalKg = d.derivedTotalKg
   const kgPerRoll = d.kgPerRoll
   const mPerRoll = d.mPerRoll
@@ -516,13 +535,35 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
 
   // Conversion (only for cartons)
   let conversionCost = 0
+  let conversionRunMinutes: number | null = null
+  let conversionRollChangeMinutes: number | null = null
+  let conversionTotalMinutes: number | null = null
+  let cartons: number | null = null
+  let kgPerCarton: number | null = null
+  let cartonCostTotal: number | null = null
   if (inputs.finish_mode === 'Cartons' && units != null) {
-    const conv = pickConversionRate(ratebook, Number(inputs.thickness_um || 0), Number(inputs.base_length_mm || 0))
-    if (conv) {
-      const bpm = Number(conv.bags_per_hour || 0) / 60
-      const minutes = (units / Math.max(bpm || 1e-9, 1e-9)) + Number(conv.setup_minutes || 0)
-      conversionCost = minutes * 1
-    }
+    const speed = pickConversionSpeed(ratebook, Number(inputs.thickness_um || 0), Number(inputs.base_length_mm || 0))
+    const bpm = speed ? Number(speed.bags_per_minute || 0) : 0
+    conversionRunMinutes = bpm > 0 ? units / bpm : null
+
+    const rollAvgKg = convFactor(ratebook, 'roll_weight_avg', 0)
+    const rollChangeMins = convFactor(ratebook, 'roll_change_minutes', 0)
+    const rollChanges = rollAvgKg > 0 && derivedTotalKg > 0 ? Math.ceil(derivedTotalKg / rollAvgKg) : 0
+    conversionRollChangeMinutes = rollChanges > 0 && rollChangeMins > 0 ? rollChanges * rollChangeMins : 0
+
+    conversionTotalMinutes =
+      (conversionRunMinutes != null ? conversionRunMinutes : 0) + (conversionRollChangeMinutes != null ? conversionRollChangeMinutes : 0)
+
+    const costPerHr = convFactor(ratebook, 'conversion_cost_per_hr', 0)
+    const runningCost = costPerHr > 0 ? (conversionTotalMinutes / 60) * costPerHr : 0
+
+    const bagsPerCarton = inputs.bags_per_carton != null ? Math.round(Number(inputs.bags_per_carton || 0)) : 0
+    cartons = bagsPerCarton > 0 ? Math.ceil(units / bagsPerCarton) : null
+    kgPerCarton = bagsPerCarton > 0 && kgPerUnit > 0 ? kgPerUnit * bagsPerCarton : null
+    const cartonCost = convFactor(ratebook, 'carton_cost', 0)
+    cartonCostTotal = cartons != null && cartons > 0 && cartonCost >= 0 ? cartons * cartonCost : 0
+
+    conversionCost = runningCost + (cartonCostTotal || 0)
   }
 
   // Core cost (only for rolls):
@@ -568,13 +609,17 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     units_per_roll: null,
     totals_kg: derivedTotalKg,
     totals_units: units,
-    // Do not clamp/round yield; let the UI format it.
-    yield_m_per_kg: yieldMPerKg,
     kg_per_roll: kgPerRoll,
     m_per_roll: mPerRoll,
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
     extrusion_hours: extrusionHours,
     extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
+    conversion_minutes_total: conversionTotalMinutes,
+    conversion_minutes_run: conversionRunMinutes,
+    conversion_minutes_roll_changes: conversionRollChangeMinutes,
+    cartons,
+    kg_per_carton: kgPerCarton,
+    carton_cost_total: cartonCostTotal,
     printing_unavailable_reason: printingUnavailableReason,
     cost_breakdown: {
       material_cost: roundMoney(materialCost),

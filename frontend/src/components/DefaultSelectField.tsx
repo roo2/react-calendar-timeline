@@ -12,7 +12,8 @@ export function isDefaultValue(value: unknown, defaultValue: unknown): boolean {
 export function defaultFieldSx(isDefault: boolean) {
   if (!isDefault) return {}
   return {
-    '& .MuiInputBase-root': { bgcolor: 'action.hover' },
+    // Very light yellow tint to indicate "default" without looking disabled.
+    '& .MuiInputBase-root': { bgcolor: '#FFFDE7' },
   }
 }
 
@@ -21,7 +22,7 @@ type DefaultSelectFieldProps = Omit<TextFieldProps, 'select'> & {
 }
 
 /**
- * TextField(select) that renders with a soft grey background while it is still at its default value.
+ * TextField(select) that renders with a subtle tint while it is still at its default value.
  * Intended as a reusable pattern across quote/job sheet forms.
  */
 export function DefaultSelectField(props: DefaultSelectFieldProps) {
