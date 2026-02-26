@@ -34,6 +34,15 @@ function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'mi
   return `${gaugeKey(s)}:${lengthKey(s)}`
 }
 
+function slugify(s: string) {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
 export function ConversionAdminPage() {
   const [speeds, setSpeeds] = useState<ConversionSpeed[]>([])
   const [factors, setFactors] = useState<ConversionFactor[]>([])
@@ -41,12 +50,13 @@ export function ConversionAdminPage() {
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
 
-  const [newFactorSlug, setNewFactorSlug] = useState('')
   const [newFactorName, setNewFactorName] = useState('')
-  const [newFactorValue, setNewFactorValue] = useState<number | ''>('')
+  const [newFactorValue, setNewFactorValue] = useState('')
   const canCreateFactor = useMemo(() => {
-    return !!newFactorSlug.trim() && !!newFactorName.trim() && newFactorValue !== ''
-  }, [newFactorName, newFactorSlug, newFactorValue])
+    const slug = slugify(newFactorName)
+    const v = parseFloat(newFactorValue)
+    return !!slug && !!newFactorName.trim() && newFactorValue.trim() !== '' && Number.isFinite(v)
+  }, [newFactorName, newFactorValue])
 
   const gaugeRanges: GaugeRange[] = useMemo(() => {
     const m = new Map<string, GaugeRange>()
@@ -72,11 +82,11 @@ export function ConversionAdminPage() {
     return m
   }, [speeds])
 
-  const [cellDrafts, setCellDrafts] = useState<Record<string, number | ''>>({})
+  const [cellDrafts, setCellDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    const next: Record<string, number | ''> = {}
-    for (const s of speeds || []) next[speedKey(s)] = Number(s.bags_per_minute)
+    const next: Record<string, string> = {}
+    for (const s of speeds || []) next[speedKey(s)] = String(s.bags_per_minute)
     setCellDrafts(next)
   }, [speeds])
 
@@ -205,14 +215,9 @@ export function ConversionAdminPage() {
                   {lengthRanges.map((l) => {
                     const key = `${gaugeKey(g)}:${lengthKey(l)}`
                     const existing = speedByKey.get(key) || null
-                    const draft = Object.prototype.hasOwnProperty.call(cellDrafts, key)
-                      ? cellDrafts[key]
-                      : existing
-                        ? Number(existing.bags_per_minute)
-                        : ''
+                    const draft = Object.prototype.hasOwnProperty.call(cellDrafts, key) ? cellDrafts[key] : existing ? String(existing.bags_per_minute) : ''
                     const isSaving = savingKey === `speed:${key}`
-                    const isDirty =
-                      (existing ? Number(existing.bags_per_minute) : '') !== draft
+                    const isDirty = (existing ? String(existing.bags_per_minute) : '') !== draft
 
                     return (
                       <TableCell key={key} align="center">
@@ -222,11 +227,15 @@ export function ConversionAdminPage() {
                           value={draft}
                           onChange={(e) => {
                             const v = e.target.value
-                            setCellDrafts((cur) => ({ ...cur, [key]: v ? parseFloat(v) : '' }))
+                            // Allow partial decimal input like "1." while typing.
+                            if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) {
+                              setCellDrafts((cur) => ({ ...cur, [key]: v }))
+                            }
                           }}
                           onBlur={() => {
                             if (!isDirty || isSaving) return
-                            const patchVal = draft === '' ? null : Number(draft)
+                            const trimmed = draft.trim()
+                            const patchVal = trimmed === '' ? null : parseFloat(trimmed)
                             const apiKey = {
                               min_gauge_um: g.min_gauge_um,
                               max_gauge_um: g.max_gauge_um,
@@ -237,7 +246,7 @@ export function ConversionAdminPage() {
                               // Don't implicitly delete on clear — just revert.
                               setCellDrafts((cur) => ({
                                 ...cur,
-                                [key]: existing ? Number(existing.bags_per_minute) : '',
+                                [key]: existing ? String(existing.bags_per_minute) : '',
                               }))
                               return
                             }
@@ -267,7 +276,6 @@ export function ConversionAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 220 }}>Slug</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell sx={{ width: 180 }}>Value</TableCell>
                 <TableCell sx={{ width: 220 }} />
@@ -279,13 +287,18 @@ export function ConversionAdminPage() {
               ))}
               <TableRow>
                 <TableCell>
-                  <TextField size="small" label="Slug" value={newFactorSlug} onChange={(e) => setNewFactorSlug(e.target.value)} />
-                </TableCell>
-                <TableCell>
                   <TextField size="small" fullWidth label="Name" value={newFactorName} onChange={(e) => setNewFactorName(e.target.value)} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={newFactorValue} onChange={(e) => setNewFactorValue(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField
+                    size="small"
+                    inputProps={{ inputMode: 'decimal' }}
+                    value={newFactorValue}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) setNewFactorValue(v)
+                    }}
+                  />
                 </TableCell>
                 <TableCell align="right">
                   <Button
@@ -294,8 +307,8 @@ export function ConversionAdminPage() {
                     disabled={!canCreateFactor}
                     onClick={() => {
                       if (!canCreateFactor) return
-                      void saveFactor(newFactorSlug, { name: newFactorName.trim(), value: Number(newFactorValue) }).then(() => {
-                        setNewFactorSlug('')
+                      const slug = slugify(newFactorName)
+                      void saveFactor(slug, { name: newFactorName.trim(), value: parseFloat(newFactorValue) }).then(() => {
                         setNewFactorName('')
                         setNewFactorValue('')
                       })
@@ -320,22 +333,30 @@ function FactorRow(props: {
   onDelete: (slug: string) => Promise<void>
 }) {
   const { row, saving, onSave, onDelete } = props
-  const [value, setValue] = useState<number | ''>(row.value)
-  const dirty = value !== row.value
+  const [value, setValue] = useState(() => String(row.value))
+  useEffect(() => setValue(String(row.value)), [row.slug, row.value])
+  const dirty = value !== String(row.value)
   return (
     <TableRow hover>
-      <TableCell sx={{ fontFamily: 'monospace' }}>{row.slug}</TableCell>
       <TableCell>{row.name}</TableCell>
       <TableCell>
-        <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={value} onChange={(e) => setValue(e.target.value ? parseFloat(e.target.value) : '')} />
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'decimal' }}
+          value={value}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) setValue(v)
+          }}
+        />
       </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
             size="small"
             variant="outlined"
-            disabled={saving || !dirty || value === ''}
-            onClick={() => void onSave(row.slug, { name: row.name, value: Number(value) })}
+            disabled={saving || !dirty || value.trim() === '' || !Number.isFinite(parseFloat(value))}
+            onClick={() => void onSave(row.slug, { name: row.name, value: parseFloat(value) })}
           >
             {saving ? 'Saving…' : 'Save'}
           </Button>

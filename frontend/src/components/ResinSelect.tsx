@@ -1,4 +1,4 @@
-import { Autocomplete, TextField } from '@mui/material'
+import { Autocomplete, TextField, type SxProps, type Theme } from '@mui/material'
 
 export type ResinOption = { resin_code: string; name: string }
 
@@ -9,9 +9,11 @@ export function ResinSelect(props: {
   error?: boolean
   helperText?: string
   reserveHelperTextSpace?: boolean
+  fullWidth?: boolean
+  sx?: SxProps<Theme>
   onChangeCode: (nextCode: string) => void
 }) {
-  const { options, valueCode, label, error, helperText, reserveHelperTextSpace = true, onChangeCode } = props
+  const { options, valueCode, label, error, helperText, reserveHelperTextSpace = true, fullWidth = true, sx, onChangeCode } = props
   return (
     <Autocomplete
       size="small"
@@ -20,9 +22,11 @@ export function ResinSelect(props: {
       getOptionLabel={(o) => `${o.resin_code} — ${o.name}`}
       isOptionEqualToValue={(a, b) => a.resin_code === b.resin_code}
       onChange={(_e, v) => onChangeCode(v?.resin_code || '')}
+      sx={sx}
       renderInput={(params) => (
         <TextField
           {...params}
+          fullWidth={fullWidth}
           label={label || 'Resin'}
           error={error}
           helperText={helperText !== undefined ? helperText : reserveHelperTextSpace ? ' ' : undefined}

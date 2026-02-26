@@ -135,7 +135,7 @@ function QuotePreview(props: {
               <Typography variant="body2">
                 Conversion time: {Number(p.conversion_minutes_total).toFixed(1)} min
                 {p.conversion_minutes_run != null && p.conversion_minutes_roll_changes != null
-                  ? ` (run ${Number(p.conversion_minutes_run).toFixed(1)} + roll changes ${Number(p.conversion_minutes_roll_changes).toFixed(1)})`
+                  ? ` (${Number(p.conversion_minutes_run).toFixed(1)} + ${Number(p.conversion_minutes_roll_changes).toFixed(1)} change)`
                   : ''}
               </Typography>
             )}
@@ -813,6 +813,15 @@ export function QuotesPage() {
                   <MenuItem value="Rolls">Rolls</MenuItem>
                   <MenuItem value="Cartons">Cartons</MenuItem>
                 </DefaultSelectField>
+                {finishMode === 'Cartons' ? (
+                  <TextField
+                    label="Bags per Carton"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={bagsPerCarton}
+                    onChange={(e) => setBagsPerCarton(e.target.value)}
+                  />
+                ) : null}
               </Box>
             </Paper>
 
@@ -927,17 +936,6 @@ export function QuotesPage() {
                         ) : null}
                       </Box>
                     )}
-
-                    {showRunUp && canHaveGusset && flagGusset ? (
-                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-                        <TextField
-                          label="Gusset Return (mm)"
-                          type="number"
-                          value={gussetReturnMm}
-                          onChange={(e) => setGussetReturnMm(e.target.value)}
-                        />
-                      </Box>
-                    ) : null}
                   </Stack>
                 )}
 
@@ -949,11 +947,8 @@ export function QuotesPage() {
                   <TextField label="Length" type="number" value={length} onChange={(e) => setLength(e.target.value)} />
                 </Box>
 
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
                   <TextField label="Thickness / Gauge (µm)" type="number" value={thicknessUm} onChange={(e) => setThicknessUm(e.target.value)} />
-                </Box>
-
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
                   <TextField
                     label="Trim (%)"
                     type="number"
@@ -1246,10 +1241,8 @@ export function QuotesPage() {
                 Packaging
               </Typography>
               <Stack spacing={2}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-                  <TextField label="Finish Type" value={finishMode} InputProps={{ readOnly: true }} disabled helperText="From Product Identity" />
-
-                  {finishMode === 'Rolls' ? (
+                {finishMode === 'Rolls' ? (
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                     <DefaultSelectField defaultValue="7mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
                       {['7mm', '13mm', 'PVC', 'None'].map((v) => (
                         <MenuItem key={v} value={v}>
@@ -1257,9 +1250,7 @@ export function QuotesPage() {
                         </MenuItem>
                       ))}
                     </DefaultSelectField>
-                  ) : null}
 
-                  {finishMode === 'Rolls' ? (
                     <DefaultSelectField
                       label="Roll weight billing"
                       defaultValue="core_included"
@@ -1270,18 +1261,8 @@ export function QuotesPage() {
                       <MenuItem value="core_off">Exclude core</MenuItem>
                       <MenuItem value="core_half_off">Half core</MenuItem>
                     </DefaultSelectField>
-                  ) : null}
-
-                  {finishMode === 'Cartons' ? (
-                    <TextField
-                      label="Bags per Carton"
-                      type="number"
-                      inputProps={{ min: 1, step: 1 }}
-                      value={bagsPerCarton}
-                      onChange={(e) => setBagsPerCarton(e.target.value)}
-                    />
-                  ) : null}
-                </Box>
+                  </Box>
+                ) : null}
 
                 <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2 }}>
                   <DefaultSelectField defaultValue="Chep" label="Pallet Type" value={palletType} onChange={(e) => setPalletType(e.target.value as any)}>

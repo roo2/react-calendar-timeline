@@ -4,9 +4,9 @@ import { Box, List, ListItemButton, ListItemText, Paper, Typography } from '@mui
 const items = [
   { to: '/admin/resins', label: 'Resins' },
   { to: '/admin/extrusion', label: 'Extrusion' },
-  { to: '/admin/conversion', label: 'Packing / Conversion' },
   { to: '/admin/printing', label: 'Printing' },
   { to: '/admin/cores', label: 'Cores' },
+  { to: '/admin/conversion', label: 'Packing / Conversion' },
 ]
 
 export function AdminLayout() {

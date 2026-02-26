@@ -14,9 +14,9 @@ export function BlendComponentsEditor(props: {
   const sumOk = Math.abs(sum - 100) < 0.01
 
   return (
-    <Stack spacing={1}>
+    <Stack spacing={1} sx={{ width: '100%' }}>
       {components.map((c, idx) => (
-        <Stack key={idx} direction="row" spacing={1} alignItems="center">
+        <Stack key={idx} direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
           <ResinSelect
             options={resinOptions}
             valueCode={c.resin_code}
@@ -27,6 +27,7 @@ export function BlendComponentsEditor(props: {
               onChange(copy)
             }}
             reserveHelperTextSpace={false}
+            sx={{ flex: 1, minWidth: 520 }}
           />
           <TextField
             size="small"
