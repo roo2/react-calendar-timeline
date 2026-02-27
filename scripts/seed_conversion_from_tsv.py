@@ -12,6 +12,11 @@ from sqlalchemy import create_engine, text
 def get_db_url() -> str:
     env_url = os.getenv("DATABASE_URL")
     if env_url:
+        # Normalize Heroku-style URLs for SQLAlchemy
+        if env_url.startswith("postgres://"):
+            return "postgresql+psycopg://" + env_url[len("postgres://") :]
+        if env_url.startswith("postgresql://"):
+            return "postgresql+psycopg://" + env_url[len("postgresql://") :]
         return env_url
     return "postgresql+psycopg://app:app@db:5432/app"
 

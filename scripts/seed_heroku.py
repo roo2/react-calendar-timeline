@@ -10,6 +10,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# IMPORTANT: these are executed inside a Heroku dyno, so they must be repo-relative paths
+# (the dyno does not have your local /Users/... filesystem).
+SEED_EXTRUDERS_SCRIPT = Path("scripts") / "seed_extruders_from_tsv.py"
+SEED_WASTE_FACTORS_SCRIPT = Path("scripts") / "seed_waste_factors_from_tsv.py"
+SEED_PRINTING_PRICING_SCRIPT = Path("scripts") / "seed_printing_pricing_from_tsv.py"
+SEED_CONVERSION_SCRIPT = Path("scripts") / "seed_conversion_from_tsv.py"
+
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print(f"$ {' '.join(cmd)}", flush=True)
@@ -69,10 +76,12 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         description=(
             "Run seed steps against a Heroku deployment.\n\n"
-            "Assumes you have already cleared the DB and run migrations.\n"
             "This script will:\n"
+            "- (by default) run alembic migrations on Heroku\n"
+            "- (by default) seed admin master data from TSVs on Heroku (extruders, extrusion waste factors, printing pricing, conversion)\n"
             "- heroku run scripts/create_admin.py to create/promote a SYS_ADMIN user\n"
-            "- run API import scripts locally against the Heroku URL to import customers and plates from plate-db.tsv"
+            "- run API import scripts locally against the Heroku URL to import customers and plates from plate-db.tsv\n\n"
+            "Note: It does not clear/drop the Heroku database."
         )
     )
     p.add_argument(
@@ -101,6 +110,16 @@ def main(argv: list[str]) -> int:
         help="Plate database file path relative to repo root (default: scripts/plate-db.tsv)",
     )
     p.add_argument(
+        "--skip-migrations",
+        action="store_true",
+        help="Skip running alembic upgrade head on Heroku.",
+    )
+    p.add_argument(
+        "--skip-tsv-seeds",
+        action="store_true",
+        help="Skip seeding TSV-backed admin data on Heroku (extruders/waste/printing pricing/conversion).",
+    )
+    p.add_argument(
         "--include-fixture-min-chain",
         action="store_true",
         help="Also run scripts/fixture_min_chain.py on Heroku (DB-level fixture insert)",
@@ -124,8 +143,21 @@ def main(argv: list[str]) -> int:
     if args.admin_password == "admin" and not os.getenv("SEED_ADMIN_PASSWORD"):
         print("WARNING: using default admin password 'admin' (set SEED_ADMIN_PASSWORD to override).", flush=True)
 
+    # 0) Migrations + TSV seeds (runs inside one-off dynos).
+    if not args.skip_migrations:
+        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", "-m", "alembic", "upgrade", "head"])
+    else:
+        print("Skipping migrations (--skip-migrations).", flush=True)
+
+    if not args.skip_tsv_seeds:
+        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_EXTRUDERS_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_WASTE_FACTORS_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_PRINTING_PRICING_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_CONVERSION_SCRIPT.as_posix()])
+    else:
+        print("Skipping TSV seeds (--skip-tsv-seeds).", flush=True)
+
     # 1) Create/promote SYS_ADMIN user on Heroku DB (runs inside a one-off dyno).
-    # Note: this does not run migrations; user said they'll do that manually.
     _run(
         [
             "heroku",
