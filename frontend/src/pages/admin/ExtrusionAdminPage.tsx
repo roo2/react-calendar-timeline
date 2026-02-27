@@ -23,10 +23,6 @@ export function ExtrusionAdminPage() {
 
   const canCreateExtruder = useMemo(() => !!newExtruderCode.trim(), [newExtruderCode])
 
-  const [newWasteFactor, setNewWasteFactor] = useState('')
-  const [newWasteMinutes, setNewWasteMinutes] = useState<number | ''>('')
-  const canCreateWaste = useMemo(() => !!newWasteFactor.trim() && newWasteMinutes !== '', [newWasteFactor, newWasteMinutes])
-
   useEffect(() => {
     void (async () => {
       try {
@@ -105,22 +101,6 @@ export function ExtrusionAdminPage() {
       })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save waste factor')
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  async function deleteWasteFactor(factor: string) {
-    const trimmed = factor.trim()
-    if (!trimmed) return
-    if (!confirmDelete(`waste factor '${trimmed}'`)) return
-    try {
-      setErr(null)
-      setSavingKey(`wf:${trimmed}`)
-      await apiFetch<void>(`/api/admin/rate-cards/extrusion-waste-factors/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setWasteFactors((cur) => cur.filter((r) => r.factor !== trimmed))
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to delete waste factor')
     } finally {
       setSavingKey(null)
     }
@@ -243,33 +223,8 @@ export function ExtrusionAdminPage() {
                   row={r}
                   saving={savingKey === `wf:${r.factor}`}
                   onSave={saveWasteFactor}
-                  onDelete={deleteWasteFactor}
                 />
               ))}
-              <TableRow>
-                <TableCell>
-                  <TextField size="small" fullWidth label="Factor" value={newWasteFactor} onChange={(e) => setNewWasteFactor(e.target.value)} />
-                </TableCell>
-                <TableCell>
-                  <TextField size="small" label="Minutes" inputProps={{ inputMode: 'numeric' }} value={newWasteMinutes} onChange={(e) => setNewWasteMinutes(e.target.value ? parseFloat(e.target.value) : '')} />
-                </TableCell>
-                <TableCell align="right">
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={!canCreateWaste || savingKey === `wf:${newWasteFactor.trim()}`}
-                    onClick={() => {
-                      if (!canCreateWaste) return
-                      void saveWasteFactor(newWasteFactor, { minutes: Number(newWasteMinutes) }).then(() => {
-                        setNewWasteFactor('')
-                        setNewWasteMinutes('')
-                      })
-                    }}
-                  >
-                    Add factor
-                  </Button>
-                </TableCell>
-              </TableRow>
             </TableBody>
           </AdminDataTable>
         )}
@@ -353,9 +308,8 @@ function WasteFactorRow(props: {
   row: ExtrusionWasteFactor
   saving: boolean
   onSave: (factor: string, patch: Omit<ExtrusionWasteFactor, 'factor'>) => Promise<void>
-  onDelete: (factor: string) => Promise<void>
 }) {
-  const { row, saving, onSave, onDelete } = props
+  const { row, saving, onSave } = props
   const [minutes, setMinutes] = useState<number | ''>(row.minutes)
   const dirty = minutes !== row.minutes
   return (
@@ -368,9 +322,6 @@ function WasteFactorRow(props: {
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button size="small" variant="outlined" disabled={saving || !dirty || minutes === ''} onClick={() => void onSave(row.factor, { minutes: Number(minutes) })}>
             {saving ? 'Saving…' : 'Save'}
-          </Button>
-          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.factor)}>
-            Delete
           </Button>
         </Stack>
       </TableCell>

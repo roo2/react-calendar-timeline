@@ -42,6 +42,15 @@ function fmtDollars(v: any, dp: number = 2) {
   return `$${n.toFixed(dp)}`
 }
 
+function fmtHoursMinutes(vMinutes: any) {
+  const n = Number(vMinutes)
+  if (!Number.isFinite(n)) return String(vMinutes ?? '')
+  const total = Math.max(0, Math.round(n))
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  return `${h}:${String(m).padStart(2, '0')}`
+}
+
 type ResinBlendPreset = {
   blend_code: string
   name: string
@@ -102,12 +111,12 @@ function QuotePreview(props: {
             )}
             {p.extrusion_hours != null ? (
               <Typography variant="body2">
-                Extrusion time: {Number(p.extrusion_hours).toFixed(2)} hr
+                Extrusion time: {fmtHoursMinutes(Number(p.extrusion_hours) * 60)}
               </Typography>
             ) : null}
             {Number(p.extrusion_waste_minutes || 0) > 0 ? (
               <Typography variant="body2">
-                Wasted extrusion minutes: {Math.round(Number(p.extrusion_waste_minutes || 0))} min
+                Wasted extrusion time: {fmtHoursMinutes(Number(p.extrusion_waste_minutes || 0))}
               </Typography>
             ) : null}
             {finishMode === 'Rolls' && p.kg_per_roll != null && (
@@ -133,9 +142,9 @@ function QuotePreview(props: {
             )}
             {p.conversion_minutes_total != null && (
               <Typography variant="body2">
-                Conversion time: {Number(p.conversion_minutes_total).toFixed(1)} min
+                Conversion time: {fmtHoursMinutes(Number(p.conversion_minutes_total))}
                 {p.conversion_minutes_run != null && p.conversion_minutes_roll_changes != null
-                  ? ` (${Number(p.conversion_minutes_run).toFixed(1)} + ${Number(p.conversion_minutes_roll_changes).toFixed(1)} change)`
+                  ? ` (${fmtHoursMinutes(Number(p.conversion_minutes_run))} run + ${fmtHoursMinutes(Number(p.conversion_minutes_roll_changes))} change)`
                   : ''}
               </Typography>
             )}
@@ -173,10 +182,12 @@ function QuotePreview(props: {
                 <TableCell>Conversion</TableCell>
                 <TableCell>{fmtDollars(p.cost_breakdown?.conversion_cost)}</TableCell>
               </TableRow>
-              <TableRow>
-                <TableCell>Core</TableCell>
-                <TableCell>{fmtDollars(p.cost_breakdown?.core_cost)}</TableCell>
-              </TableRow>
+              {finishMode === 'Rolls' ? (
+                <TableRow>
+                  <TableCell>Core</TableCell>
+                  <TableCell>{fmtDollars(p.cost_breakdown?.core_cost)}</TableCell>
+                </TableRow>
+              ) : null}
               <TableRow>
                 <TableCell>Waste</TableCell>
                 <TableCell>{fmtDollars(p.cost_breakdown?.waste_cost)}</TableCell>
@@ -1220,14 +1231,14 @@ export function QuotesPage() {
                     <TableHead>
                       <TableRow>
                         <TableCell>Factor</TableCell>
-                        <TableCell align="right">Minutes</TableCell>
+                      <TableCell align="right">Time (H:MM)</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {appliedExtrusionWasteFactors.map((f) => (
                         <TableRow key={f.slug}>
                           <TableCell>{wasteFactorLabel(f.slug)}</TableCell>
-                          <TableCell align="right">{Math.round(Number(f.minutes || 0))}</TableCell>
+                        <TableCell align="right">{fmtHoursMinutes(Number(f.minutes || 0))}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

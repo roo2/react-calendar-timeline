@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
-import { confirmDelete } from './components/confirmDelete'
 
 type ConversionSpeed = {
   min_gauge_um: number
@@ -34,29 +33,14 @@ function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'mi
   return `${gaugeKey(s)}:${lengthKey(s)}`
 }
 
-function slugify(s: string) {
-  return s
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
 export function ConversionAdminPage() {
   const [speeds, setSpeeds] = useState<ConversionSpeed[]>([])
   const [factors, setFactors] = useState<ConversionFactor[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
-
-  const [newFactorName, setNewFactorName] = useState('')
-  const [newFactorValue, setNewFactorValue] = useState('')
-  const canCreateFactor = useMemo(() => {
-    const slug = slugify(newFactorName)
-    const v = parseFloat(newFactorValue)
-    return !!slug && !!newFactorName.trim() && newFactorValue.trim() !== '' && Number.isFinite(v)
-  }, [newFactorName, newFactorValue])
+  const [speedSavedFlash, setSpeedSavedFlash] = useState(false)
+  const speedSavedTimerRef = useRef<number | null>(null)
 
   const gaugeRanges: GaugeRange[] = useMemo(() => {
     const m = new Map<string, GaugeRange>()
@@ -89,6 +73,12 @@ export function ConversionAdminPage() {
     for (const s of speeds || []) next[speedKey(s)] = String(s.bags_per_minute)
     setCellDrafts(next)
   }, [speeds])
+
+  useEffect(() => {
+    return () => {
+      if (speedSavedTimerRef.current != null) window.clearTimeout(speedSavedTimerRef.current)
+    }
+  }, [])
 
   const factorsSorted = useMemo(() => {
     return (factors || []).slice().sort((a, b) => a.slug.localeCompare(b.slug))
@@ -134,6 +124,9 @@ export function ConversionAdminPage() {
         next[idx] = saved
         return next
       })
+      if (speedSavedTimerRef.current != null) window.clearTimeout(speedSavedTimerRef.current)
+      setSpeedSavedFlash(true)
+      speedSavedTimerRef.current = window.setTimeout(() => setSpeedSavedFlash(false), 1500)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save conversion speed')
     } finally {
@@ -166,32 +159,21 @@ export function ConversionAdminPage() {
     }
   }
 
-  async function deleteFactor(slug: string) {
-    const s = slug.trim()
-    if (!s) return
-    if (!confirmDelete(`conversion factor '${s}'`)) return
-    const k = `factor:${s}`
-    try {
-      setErr(null)
-      setSavingKey(k)
-      await apiFetch<void>(`/api/admin/rate-cards/conversion-factors/${encodeURIComponent(s)}`, { method: 'DELETE' })
-      setFactors((cur) => cur.filter((f) => f.slug !== s))
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to delete conversion factor')
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Packing / Conversion" subtitle="Conversion speeds (bags/minute) and conversion factors used for carton estimates." />
       {err ? <Alert severity="error">{err}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Conversion speeds
-        </Typography>
+        <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography variant="subtitle1">Conversion speeds (bags/minute)</Typography>
+          <Typography
+            variant="caption"
+            color={savingKey?.startsWith('speed:') ? 'text.secondary' : speedSavedFlash ? 'success.main' : 'text.secondary'}
+          >
+            {savingKey?.startsWith('speed:') ? 'Saving…' : speedSavedFlash ? 'Saved' : ''}
+          </Typography>
+        </Stack>
         {loading ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
@@ -283,41 +265,8 @@ export function ConversionAdminPage() {
             </TableHead>
             <TableBody>
               {factorsSorted.map((f) => (
-                <FactorRow key={f.slug} row={f} saving={savingKey === `factor:${f.slug}`} onSave={saveFactor} onDelete={deleteFactor} />
+                <FactorRow key={f.slug} row={f} saving={savingKey === `factor:${f.slug}`} onSave={saveFactor} />
               ))}
-              <TableRow>
-                <TableCell>
-                  <TextField size="small" fullWidth label="Name" value={newFactorName} onChange={(e) => setNewFactorName(e.target.value)} />
-                </TableCell>
-                <TableCell>
-                  <TextField
-                    size="small"
-                    inputProps={{ inputMode: 'decimal' }}
-                    value={newFactorValue}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) setNewFactorValue(v)
-                    }}
-                  />
-                </TableCell>
-                <TableCell align="right">
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    disabled={!canCreateFactor}
-                    onClick={() => {
-                      if (!canCreateFactor) return
-                      const slug = slugify(newFactorName)
-                      void saveFactor(slug, { name: newFactorName.trim(), value: parseFloat(newFactorValue) }).then(() => {
-                        setNewFactorName('')
-                        setNewFactorValue('')
-                      })
-                    }}
-                  >
-                    Add factor
-                  </Button>
-                </TableCell>
-              </TableRow>
             </TableBody>
           </AdminDataTable>
         )}
@@ -330,9 +279,8 @@ function FactorRow(props: {
   row: ConversionFactor
   saving: boolean
   onSave: (slug: string, patch: Pick<ConversionFactor, 'name' | 'value'>) => Promise<void>
-  onDelete: (slug: string) => Promise<void>
 }) {
-  const { row, saving, onSave, onDelete } = props
+  const { row, saving, onSave } = props
   const [value, setValue] = useState(() => String(row.value))
   useEffect(() => setValue(String(row.value)), [row.slug, row.value])
   const dirty = value !== String(row.value)
@@ -359,9 +307,6 @@ function FactorRow(props: {
             onClick={() => void onSave(row.slug, { name: row.name, value: parseFloat(value) })}
           >
             {saving ? 'Saving…' : 'Save'}
-          </Button>
-          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.slug)}>
-            Delete
           </Button>
         </Stack>
       </TableCell>
