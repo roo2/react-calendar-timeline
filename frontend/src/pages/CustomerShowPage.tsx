@@ -128,7 +128,7 @@ export function CustomerShowPage() {
         <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Basic Information</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Customer Name</strong>
+            <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Company Name</strong>
             <p style={{ margin: '4px 0 0' }}>{customer.name}</p>
           </div>
           {customer.abn && (
@@ -137,10 +137,10 @@ export function CustomerShowPage() {
               <p style={{ margin: '4px 0 0' }}>{customer.abn}</p>
             </div>
           )}
-          {customer.tax_id && (
+          {customer.contact_phone && (
             <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Tax ID</strong>
-              <p style={{ margin: '4px 0 0' }}>{customer.tax_id}</p>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Contact Phone</strong>
+              <p style={{ margin: '4px 0 0' }}>{customer.contact_phone}</p>
             </div>
           )}
           {customer.payment_terms && (
@@ -149,10 +149,10 @@ export function CustomerShowPage() {
               <p style={{ margin: '4px 0 0' }}>{customer.payment_terms}</p>
             </div>
           )}
-          {customer.credit_limit != null && (
+          {customer.deposit_required && (
             <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Credit Limit</strong>
-              <p style={{ margin: '4px 0 0' }}>${customer.credit_limit.toFixed(2)}</p>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Deposit Required</strong>
+              <p style={{ margin: '4px 0 0' }}>{customer.deposit_pct != null ? `${customer.deposit_pct}%` : 'Yes'}</p>
             </div>
           )}
         </div>
@@ -161,6 +161,46 @@ export function CustomerShowPage() {
             <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Notes</strong>
             <p style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{customer.notes}</p>
           </div>
+        )}
+      </section>
+
+      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Contacts</h2>
+        {contacts.length > 0 ? (
+          <div style={{ display: 'grid', gap: 16 }}>
+            {contacts.map((c: any, idx: number) => (
+              <div key={idx} style={{ padding: 16, background: '#f9fafb', borderRadius: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{c.name}</h3>
+                  <span style={{ padding: '4px 8px', background: '#e5e7eb', borderRadius: 4, fontSize: '0.75rem' }}>
+                    {c.type}
+                  </span>
+                </div>
+                {c.title && <p style={{ margin: '4px 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.title}</p>}
+                <div style={{ marginTop: 8 }}>
+                  <p style={{ margin: '4px 0' }}>
+                    <strong>Email:</strong>{' '}
+                    <MuiLink href={`mailto:${c.email}`} underline="hover">
+                      {c.email}
+                    </MuiLink>
+                  </p>
+                  {c.phone && (
+                    <p style={{ margin: '4px 0' }}>
+                      <strong>Phone:</strong> {c.phone}
+                    </p>
+                  )}
+                  {c.phone_alt && (
+                    <p style={{ margin: '4px 0' }}>
+                      <strong>Alt Phone:</strong> {c.phone_alt}
+                    </p>
+                  )}
+                  {c.notes && <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.notes}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p style={{ color: '#9ca3af' }}>No contacts registered.</p>
         )}
       </section>
 
@@ -265,39 +305,6 @@ export function CustomerShowPage() {
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Contacts</h2>
-        {contacts.length > 0 ? (
-          <div style={{ display: 'grid', gap: 16 }}>
-            {contacts.map((c: any, idx: number) => (
-              <div key={idx} style={{ padding: 16, background: '#f9fafb', borderRadius: 6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{c.name}</h3>
-                  <span style={{ padding: '4px 8px', background: '#e5e7eb', borderRadius: 4, fontSize: '0.75rem' }}>
-                    {c.type}
-                  </span>
-                </div>
-                {c.title && <p style={{ margin: '4px 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.title}</p>}
-                <div style={{ marginTop: 8 }}>
-                  <p style={{ margin: '4px 0' }}>
-                    <strong>Email:</strong>{' '}
-                    <MuiLink href={`mailto:${c.email}`} underline="hover">
-                      {c.email}
-                    </MuiLink>
-                  </p>
-                  <p style={{ margin: '4px 0' }}>
-                    <strong>Preferred Method:</strong> {c.preferred_method}
-                  </p>
-                  {c.notes && <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.notes}</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p style={{ color: '#9ca3af' }}>No contacts registered.</p>
-        )}
-      </section>
-
-      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
         <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Delivery Addresses</h2>
         {addresses.length > 0 ? (
           <div style={{ display: 'grid', gap: 16 }}>
@@ -369,10 +376,6 @@ export function CustomerShowPage() {
                 <p style={{ margin: '4px 0 0' }}>{prefs.preferred_transport_company}</p>
               </div>
             )}
-            <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Preferred Wrapping</strong>
-              <p style={{ margin: '4px 0 0' }}>{prefs.preferred_wrapping ? 'Required' : 'Not Required'}</p>
-            </div>
             {prefs.special_instructions && (
               <div style={{ gridColumn: '1 / -1' }}>
                 <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Special Instructions</strong>
@@ -380,13 +383,6 @@ export function CustomerShowPage() {
               </div>
             )}
           </div>
-        </section>
-      )}
-
-      {customer.internal_notes && canEdit && (
-        <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fef3c7' }}>
-          <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Internal Notes</h2>
-          <p style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#92400e' }}>{customer.internal_notes}</p>
         </section>
       )}
 

@@ -43,14 +43,14 @@ async def get_customer(customer_id: str):
         "customer": _customer_summary(c)
         | {
             "abn": c.abn,
-            "tax_id": c.tax_id,
+            "contact_phone": getattr(c, "contact_phone", None),
             "contacts": c.contacts.get("items", []) if isinstance(c.contacts, dict) else [],
             "delivery_addresses": c.delivery_addresses.get("items", []) if isinstance(c.delivery_addresses, dict) else [],
             "delivery_preferences": c.delivery_preferences if isinstance(c.delivery_preferences, dict) else {},
             "payment_terms": c.payment_terms,
-            "credit_limit": float(c.credit_limit) if c.credit_limit is not None else None,
+            "deposit_required": bool(getattr(c, "deposit_required", False)),
+            "deposit_pct": float(c.deposit_pct) if getattr(c, "deposit_pct", None) is not None else None,
             "notes": c.notes,
-            "internal_notes": c.internal_notes,
             "products_count": products_count,
             "orders_count": orders_count,
         }

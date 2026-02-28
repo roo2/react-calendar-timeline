@@ -16,12 +16,24 @@ import {
   Typography,
 } from '@mui/material'
 
+const PAYMENT_TERMS_OPTIONS = [
+  'Up Front',
+  '7 days',
+  '14 days',
+  '21 days',
+  '31 days',
+  'EoM + 30 days',
+  'EoM + 45 days',
+  'EoM + 60 days',
+] as const
+
 type Contact = {
   type: string
   name: string
   title?: string | null
   email: string
-  preferred_method: string
+  phone?: string | null
+  phone_alt?: string | null
   notes?: string | null
 }
 
@@ -43,7 +55,6 @@ type Address = {
 type DeliveryPrefs = {
   preferred_pallet_type: string
   preferred_transport_company?: string | null
-  preferred_wrapping: boolean
   special_instructions?: string | null
 }
 
@@ -53,8 +64,10 @@ type CustomerDetail = {
   name: string
   status: string
   abn?: string | null
-  tax_id?: string | null
+  contact_phone?: string | null
   payment_terms?: string | null
+  deposit_required?: boolean
+  deposit_pct?: number | null
   credit_limit?: number | null
   notes?: string | null
   internal_notes?: string | null
@@ -69,7 +82,8 @@ function coerceContact(x: any): Contact {
     name: String(x?.name ?? ''),
     title: x?.title ?? '',
     email: String(x?.email ?? ''),
-    preferred_method: String(x?.preferred_method ?? 'Email'),
+    phone: x?.phone ?? '',
+    phone_alt: x?.phone_alt ?? '',
     notes: x?.notes ?? '',
   }
 }
@@ -104,7 +118,7 @@ export function CustomerUpsertPage() {
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [abn, setAbn] = useState('')
-  const [taxId, setTaxId] = useState('')
+  const [contactPhone, setContactPhone] = useState('')
   const [status, setStatus] = useState<'Active' | 'Inactive' | 'Archived'>('Active')
 
   const [contacts, setContacts] = useState<Contact[]>([
@@ -113,7 +127,8 @@ export function CustomerUpsertPage() {
       name: '',
       title: '',
       email: '',
-      preferred_method: 'Email',
+      phone: '',
+      phone_alt: '',
       notes: '',
     },
   ])
@@ -136,13 +151,12 @@ export function CustomerUpsertPage() {
 
   const [preferredPalletType, setPreferredPalletType] = useState('Plain')
   const [preferredTransportCompany, setPreferredTransportCompany] = useState('')
-  const [preferredWrapping, setPreferredWrapping] = useState(true)
   const [specialInstructions, setSpecialInstructions] = useState('')
 
   const [paymentTerms, setPaymentTerms] = useState('')
-  const [creditLimit, setCreditLimit] = useState('')
+  const [depositRequired, setDepositRequired] = useState(false)
+  const [depositPct, setDepositPct] = useState('')
   const [notes, setNotes] = useState('')
-  const [internalNotes, setInternalNotes] = useState('')
 
   const [localErr, setLocalErr] = useState<string | null>(null)
 
@@ -183,7 +197,7 @@ export function CustomerUpsertPage() {
     setCode(c.code ?? '')
     setName(c.name ?? '')
     setAbn(c.abn || '')
-    setTaxId(c.tax_id || '')
+    setContactPhone(c.contact_phone || '')
     setStatus((c.status as any) || 'Active')
 
     const loadedContacts = Array.isArray(c.contacts) ? c.contacts.map(coerceContact) : []
@@ -201,13 +215,12 @@ export function CustomerUpsertPage() {
     const p = c.delivery_preferences || {}
     setPreferredPalletType(String(p.preferred_pallet_type ?? 'Plain'))
     setPreferredTransportCompany(String(p.preferred_transport_company ?? ''))
-    setPreferredWrapping(Boolean(p.preferred_wrapping ?? true))
     setSpecialInstructions(String(p.special_instructions ?? ''))
 
     setPaymentTerms(c.payment_terms || '')
-    setCreditLimit(c.credit_limit != null ? String(c.credit_limit) : '')
+    setDepositRequired(Boolean(c.deposit_required ?? false))
+    setDepositPct(c.deposit_pct != null ? String(c.deposit_pct) : '')
     setNotes(c.notes || '')
-    setInternalNotes(c.internal_notes || '')
 
     setHydratedId(customerId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,11 +232,13 @@ export function CustomerUpsertPage() {
         code,
         name,
         abn: abn || null,
-        tax_id: taxId || null,
+        contact_phone: contactPhone || null,
         status,
         contacts: contacts.map((c) => ({
           ...c,
           title: c.title || null,
+          phone: c.phone || null,
+          phone_alt: c.phone_alt || null,
           notes: c.notes || null,
         })),
         delivery_addresses: addresses.map((a) => ({
@@ -236,13 +251,12 @@ export function CustomerUpsertPage() {
         delivery_preferences: {
           preferred_pallet_type: preferredPalletType,
           preferred_transport_company: preferredTransportCompany || null,
-          preferred_wrapping: preferredWrapping,
           special_instructions: specialInstructions || null,
         } satisfies DeliveryPrefs,
         payment_terms: paymentTerms || null,
-        credit_limit: creditLimit ? Number(creditLimit) : null,
+        deposit_required: !!depositRequired,
+        deposit_pct: depositRequired ? (depositPct ? Number(depositPct) : null) : null,
         notes: notes || null,
-        internal_notes: internalNotes || null,
       }
 
       if (isEdit) {
@@ -296,7 +310,7 @@ export function CustomerUpsertPage() {
               }
             />
             <TextField
-              label="Customer Name"
+              label="Company Name"
               value={name}
               onChange={(e) => {
                 setName(e.currentTarget.value)
@@ -306,8 +320,8 @@ export function CustomerUpsertPage() {
               error={!!fieldErrors['name']}
               helperText={fieldErrors['name'] || ''}
             />
-            <TextField label="ABN" value={abn} onChange={(e) => setAbn(e.currentTarget.value)} />
-            <TextField label="Tax ID" value={taxId} onChange={(e) => setTaxId(e.currentTarget.value)} />
+            <TextField label="ABN" value={abn} onChange={(e) => setAbn(e.target.value)} />
+            <TextField label="Contact Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
             <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
               <MenuItem value="Active">Active</MenuItem>
               <MenuItem value="Inactive">Inactive</MenuItem>
@@ -330,7 +344,7 @@ export function CustomerUpsertPage() {
               onClick={() =>
                 setContacts((prev) => [
                   ...prev,
-                  { type: 'Other', name: '', email: '', preferred_method: 'Email', title: '', notes: '' },
+                  { type: 'Other', name: '', email: '', phone: '', phone_alt: '', title: '', notes: '' },
                 ])
               }
             >
@@ -398,15 +412,15 @@ export function CustomerUpsertPage() {
                     helperText={fieldErrors[`contacts[${idx}].email`] || ''}
                   />
                   <TextField
-                    select
-                    label="Preferred Method"
-                    value={c.preferred_method}
-                    onChange={(e) =>
-                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, preferred_method: e.target.value } : x)))
-                    }
-                  >
-                    <MenuItem value="Email">Email</MenuItem>
-                  </TextField>
+                    label="Phone"
+                    value={c.phone || ''}
+                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone: e.target.value } : x)))}
+                  />
+                  <TextField
+                    label="Alt Phone"
+                    value={c.phone_alt || ''}
+                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone_alt: e.target.value } : x)))}
+                  />
                   <TextField
                     label="Notes"
                     value={c.notes || ''}
@@ -587,7 +601,7 @@ export function CustomerUpsertPage() {
               select
               label="Preferred Pallet Type"
               value={preferredPalletType}
-              onChange={(e) => setPreferredPalletType(e.currentTarget.value)}
+              onChange={(e) => setPreferredPalletType(String(e.target.value))}
             >
               {['Plain', 'Chep', 'Resin', 'None'].map((p) => (
                 <MenuItem key={p} value={p}>
@@ -598,16 +612,12 @@ export function CustomerUpsertPage() {
             <TextField
               label="Preferred Transport Company"
               value={preferredTransportCompany}
-              onChange={(e) => setPreferredTransportCompany(e.currentTarget.value)}
-            />
-            <FormControlLabel
-              control={<Checkbox checked={preferredWrapping} onChange={(e) => setPreferredWrapping(e.currentTarget.checked)} />}
-              label="Preferred Wrapping Required"
+              onChange={(e) => setPreferredTransportCompany(e.target.value)}
             />
             <TextField
               label="Special Delivery Instructions"
               value={specialInstructions}
-              onChange={(e) => setSpecialInstructions(e.currentTarget.value)}
+              onChange={(e) => setSpecialInstructions(e.target.value)}
               multiline
               minRows={3}
             />
@@ -618,22 +628,50 @@ export function CustomerUpsertPage() {
           <Typography variant="h6" sx={{ mb: 2 }}>
             Additional Information
           </Typography>
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, alignItems: 'center' }}>
             <TextField
+              select
               label="Payment Terms"
               value={paymentTerms}
-              onChange={(e) => setPaymentTerms(e.currentTarget.value)}
-              placeholder="e.g., Net 30"
+              onChange={(e) => setPaymentTerms(e.target.value)}
+            >
+              <MenuItem value="">—</MenuItem>
+              {PAYMENT_TERMS_OPTIONS.map((t) => (
+                <MenuItem key={t} value={t}>
+                  {t}
+                </MenuItem>
+              ))}
+            </TextField>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={depositRequired}
+                  onChange={(e) => {
+                    setDepositRequired(e.target.checked)
+                    if (!e.target.checked) setDepositPct('')
+                  }}
+                />
+              }
+              label="Deposit Required"
             />
             <TextField
-              label="Credit Limit"
+              label="Deposit %"
               type="number"
-              inputProps={{ min: 0, step: 0.01 }}
-              value={creditLimit}
-              onChange={(e) => setCreditLimit(e.currentTarget.value)}
+              inputProps={{ min: 0, max: 100, step: 0.5 }}
+              value={depositPct}
+              onChange={(e) => setDepositPct(e.target.value)}
+              disabled={!depositRequired}
             />
-            <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.currentTarget.value)} multiline minRows={3} />
-            <TextField label="Internal Notes" value={internalNotes} onChange={(e) => setInternalNotes(e.currentTarget.value)} multiline minRows={3} />
+          </Box>
+          <Box sx={{ mt: 2 }}>
+            <TextField
+              label="Notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              multiline
+              minRows={3}
+              fullWidth
+            />
           </Box>
         </Paper>
 

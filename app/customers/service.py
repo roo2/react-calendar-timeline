@@ -47,15 +47,15 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             code=payload.code,
             name=payload.name,
             abn=payload.abn,
-            tax_id=payload.tax_id,
+            contact_phone=payload.contact_phone,
             status=payload.status,
             contacts={"items": contacts_list},  # Store as dict with 'items' key for consistency
             delivery_addresses={"items": addresses_list},  # Store as dict with 'items' key
             delivery_preferences=delivery_prefs,
             payment_terms=payload.payment_terms,
-            credit_limit=payload.credit_limit,
+            deposit_required=payload.deposit_required,
+            deposit_pct=payload.deposit_pct,
             notes=payload.notes,
-            internal_notes=payload.internal_notes,
         )
         
         db.add(customer)
@@ -84,15 +84,15 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         # Update fields
         customer.name = payload.name
         customer.abn = payload.abn
-        customer.tax_id = payload.tax_id
+        customer.contact_phone = payload.contact_phone
         customer.status = payload.status
         customer.contacts = {"items": contacts_list}
         customer.delivery_addresses = {"items": addresses_list}
         customer.delivery_preferences = delivery_prefs
         customer.payment_terms = payload.payment_terms
-        customer.credit_limit = payload.credit_limit
+        customer.deposit_required = payload.deposit_required
+        customer.deposit_pct = payload.deposit_pct
         customer.notes = payload.notes
-        customer.internal_notes = payload.internal_notes
         
         db.commit()
         db.refresh(customer)

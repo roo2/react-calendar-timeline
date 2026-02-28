@@ -65,7 +65,7 @@ def _default_customer_payload(name: str, code: str) -> Dict[str, Any]:
         "code": code,
         "name": name,
         "abn": None,
-        "tax_id": None,
+        "contact_phone": "+61 400 000 000",
         "status": "Active",
         "contacts": [
             {
@@ -75,7 +75,6 @@ def _default_customer_payload(name: str, code: str) -> Dict[str, Any]:
                 "email": "admin@example.com",
                 "phone": "+61 400 000 000",
                 "phone_alt": None,
-                "preferred_method": "Email",
                 "notes": "Seeded via plate import script",
             }
         ],
@@ -98,15 +97,13 @@ def _default_customer_payload(name: str, code: str) -> Dict[str, Any]:
         "delivery_preferences": {
             "preferred_pallet_type": "Plain",
             "preferred_transport_company": None,
-            "preferred_wrapping": True,
             "special_instructions": None,
             "delivery_contact_id": None,
         },
-        "payment_terms": "Net 30",
-        "credit_limit": 25000,
-        "currency_preference": "AUD",
+        "payment_terms": "31 days",
+        "deposit_required": False,
+        "deposit_pct": None,
         "notes": "Seeded customer from plate database",
-        "internal_notes": "Test data",
     }
 
 

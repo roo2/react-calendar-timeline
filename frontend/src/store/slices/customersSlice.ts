@@ -15,11 +15,11 @@ export type CustomerDetail = {
   name: string
   status: string
   abn?: string | null
-  tax_id?: string | null
+  contact_phone?: string | null
   payment_terms?: string | null
-  credit_limit?: number | null
+  deposit_required?: boolean
+  deposit_pct?: number | null
   notes?: string | null
-  internal_notes?: string | null
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
@@ -31,15 +31,15 @@ export type CustomerUpsertPayload = {
   code: string
   name: string
   abn: string | null
-  tax_id: string | null
+  contact_phone: string | null
   status: string
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
   payment_terms: string | null
-  credit_limit: number | null
+  deposit_required: boolean
+  deposit_pct: number | null
   notes: string | null
-  internal_notes: string | null
 }
 
 type Status = 'idle' | 'loading' | 'succeeded' | 'failed'
