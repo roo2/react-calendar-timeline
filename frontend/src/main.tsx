@@ -23,6 +23,16 @@ const theme = createTheme({
         },
       },
     },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          // Transparent border when disabled so computed/read-only fields are visually distinct.
+          '&.Mui-disabled .MuiOutlinedInput-notchedOutline': {
+            borderColor: 'transparent',
+          },
+        },
+      },
+    },
   },
 })
 

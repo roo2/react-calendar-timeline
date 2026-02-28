@@ -28,6 +28,7 @@ import { DefaultSelectField } from '../components/DefaultSelectField'
 import { productTypeCanHaveGusset } from '../utils/specCompat'
 import {
   computeAppliedExtrusionWasteFactors,
+  computeDerivedGeometryAndTotals,
   computeLayflatWidthMm,
   computePrintingUnavailableReason,
   computeQuickQuotePreview,
@@ -40,6 +41,12 @@ function fmtDollars(v: any, dp: number = 2) {
   const n = Number(v)
   if (!Number.isFinite(n)) return String(v ?? '')
   return `$${n.toFixed(dp)}`
+}
+
+function formatKgDisplay(v: number | null | undefined): string {
+  if (v == null) return ''
+  const n = Number(v)
+  return Number.isFinite(n) ? n.toFixed(2) : ''
 }
 
 function fmtHoursMinutes(vMinutes: any) {
@@ -66,6 +73,7 @@ function QuotePreview(props: {
 }) {
   const { preview, loading, canCalculate, missing, finishMode } = props
   const p = preview
+  const dash = '—'
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
@@ -75,20 +83,15 @@ function QuotePreview(props: {
         </Typography>
       </Box>
 
-      {!p ? (
-        <Box sx={{ mt: 1 }}>
-          <Typography variant="body2" color="text.secondary">
-            {canCalculate ? 'Ready to calculate.' : 'Add more details to see pricing.'}
-          </Typography>
-          {missing.length ? (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-              Missing: {missing.join(', ')}
-            </Typography>
-          ) : null}
-        </Box>
-      ) : (
-        <>
-          <Box sx={{ mt: 1 }}>
+      {!p && missing.length > 0 ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          Missing: {missing.join(', ')}
+        </Typography>
+      ) : null}
+
+      <Box sx={{ mt: 1 }}>
+        {p ? (
+          <>
             {(() => {
               const kgPerUnit =
                 p.kg_per_unit != null
@@ -151,73 +154,79 @@ function QuotePreview(props: {
             {p.carton_cost_total != null && Number(p.carton_cost_total || 0) > 0 && (
               <Typography variant="body2">Carton cost: {fmtDollars(p.carton_cost_total)}</Typography>
             )}
-          </Box>
-
-          <Divider sx={{ my: 2 }} />
-
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>
-            Breakdown
+          </>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            {canCalculate ? 'Ready to calculate.' : 'Add more details to see pricing.'}
           </Typography>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Stage</TableCell>
-                <TableCell>Cost</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <TableRow>
-                <TableCell>Material</TableCell>
-                <TableCell>{fmtDollars(p.cost_breakdown?.material_cost)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Extrusion</TableCell>
-                <TableCell>{fmtDollars(p.cost_breakdown?.extrusion_cost)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Printing</TableCell>
-                <TableCell>{fmtDollars(p.cost_breakdown?.printing_cost)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Conversion</TableCell>
-                <TableCell>{fmtDollars(p.cost_breakdown?.conversion_cost)}</TableCell>
-              </TableRow>
-              {finishMode === 'Rolls' ? (
-                <TableRow>
-                  <TableCell>Core</TableCell>
-                  <TableCell>{fmtDollars(p.cost_breakdown?.core_cost)}</TableCell>
-                </TableRow>
-              ) : null}
-              <TableRow>
-                <TableCell>Waste</TableCell>
-                <TableCell>{fmtDollars(p.cost_breakdown?.waste_cost)}</TableCell>
-              </TableRow>
+        )}
+      </Box>
 
-              <TableRow>
-                <TableCell colSpan={2} sx={{ py: 0.5 }} />
-              </TableRow>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Total cost</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{fmtDollars(p.total_cost)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Margin (%)</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{Math.round(Number(p.margin || 0) * 100)}%</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Suggested price</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{fmtDollars(p.final_price)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Suggested price / kg</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>
-                  {Number(p.totals_kg || 0) > 0 ? fmtDollars(Number(p.final_price || 0) / Number(p.totals_kg || 1)) : '—'}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </>
-      )}
+      <Divider sx={{ my: 2 }} />
+
+      <Typography variant="subtitle1" sx={{ mb: 1 }}>
+        Breakdown
+      </Typography>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>Stage</TableCell>
+            <TableCell>Cost</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          <TableRow>
+            <TableCell>Material</TableCell>
+            <TableCell>{p ? fmtDollars(p.cost_breakdown?.material_cost) : dash}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell>Extrusion</TableCell>
+            <TableCell>{p ? fmtDollars(p.cost_breakdown?.extrusion_cost) : dash}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell>Printing</TableCell>
+            <TableCell>{p ? fmtDollars(p.cost_breakdown?.printing_cost) : dash}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell>Conversion</TableCell>
+            <TableCell>{p ? fmtDollars(p.cost_breakdown?.conversion_cost) : dash}</TableCell>
+          </TableRow>
+          {finishMode === 'Rolls' ? (
+            <TableRow>
+              <TableCell>Core</TableCell>
+              <TableCell>{p ? fmtDollars(p.cost_breakdown?.core_cost) : dash}</TableCell>
+            </TableRow>
+          ) : null}
+          <TableRow>
+            <TableCell>Waste</TableCell>
+            <TableCell>{p ? fmtDollars(p.cost_breakdown?.waste_cost) : dash}</TableCell>
+          </TableRow>
+
+          <TableRow>
+            <TableCell colSpan={2} sx={{ py: 0.5 }} />
+          </TableRow>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 600 }}>Total cost</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>{p ? fmtDollars(p.total_cost) : dash}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 600 }}>Margin (%)</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>{p ? `${Math.round(Number(p.margin || 0) * 100)}%` : dash}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 600 }}>Suggested price</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>{p ? fmtDollars(p.final_price) : dash}</TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 600 }}>Suggested price / kg</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>
+              {p && Number(p.totals_kg || 0) > 0
+                ? fmtDollars(Number(p.final_price || 0) / Number(p.totals_kg || 1))
+                : dash}
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </Paper>
   )
 }
@@ -231,10 +240,12 @@ export function QuotesPage() {
   const [ratebook, setRatebook] = useState<QuoteRatebook | null>(null)
   const [ratebookErr, setRatebookErr] = useState<string | null>(null)
 
-  // Quantity
-  const [qtyType, setQtyType] = useState<'units' | 'kg'>('kg')
-  const [qtyTotal, setQtyTotal] = useState('')
-  const [qtyRolls, setQtyRolls] = useState('')
+  // Quantity (four independent values; qtyType only controls which are editable vs computed)
+  const [qtyType, setQtyType] = useState<'units' | 'kg' | 'total_rolls'>('kg')
+  const [totalKg, setTotalKg] = useState('')
+  const [numRolls, setNumRolls] = useState('')
+  const [weightPerRoll, setWeightPerRoll] = useState('')
+  const [numUnits, setNumUnits] = useState('')
 
   // Product identity
   const [productType, setProductType] = useState('Bag')
@@ -414,9 +425,10 @@ export function QuotesPage() {
   const ufilmRightWidthMmNum = Math.round(Number(ufilmRightWidthMm || 0))
   const thicknessUmNum = Math.round(Number(thicknessUm || 0))
   const gussetReturnMmNum = Math.round(Number(gussetReturnMm || 0))
-  const qtyUnitsNum = Math.round(Number(qtyTotal || 0))
-  const qtyKgNum = Number(qtyTotal || 0)
-  const qtyRollsNum = Math.round(Number(qtyRolls || 0))
+  const totalKgNum = Number(totalKg || 0)
+  const numUnitsNum = Math.round(Number(numUnits || 0))
+  const numRollsNum = Math.round(Number(numRolls || 0))
+  const weightPerRollNum = Number(weightPerRoll || 0)
 
   const showRunUp = !isUFilm && (productType === 'Sheet' || productType === 'Centerfold')
   const runUpOptions: number[] = productType === 'Centerfold' ? [1, 2] : productType === 'Sheet' ? [2, 4, 6] : [1]
@@ -430,8 +442,16 @@ export function QuotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productType, showRunUp])
 
+  useEffect(() => {
+    if (finishMode !== 'Rolls' && qtyType === 'total_rolls') setQtyType('kg')
+  }, [finishMode, qtyType])
+
   const canCalculate =
-    (qtyType === 'units' ? Number(qtyTotal || 0) > 0 : !!qtyTotal) &&
+    (qtyType === 'total_rolls'
+      ? numRollsNum > 0 && weightPerRollNum > 0
+      : qtyType === 'units'
+        ? numUnitsNum > 0
+        : totalKg.trim() !== '') &&
     widthMmNum > 0 &&
     (!isUFilm || (ufilmLeftWidthMmNum > 0 && ufilmRightWidthMmNum > 0)) &&
     thicknessUmNum > 0 &&
@@ -443,7 +463,15 @@ export function QuotesPage() {
   const missingForCalc = useMemo(() => {
     const missing: string[] = []
     if (!ratebook) missing.push('Pricing rates')
-    if (!(qtyType === 'units' ? qtyUnitsNum > 0 : qtyKgNum > 0)) missing.push(qtyType === 'units' ? 'Total Bags' : 'Total KG')
+    if (qtyType === 'units' && !(numUnitsNum > 0))
+      missing.push(
+        `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
+      )
+    else if (qtyType === 'kg' && !(totalKgNum > 0)) missing.push('Total KG')
+    else if (qtyType === 'total_rolls') {
+      if (!(numRollsNum > 0)) missing.push('No. of Rolls')
+      if (!(weightPerRollNum > 0)) missing.push('Weight per roll')
+    }
     if (!(widthMmNum > 0)) missing.push('Width')
     if (isUFilm && !(ufilmLeftWidthMmNum > 0)) missing.push('U-Film Left Width')
     if (isUFilm && !(ufilmRightWidthMmNum > 0)) missing.push('U-Film Right Width')
@@ -466,10 +494,13 @@ export function QuotesPage() {
     numColours,
     printMethod,
     printingError,
-    qtyKgNum,
+    numRollsNum,
+    numUnitsNum,
+    productType,
     qtyType,
-    qtyUnitsNum,
     ratebook,
+    totalKgNum,
+    weightPerRollNum,
     showNumColours,
     thicknessUmNum,
     ufilmLeftWidthMmNum,
@@ -479,13 +510,16 @@ export function QuotesPage() {
 
   const calcPayload = useMemo(() => {
     const qty: any = {}
-    if (qtyType === 'units') qty.units = qtyUnitsNum
-    if (qtyType === 'kg') qty.total_kg = Number(qtyTotal || 0)
-    if (finishMode === 'Rolls' && qtyRollsNum > 0) qty.rolls = qtyRollsNum
+    if (qtyType === 'units') qty.units = numUnitsNum
+    if (qtyType === 'kg') qty.total_kg = totalKgNum
+    if (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
+      qty.total_kg = numRollsNum * weightPerRollNum
+      qty.rolls = numRollsNum
+    } else if (finishMode === 'Rolls' && numRollsNum > 0) qty.rolls = numRollsNum
 
-    if (qtyType === 'units' && qtyUnitsNum > 0 && baseLengthMm > 0) {
+    if (qtyType === 'units' && numUnitsNum > 0 && baseLengthMm > 0) {
       // Provide total_m so printing/core costing can work for bag-style quotes.
-      qty.total_m = (Number(qtyUnitsNum) * baseLengthMm) / 1000
+      qty.total_m = (numUnitsNum * baseLengthMm) / 1000
     }
 
     const blendPreset = resinBlendCode ? resinBlends.find((b) => b.blend_code === resinBlendCode) : null
@@ -565,11 +599,12 @@ export function QuotesPage() {
     numColours,
     palletType,
     printMethod,
-    qtyTotal,
-    qtyRollsNum,
+    numRollsNum,
+    numUnitsNum,
     qtyType,
-    qtyUnitsNum,
     quickMargin,
+    totalKgNum,
+    weightPerRollNum,
     resinBlendCode,
     resinBlends,
     rollWeightBilling,
@@ -583,6 +618,90 @@ export function QuotesPage() {
     ufilmRightWidthMmNum,
     widthMmNum,
   ])
+
+  const derivedForDisplay = useMemo(() => {
+    if (!ratebook || !calcPayload) return null
+    try {
+      const inputs: QuickQuoteInputs = {
+        ...calcPayload,
+        requested_margin: Number(calcPayload.requested_margin) || 0,
+      }
+      return computeDerivedGeometryAndTotals(inputs, ratebook)
+    } catch {
+      return null
+    }
+  }, [ratebook, calcPayload])
+
+  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
+
+  const totalKgDisplay =
+    qtyType === 'kg'
+      ? totalKgNum
+      : qtyType === 'units'
+        ? (derivedForDisplay?.derivedTotalKg ?? null)
+        : qtyType === 'total_rolls'
+          ? (numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : null)
+          : null
+  const unitsDisplay =
+    qtyType === 'units' ? numUnitsNum : (derivedForDisplay?.units != null ? derivedForDisplay.units : null)
+  const rollsDisplay = finishMode === 'Rolls' ? numRollsNum : null
+  const weightPerRollDisplay =
+    qtyType === 'total_rolls'
+      ? weightPerRollNum
+      : finishMode === 'Rolls' && numRollsNum > 0 && derivedForDisplay?.kgPerRoll != null
+        ? derivedForDisplay.kgPerRoll
+        : null
+
+  const totalKgEditable = qtyType === 'kg'
+  const unitsEditable = qtyType === 'units'
+  const rollsEditable = finishMode === 'Rolls'
+  const weightPerRollEditable = qtyType === 'total_rolls'
+
+  // Only show computed value when the inputs that drive it are set; otherwise keep showing the field's stored value (so changing Qty Type doesn't wipe the display).
+  const haveDriverForTotalKg =
+    (qtyType === 'units' && numUnitsNum > 0) || (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
+  const haveDriverForUnits =
+    (qtyType === 'kg' && totalKgNum > 0) ||
+    (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
+  const haveDriverForWeightPerRoll =
+    finishMode === 'Rolls' &&
+    numRollsNum > 0 &&
+    ((qtyType === 'kg' && totalKgNum > 0) || (qtyType === 'units' && numUnitsNum > 0))
+
+  // Keep Weight per Roll state in sync when it's computed (Total KG or Bags mode), so switching to Total Rolls shows the value that was displayed instead of clearing it.
+  useEffect(() => {
+    if (
+      finishMode === 'Rolls' &&
+      qtyType !== 'total_rolls' &&
+      numRollsNum > 0 &&
+      (totalKgNum > 0 || numUnitsNum > 0) &&
+      derivedForDisplay?.kgPerRoll != null
+    ) {
+      const computed = Number(derivedForDisplay.kgPerRoll)
+      const str = Number.isFinite(computed) ? (computed % 1 === 0 ? String(computed) : computed.toFixed(2)) : ''
+      setWeightPerRoll(str)
+    }
+  }, [
+    finishMode,
+    qtyType,
+    numRollsNum,
+    totalKgNum,
+    numUnitsNum,
+    derivedForDisplay?.kgPerRoll,
+  ])
+
+  // Keep No. of units state in sync when it's computed (Total KG or Total Rolls mode), so switching to Units/Bags shows the value that was displayed instead of clearing it.
+  useEffect(() => {
+    if (
+      qtyType !== 'units' &&
+      derivedForDisplay?.units != null &&
+      ((qtyType === 'kg' && totalKgNum > 0) ||
+        (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0))
+    ) {
+      const computed = Math.round(Number(derivedForDisplay.units))
+      setNumUnits(Number.isFinite(computed) && computed >= 0 ? String(computed) : '')
+    }
+  }, [qtyType, totalKgNum, numRollsNum, weightPerRollNum, derivedForDisplay?.units])
 
   const layflatWidthMm = useMemo(() => {
     try {
@@ -841,30 +960,73 @@ export function QuotesPage() {
                 Quantity
               </Typography>
               <Stack spacing={2}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
                   <DefaultSelectField defaultValue="kg" label="Qty Type" value={qtyType} onChange={(e) => setQtyType(e.target.value as any)}>
-                    <MenuItem value="units">Bags (Units)</MenuItem>
+                    <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
                     <MenuItem value="kg">Total KG</MenuItem>
+                    {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
                   </DefaultSelectField>
+                </Box>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
                   <TextField
-                    label={qtyType === 'units' ? 'Total Bags' : 'Total KG'}
+                    label="Total KG"
                     type="number"
-                    value={qtyTotal}
-                    onChange={(e) => setQtyTotal(e.target.value)}
+                    inputProps={{ min: 0, step: 0.1 }}
+                    value={
+                      totalKgEditable
+                        ? totalKg
+                        : (haveDriverForTotalKg && totalKgDisplay != null
+                          ? formatKgDisplay(totalKgDisplay)
+                          : totalKg !== '' && Number.isFinite(Number(totalKg))
+                            ? formatKgDisplay(Number(totalKg))
+                            : totalKg)
+                    }
+                    onChange={totalKgEditable ? (e) => setTotalKg(e.target.value) : undefined}
+                    disabled={!totalKgEditable}
+                  />
+                  <TextField
+                    label="No. of Rolls"
+                    type="number"
+                    inputProps={{ min: 0, step: 1 }}
+                    value={
+                      rollsEditable
+                        ? numRolls
+                        : (rollsDisplay != null ? rollsDisplay : finishMode === 'Cartons' ? '—' : numRolls)
+                    }
+                    onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
+                    disabled={!rollsEditable}
+                  />
+                  <TextField
+                    label="Weight per Roll (kg)"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.1 }}
+                    value={
+                      weightPerRollEditable
+                        ? weightPerRoll
+                        : (haveDriverForWeightPerRoll && weightPerRollDisplay != null
+                          ? formatKgDisplay(weightPerRollDisplay)
+                          : finishMode === 'Cartons'
+                            ? '—'
+                            : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
+                              ? formatKgDisplay(Number(weightPerRoll))
+                              : weightPerRoll)
+                    }
+                    onChange={weightPerRollEditable ? (e) => setWeightPerRoll(e.target.value) : undefined}
+                    disabled={!weightPerRollEditable}
+                  />
+                  <TextField
+                    label={`No. of ${productUnitLabel}`}
+                    type="number"
+                    inputProps={{ min: 0, step: 1 }}
+                    value={
+                      unitsEditable
+                        ? numUnits
+                        : (haveDriverForUnits && unitsDisplay != null ? unitsDisplay : numUnits)
+                    }
+                    onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
+                    disabled={!unitsEditable}
                   />
                 </Box>
-
-                {finishMode === 'Rolls' ? (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-                    <TextField
-                      label="No. of Rolls"
-                      type="number"
-                      inputProps={{ min: 1, step: 1 }}
-                      value={qtyRolls}
-                      onChange={(e) => setQtyRolls(e.target.value)}
-                    />
-                  </Box>
-                ) : null}
               </Stack>
             </Paper>
 

@@ -258,7 +258,7 @@ function convFactor(ratebook: QuoteRatebook, slug: string, fallback = 0): number
   return Number.isFinite(n) ? n : fallback
 }
 
-function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: QuoteRatebook) {
+export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: QuoteRatebook) {
   const unitsIn = typeof inputs.quantity.units === 'number' && inputs.quantity.units > 0 ? Math.round(inputs.quantity.units) : null
   const totalKgN = toNum((inputs.quantity as any).total_kg)
   const totalMN = toNum((inputs.quantity as any).total_m)
@@ -348,11 +348,11 @@ function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: Quo
 
   const webLengthM = derivedTotalM
 
-  // If the user is quoting cartons by KG/meters, we can still estimate the number of bags.
+  // Derive units from total kg whenever we have kgPerUnit (so "No. of product_type" can be shown for any finish mode).
   const units =
     unitsIn != null
       ? unitsIn
-      : inputs.finish_mode === 'Cartons' && !inputs.continuous_roll && kgPerUnit > 0 && trimmedTotalKg > 0
+      : !inputs.continuous_roll && kgPerUnit > 0 && trimmedTotalKg > 0
         ? Math.max(0, Math.round(trimmedTotalKg / kgPerUnit))
         : null
 
