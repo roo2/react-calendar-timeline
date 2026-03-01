@@ -266,6 +266,7 @@ export function QuotesPage() {
   const [thicknessUm, setThicknessUm] = useState('')
   const [trimPctText, setTrimPctText] = useState<string>('')
   const [runUp, setRunUp] = useState<number>(1)
+  const [layflatInput, setLayflatInput] = useState<string | null>(null)
 
   // Materials
   const [resinBlends, setResinBlends] = useState<ResinBlendPreset[]>([])
@@ -292,7 +293,7 @@ export function QuotesPage() {
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
 
   // Pricing
-  const [quickMargin, setQuickMargin] = useState('0.20')
+  const [quickMargin, setQuickMargin] = useState('32')
   const [quickPreview, setQuickPreview] = useState<any>(null)
   const [calcLoading, setCalcLoading] = useState(false)
   const [printingError, setPrintingError] = useState<string | null>(null)
@@ -451,7 +452,9 @@ export function QuotesPage() {
       ? numRollsNum > 0 && weightPerRollNum > 0
       : qtyType === 'units'
         ? numUnitsNum > 0
-        : totalKg.trim() !== '') &&
+        : qtyType === 'kg'
+          ? totalKg.trim() !== '' && (finishMode !== 'Rolls' || weightPerRollNum > 0)
+          : false) &&
     widthMmNum > 0 &&
     (!isUFilm || (ufilmLeftWidthMmNum > 0 && ufilmRightWidthMmNum > 0)) &&
     thicknessUmNum > 0 &&
@@ -467,12 +470,15 @@ export function QuotesPage() {
       missing.push(
         `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
       )
-    else if (qtyType === 'kg' && !(totalKgNum > 0)) missing.push('Total KG')
+    else if (qtyType === 'kg') {
+      if (!(totalKgNum > 0)) missing.push('Total KG')
+      if (finishMode === 'Rolls' && !(weightPerRollNum > 0)) missing.push('Weight per roll')
+    }
     else if (qtyType === 'total_rolls') {
       if (!(numRollsNum > 0)) missing.push('No. of Rolls')
       if (!(weightPerRollNum > 0)) missing.push('Weight per roll')
     }
-    if (!(widthMmNum > 0)) missing.push('Width')
+    if (!(widthMmNum > 0)) missing.push(`${productType} Width`)
     if (isUFilm && !(ufilmLeftWidthMmNum > 0)) missing.push('U-Film Left Width')
     if (isUFilm && !(ufilmRightWidthMmNum > 0)) missing.push('U-Film Right Width')
     if (!(thicknessUmNum > 0)) missing.push('Gauge')
@@ -511,11 +517,16 @@ export function QuotesPage() {
   const calcPayload = useMemo(() => {
     const qty: any = {}
     if (qtyType === 'units') qty.units = numUnitsNum
-    if (qtyType === 'kg') qty.total_kg = totalKgNum
+    if (qtyType === 'kg') {
+      qty.total_kg = totalKgNum
+      if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
+        qty.rolls = Math.round(totalKgNum / weightPerRollNum)
+      }
+    }
     if (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
       qty.total_kg = numRollsNum * weightPerRollNum
       qty.rolls = numRollsNum
-    } else if (finishMode === 'Rolls' && numRollsNum > 0) qty.rolls = numRollsNum
+    } else if (finishMode === 'Rolls' && qtyType !== 'kg' && numRollsNum > 0) qty.rolls = numRollsNum
 
     if (qtyType === 'units' && numUnitsNum > 0 && baseLengthMm > 0) {
       // Provide total_m so printing/core costing can work for bag-style quotes.
@@ -576,7 +587,7 @@ export function QuotesPage() {
       pallet_type: palletType,
 
       quantity: qty,
-      requested_margin: quickMargin,
+      requested_margin: Number(quickMargin || 0) / 100,
     }
   }, [
     additiveRows,
@@ -644,7 +655,12 @@ export function QuotesPage() {
           : null
   const unitsDisplay =
     qtyType === 'units' ? numUnitsNum : (derivedForDisplay?.units != null ? derivedForDisplay.units : null)
-  const rollsDisplay = finishMode === 'Rolls' ? numRollsNum : null
+  const rollsDisplay =
+    finishMode === 'Rolls'
+      ? qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
+        ? Math.round(totalKgNum / weightPerRollNum)
+        : numRollsNum
+      : null
   const weightPerRollDisplay =
     qtyType === 'total_rolls'
       ? weightPerRollNum
@@ -654,8 +670,10 @@ export function QuotesPage() {
 
   const totalKgEditable = qtyType === 'kg'
   const unitsEditable = qtyType === 'units'
-  const rollsEditable = finishMode === 'Rolls'
-  const weightPerRollEditable = qtyType === 'total_rolls'
+  const rollsEditable = finishMode === 'Rolls' && qtyType !== 'kg'
+  const weightPerRollEditable =
+    finishMode === 'Rolls' &&
+    (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'kg')
 
   // Only show computed value when the inputs that drive it are set; otherwise keep showing the field's stored value (so changing Qty Type doesn't wipe the display).
   const haveDriverForTotalKg =
@@ -668,13 +686,13 @@ export function QuotesPage() {
     numRollsNum > 0 &&
     ((qtyType === 'kg' && totalKgNum > 0) || (qtyType === 'units' && numUnitsNum > 0))
 
-  // Keep Weight per Roll state in sync when it's computed (Total KG or Bags mode), so switching to Total Rolls shows the value that was displayed instead of clearing it.
+  // Keep Weight per Roll state in sync when it's computed (Total KG mode only), so switching to Total Rolls shows the value that was displayed. Skip when Bags mode so user can edit Weight per Roll there.
   useEffect(() => {
     if (
       finishMode === 'Rolls' &&
-      qtyType !== 'total_rolls' &&
+      qtyType === 'kg' &&
       numRollsNum > 0 &&
-      (totalKgNum > 0 || numUnitsNum > 0) &&
+      totalKgNum > 0 &&
       derivedForDisplay?.kgPerRoll != null
     ) {
       const computed = Number(derivedForDisplay.kgPerRoll)
@@ -967,7 +985,7 @@ export function QuotesPage() {
                     {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
                   </DefaultSelectField>
                 </Box>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
                   <TextField
                     label="Total KG"
                     type="number"
@@ -985,16 +1003,16 @@ export function QuotesPage() {
                     disabled={!totalKgEditable}
                   />
                   <TextField
-                    label="No. of Rolls"
+                    label={`No. of ${productUnitLabel}`}
                     type="number"
                     inputProps={{ min: 0, step: 1 }}
                     value={
-                      rollsEditable
-                        ? numRolls
-                        : (rollsDisplay != null ? rollsDisplay : finishMode === 'Cartons' ? '—' : numRolls)
+                      unitsEditable
+                        ? numUnits
+                        : (haveDriverForUnits && unitsDisplay != null ? unitsDisplay : numUnits)
                     }
-                    onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
-                    disabled={!rollsEditable}
+                    onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
+                    disabled={!unitsEditable}
                   />
                   <TextField
                     label="Weight per Roll (kg)"
@@ -1015,16 +1033,16 @@ export function QuotesPage() {
                     disabled={!weightPerRollEditable}
                   />
                   <TextField
-                    label={`No. of ${productUnitLabel}`}
+                    label="No. of Rolls"
                     type="number"
                     inputProps={{ min: 0, step: 1 }}
                     value={
-                      unitsEditable
-                        ? numUnits
-                        : (haveDriverForUnits && unitsDisplay != null ? unitsDisplay : numUnits)
+                      rollsEditable
+                        ? numRolls
+                        : (rollsDisplay != null ? rollsDisplay : finishMode === 'Cartons' ? '—' : numRolls)
                     }
-                    onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
-                    disabled={!unitsEditable}
+                    onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
+                    disabled={!rollsEditable}
                   />
                 </Box>
               </Stack>
@@ -1066,10 +1084,21 @@ export function QuotesPage() {
                         }}
                       >
                         <TextField
-                          label="Product Width (mm)"
+                          label="Layflat Width (mm)"
                           type="number"
-                          value={widthMm}
-                          onChange={(e) => setWidthMm(e.target.value)}
+                          value={layflatInput != null ? layflatInput : (layflatWidthMm > 0 ? String(Math.round(layflatWidthMm)) : '')}
+                          onFocus={() => setLayflatInput(layflatWidthMm > 0 ? String(Math.round(layflatWidthMm)) : '')}
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            setLayflatInput(raw)
+                            if (raw === '') {
+                              setWidthMm('')
+                            } else {
+                              const v = Number(raw)
+                              if (Number.isFinite(v) && runUp > 0) setWidthMm(String((v * 2) / runUp))
+                            }
+                          }}
+                          onBlur={() => setLayflatInput(null)}
                         />
                         <DefaultSelectField
                           label="Run Up"
@@ -1084,29 +1113,58 @@ export function QuotesPage() {
                           ))}
                         </DefaultSelectField>
                         <TextField
+                          label={`${productType} Width (mm)`}
+                          type="number"
+                          value={widthMm}
+                          onChange={(e) => setWidthMm(e.target.value)}
+                        />
+                      </Box>
+                    ) : canHaveGusset && flagGusset ? (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1.5,
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <TextField
+                          label={`${productType} Width (mm)`}
+                          type="number"
+                          value={widthMm}
+                          onChange={(e) => setWidthMm(e.target.value)}
+                          sx={{ width: isMobile ? '100%' : 200 }}
+                        />
+                        <Typography sx={{ fontSize: '1.75rem', lineHeight: 1, color: 'text.secondary', px: 0.5 }}>+</Typography>
+                        <TextField
+                          label="Gusset Return (mm)"
+                          type="number"
+                          value={gussetReturnMm}
+                          onChange={(e) => setGussetReturnMm(e.target.value)}
+                          sx={{ width: isMobile ? '100%' : 200 }}
+                        />
+                        <Typography sx={{ fontSize: '1.75rem', lineHeight: 1, color: 'text.secondary', px: 0.5 }}>=</Typography>
+                        <TextField
                           label="Layflat Width (mm)"
-                          value={layflatWidthMm > 0 ? Math.round(layflatWidthMm) : ''}
+                          value={
+                            widthMmNum > 0 || gussetReturnMmNum > 0
+                              ? String(widthMmNum + gussetReturnMmNum)
+                              : ''
+                          }
                           InputProps={{ readOnly: true }}
                           disabled
+                          sx={{ width: isMobile ? '100%' : 180 }}
                         />
                       </Box>
                     ) : (
                       <Box
                         sx={{
                           display: 'grid',
-                          gridTemplateColumns: isMobile ? '1fr' : canHaveGusset && flagGusset ? 'repeat(2, minmax(0, 1fr))' : 'minmax(240px, 1fr)',
+                          gridTemplateColumns: isMobile ? '1fr' : 'minmax(240px, 1fr)',
                           gap: 2,
                         }}
                       >
-                        <TextField label="Width (mm)" type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
-                        {canHaveGusset && flagGusset ? (
-                          <TextField
-                            label="Gusset Return (mm)"
-                            type="number"
-                            value={gussetReturnMm}
-                            onChange={(e) => setGussetReturnMm(e.target.value)}
-                          />
-                        ) : null}
+                        <TextField label={`${productType} Width (mm)`} type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
                       </Box>
                     )}
                   </Stack>
@@ -1456,12 +1514,11 @@ export function QuotesPage() {
               <Stack spacing={2}>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                   <TextField
-                    label="Margin (decimal)"
+                    label="Margin (%)"
                     type="number"
-                    inputProps={{ min: 0, max: 1, step: 0.01 }}
+                    inputProps={{ min: 0, max: 100, step: 0.5 }}
                     value={quickMargin}
                     onChange={(e) => setQuickMargin(e.target.value)}
-                    helperText="Enter as decimal (e.g., 0.25 = 25%)"
                   />
                 </Box>
 

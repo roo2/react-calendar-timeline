@@ -211,8 +211,8 @@ function computeLayflatMm(spec: {
   // - Centerfold layflat = 0.5 * base width
   // - U-Film layflat = middle width + left + right
   // Quote-only override:
-  // - Sheet/Centerfold can use Run Up, where layflat = product_width * run_up
-  if ((pt === 'Sheet' || pt === 'Centerfold') && Number.isFinite(ru) && ru > 0) return w * ru
+  // - Sheet/Centerfold with Run Up: 2 up = 1x width, 4 up = 2x width, 6 up = 3x width (layflat = product_width * run_up / 2)
+  if ((pt === 'Sheet' || pt === 'Centerfold') && Number.isFinite(ru) && ru > 0) return w * (ru / 2)
   if (pt === 'Centerfold' || geom === 'centrefold' || geom === 'centre_fold' || geom === 'centerfold') return 0.5 * w
   if (pt === 'U-Film') {
     const l = Number(spec.ufilm_left_width_mm || 0)
