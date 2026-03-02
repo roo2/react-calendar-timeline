@@ -76,7 +76,7 @@ async def logout(request: Request, response: Response, identity=Depends(current_
                 svc.logout(sid)
         except Exception:
             pass
-    response.clear_cookie(settings.COOKIE_NAME)
+    response.delete_cookie(settings.COOKIE_NAME, path="/")
     return JSONResponse(status_code=200, content={"ok": True})
 
  
