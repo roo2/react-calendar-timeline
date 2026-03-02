@@ -72,6 +72,7 @@ class Colour(Base):
     colour_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     __table_args__ = (
         CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),

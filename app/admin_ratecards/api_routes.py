@@ -4,7 +4,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import case, delete, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 import re
 import uuid
@@ -95,11 +95,13 @@ class ColourDTO(BaseModel):
     colour_code: str
     name: str
     price_per_kg: float
+    sort_order: int = 0
 
 
 class ColourUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     price_per_kg: float = Field(..., ge=0)
+    sort_order: int = Field(0, ge=0)
 
 
 class CoreDTO(BaseModel):
@@ -465,12 +467,13 @@ async def delete_additive(additive_code: str):
 )
 async def list_colours():
     with SessionLocal() as db:
-        rows = db.execute(select(Colour).order_by(Colour.colour_code.asc())).scalars().all()
+        rows = db.execute(select(Colour).order_by(Colour.sort_order.asc(), Colour.colour_code.asc())).scalars().all()
         return [
             ColourDTO(
                 colour_code=c.colour_code,
                 name=c.name,
                 price_per_kg=float(c.price_per_kg),
+                sort_order=c.sort_order,
             )
             for c in rows
         ]
@@ -489,15 +492,18 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
     with SessionLocal.begin() as db:
         c = db.get(Colour, code)
         if not c:
+            max_order = db.execute(select(func.coalesce(func.max(Colour.sort_order), 0))).scalar() or 0
             c = Colour(
                 colour_code=code,
                 name=payload.name,
                 price_per_kg=payload.price_per_kg,
+                sort_order=max_order + 1,
             )
             db.add(c)
         else:
             c.name = payload.name
             c.price_per_kg = payload.price_per_kg
+            c.sort_order = payload.sort_order
 
     with SessionLocal() as db:
         c2 = db.get(Colour, code)
@@ -506,6 +512,7 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
             colour_code=c2.colour_code,
             name=c2.name,
             price_per_kg=float(c2.price_per_kg),
+            sort_order=c2.sort_order,
         )
 
 

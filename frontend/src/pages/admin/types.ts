@@ -15,6 +15,7 @@ export type Colour = {
   colour_code: string
   name: string
   price_per_kg: number
+  sort_order: number
 }
 
 export type ResinBlend = {

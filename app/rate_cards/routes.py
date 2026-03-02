@@ -62,7 +62,7 @@ async def list_resin_blends():
 @router.get("/colours", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
 async def list_colours():
     with SessionLocal() as db:
-        rows = db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.colour_code.asc())).all()
+        rows = db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.sort_order.asc(), Colour.colour_code.asc())).all()
         return [{"colour_code": r[0], "name": r[1]} for r in rows]
 
 

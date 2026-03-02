@@ -55,7 +55,9 @@ function fmtHoursMinutes(vMinutes: any) {
   const total = Math.max(0, Math.round(n))
   const h = Math.floor(total / 60)
   const m = total % 60
-  return `${h}:${String(m).padStart(2, '0')}`
+  if (h === 0) return `${m}min`
+  if (m === 0) return `${h}hr`
+  return `${h}hr ${m}min`
 }
 
 type ResinBlendPreset = {
@@ -103,7 +105,7 @@ function QuotePreview(props: {
               if (kgPer1000 == null || !Number.isFinite(kgPer1000)) return null
               return (
                 <Typography variant="body2">
-                  Yield estimate: {kgPer1000.toFixed(2)} kg / 1000 products
+                  Yield estimate: {kgPer1000.toFixed(2)}kg / 1000 products
                 </Typography>
               )
             })()}
@@ -124,12 +126,12 @@ function QuotePreview(props: {
             ) : null}
             {finishMode === 'Rolls' && p.kg_per_roll != null && (
               <Typography variant="body2">
-                Weight / Roll: {Number(p.kg_per_roll).toFixed(2)} kg
+                Weight / Roll: {Number(p.kg_per_roll).toFixed(2)}kg
               </Typography>
             )}
             {finishMode === 'Rolls' && p.m_per_roll != null && (
               <Typography variant="body2">
-                Meters / Roll: {Number(p.m_per_roll).toFixed(2)} m
+                Meters / Roll: {Number(p.m_per_roll).toFixed(2)}m
               </Typography>
             )}
             {p.unit_price != null && (
@@ -140,7 +142,7 @@ function QuotePreview(props: {
             {p.cartons != null && (
               <Typography variant="body2">
                 Cartons: {Number(p.cartons)}
-                {p.kg_per_carton != null ? ` (${Number(p.kg_per_carton).toFixed(2)} kg/carton)` : ''}
+                {p.kg_per_carton != null ? ` (${Number(p.kg_per_carton).toFixed(2)}kg/carton)` : ''}
               </Typography>
             )}
             {p.conversion_minutes_total != null && (
@@ -273,7 +275,7 @@ export function QuotesPage() {
   const [resinBlendsErr, setResinBlendsErr] = useState<string | null>(null)
   const [resinBlendCode, setResinBlendCode] = useState<string>('LD')
   const [colourRows, setColourRows] = useState<Array<{ colour_code: string; strength_pct: string }>>([
-    { colour_code: 'WHITE', strength_pct: '' },
+    { colour_code: '', strength_pct: '' },
     { colour_code: '', strength_pct: '' },
   ])
   const [additiveRows, setAdditiveRows] = useState<Array<{ additive_code: string; pct: string }>>([
@@ -1224,41 +1226,25 @@ export function QuotesPage() {
                   </TableHead>
                   <TableBody>
                     {colourRows.map((row, idx) => {
-                      const defaults = idx === 0 ? { colour_code: 'WHITE', strength_pct: '' } : { colour_code: '', strength_pct: '' }
+                      const defaults = { colour_code: '', strength_pct: '' }
                       const isDefault = isDefaultRow(row, defaults)
-                      const isWhite = idx === 0
                       return (
                         <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
                           <TableCell sx={{ width: '55%' }}>
-                            {isWhite ? (
-                              <TextField
-                                size="small"
-                                label="Colour"
-                                value="WHITE (Opaque)"
-                                disabled
-                                fullWidth
-                                sx={{
-                                  // Keep this non-editable, but make the text a bit darker so it doesn't read as "fully disabled".
-                                  '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: 'rgba(0,0,0,0.72)' },
-                                  '& .MuiInputLabel-root.Mui-disabled': { color: 'rgba(0,0,0,0.6)' },
-                                }}
-                              />
-                            ) : (
-                              <ColourSelect
-                                options={colourOptions}
-                                valueCode={row.colour_code}
-                                label="Colour"
-                                onChangeCode={(nextCode) =>
-                                  setColourRows((prev) => {
-                                    const next = [...prev]
-                                    next[idx] = { ...(next[idx] || { colour_code: '', strength_pct: '' }), colour_code: nextCode }
-                                    return next
-                                  })
-                                }
-                              />
-                            )}
+                            <ColourSelect
+                              options={colourOptions}
+                              valueCode={row.colour_code}
+                              label={idx === 0 ? 'Colour 1' : `Colour ${idx + 1}`}
+                              onChangeCode={(nextCode) =>
+                                setColourRows((prev) => {
+                                  const next = [...prev]
+                                  next[idx] = { ...(next[idx] || { colour_code: '', strength_pct: '' }), colour_code: nextCode }
+                                  return next
+                                })
+                              }
+                            />
                           </TableCell>
-                          <TableCell sx={{ width: '45%' }}>
+                          <TableCell sx={{ width: '35%' }}>
                             <TextField
                               size="small"
                               label="%"
@@ -1276,27 +1262,42 @@ export function QuotesPage() {
                             />
                           </TableCell>
                           <TableCell sx={{ width: '10%' }}>
-                            {!isDefault ? (
+                            <Stack direction="row" spacing={1} justifyContent="flex-end">
+                              {!isDefault ? (
+                                <Button
+                                  size="small"
+                                  color="inherit"
+                                  onClick={() =>
+                                    setColourRows((prev) => {
+                                      const next = [...prev]
+                                      next[idx] = defaults
+                                      return next
+                                    })
+                                  }
+                                >
+                                  Clear
+                                </Button>
+                              ) : null}
                               <Button
                                 size="small"
                                 color="inherit"
-                                onClick={() =>
-                                  setColourRows((prev) => {
-                                    const next = [...prev]
-                                    next[idx] = defaults
-                                    return next
-                                  })
-                                }
+                                onClick={() => setColourRows((prev) => prev.filter((_, i) => i !== idx))}
+                                disabled={colourRows.length <= 2}
                               >
-                                Clear
+                                Remove
                               </Button>
-                            ) : null}
+                            </Stack>
                           </TableCell>
                         </TableRow>
                       )
                     })}
                   </TableBody>
                 </Table>
+                <Box sx={{ mt: 1 }}>
+                  <Button variant="outlined" size="small" onClick={() => setColourRows((prev) => [...prev, { colour_code: '', strength_pct: '' }])}>
+                    Add colour
+                  </Button>
+                </Box>
 
                 <Box>
                   <Table size="small">
@@ -1432,7 +1433,7 @@ export function QuotesPage() {
                     selectedExtruder.extruder
                       ? `${selectedExtruder.extruder.extruder_code}. Decision Width: ${selectedExtruder.extruder.decision_width_mm ?? '—'}. Average output: ${
                           selectedExtruder.extruder.average_kg_hr ?? '—'
-                        } kg/hr`
+                        }kg/hr`
                       : ''
                   }
                   placeholder={ratebook?.extruders ? 'No suitable extruder' : 'Loading…'}
@@ -1451,7 +1452,7 @@ export function QuotesPage() {
                     <TableHead>
                       <TableRow>
                         <TableCell>Factor</TableCell>
-                      <TableCell align="right">Time (H:MM)</TableCell>
+                      <TableCell align="right">Time</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>

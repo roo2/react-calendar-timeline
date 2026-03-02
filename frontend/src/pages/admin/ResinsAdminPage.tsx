@@ -181,12 +181,10 @@ export function ResinsAdminPage() {
         method: 'PUT',
         body: JSON.stringify(patch),
       })
-      setColours((cur) => {
-        const idx = cur.findIndex((r) => r.colour_code === saved.colour_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.colour_code.localeCompare(b.colour_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
+        setColours((cur) => {
+          const idx = cur.findIndex((r) => r.colour_code === saved.colour_code)
+          const next = idx === -1 ? [...cur, saved] : cur.slice().map((r, i) => (i === idx ? saved : r))
+          return next.sort((a, b) => a.sort_order - b.sort_order || a.colour_code.localeCompare(b.colour_code))
       })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save colour')
@@ -414,6 +412,7 @@ export function ResinsAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ width: 80 }}>Order</TableCell>
                 <TableCell sx={{ width: 180 }}>Code</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
@@ -453,7 +452,8 @@ export function ResinsAdminPage() {
                     disabled={!canCreateColour || savingKey === `colour:${newColourCode.trim()}`}
                     onClick={() => {
                       if (!canCreateColour) return
-                      void saveColour(newColourCode, { name: newColourName.trim(), price_per_kg: Number(newColourPrice) }).then(() => {
+                      const maxOrder = colours.length === 0 ? 0 : Math.max(...colours.map((c) => c.sort_order))
+                      void saveColour(newColourCode, { name: newColourName.trim(), price_per_kg: Number(newColourPrice), sort_order: maxOrder + 1 }).then(() => {
                         setNewColourCode('')
                         setNewColourName('')
                         setNewColourPrice('')
@@ -616,9 +616,33 @@ function ColourRow(props: {
   const { row, saving, onSave, onDelete } = props
   const [name, setName] = useState(row.name)
   const [price, setPrice] = useState<number | ''>(row.price_per_kg)
-  const dirty = name !== row.name || price !== row.price_per_kg
+  const [sortOrder, setSortOrder] = useState<number | ''>(row.sort_order)
+  useEffect(() => {
+    setName(row.name)
+    setPrice(row.price_per_kg)
+    setSortOrder(row.sort_order)
+  }, [row.name, row.price_per_kg, row.sort_order])
+  const dirty =
+    name !== row.name || price !== row.price_per_kg || (sortOrder !== '' && Number(sortOrder) !== row.sort_order)
   return (
     <TableRow hover>
+      <TableCell>
+        <TextField
+          size="small"
+          type="number"
+          inputProps={{ min: 0, step: 1 }}
+          sx={{ width: 72 }}
+          value={sortOrder}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '') setSortOrder('')
+            else {
+              const n = parseInt(v, 10)
+              if (!Number.isNaN(n)) setSortOrder(n)
+            }
+          }}
+        />
+      </TableCell>
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.colour_code}</TableCell>
       <TableCell>
         <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
@@ -631,8 +655,14 @@ function ColourRow(props: {
           <Button
             size="small"
             variant="outlined"
-            disabled={saving || !dirty || !name.trim() || price === ''}
-            onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price) })}
+            disabled={saving || !dirty || !name.trim() || price === '' || sortOrder === ''}
+            onClick={() =>
+              void onSave(row.colour_code, {
+                name: name.trim(),
+                price_per_kg: Number(price),
+                sort_order: Number(sortOrder),
+              })
+            }
           >
             {saving ? 'Saving…' : 'Save'}
           </Button>

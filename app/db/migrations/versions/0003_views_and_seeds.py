@@ -319,41 +319,44 @@ def upgrade() -> None:
             },
         )
 
+    # Order here defines display order (sort_order) in app and dropdowns.
     colours_seed = [
-        # colour_code, name, price_per_kg
-        ("WHITE", "White", 5.8),
-        ("BLACK", "Black", 4.5),
-        ("SILVER", "Silver", 19.88),
-        ("GREY", "Grey", 14.5),
-        ("BLUE", "Blue", 5.7),
-        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0),
-        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86),
-        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1),
-        ("YELLOW", "Yellow", 20.33),
-        ("SIGNET_YELLOW", "Signet Yellow", 17.33),
-        ("GREEN", "Green", 14.69),
-        ("ORANGE", "Orange", 19.55),
-        ("RED", "Red", 19.02),
-        ("PURPLE", "Purple", 17.23),
-        ("BROWN", "Brown", 19.42),
-        ("PINK", "Pink", 32.29),
-        ("OTHER", "Other", 25.0),
+        # colour_code, name, price_per_kg, sort_order
+        ("WHITE", "White", 5.8, 1),
+        ("BLACK", "Black", 4.5, 2),
+        ("SILVER", "Silver", 19.88, 3),
+        ("GREY", "Grey", 14.5, 4),
+        ("BLUE", "Blue", 5.7, 5),
+        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0, 6),
+        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86, 7),
+        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1, 8),
+        ("YELLOW", "Yellow", 20.33, 9),
+        ("SIGNET_YELLOW", "Signet Yellow", 17.33, 10),
+        ("GREEN", "Green", 14.69, 11),
+        ("ORANGE", "Orange", 19.55, 12),
+        ("RED", "Red", 19.02, 13),
+        ("PURPLE", "Purple", 17.23, 14),
+        ("BROWN", "Brown", 19.42, 15),
+        ("PINK", "Pink", 32.29, 16),
+        ("OTHER", "Other", 25.0, 17),
     ]
-    for colour_code, name, price_per_kg in colours_seed:
+    for colour_code, name, price_per_kg, sort_order in colours_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO colours (colour_code, name, price_per_kg)
-                VALUES (:colour_code, :name, :price_per_kg)
+                INSERT INTO colours (colour_code, name, price_per_kg, sort_order)
+                VALUES (:colour_code, :name, :price_per_kg, :sort_order)
                 ON CONFLICT (colour_code) DO UPDATE SET
                   name = excluded.name,
-                  price_per_kg = excluded.price_per_kg
+                  price_per_kg = excluded.price_per_kg,
+                  sort_order = excluded.sort_order
                 """
             ),
             {
                 "colour_code": colour_code,
                 "name": name,
                 "price_per_kg": price_per_kg,
+                "sort_order": sort_order,
             },
         )
 

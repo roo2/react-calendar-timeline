@@ -94,7 +94,7 @@ async def quotes_bootstrap(identity=Depends(current_identity)):
             )
 
         resins = [{"code": r[0], "name": r[1]} for r in db.execute(select(Resin.resin_code, Resin.name).order_by(Resin.resin_code)).all()]
-        colours = [{"code": c[0], "name": c[1]} for c in db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.colour_code)).all()]
+        colours = [{"code": c[0], "name": c[1]} for c in db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.sort_order.asc(), Colour.colour_code)).all()]
         additives = [
             {"code": a[0], "name": a[1]}
             for a in db.execute(select(Additive.additive_code, Additive.name).order_by(Additive.additive_code)).all()

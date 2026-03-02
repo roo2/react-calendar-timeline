@@ -76,14 +76,16 @@ def upgrade() -> None:
         _create_pg_enum("queue_status", ["queued", "running", "completed", "removed"])
         _create_pg_enum("printing_method", ["none", "inline", "uteco"])
 
-    # Customers
+    _false_default = sa.text("false") if _is_postgres(conn) else sa.text("0")
+
+    # Customers (consolidated: contact_phone, deposit_required, deposit_pct; no tax_id, credit_limit, internal_notes)
     op.create_table(
         "customers",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("code", sa.String(length=4), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("abn", sa.String(length=50), nullable=True),
-        sa.Column("tax_id", sa.String(length=50), nullable=True),
+        sa.Column("contact_phone", sa.String(length=50), nullable=True),
         sa.Column("status", sa.String(length=50), nullable=False, server_default=sa.text("'Active'")),
         sa.Column(
             "contacts",
@@ -100,9 +102,9 @@ def upgrade() -> None:
         ),
         sa.Column("delivery_preferences", sa.JSON, nullable=False, server_default=sa.text("'{}'")),
         sa.Column("payment_terms", sa.String(length=255), nullable=True),
-        sa.Column("credit_limit", sa.Numeric(18, 2), nullable=True),
+        sa.Column("deposit_required", sa.Boolean(), nullable=False, server_default=_false_default),
+        sa.Column("deposit_pct", sa.Numeric(5, 2), nullable=True),
         sa.Column("notes", sa.Text, nullable=True),
-        sa.Column("internal_notes", sa.Text, nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -834,6 +836,7 @@ def upgrade() -> None:
         sa.Column("colour_code", sa.String(length=32), primary_key=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("price_per_kg", sa.Numeric(12, 4), nullable=False),
+        sa.Column("sort_order", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),
     )
 
