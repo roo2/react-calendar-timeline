@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.auth.deps import allow_roles_any, csrf_protect
 from app.customers import service
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
+from app.customers.service import DuplicateCustomerCodeError
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -28,7 +29,14 @@ async def list_customers(q: Optional[str] = Query(default=None)):
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_customer(payload: CustomerCreateRequest):
-    c = service.create_customer(payload)
+    try:
+        c = service.create_customer(payload)
+    except DuplicateCustomerCodeError as e:
+        # Return 409 with validation-style detail so the frontend can highlight the code field.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=[{"loc": ["body", "code"], "msg": str(e)}],
+        ) from e
     return {"ok": True, "customer": _customer_summary(c)}
 
 

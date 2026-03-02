@@ -72,8 +72,9 @@ function QuotePreview(props: {
   canCalculate: boolean
   missing: string[]
   finishMode: 'Rolls' | 'Cartons'
+  productType: string
 }) {
-  const { preview, loading, canCalculate, missing, finishMode } = props
+  const { preview, loading, canCalculate, missing, finishMode, productType } = props
   const p = preview
   const dash = '—'
   return (
@@ -136,7 +137,12 @@ function QuotePreview(props: {
             )}
             {p.unit_price != null && (
               <Typography variant="body2">
-                Unit price: {fmtDollars(p.unit_price, 4)}
+                Price per {productType}: {fmtDollars(p.unit_price, 4)}
+              </Typography>
+            )}
+            {p.totals_m != null && Number(p.totals_m) > 0 && (
+              <Typography variant="body2">
+                Total meters: {Number(p.totals_m).toFixed(2)}m
               </Typography>
             )}
             {p.cartons != null && (
@@ -213,7 +219,7 @@ function QuotePreview(props: {
           </TableRow>
           <TableRow>
             <TableCell sx={{ fontWeight: 600 }}>Margin (%)</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>{p ? `${Math.round(Number(p.margin || 0) * 100)}%` : dash}</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>{p ? `${(Number(p.margin || 0) * 100).toFixed(2)}%` : dash}</TableCell>
           </TableRow>
           <TableRow>
             <TableCell sx={{ fontWeight: 600 }}>Suggested price</TableCell>
@@ -292,10 +298,13 @@ export function QuotesPage() {
   const [coreType, setCoreType] = useState('7mm')
   const [rollWeightBilling, setRollWeightBilling] = useState<'core_included' | 'core_off' | 'core_half_off'>('core_included')
   const [bagsPerCarton, setBagsPerCarton] = useState('')
+  const [cartonOptionSlug, setCartonOptionSlug] = useState<string | null>(null)
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
 
-  // Pricing
+  // Pricing: margin (%) and price per kg are linked; last-edited field drives the other to avoid loops.
   const [quickMargin, setQuickMargin] = useState('32')
+  const [suggestedPricePerKg, setSuggestedPricePerKg] = useState('')
+  const [priceDriver, setPriceDriver] = useState<'margin' | 'pricePerKg'>('margin')
   const [quickPreview, setQuickPreview] = useState<any>(null)
   const [calcLoading, setCalcLoading] = useState(false)
   const [printingError, setPrintingError] = useState<string | null>(null)
@@ -329,6 +338,13 @@ export function QuotesPage() {
       }
     })()
   }, [])
+
+  useEffect(() => {
+    const opts = ratebook?.carton_options
+    if (!Array.isArray(opts) || opts.length === 0) return
+    const defaultOpt = opts.find((o) => o?.is_default)
+    if (defaultOpt && cartonOptionSlug === null) setCartonOptionSlug(defaultOpt.slug)
+  }, [ratebook?.carton_options, cartonOptionSlug])
 
   useEffect(() => {
     let cancelled = false
@@ -586,6 +602,7 @@ export function QuotesPage() {
       core_type: finishMode === 'Rolls' ? coreType : null,
       roll_weight_billing: finishMode === 'Rolls' ? rollWeightBilling : null,
       bags_per_carton: finishMode === 'Cartons' ? (bagsPerCarton ? Number(bagsPerCarton) : null) : null,
+      carton_option_slug: finishMode === 'Cartons' ? (cartonOptionSlug || null) : null,
       pallet_type: palletType,
 
       quantity: qty,
@@ -596,6 +613,7 @@ export function QuotesPage() {
     baseLengthMm,
     bagsPerCarton,
     canHaveGusset,
+    cartonOptionSlug,
     colourRows,
     coreType,
     defaultResinCode,
@@ -661,7 +679,9 @@ export function QuotesPage() {
     finishMode === 'Rolls'
       ? qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
         ? Math.round(totalKgNum / weightPerRollNum)
-        : numRollsNum
+        : qtyType === 'units' && derivedForDisplay?.derivedTotalKg != null && weightPerRollNum > 0
+          ? Math.round(derivedForDisplay.derivedTotalKg / weightPerRollNum)
+          : numRollsNum
       : null
   const weightPerRollDisplay =
     qtyType === 'total_rolls'
@@ -672,7 +692,7 @@ export function QuotesPage() {
 
   const totalKgEditable = qtyType === 'kg'
   const unitsEditable = qtyType === 'units'
-  const rollsEditable = finishMode === 'Rolls' && qtyType !== 'kg'
+  const rollsEditable = finishMode === 'Rolls' && qtyType === 'total_rolls'
   const weightPerRollEditable =
     finishMode === 'Rolls' &&
     (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'kg')
@@ -687,28 +707,6 @@ export function QuotesPage() {
     finishMode === 'Rolls' &&
     numRollsNum > 0 &&
     ((qtyType === 'kg' && totalKgNum > 0) || (qtyType === 'units' && numUnitsNum > 0))
-
-  // Keep Weight per Roll state in sync when it's computed (Total KG mode only), so switching to Total Rolls shows the value that was displayed. Skip when Bags mode so user can edit Weight per Roll there.
-  useEffect(() => {
-    if (
-      finishMode === 'Rolls' &&
-      qtyType === 'kg' &&
-      numRollsNum > 0 &&
-      totalKgNum > 0 &&
-      derivedForDisplay?.kgPerRoll != null
-    ) {
-      const computed = Number(derivedForDisplay.kgPerRoll)
-      const str = Number.isFinite(computed) ? (computed % 1 === 0 ? String(computed) : computed.toFixed(2)) : ''
-      setWeightPerRoll(str)
-    }
-  }, [
-    finishMode,
-    qtyType,
-    numRollsNum,
-    totalKgNum,
-    numUnitsNum,
-    derivedForDisplay?.kgPerRoll,
-  ])
 
   // Keep No. of units state in sync when it's computed (Total KG or Total Rolls mode), so switching to Units/Bags shows the value that was displayed instead of clearing it.
   useEffect(() => {
@@ -788,6 +786,7 @@ export function QuotesPage() {
       num_colours: Number(calcPayload.num_colours || 0),
       finish_mode: calcPayload.finish_mode,
       bags_per_carton: calcPayload.bags_per_carton != null ? Number(calcPayload.bags_per_carton) : null,
+      carton_option_slug: calcPayload.carton_option_slug ?? null,
       core_type: calcPayload.core_type,
       roll_weight_billing: calcPayload.roll_weight_billing != null ? calcPayload.roll_weight_billing : null,
       extruder_code: selectedExtruder.extruder?.extruder_code || null,
@@ -851,6 +850,7 @@ export function QuotesPage() {
       num_colours: Number(payload.num_colours || 0),
       finish_mode: payload.finish_mode,
       bags_per_carton: payload.bags_per_carton != null ? Number(payload.bags_per_carton) : null,
+      carton_option_slug: payload.carton_option_slug ?? null,
       core_type: payload.core_type,
       roll_weight_billing: payload.roll_weight_billing != null ? payload.roll_weight_billing : null,
       colour_components: payload.colour_components,
@@ -897,6 +897,30 @@ export function QuotesPage() {
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canCalculate, calcPayload, ratebook])
+
+  // When margin is the driver, sync price-per-kg from the result.
+  useEffect(() => {
+    if (priceDriver !== 'margin') return
+    const p = quickPreview
+    if (!p || typeof p.totals_kg !== 'number' || p.totals_kg <= 0) return
+    const fp = Number(p.final_price)
+    if (Number.isFinite(fp)) setSuggestedPricePerKg((fp / p.totals_kg).toFixed(2))
+  }, [quickPreview, priceDriver])
+
+  // When price-per-kg is the driver and we have a result, sync margin so the next recalc uses it (e.g. user set price per kg before first result).
+  useEffect(() => {
+    if (priceDriver !== 'pricePerKg') return
+    const priceKg = Number(suggestedPricePerKg)
+    if (!Number.isFinite(priceKg) || priceKg <= 0) return
+    const p = quickPreview
+    if (!p || typeof p.totals_kg !== 'number' || p.totals_kg <= 0) return
+    const totalCost = Number(p.total_cost)
+    if (!Number.isFinite(totalCost)) return
+    const margin = 1 - totalCost / (priceKg * p.totals_kg)
+    const pct = Math.max(0, Math.min(99.99, margin * 100))
+    const next = pct.toFixed(2)
+    if (next !== quickMargin) setQuickMargin(next)
+  }, [quickPreview, priceDriver, suggestedPricePerKg, quickMargin])
 
   const printingErrorComputed: string | null = useMemo(() => {
     if (!ratebook) return null
@@ -964,13 +988,30 @@ export function QuotesPage() {
                   <MenuItem value="Cartons">Cartons</MenuItem>
                 </DefaultSelectField>
                 {finishMode === 'Cartons' ? (
-                  <TextField
-                    label="Bags per Carton"
-                    type="number"
-                    inputProps={{ min: 1, step: 1 }}
-                    value={bagsPerCarton}
-                    onChange={(e) => setBagsPerCarton(e.target.value)}
-                  />
+                  <>
+                    <TextField
+                      label="Bags per Carton"
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={bagsPerCarton}
+                      onChange={(e) => setBagsPerCarton(e.target.value)}
+                    />
+                    {ratebook?.carton_options && ratebook.carton_options.length > 0 ? (
+                      <DefaultSelectField
+                        label="Carton option"
+                        defaultValue={ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? ''}
+                        value={cartonOptionSlug ?? (ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? '')}
+                        onChange={(e) => setCartonOptionSlug(e.target.value || null)}
+                      >
+                        <MenuItem value="">—</MenuItem>
+                        {ratebook.carton_options.map((opt) => (
+                          <MenuItem key={opt.slug} value={opt.slug}>
+                            {opt.name} (${Number(opt.cost_per_unit).toFixed(2)})
+                          </MenuItem>
+                        ))}
+                      </DefaultSelectField>
+                    ) : null}
+                  </>
                 ) : null}
               </Box>
             </Paper>
@@ -1519,7 +1560,32 @@ export function QuotesPage() {
                     type="number"
                     inputProps={{ min: 0, max: 100, step: 0.5 }}
                     value={quickMargin}
-                    onChange={(e) => setQuickMargin(e.target.value)}
+                    onChange={(e) => {
+                      setQuickMargin(e.target.value)
+                      setPriceDriver('margin')
+                    }}
+                  />
+                  <TextField
+                    label="Price per kg ($)"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.01 }}
+                    value={suggestedPricePerKg}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setSuggestedPricePerKg(v)
+                      setPriceDriver('pricePerKg')
+                      const priceKg = Number(v)
+                      const p = quickPreview
+                      if (Number.isFinite(priceKg) && priceKg > 0 && p && typeof p.totals_kg === 'number' && p.totals_kg > 0) {
+                        const totalCost = Number(p.total_cost)
+                        if (Number.isFinite(totalCost)) {
+                          const margin = 1 - totalCost / (priceKg * p.totals_kg)
+                          const pct = Math.max(0, Math.min(99.99, margin * 100))
+                          setQuickMargin(pct.toFixed(2))
+                        }
+                      }
+                    }}
+                    helperText="Edit either field; the other updates from the quote result."
                   />
                 </Box>
 
@@ -1554,7 +1620,7 @@ export function QuotesPage() {
               alignSelf: 'flex-start',
             }}
           >
-            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} />
+            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} />
           </Box>
         ) : null}
       </Box>
@@ -1581,7 +1647,7 @@ export function QuotesPage() {
               backgroundColor: 'background.paper',
             }}
           >
-            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} />
+            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} />
           </Paper>
         </>
       ) : null}

@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ SEED_EXTRUDERS_SCRIPT = Path("scripts") / "seed_extruders_from_tsv.py"
 SEED_WASTE_FACTORS_SCRIPT = Path("scripts") / "seed_waste_factors_from_tsv.py"
 SEED_PRINTING_PRICING_SCRIPT = Path("scripts") / "seed_printing_pricing_from_tsv.py"
 SEED_CONVERSION_SCRIPT = Path("scripts") / "seed_conversion_from_tsv.py"
+SEED_CARTON_OPTIONS_SCRIPT = Path("scripts") / "seed_carton_options_from_tsv.py"
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -38,20 +40,34 @@ def _looks_like_url(s: str) -> bool:
     return s.startswith("http://") or s.startswith("https://")
 
 
+def _heroku_app_name(heroku_app: str) -> str:
+    """Return the Heroku app name for CLI commands (e.g. pg:reset). If heroku_app is a URL, derive name from host."""
+    if not _looks_like_url(heroku_app):
+        return heroku_app
+    host = urlparse(heroku_app).netloc or heroku_app
+    if host.endswith(".herokuapp.com"):
+        return host[: -len(".herokuapp.com")]
+    return heroku_app
+
+
 def _heroku_web_url(app: str) -> str | None:
     """
-    Ask Heroku for the canonical web URL of the app.
-    This is more reliable than guessing https://<app>.herokuapp.com because some
-    environments/apps use different hostnames or custom domains.
+    Ask Heroku for the canonical web URL of the app (e.g. pipeline/review apps
+    use URLs like https://crownpack-production-38f4b529d3b6.herokuapp.com/).
     """
+    app_name = _heroku_app_name(app) if _looks_like_url(app) else app
     try:
         out = subprocess.check_output(
-            ["heroku", "apps:info", "-a", app, "--json"],
+            ["heroku", "apps:info", "-a", app_name, "--json"],
             stderr=subprocess.STDOUT,
             text=True,
         )
         info = json.loads(out)
-        web = info.get("web_url") if isinstance(info, dict) else None
+        if not isinstance(info, dict):
+            return None
+        # web_url is under the "app" key in heroku apps:info --json
+        app_info = info.get("app")
+        web = app_info.get("web_url") if isinstance(app_info, dict) else info.get("web_url")
         if isinstance(web, str) and web.strip():
             return web.strip().rstrip("/")
     except Exception:
@@ -75,13 +91,14 @@ def _default_base_url(app_or_url: str) -> str:
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         description=(
-            "Run seed steps against a Heroku deployment.\n\n"
-            "This script will:\n"
-            "- (by default) run alembic migrations on Heroku\n"
-            "- (by default) seed admin master data from TSVs on Heroku (extruders, extrusion waste factors, printing pricing, conversion)\n"
-            "- heroku run scripts/create_admin.py to create/promote a SYS_ADMIN user\n"
-            "- run API import scripts locally against the Heroku URL to import customers and plates from plate-db.tsv\n\n"
-            "Note: It does not clear/drop the Heroku database."
+            "Reset Heroku Postgres and run full seed (parity with reset_local_db).\n\n"
+            "Steps:\n"
+            "1. heroku pg:reset DATABASE (unless --skip-reset)\n"
+            "2. alembic upgrade head\n"
+            "3. Seed from TSVs: extruders, waste factors, printing pricing, conversion, carton options (unless --skip-tsv-seeds)\n"
+            "4. create_admin.py (admin user with SYS_ADMIN)\n"
+            "5. API import: plate customers + print plates from plate-db.tsv (unless --skip-plate-import)\n\n"
+            "Use --skip-reset to re-run migrations/seeds without wiping the database."
         )
     )
     p.add_argument(
@@ -93,6 +110,11 @@ def main(argv: list[str]) -> int:
         "--base-url",
         default=None,
         help="API base URL (optional). If omitted, uses Heroku app web_url.",
+    )
+    p.add_argument(
+        "--skip-reset",
+        action="store_true",
+        help="Skip heroku pg:reset (re-run migrations and seeds only).",
     )
     p.add_argument(
         "--admin-username",
@@ -110,14 +132,9 @@ def main(argv: list[str]) -> int:
         help="Plate database file path relative to repo root (default: scripts/plate-db.tsv)",
     )
     p.add_argument(
-        "--skip-migrations",
-        action="store_true",
-        help="Skip running alembic upgrade head on Heroku.",
-    )
-    p.add_argument(
         "--skip-tsv-seeds",
         action="store_true",
-        help="Skip seeding TSV-backed admin data on Heroku (extruders/waste/printing pricing/conversion).",
+        help="Skip seeding TSV-backed admin data (extruders/waste/printing pricing/conversion).",
     )
     p.add_argument(
         "--include-fixture-min-chain",
@@ -127,13 +144,14 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--skip-plate-import",
         action="store_true",
-        help="Skip importing customers/plates via API (only create/promote admin user).",
+        help="Skip importing customers/plates via API.",
     )
 
     args = p.parse_args(argv)
 
     _require_heroku_cli()
 
+    app_name = _heroku_app_name(args.heroku_app)
     base_url = (args.base_url or _default_base_url(args.heroku_app)).rstrip("/")
 
     plate_db_path = (REPO_ROOT / args.plate_db).resolve()
@@ -143,27 +161,31 @@ def main(argv: list[str]) -> int:
     if args.admin_password == "admin" and not os.getenv("SEED_ADMIN_PASSWORD"):
         print("WARNING: using default admin password 'admin' (set SEED_ADMIN_PASSWORD to override).", flush=True)
 
-    # 0) Migrations + TSV seeds (runs inside one-off dynos).
-    if not args.skip_migrations:
-        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", "-m", "alembic", "upgrade", "head"])
+    # 0) Reset Heroku Postgres (destructive).
+    if not args.skip_reset:
+        print("Resetting Heroku database…", flush=True)
+        _run(["heroku", "pg:reset", "DATABASE", "-a", app_name, "--confirm", app_name])
     else:
-        print("Skipping migrations (--skip-migrations).", flush=True)
+        print("Skipping pg:reset (--skip-reset).", flush=True)
 
+    # 1) Migrations + TSV seeds (runs inside one-off dynos).
+    _run(["heroku", "run", "-a", app_name, "--", "python", "-m", "alembic", "upgrade", "head"])
     if not args.skip_tsv_seeds:
-        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_EXTRUDERS_SCRIPT.as_posix()])
-        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_WASTE_FACTORS_SCRIPT.as_posix()])
-        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_PRINTING_PRICING_SCRIPT.as_posix()])
-        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", SEED_CONVERSION_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", app_name, "--", "python", SEED_EXTRUDERS_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", app_name, "--", "python", SEED_WASTE_FACTORS_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", app_name, "--", "python", SEED_PRINTING_PRICING_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", app_name, "--", "python", SEED_CONVERSION_SCRIPT.as_posix()])
+        _run(["heroku", "run", "-a", app_name, "--", "python", SEED_CARTON_OPTIONS_SCRIPT.as_posix()])
     else:
         print("Skipping TSV seeds (--skip-tsv-seeds).", flush=True)
 
-    # 1) Create/promote SYS_ADMIN user on Heroku DB (runs inside a one-off dyno).
+    # 2) Create/promote SYS_ADMIN user on Heroku DB (runs inside a one-off dyno).
     _run(
         [
             "heroku",
             "run",
             "-a",
-            args.heroku_app,
+            app_name,
             "--",
             "python",
             "scripts/create_admin.py",
@@ -178,13 +200,13 @@ def main(argv: list[str]) -> int:
     )
 
     if args.include_fixture_min_chain:
-        _run(["heroku", "run", "-a", args.heroku_app, "--", "python", "scripts/fixture_min_chain.py"])
+        _run(["heroku", "run", "-a", app_name, "--", "python", "scripts/fixture_min_chain.py"])
 
     if args.skip_plate_import:
         print("Done (skipped plate import).", flush=True)
         return 0
 
-    # 2) Import customers + plates via API against the Heroku URL (runs locally).
+    # 3) Import customers + plates via API against the Heroku URL (runs locally).
     py = sys.executable or "python"
     _run(
         [
@@ -223,4 +245,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

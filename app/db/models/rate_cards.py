@@ -214,6 +214,20 @@ class ConversionFactor(Base):
     )
 
 
+class CartonOption(Base):
+    __tablename__ = "carton_options"
+
+    slug: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    cost_per_unit: Mapped[float] = mapped_column(Numeric(12, 4))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (
+        CheckConstraint("length(slug) > 0", name="ck_carton_options_slug_nonempty"),
+        CheckConstraint("cost_per_unit >= 0", name="ck_carton_options_cost_nonneg"),
+    )
+
+
 class WasteAdder(Base):
     __tablename__ = "waste_adders"
 

@@ -975,6 +975,16 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "carton_options",
+        sa.Column("slug", sa.String(length=64), primary_key=True),
+        sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("cost_per_unit", sa.Numeric(12, 4), nullable=False),
+        sa.Column("is_default", sa.Boolean(), nullable=False, server_default="0"),
+        sa.CheckConstraint("length(slug) > 0", name="ck_carton_options_slug_nonempty"),
+        sa.CheckConstraint("cost_per_unit >= 0", name="ck_carton_options_cost_nonneg"),
+    )
+
+    op.create_table(
         "waste_adders",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("condition", sa.Text, nullable=False, unique=True),
@@ -989,6 +999,7 @@ def downgrade() -> None:
 
     # Rate cards
     op.drop_table("waste_adders")
+    op.drop_table("carton_options")
     op.drop_table("conversion_factors")
     op.drop_table("conversion_speeds")
     op.drop_table("conversion_rates")

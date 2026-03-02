@@ -31,6 +31,7 @@ export type QuoteRatebook = {
     bags_per_minute: number
   }>
   conversion_factors?: Record<string, number>
+  carton_options?: Array<{ slug: string; name: string; cost_per_unit: number; is_default: boolean }>
   waste_adders: Array<{ condition: string; waste_minutes: number }>
   extrusion_waste_factors?: Array<{ slug: string; minutes: number }>
   extrusion_throughput_kg_per_hr: number
@@ -57,6 +58,7 @@ export type QuickQuoteInputs = {
   num_colours: number
   finish_mode: 'Rolls' | 'Cartons'
   bags_per_carton?: number | null
+  carton_option_slug?: string | null
   core_type: string | null
   roll_weight_billing?: 'core_included' | 'core_off' | 'core_half_off' | null
   extruder_code?: string | null
@@ -73,6 +75,7 @@ export type QuotePreview = {
   units_per_roll: number | null
   totals_kg: number | null
   totals_units: number | null
+  totals_m: number | null
   kg_per_roll: number | null
   m_per_roll: number | null
   cost_per_kg: number | null
@@ -326,24 +329,33 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     }
   }
 
-  const derivedTotalKg =
-    totalKgReqPlastic != null
-      ? totalKgReqPlastic
-      : totalMReq != null && kgPerLinearM > 0
-        ? totalMReq * kgPerLinearM
-        : unitsIn != null
-          ? kgPerUnit * unitsIn
-          : 0
-  let derivedTotalM = totalMReq != null ? totalMReq : derivedTotalKg > 0 && kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
-  let trimmedTotalKg = derivedTotalKg
-
-  // Trim reduces the job length (and therefore material) irrespective of how the length was derived.
-  // Example: 5% trim of 10000m => 9500m.
   const trimPct = inputs.trim_pct != null && Number.isFinite(Number(inputs.trim_pct)) ? Number(inputs.trim_pct) : null
-  if (trimPct != null && trimPct > 0 && derivedTotalM > 0) {
-    const trimFactor = clamp(1 - trimPct / 100, 0, 1)
-    derivedTotalM = derivedTotalM * trimFactor
-    trimmedTotalKg = trimmedTotalKg * trimFactor
+  const trimFactor = trimPct != null && trimPct > 0 ? clamp(1 - trimPct / 100, 0.01, 1) : null
+
+  // When quantity is given as units (No. of Bags): usable kg = units * kgPerUnit. Trim is waste, so we need to
+  // produce more: produced kg = usableKg / (1 - trimPct/100). When quantity is kg/m/rolls, trim reduces usable length.
+  let derivedTotalKg: number
+  let derivedTotalM: number
+  let trimmedTotalKg: number
+
+  if (unitsIn != null && kgPerUnit > 0) {
+    const usableKg = kgPerUnit * unitsIn
+    derivedTotalKg = trimFactor != null ? usableKg / trimFactor : usableKg
+    trimmedTotalKg = derivedTotalKg
+    derivedTotalM = kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
+  } else {
+    derivedTotalKg =
+      totalKgReqPlastic != null
+        ? totalKgReqPlastic
+        : totalMReq != null && kgPerLinearM > 0
+          ? totalMReq * kgPerLinearM
+          : 0
+    derivedTotalM = totalMReq != null ? totalMReq : derivedTotalKg > 0 && kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
+    trimmedTotalKg = derivedTotalKg
+    if (trimFactor != null && derivedTotalM > 0) {
+      derivedTotalM = derivedTotalM * trimFactor
+      trimmedTotalKg = trimmedTotalKg * trimFactor
+    }
   }
 
   const webLengthM = derivedTotalM
@@ -382,12 +394,21 @@ export type AppliedExtrusionWasteFactor = {
   minutes: number
 }
 
+/**
+ * Waste minutes for extrusion cost and material waste.
+ * - simple_job: base (operator time), always applies.
+ * - Other operator-time factors (gusset, complex_set_up_print_or_perforation): stack (add).
+ * - non_standard_resin_or_colour: extruder machine time only, runs in parallel with operator factors.
+ * Total = max(operator stacked minutes, non_standard_resin minutes) so parallel work is not double-counted.
+ */
 function computeExtrusionWasteMinutes(applied: AppliedExtrusionWasteFactor[]): number {
-  const base = applied.find((f) => f.slug === 'simple_job')?.minutes ?? 0
-  const parallel = applied
-    .filter((f) => f.slug !== 'simple_job')
-    .reduce((acc, f) => Math.max(acc, Number(f.minutes || 0)), 0)
-  return Math.max(0, Number(base || 0)) + Math.max(0, Number(parallel || 0))
+  const simpleJob = applied.find((f) => f.slug === 'simple_job')?.minutes ?? 0
+  const operatorFactors = applied.filter(
+    (f) => f.slug !== 'simple_job' && f.slug !== 'non_standard_resin_or_colour',
+  )
+  const operatorStacked = Math.max(0, Number(simpleJob || 0)) + operatorFactors.reduce((acc, f) => acc + Math.max(0, Number(f.minutes || 0)), 0)
+  const extruderOnly = applied.find((f) => f.slug === 'non_standard_resin_or_colour')?.minutes ?? 0
+  return Math.max(operatorStacked, Math.max(0, Number(extruderOnly || 0)))
 }
 
 function buildExtrusionWasteCfg(ratebook: QuoteRatebook): Map<string, number> {
@@ -403,11 +424,12 @@ function buildExtrusionWasteCfg(ratebook: QuoteRatebook): Map<string, number> {
 export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): AppliedExtrusionWasteFactor[] {
   const cfg = buildExtrusionWasteCfg(ratebook)
 
-  // Custom waste factor logic (minutes configurable in DB):
+  // Waste factor logic (minutes from DB). Stacking: simple_job + gusset + complex_set_up stack (operator time);
+  // non_standard_resin_or_colour is extruder-only and combined in parallel (see computeExtrusionWasteMinutes).
   // - simple_job: always applies
   // - gusset: gusseted geometry
-  // - non_standard_resin_or_colour: any colour OR additives OR resin blend other than default
-   // - complex_set_up_print_or_perforation: printing OR any conversion flags that complicate setup
+  // - non_standard_resin_or_colour: any colour OR additives OR resin blend other than default (extruder time, parallel)
+  // - complex_set_up_print_or_perforation: printing OR conversion flags that complicate setup
   const hasAnyColour =
     Array.isArray(inputs.colour_components) && inputs.colour_components.some((c) => (Number(c?.strength_pct || 0) || 0) > 0)
   const hasGusset = String(inputs.geometry || '').toLowerCase() === 'gusset' && Number(inputs.gusset_mm || 0) > 0
@@ -560,7 +582,12 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     const bagsPerCarton = inputs.bags_per_carton != null ? Math.round(Number(inputs.bags_per_carton || 0)) : 0
     cartons = bagsPerCarton > 0 ? Math.ceil(units / bagsPerCarton) : null
     kgPerCarton = bagsPerCarton > 0 && kgPerUnit > 0 ? kgPerUnit * bagsPerCarton : null
-    const cartonCost = convFactor(ratebook, 'carton_cost', 0)
+    let cartonCost = convFactor(ratebook, 'carton_cost', 0)
+    const slug = inputs.carton_option_slug?.trim()
+    if (slug && Array.isArray(ratebook.carton_options)) {
+      const opt = ratebook.carton_options.find((o) => String(o?.slug) === slug)
+      if (opt != null && Number.isFinite(opt.cost_per_unit)) cartonCost = opt.cost_per_unit
+    }
     cartonCostTotal = cartons != null && cartons > 0 && cartonCost >= 0 ? cartons * cartonCost : 0
 
     conversionCost = runningCost + (cartonCostTotal || 0)
@@ -609,6 +636,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     units_per_roll: null,
     totals_kg: derivedTotalKg,
     totals_units: units,
+    totals_m: d.derivedTotalM > 0 ? roundMoney(d.derivedTotalM) : null,
     kg_per_roll: kgPerRoll,
     m_per_roll: mPerRoll,
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,

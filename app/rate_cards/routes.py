@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.auth.deps import allow_roles_any
 from app.db.models.rate_cards import (
     Additive,
+    CartonOption,
     Colour,
     ConversionFactor,
     ConversionSpeed,
@@ -152,6 +153,11 @@ async def get_ratebook():
             )
         ).all()
         conversion_factors = db.execute(select(ConversionFactor.slug, ConversionFactor.value)).all()
+        carton_options = db.execute(
+            select(CartonOption.slug, CartonOption.name, CartonOption.cost_per_unit, CartonOption.is_default).order_by(
+                CartonOption.slug.asc()
+            )
+        ).all()
         waste_adders = db.execute(select(WasteAdder.condition, WasteAdder.waste_minutes)).all()
         extrusion_waste_factors = db.execute(
             select(ExtrusionWasteFactor.slug, ExtrusionWasteFactor.minutes).order_by(ExtrusionWasteFactor.factor.asc())
@@ -227,6 +233,15 @@ async def get_ratebook():
             for min_g, max_g, min_l, max_l, bpm in conversion_speeds
         ],
         "conversion_factors": {str(slug): float(v) for slug, v in conversion_factors},
+        "carton_options": [
+            {
+                "slug": str(slug),
+                "name": str(name),
+                "cost_per_unit": float(cost),
+                "is_default": bool(is_default),
+            }
+            for slug, name, cost, is_default in carton_options
+        ],
         "waste_adders": [{"condition": str(c), "waste_minutes": int(m or 0)} for c, m in waste_adders],
         "extrusion_waste_factors": [{"slug": str(slug), "minutes": int(m or 0)} for slug, m in extrusion_waste_factors],
         "extrusion_throughput_kg_per_hr": 0,

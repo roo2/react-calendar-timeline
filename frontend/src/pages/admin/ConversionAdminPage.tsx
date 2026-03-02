@@ -18,6 +18,13 @@ type ConversionFactor = {
   value: number
 }
 
+type CartonOption = {
+  slug: string
+  name: string
+  cost_per_unit: number
+  is_default: boolean
+}
+
 type GaugeRange = { min_gauge_um: number; max_gauge_um: number }
 type LengthRange = { min_length_mm: number; max_length_mm: number }
 
@@ -36,6 +43,7 @@ function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'mi
 export function ConversionAdminPage() {
   const [speeds, setSpeeds] = useState<ConversionSpeed[]>([])
   const [factors, setFactors] = useState<ConversionFactor[]>([])
+  const [cartonOptions, setCartonOptions] = useState<CartonOption[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
@@ -89,12 +97,14 @@ export function ConversionAdminPage() {
       try {
         setErr(null)
         setLoading(true)
-        const [s, f] = await Promise.all([
+        const [s, f, co] = await Promise.all([
           apiFetch<ConversionSpeed[]>('/api/admin/rate-cards/conversion-speeds'),
           apiFetch<ConversionFactor[]>('/api/admin/rate-cards/conversion-factors'),
+          apiFetch<CartonOption[]>('/api/admin/rate-cards/carton-options'),
         ])
         setSpeeds(Array.isArray(s) ? s : [])
         setFactors(Array.isArray(f) ? f : [])
+        setCartonOptions(Array.isArray(co) ? co : [])
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Failed to load conversion admin data')
       } finally {
@@ -134,6 +144,35 @@ export function ConversionAdminPage() {
     }
   }
 
+  async function saveCartonOption(slug: string, patch: Pick<CartonOption, 'name' | 'cost_per_unit'>) {
+    const k = `carton:${slug}`
+    try {
+      setErr(null)
+      setSavingKey(k)
+      const saved = await apiFetch<CartonOption>(`/api/admin/rate-cards/carton-options/${encodeURIComponent(slug)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...patch, is_default: cartonOptions.find((c) => c.slug === slug)?.is_default ?? false }),
+      })
+      setCartonOptions((cur) => cur.map((c) => (c.slug === slug ? saved : c)))
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  async function setDefaultCartonOption(slug: string) {
+    const k = `carton-default:${slug}`
+    try {
+      setErr(null)
+      setSavingKey(k)
+      const saved = await apiFetch<CartonOption>(`/api/admin/rate-cards/carton-options/${encodeURIComponent(slug)}/set-default`, {
+        method: 'POST',
+      })
+      setCartonOptions((cur) => cur.map((c) => (c.slug === slug ? saved : { ...c, is_default: false })))
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
   async function saveFactor(slug: string, patch: Pick<ConversionFactor, 'name' | 'value'>) {
     const s = slug.trim()
     if (!s) return
@@ -161,7 +200,7 @@ export function ConversionAdminPage() {
 
   return (
     <Stack spacing={2}>
-      <AdminPageHeader title="Packing / Conversion" subtitle="Conversion speeds (bags/minute) and conversion factors used for carton estimates." />
+      <AdminPageHeader title="Packing / Conversion" subtitle="Conversion speeds (bags/minute), conversion factors, and carton options used for carton estimates." />
       {err ? <Alert severity="error">{err}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -250,6 +289,38 @@ export function ConversionAdminPage() {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
+          Carton options
+        </Typography>
+        {loading ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : (
+          <AdminDataTable>
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell sx={{ width: 160 }}>Cost ($)</TableCell>
+                <TableCell sx={{ width: 140 }}>Default</TableCell>
+                <TableCell sx={{ width: 120 }} />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {(cartonOptions || []).map((c) => (
+                <CartonOptionRow
+                  key={c.slug}
+                  row={c}
+                  saving={savingKey === `carton:${c.slug}`}
+                  settingDefault={savingKey === `carton-default:${c.slug}`}
+                  onSave={saveCartonOption}
+                  onSetDefault={setDefaultCartonOption}
+                />
+              ))}
+            </TableBody>
+          </AdminDataTable>
+        )}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Conversion factors
         </Typography>
         {loading ? (
@@ -272,6 +343,59 @@ export function ConversionAdminPage() {
         )}
       </Paper>
     </Stack>
+  )
+}
+
+function CartonOptionRow(props: {
+  row: CartonOption
+  saving: boolean
+  settingDefault: boolean
+  onSave: (slug: string, patch: Pick<CartonOption, 'name' | 'cost_per_unit'>) => Promise<void>
+  onSetDefault: (slug: string) => Promise<void>
+}) {
+  const { row, saving, settingDefault, onSave, onSetDefault } = props
+  const [cost, setCost] = useState(() => String(row.cost_per_unit))
+  useEffect(() => setCost(String(row.cost_per_unit)), [row.slug, row.cost_per_unit])
+  const dirty = cost !== String(row.cost_per_unit)
+  return (
+    <TableRow hover>
+      <TableCell>{row.name}</TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          inputProps={{ inputMode: 'decimal' }}
+          value={cost}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) setCost(v)
+          }}
+        />
+      </TableCell>
+      <TableCell>
+        {row.is_default ? (
+          <Typography variant="body2" color="primary">Default</Typography>
+        ) : (
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={settingDefault}
+            onClick={() => void onSetDefault(row.slug)}
+          >
+            {settingDefault ? 'Setting…' : 'Set default'}
+          </Button>
+        )}
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={saving || !dirty || cost.trim() === '' || !Number.isFinite(parseFloat(cost)) || parseFloat(cost) < 0}
+          onClick={() => void onSave(row.slug, { name: row.name, cost_per_unit: parseFloat(cost) })}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </TableCell>
+    </TableRow>
   )
 }
 

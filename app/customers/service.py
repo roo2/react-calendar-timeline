@@ -32,12 +32,21 @@ def get_customer(customer_id: str) -> Optional[Customer]:
         return db.scalar(stmt)
 
 
+class DuplicateCustomerCodeError(ValueError):
+    """Raised when creating a customer with a code that already exists."""
+
+
 def create_customer(payload: CustomerCreateRequest) -> Customer:
     """
     Create a new customer.
     Validates that at least one contact and one address are provided.
+    Raises DuplicateCustomerCodeError if a customer with the same code already exists.
     """
     with SessionLocal() as db:  # type: Session
+        existing = db.scalar(select(Customer).where(Customer.code == payload.code))
+        if existing:
+            raise DuplicateCustomerCodeError(f"A customer with code '{payload.code}' already exists.")
+
         # Convert contacts and addresses to JSON-compatible format
         contacts_list = [contact.model_dump() for contact in payload.contacts]
         addresses_list = [address.model_dump() for address in payload.delivery_addresses]

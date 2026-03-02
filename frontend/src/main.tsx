@@ -13,6 +13,12 @@ const theme = createTheme({
     primary: { main: '#2563eb' },
   },
   components: {
+    MuiTextField: {
+      defaultProps: {
+        // Always show label above the input (shrink), even when empty or disabled.
+        InputLabelProps: { shrink: true },
+      },
+    },
     MuiTableRow: {
       styleOverrides: {
         root: {

@@ -83,7 +83,12 @@ const initialState: CustomersState = {
 
 function toUpsertError(e: unknown): UpsertError | null {
   if (!(e instanceof ApiError)) return null
-  const { fieldErrors, messages } = parseFastApiValidationDetail(e.body?.detail)
+  let { fieldErrors, messages } = parseFastApiValidationDetail(e.body?.detail)
+  // 409 Conflict (e.g. duplicate customer code): if detail is a string, map it to the code field
+  if (e.status === 409 && Object.keys(fieldErrors).length === 0 && typeof e.body?.detail === 'string') {
+    fieldErrors = { code: e.body.detail }
+    messages = [e.body.detail]
+  }
   const hasFieldErrors = Object.keys(fieldErrors).length > 0
   return {
     message: hasFieldErrors ? 'Please fix the highlighted fields and try again.' : e.message || 'Request failed',
