@@ -39,6 +39,7 @@ export type Extruder = {
   decision_width_mm?: number | null
   average_kg_hr?: number | null
   ave_width?: number | null
+  cost_per_hr?: number | null
 }
 
 export type ExtrusionWasteFactor = {

@@ -60,6 +60,7 @@ FIELD_MAP: dict[str, tuple[str, Any]] = {
     "Average (kg/hr)": ("average_kg_hr", to_int),
     "Ave Width": ("ave_width", to_float),
     "Cost/hr": ("cost_per_hr", to_money),
+    "Cost/hr($)": ("cost_per_hr", to_money),  # TSV header with $ (decimal dollars)
 }
 
 

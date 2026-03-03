@@ -87,6 +87,7 @@ type Extruder = {
   decision_width_mm?: number | null
   average_kg_hr?: number | null
   ave_width?: number | null
+  cost_per_hr?: number | null
 }
 
 type ExtrusionWasteFactor = {
@@ -158,6 +159,7 @@ export function AdminPage() {
   const [newExtruderDecisionW, setNewExtruderDecisionW] = useState<number | ''>('')
   const [newExtruderAvgKgHr, setNewExtruderAvgKgHr] = useState<number | ''>('')
   const [newExtruderAveW, setNewExtruderAveW] = useState<number | ''>('')
+  const [newExtruderCostPerHr, setNewExtruderCostPerHr] = useState<number | ''>('')
 
   const [newPrintingTierMethod, setNewPrintingTierMethod] = useState<'inline' | 'uteco'>('inline')
   const [newPrintingTierMaxWidthMm, setNewPrintingTierMaxWidthMm] = useState<number | ''>('')
@@ -1087,6 +1089,7 @@ export function AdminPage() {
                       <TableCell sx={{ width: 130 }}>Decision W</TableCell>
                       <TableCell sx={{ width: 140 }}>Avg (kg/hr)</TableCell>
                       <TableCell sx={{ width: 110 }}>Ave W</TableCell>
+                      <TableCell sx={{ width: 100 }}>Cost/hr ($)</TableCell>
                       <TableCell sx={{ width: 140 }} />
                     </TableRow>
                   </TableHead>
@@ -1152,6 +1155,15 @@ export function AdminPage() {
                           onChange={(e) => setNewExtruderAveW(e.target.value ? parseFloat(e.target.value) : '')}
                         />
                       </TableCell>
+                      <TableCell>
+                        <TextField
+                          size="small"
+                          label="Cost/hr ($)"
+                          inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }}
+                          value={newExtruderCostPerHr}
+                          onChange={(e) => setNewExtruderCostPerHr(e.target.value ? parseFloat(e.target.value) : '')}
+                        />
+                      </TableCell>
                       <TableCell align="right">
                         <Button
                           size="small"
@@ -1167,6 +1179,7 @@ export function AdminPage() {
                               decision_width_mm: newExtruderDecisionW === '' ? null : Number(newExtruderDecisionW),
                               average_kg_hr: newExtruderAvgKgHr === '' ? null : Number(newExtruderAvgKgHr),
                               ave_width: newExtruderAveW === '' ? null : Number(newExtruderAveW),
+                              cost_per_hr: newExtruderCostPerHr === '' ? null : Number(newExtruderCostPerHr),
                             }).then(() => {
                               setNewExtruderCode('')
                               setNewExtruderModel('')
@@ -1175,6 +1188,7 @@ export function AdminPage() {
                               setNewExtruderDecisionW('')
                               setNewExtruderAvgKgHr('')
                               setNewExtruderAveW('')
+                              setNewExtruderCostPerHr('')
                             })
                           }}
                         >
@@ -1906,6 +1920,7 @@ function ExtruderRow(props: {
   const [wDec, setWDec] = useState<number | ''>(extruder.decision_width_mm ?? '')
   const [avg, setAvg] = useState<number | ''>(extruder.average_kg_hr ?? '')
   const [aveWidth, setAveWidth] = useState<number | ''>(extruder.ave_width ?? '')
+  const [costPerHr, setCostPerHr] = useState<number | ''>(extruder.cost_per_hr ?? '')
 
   const dirty =
     model !== (extruder.model || '') ||
@@ -1913,7 +1928,8 @@ function ExtruderRow(props: {
     wMax !== (extruder.film_width_max_mm ?? '') ||
     wDec !== (extruder.decision_width_mm ?? '') ||
     avg !== (extruder.average_kg_hr ?? '') ||
-    aveWidth !== (extruder.ave_width ?? '')
+    aveWidth !== (extruder.ave_width ?? '') ||
+    costPerHr !== (extruder.cost_per_hr ?? '')
 
   return (
     <TableRow hover>
@@ -1936,6 +1952,9 @@ function ExtruderRow(props: {
       <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={aveWidth} onChange={(e) => setAveWidth(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }} value={costPerHr} onChange={(e) => setCostPerHr(e.target.value ? parseFloat(e.target.value) : '')} />
+      </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
@@ -1950,6 +1969,7 @@ function ExtruderRow(props: {
                 decision_width_mm: wDec === '' ? null : Number(wDec),
                 average_kg_hr: avg === '' ? null : Number(avg),
                 ave_width: aveWidth === '' ? null : Number(aveWidth),
+                cost_per_hr: costPerHr === '' ? null : Number(costPerHr),
               })
             }
           >

@@ -60,6 +60,23 @@ function fmtHoursMinutes(vMinutes: any) {
   return `${h}hr ${m}min`
 }
 
+/** Reusable alert for printing validation errors; show in both Printing section and at top of form. */
+function PrintingUnavailableAlert({ message, prominent = false }: { message: string | null; prominent?: boolean }) {
+  if (!message) return null
+  return (
+    <Alert
+      severity="error"
+      sx={
+        prominent
+          ? { py: 1.5, '& .MuiAlert-message': { fontSize: '1rem' } }
+          : { mt: 2 }
+      }
+    >
+      {message}
+    </Alert>
+  )
+}
+
 type ResinBlendPreset = {
   blend_code: string
   name: string
@@ -307,7 +324,6 @@ export function QuotesPage() {
   const [priceDriver, setPriceDriver] = useState<'margin' | 'pricePerKg'>('margin')
   const [quickPreview, setQuickPreview] = useState<any>(null)
   const [calcLoading, setCalcLoading] = useState(false)
-  const [printingError, setPrintingError] = useState<string | null>(null)
 
   const showNumColours = printMethod && printMethod !== 'None'
   const canHaveGusset = productTypeCanHaveGusset(productType)
@@ -464,73 +480,6 @@ export function QuotesPage() {
   useEffect(() => {
     if (finishMode !== 'Rolls' && qtyType === 'total_rolls') setQtyType('kg')
   }, [finishMode, qtyType])
-
-  const canCalculate =
-    (qtyType === 'total_rolls'
-      ? numRollsNum > 0 && weightPerRollNum > 0
-      : qtyType === 'units'
-        ? numUnitsNum > 0
-        : qtyType === 'kg'
-          ? totalKg.trim() !== '' && (finishMode !== 'Rolls' || weightPerRollNum > 0)
-          : false) &&
-    widthMmNum > 0 &&
-    (!isUFilm || (ufilmLeftWidthMmNum > 0 && ufilmRightWidthMmNum > 0)) &&
-    thicknessUmNum > 0 &&
-    baseLengthMm > 0 &&
-    (!(canHaveGusset && flagGusset) || gussetReturnMmNum > 0) &&
-    (!flagPrinted || (printMethod !== 'None' && (Number(numColours || 0) >= 1 || !!printingError))) &&
-    (finishMode !== 'Cartons' || Number(bagsPerCarton || 0) >= 1)
-
-  const missingForCalc = useMemo(() => {
-    const missing: string[] = []
-    if (!ratebook) missing.push('Pricing rates')
-    if (qtyType === 'units' && !(numUnitsNum > 0))
-      missing.push(
-        `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
-      )
-    else if (qtyType === 'kg') {
-      if (!(totalKgNum > 0)) missing.push('Total KG')
-      if (finishMode === 'Rolls' && !(weightPerRollNum > 0)) missing.push('Weight per roll')
-    }
-    else if (qtyType === 'total_rolls') {
-      if (!(numRollsNum > 0)) missing.push('No. of Rolls')
-      if (!(weightPerRollNum > 0)) missing.push('Weight per roll')
-    }
-    if (!(widthMmNum > 0)) missing.push(`${productType} Width`)
-    if (isUFilm && !(ufilmLeftWidthMmNum > 0)) missing.push('U-Film Left Width')
-    if (isUFilm && !(ufilmRightWidthMmNum > 0)) missing.push('U-Film Right Width')
-    if (!(thicknessUmNum > 0)) missing.push('Gauge')
-    if (!(baseLengthMm > 0)) missing.push('Length')
-    if (canHaveGusset && flagGusset && !(gussetReturnMmNum > 0)) missing.push('Gusset Return')
-    if (flagPrinted && !(printMethod !== 'None')) missing.push('Print Method')
-    if (flagPrinted && showNumColours && !(Number(numColours || 0) >= 1) && !printingError) missing.push('No. Colours')
-    if (finishMode === 'Cartons' && !(Number(bagsPerCarton || 0) >= 1)) missing.push('Bags/Carton')
-    return missing
-  }, [
-    baseLengthMm,
-    bagsPerCarton,
-    canHaveGusset,
-    finishMode,
-    flagGusset,
-    flagPrinted,
-    gussetReturnMmNum,
-    isUFilm,
-    numColours,
-    printMethod,
-    printingError,
-    numRollsNum,
-    numUnitsNum,
-    productType,
-    qtyType,
-    ratebook,
-    totalKgNum,
-    weightPerRollNum,
-    showNumColours,
-    thicknessUmNum,
-    ufilmLeftWidthMmNum,
-    ufilmRightWidthMmNum,
-    widthMmNum,
-  ])
 
   const calcPayload = useMemo(() => {
     const qty: any = {}
@@ -799,6 +748,86 @@ export function QuotesPage() {
     [calcPayload],
   )
 
+  const printingErrorComputed: string | null = useMemo(() => {
+    if (!ratebook) return null
+    if (!flagPrinted || printMethod === 'None') return null
+    const desired = Number(numColours || desiredNumColours || 0)
+    if (!Number.isFinite(desired) || desired < 1) return null
+    const inputsForPrint: QuickQuoteInputs = {
+      ...calcInputs,
+      print_method: printMethod,
+      num_colours: desired,
+    }
+    return computePrintingUnavailableReason(inputsForPrint, ratebook)
+  }, [calcInputs, desiredNumColours, flagPrinted, numColours, printMethod, ratebook])
+
+  const canCalculate =
+    (qtyType === 'total_rolls'
+      ? numRollsNum > 0 && weightPerRollNum > 0
+      : qtyType === 'units'
+        ? numUnitsNum > 0
+        : qtyType === 'kg'
+          ? totalKg.trim() !== '' && (finishMode !== 'Rolls' || weightPerRollNum > 0)
+          : false) &&
+    widthMmNum > 0 &&
+    (!isUFilm || (ufilmLeftWidthMmNum > 0 && ufilmRightWidthMmNum > 0)) &&
+    thicknessUmNum > 0 &&
+    baseLengthMm > 0 &&
+    (!(canHaveGusset && flagGusset) || gussetReturnMmNum > 0) &&
+    (!flagPrinted || (printMethod !== 'None' && (Number(numColours || 0) >= 1 || !!printingErrorComputed))) &&
+    (finishMode !== 'Cartons' || Number(bagsPerCarton || 0) >= 1)
+
+  const missingForCalc = useMemo(() => {
+    const missing: string[] = []
+    if (!ratebook) missing.push('Pricing rates')
+    if (qtyType === 'units' && !(numUnitsNum > 0))
+      missing.push(
+        `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
+      )
+    else if (qtyType === 'kg') {
+      if (!(totalKgNum > 0)) missing.push('Total KG')
+      if (finishMode === 'Rolls' && !(weightPerRollNum > 0)) missing.push('Weight per roll')
+    }
+    else if (qtyType === 'total_rolls') {
+      if (!(numRollsNum > 0)) missing.push('No. of Rolls')
+      if (!(weightPerRollNum > 0)) missing.push('Weight per roll')
+    }
+    if (!(widthMmNum > 0)) missing.push(`${productType} Width`)
+    if (isUFilm && !(ufilmLeftWidthMmNum > 0)) missing.push('U-Film Left Width')
+    if (isUFilm && !(ufilmRightWidthMmNum > 0)) missing.push('U-Film Right Width')
+    if (!(thicknessUmNum > 0)) missing.push('Gauge')
+    if (!(baseLengthMm > 0)) missing.push('Length')
+    if (canHaveGusset && flagGusset && !(gussetReturnMmNum > 0)) missing.push('Gusset Return')
+    if (flagPrinted && !(printMethod !== 'None')) missing.push('Print Method')
+    if (flagPrinted && showNumColours && !(Number(numColours || 0) >= 1) && !printingErrorComputed) missing.push('No. Colours')
+    if (finishMode === 'Cartons' && !(Number(bagsPerCarton || 0) >= 1)) missing.push('Bags/Carton')
+    return missing
+  }, [
+    baseLengthMm,
+    bagsPerCarton,
+    canHaveGusset,
+    finishMode,
+    flagGusset,
+    flagPrinted,
+    gussetReturnMmNum,
+    isUFilm,
+    numColours,
+    printMethod,
+    printingErrorComputed,
+    numRollsNum,
+    numUnitsNum,
+    productType,
+    qtyType,
+    ratebook,
+    totalKgNum,
+    weightPerRollNum,
+    showNumColours,
+    thicknessUmNum,
+    ufilmLeftWidthMmNum,
+    ufilmRightWidthMmNum,
+    widthMmNum,
+  ])
+
   const appliedExtrusionWasteFactors: AppliedExtrusionWasteFactor[] = useMemo(() => {
     if (!ratebook) return []
     try {
@@ -922,35 +951,6 @@ export function QuotesPage() {
     if (next !== quickMargin) setQuickMargin(next)
   }, [quickPreview, priceDriver, suggestedPricePerKg, quickMargin])
 
-  const printingErrorComputed: string | null = useMemo(() => {
-    if (!ratebook) return null
-    if (!flagPrinted || printMethod === 'None') return null
-    const desired = Number(desiredNumColours || 0)
-    if (!Number.isFinite(desired) || desired < 1) return null
-    const inputsForPrint: QuickQuoteInputs = {
-      ...calcInputs,
-      print_method: printMethod,
-      num_colours: desired,
-    }
-    return computePrintingUnavailableReason(inputsForPrint, ratebook)
-  }, [calcInputs, desiredNumColours, flagPrinted, printMethod, ratebook])
-
-  useEffect(() => {
-    if (printingErrorComputed) {
-      setPrintingError(printingErrorComputed)
-      if (numColours !== '0') setNumColours('0')
-      return
-    }
-
-    setPrintingError(null)
-
-    // If the error cleared, restore the user's desired value so printing resumes automatically.
-    if (flagPrinted && printMethod !== 'None') {
-      const desired = desiredNumColours.trim()
-      if (numColours === '0' && Number(desired || 0) >= 1) setNumColours(desired)
-    }
-  }, [desiredNumColours, flagPrinted, numColours, printMethod, printingErrorComputed])
-
   return (
     <Stack spacing={2}>
       <Box>
@@ -961,6 +961,7 @@ export function QuotesPage() {
       </Box>
 
       {(err || ratebookErr) && <Alert severity="error">{err || ratebookErr}</Alert>}
+      <PrintingUnavailableAlert message={printingErrorComputed} prominent />
 
       <Box
         sx={{
@@ -1452,15 +1453,10 @@ export function QuotesPage() {
                       setNumColours(e.target.value)
                       setDesiredNumColours(e.target.value)
                     }}
-                    disabled={!!printingError}
                   />
                 ) : null}
               </Box>
-              {printingError ? (
-                <Alert severity="warning" sx={{ mt: 2 }}>
-                  {printingError}
-                </Alert>
-              ) : null}
+              <PrintingUnavailableAlert message={printingErrorComputed} />
             </Paper>
 
             <Paper variant="outlined" sx={{ p: 2 }}>

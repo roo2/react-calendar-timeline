@@ -185,6 +185,7 @@ class ExtruderDTO(BaseModel):
     decision_width_mm: int | None = None
     average_kg_hr: int | None = None
     ave_width: float | None = None
+    cost_per_hr: float | None = None
 
 
 class ExtruderUpsertRequest(BaseModel):
@@ -194,6 +195,7 @@ class ExtruderUpsertRequest(BaseModel):
     decision_width_mm: int | None = None
     average_kg_hr: int | None = None
     ave_width: float | None = None
+    cost_per_hr: float | None = Field(default=None, ge=0)
 
 
 class ExtrusionWasteFactorDTO(BaseModel):
@@ -1036,6 +1038,7 @@ async def list_extruders():
                 decision_width_mm=e.decision_width_mm,
                 average_kg_hr=e.average_kg_hr,
                 ave_width=float(e.ave_width) if e.ave_width is not None else None,
+                cost_per_hr=float(e.cost_per_hr) if e.cost_per_hr is not None else None,
             )
             for e in rows
         ]
@@ -1062,6 +1065,7 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
         row.decision_width_mm = payload.decision_width_mm
         row.average_kg_hr = payload.average_kg_hr
         row.ave_width = payload.ave_width
+        row.cost_per_hr = payload.cost_per_hr
 
     with SessionLocal() as db:
         e2 = db.get(Extruder, code)
@@ -1074,6 +1078,7 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
             decision_width_mm=e2.decision_width_mm,
             average_kg_hr=e2.average_kg_hr,
             ave_width=float(e2.ave_width) if e2.ave_width is not None else None,
+            cost_per_hr=float(e2.cost_per_hr) if e2.cost_per_hr is not None else None,
         )
 
 
