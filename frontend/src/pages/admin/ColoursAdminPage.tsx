@@ -112,7 +112,7 @@ export function ColoursAdminPage() {
                     disabled={!canCreate || saving === newCode.trim()}
                     onClick={() => {
                       if (!canCreate) return
-                      void saveRow(newCode, { name: newName.trim(), price_per_kg: Number(newPrice) }).then(() => {
+                      void saveRow(newCode, { name: newName.trim(), price_per_kg: Number(newPrice), sort_order: rows.length }).then(() => {
                         setNewCode('')
                         setNewName('')
                         setNewPrice('')
@@ -152,7 +152,7 @@ function ColourRow(props: {
       </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
-          <Button size="small" variant="outlined" disabled={saving || !dirty || !name.trim() || price === ''} onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price) })}>
+          <Button size="small" variant="outlined" disabled={saving || !dirty || !name.trim() || price === ''} onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price), sort_order: row.sort_order })}>
             {saving ? 'Saving…' : 'Save'}
           </Button>
           <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.colour_code)}>
