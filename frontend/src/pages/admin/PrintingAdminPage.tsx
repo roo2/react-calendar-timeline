@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
@@ -12,6 +13,7 @@ function tierKey(t: { method: string; max_print_width_mm: number; num_colours: n
 }
 
 export function PrintingAdminPage() {
+  const { setDirty } = useUnsavedChanges()
   const [tiers, setTiers] = useState<PrintingPricingTier[]>([])
   const [inks, setInks] = useState<Ink[]>([])
   const [plates, setPlates] = useState<Plate[]>([])
@@ -90,6 +92,7 @@ export function PrintingAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save ink')
     } finally {
@@ -106,6 +109,7 @@ export function PrintingAdminPage() {
       setSavingKey(`ink:${trimmed}`)
       await apiFetch<void>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setInks((cur) => cur.filter((i) => i.ink_code !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete ink')
     } finally {
@@ -132,6 +136,7 @@ export function PrintingAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save plate')
     } finally {
@@ -150,6 +155,7 @@ export function PrintingAdminPage() {
       setSavingKey(key)
       await apiFetch<void>(`/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`, { method: 'DELETE' })
       setPlates((cur) => cur.filter((p) => !(p.customer_id === cid && p.plate_code === code)))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete plate')
     } finally {
@@ -183,6 +189,7 @@ export function PrintingAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save printing tier')
     } finally {
@@ -206,6 +213,7 @@ export function PrintingAdminPage() {
         { method: 'DELETE' },
       )
       setTiers((cur) => cur.filter((t) => !(t.method === m && t.max_print_width_mm === key.max_print_width_mm && t.num_colours === key.num_colours)))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete printing tier')
     } finally {

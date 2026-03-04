@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import {
+  clearUpsertErrors,
+  createSavedQuote,
+  fetchQuotesBootstrap,
+  updateSavedQuote,
+} from '../store/slices/quotesSlice'
 import {
   Alert,
   Box,
@@ -47,6 +56,13 @@ function formatKgDisplay(v: number | null | undefined): string {
   if (v == null) return ''
   const n = Number(v)
   return Number.isFinite(n) ? n.toFixed(2) : ''
+}
+
+/** Round a numeric string to 2 decimal places for storage/display (Margin %, Price per KG). */
+function roundTo2Decimals(s: string): string {
+  if (s.trim() === '') return s
+  const n = Number(s)
+  return Number.isFinite(n) ? n.toFixed(2) : s
 }
 
 function fmtHoursMinutes(vMinutes: any) {
@@ -256,14 +272,39 @@ function QuotePreview(props: {
   )
 }
 
-export function QuotesPage() {
+export type SavedQuoteInitialData = {
+  customer_id: string
+  payload: Record<string, unknown>
+  /** String from API preserves exact decimals on reload */
+  cost_per_kg?: string | number | null
+  price_per_kg?: string | number | null
+}
+
+type QuotesPageProps = {
+  quoteId?: string
+  initialData?: SavedQuoteInitialData | null
+}
+
+export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
+  const navigate = useNavigate()
+  const isEditMode = Boolean(quoteId && initialData)
 
-  const [bootstrap, setBootstrap] = useState<any>(null)
+  const dispatch = useAppDispatch()
+  const bootstrapState = useAppSelector((s) => s.quotes.bootstrap)
+  const upsertState = useAppSelector((s) => s.quotes.upsert)
+  const bootstrap = bootstrapState.data
   const [err, setErr] = useState<string | null>(null)
   const [ratebook, setRatebook] = useState<QuoteRatebook | null>(null)
   const [ratebookErr, setRatebookErr] = useState<string | null>(null)
+  const [customerId, setCustomerId] = useState<string>('')
+  const saving = upsertState.status === 'loading'
+  const displayErr = err || bootstrapState.error || upsertState.error || null
+  const [hydratedFromQuote, setHydratedFromQuote] = useState(false)
+  const initialPayloadSnapshotRef = useRef<string | null>(null)
+  const preserveLoadedPricePerKgRef = useRef(false)
+  const payloadForEditDetectionRef = useRef<Record<string, unknown>>({})
 
   // Quantity (four independent values; qtyType only controls which are editable vs computed)
   const [qtyType, setQtyType] = useState<'units' | 'kg' | 'total_rolls'>('kg')
@@ -331,16 +372,117 @@ export function QuotesPage() {
   const derivedGeometry: 'Flat' | 'Gusset' = canHaveGusset && flagGusset ? 'Gusset' : 'Flat'
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        const b = await apiFetch<any>('/api/quotes/bootstrap')
-        setBootstrap(b)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load quote data')
+    void dispatch(fetchQuotesBootstrap())
+  }, [dispatch])
+
+  useEffect(() => {
+    dispatch(clearUpsertErrors())
+  }, [dispatch, quoteId])
+
+  // Hydrate form from saved quote when editing
+  useEffect(() => {
+    if (!initialData?.payload || hydratedFromQuote) return
+    const p = initialData.payload as any
+    setCustomerId(initialData.customer_id || '')
+    if (p.product_type != null) setProductType(String(p.product_type))
+    if (p.geometry != null) setFlagGusset(p.geometry === 'Gusset')
+    if (p.finish_mode != null) setFinishMode(p.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls')
+    if (p.base_width_mm != null) setWidthMm(p.base_width_mm === 0 ? '' : String(p.base_width_mm))
+    if (p.ufilm_left_width_mm != null) setUfilmLeftWidthMm(String(p.ufilm_left_width_mm))
+    if (p.ufilm_right_width_mm != null) setUfilmRightWidthMm(String(p.ufilm_right_width_mm))
+    if (p.gusset_mm != null) setGussetReturnMm(String(p.gusset_mm))
+    if (p.length != null) setLength(String(p.length))
+    else if (p.base_length_mm != null) setLength(String(p.base_length_mm))
+    if (p.thickness_um != null) setThicknessUm(p.thickness_um === 0 ? '' : String(p.thickness_um))
+    if (p.trim_pct != null) setTrimPctText(String(p.trim_pct))
+    if (p.run_up != null) setRunUp(Number(p.run_up) || 1)
+    if (p.resin_blend_code != null) setResinBlendCode(String(p.resin_blend_code))
+    if (Array.isArray(p.colourRows)) setColourRows(p.colourRows)
+    else if (Array.isArray(p.colour_components) && p.colour_components.length > 0)
+      setColourRows(
+        p.colour_components.map((c: any) => ({
+          colour_code: c.colour_code || '',
+          strength_pct: c.strength_pct != null ? String(c.strength_pct) : '',
+        }))
+      )
+    if (Array.isArray(p.additiveRows)) setAdditiveRows(p.additiveRows)
+    else if (Array.isArray(p.additives) && p.additives.length > 0)
+      setAdditiveRows(
+        p.additives.map((a: any) => ({
+          additive_code: a.additive_code || '',
+          pct: a.pct != null ? String(a.pct) : '',
+        }))
+      )
+    if (p.print_method != null) setPrintMethod(p.print_method === 'Uteco' ? 'Uteco' : p.print_method === 'Inline' ? 'Inline' : 'None')
+    if (p.num_colours != null) setNumColours(p.num_colours === 0 ? '' : String(p.num_colours))
+    if (p.num_colours != null) setDesiredNumColours(p.num_colours === 0 ? '' : String(p.num_colours))
+    if (p.finish_mode === 'Cartons') {
+      if (p.bags_per_carton != null) setBagsPerCarton(String(p.bags_per_carton))
+      if (p.carton_option_slug != null) setCartonOptionSlug(p.carton_option_slug)
+    }
+    if (p.core_type != null) setCoreType(p.core_type)
+    if (p.roll_weight_billing != null) setRollWeightBilling(p.roll_weight_billing)
+    if (p.pallet_type != null) setPalletType(p.pallet_type)
+    if (p.qtyType != null) setQtyType(p.qtyType)
+    if (p.length != null) setLength(p.length)
+    if (p.lengthUnits != null) setLengthUnits(p.lengthUnits === 'm' ? 'm' : 'mm')
+    if (p.numUnits != null) setNumUnits(String(p.numUnits))
+    if (p.numRolls != null) setNumRolls(String(p.numRolls))
+    if (p.totalKg != null) setTotalKg(String(p.totalKg))
+    if (p.weightPerRoll != null) setWeightPerRoll(String(p.weightPerRoll))
+    if (p.quantity?.units != null) setNumUnits(String(p.quantity.units))
+    if (p.quantity?.total_kg != null) setTotalKg(String(p.quantity.total_kg))
+    if (p.quantity?.rolls != null) setNumRolls(String(p.quantity.rolls))
+    if (p.flagPerforated != null) setFlagPerforated(!!p.flagPerforated)
+    if (p.flagSealed != null) setFlagSealed(!!p.flagSealed)
+    if (p.flagPunched != null) setFlagPunched(!!p.flagPunched)
+    if (p.showNumColours != null) setFlagPrinted(!!p.showNumColours)
+    // Prefer price_per_kg as source of truth on load; use saved margin from payload when present so we don't recompute (avoids two-way drift on save/reload).
+    // Support string from API and number (legacy); round to 2dp for display.
+    const pricePerKgNum = Number(initialData.price_per_kg)
+    if (initialData.price_per_kg != null && initialData.price_per_kg !== '' && Number.isFinite(pricePerKgNum) && pricePerKgNum > 0) {
+      setSuggestedPricePerKg(
+        roundTo2Decimals(
+          typeof initialData.price_per_kg === 'string' ? initialData.price_per_kg.trim() : String(initialData.price_per_kg)
+        )
+      )
+      setPriceDriver('pricePerKg')
+      preserveLoadedPricePerKgRef.current = true
+      // Use saved margin string when present so both price and margin match exactly what was saved (no derivation/rounding).
+      if (typeof p.requested_margin_pct_str === 'string' && p.requested_margin_pct_str.trim() !== '') {
+        setQuickMargin(roundTo2Decimals(String(p.requested_margin_pct_str).trim()))
+      } else {
+        const cost =
+          initialData.cost_per_kg != null &&
+          initialData.cost_per_kg !== '' &&
+          Number.isFinite(Number(initialData.cost_per_kg))
+            ? Number(initialData.cost_per_kg)
+            : null
+        const price = pricePerKgNum
+        if (cost != null && price > 0) {
+          const marginPct = Math.max(0, Math.min(99.99, (1 - cost / price) * 100))
+          setQuickMargin(roundTo2Decimals(String(marginPct)))
+        } else if (p.requested_margin != null && Number.isFinite(Number(p.requested_margin))) {
+          const pct = Number(p.requested_margin) * 100
+          setQuickMargin(roundTo2Decimals(String(pct)))
+        } else {
+          setQuickMargin('')
+        }
       }
-    })()
-  }, [])
+    } else {
+      preserveLoadedPricePerKgRef.current = false
+      if (typeof p.requested_margin_pct_str === 'string' && p.requested_margin_pct_str.trim() !== '') {
+        setQuickMargin(roundTo2Decimals(String(p.requested_margin_pct_str).trim()))
+      } else if (p.requested_margin != null) {
+        const pct = Number(p.requested_margin) * 100
+        setQuickMargin(Number.isFinite(pct) ? roundTo2Decimals(String(pct)) : '')
+      } else {
+        setQuickMargin('')
+      }
+      setPriceDriver('margin')
+    }
+    setHydratedFromQuote(true)
+  }, [initialData, hydratedFromQuote])
 
   useEffect(() => {
     void (async () => {
@@ -748,6 +890,93 @@ export function QuotesPage() {
     [calcPayload],
   )
 
+  /** Full form state for persisting; used to re-hydrate on edit. */
+  const payloadForSave = useMemo(
+    () => ({
+      ...calcPayload,
+      requested_margin_pct_str: quickMargin,
+      qtyType,
+      length,
+      lengthUnits,
+      numUnits,
+      numRolls,
+      totalKg,
+      weightPerRoll,
+      colourRows,
+      additiveRows,
+      resinBlendCode,
+      coreType,
+      rollWeightBilling,
+      bagsPerCarton,
+      cartonOptionSlug,
+      palletType,
+      flagPerforated,
+      flagSealed,
+      flagPunched,
+      desiredNumColours: desiredNumColours || numColours,
+      showNumColours: flagPrinted,
+    }),
+    [
+      calcPayload,
+      quickMargin,
+      qtyType,
+      length,
+      lengthUnits,
+      numUnits,
+      numRolls,
+      totalKg,
+      weightPerRoll,
+      colourRows,
+      additiveRows,
+      resinBlendCode,
+      coreType,
+      rollWeightBilling,
+      bagsPerCarton,
+      cartonOptionSlug,
+      palletType,
+      flagPerforated,
+      flagSealed,
+      flagPunched,
+      desiredNumColours,
+      numColours,
+      flagPrinted,
+    ],
+  )
+
+  // For edit-mode "did user edit the spec?" we exclude pricing (requested_margin, requested_margin_pct_str) so that updating Price per KG → margin sync doesn't trigger a switch to margin driver
+  const payloadForEditDetection = useMemo(() => {
+    const { requested_margin: _rm, requested_margin_pct_str: _rmStr, ...rest } = payloadForSave as {
+      requested_margin?: number
+      requested_margin_pct_str?: string
+      [k: string]: unknown
+    }
+    return rest
+  }, [payloadForSave])
+  payloadForEditDetectionRef.current = payloadForEditDetection
+
+  // Edit mode: capture initial payload snapshot once after hydration has settled so we don't falsely detect an edit (and overwrite loaded price per kg).
+  useEffect(() => {
+    if (!isEditMode || !hydratedFromQuote || initialPayloadSnapshotRef.current != null) return
+    const t = window.setTimeout(() => {
+      initialPayloadSnapshotRef.current = JSON.stringify(payloadForEditDetectionRef.current)
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [isEditMode, hydratedFromQuote])
+
+  // Edit mode: when user edits the form spec (not just margin/price), switch to margin-as-driver so margin is maintained and price per kg updates
+  useEffect(() => {
+    if (
+      isEditMode &&
+      hydratedFromQuote &&
+      initialPayloadSnapshotRef.current != null &&
+      JSON.stringify(payloadForEditDetection) !== initialPayloadSnapshotRef.current
+    ) {
+      preserveLoadedPricePerKgRef.current = false
+      setPriceDriver('margin')
+      initialPayloadSnapshotRef.current = null
+    }
+  }, [isEditMode, hydratedFromQuote, payloadForEditDetection])
+
   const printingErrorComputed: string | null = useMemo(() => {
     if (!ratebook) return null
     if (!flagPrinted || printMethod === 'None') return null
@@ -927,18 +1156,21 @@ export function QuotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canCalculate, calcPayload, ratebook])
 
-  // When margin is the driver, sync price-per-kg from the result.
+  // When margin is the driver, sync price-per-kg from the result. Skip when we just loaded by price_per_kg so we don't overwrite the saved value.
   useEffect(() => {
     if (priceDriver !== 'margin') return
+    if (preserveLoadedPricePerKgRef.current) return
     const p = quickPreview
     if (!p || typeof p.totals_kg !== 'number' || p.totals_kg <= 0) return
     const fp = Number(p.final_price)
-    if (Number.isFinite(fp)) setSuggestedPricePerKg((fp / p.totals_kg).toFixed(2))
+    if (Number.isFinite(fp)) setSuggestedPricePerKg(roundTo2Decimals(String(fp / p.totals_kg)))
   }, [quickPreview, priceDriver])
 
   // When price-per-kg is the driver and we have a result, sync margin so the next recalc uses it (e.g. user set price per kg before first result).
+  // Skip when we just loaded from a saved quote: we already set margin from saved cost/price; overwriting from API result causes two-way rounding drift.
   useEffect(() => {
     if (priceDriver !== 'pricePerKg') return
+    if (preserveLoadedPricePerKgRef.current) return
     const priceKg = Number(suggestedPricePerKg)
     if (!Number.isFinite(priceKg) || priceKg <= 0) return
     const p = quickPreview
@@ -947,20 +1179,101 @@ export function QuotesPage() {
     if (!Number.isFinite(totalCost)) return
     const margin = 1 - totalCost / (priceKg * p.totals_kg)
     const pct = Math.max(0, Math.min(99.99, margin * 100))
-    const next = pct.toFixed(2)
+    const next = roundTo2Decimals(String(pct))
     if (next !== quickMargin) setQuickMargin(next)
   }, [quickPreview, priceDriver, suggestedPricePerKg, quickMargin])
 
+  const customers = bootstrap?.customers ?? []
+  const costPerKgForSave =
+    quickPreview?.cost_per_kg != null && Number.isFinite(Number(quickPreview.cost_per_kg))
+      ? Number(quickPreview.cost_per_kg)
+      : null
+  const pricePerKgForSave =
+    suggestedPricePerKg.trim() !== '' && Number.isFinite(Number(suggestedPricePerKg))
+      ? Number(suggestedPricePerKg)
+      : quickPreview?.totals_kg > 0 && quickPreview?.final_price != null
+        ? Number(quickPreview.final_price) / Number(quickPreview.totals_kg)
+        : null
+
+  const { setDirty } = useUnsavedChanges()
+
+  async function handleSaveQuote() {
+    if (!customerId.trim()) {
+      setErr('Select a customer to save this quote.')
+      return
+    }
+    setErr(null)
+    try {
+      if (quoteId) {
+        await dispatch(
+          updateSavedQuote({
+            quoteId,
+            payload: payloadForSave,
+            cost_per_kg: costPerKgForSave ?? undefined,
+            price_per_kg: pricePerKgForSave ?? undefined,
+          }),
+        ).unwrap()
+        setDirty(false)
+      } else {
+        const quote = await dispatch(
+          createSavedQuote({
+            customer_id: customerId.trim(),
+            payload: payloadForSave,
+            cost_per_kg: costPerKgForSave,
+            price_per_kg: pricePerKgForSave,
+          }),
+        ).unwrap()
+        setDirty(false)
+        navigate(`/quotes/${quote.id}/edit`)
+      }
+    } catch {
+      // Error stored in quotes.upsert.error, shown via displayErr
+    }
+  }
+
   return (
     <Stack spacing={2}>
-      <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h5">Quote Calculator</Typography>
-        <Typography variant="body2" color="text.secondary">
-          Quick quote calculator (no existing product required).
-        </Typography>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <Button component={Link} to="/quotes" variant="outlined">
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={saving || !customerId.trim() || !canCalculate}
+            onClick={() => void handleSaveQuote()}
+          >
+            {saving ? 'Saving…' : isEditMode ? 'Update quote' : 'Save quote'}
+          </Button>
+        </Box>
       </Box>
 
-      {(err || ratebookErr) && <Alert severity="error">{err || ratebookErr}</Alert>}
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+          Customer
+        </Typography>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}>
+          <TextField
+            select
+            size="small"
+            label="Customer"
+            value={customerId}
+            onChange={(e) => setCustomerId(e.target.value)}
+            disabled={isEditMode}
+            sx={{ minWidth: 220 }}
+          >
+            <MenuItem value="">— Select customer —</MenuItem>
+            {customers.map((c: { id: string; code?: string | null; name: string }) => (
+              <MenuItem key={c.id} value={c.id}>
+                {c.code ? `${c.code} – ${c.name}` : c.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+      </Paper>
+
+      {(displayErr || ratebookErr) && <Alert severity="error">{displayErr || ratebookErr}</Alert>}
       <PrintingUnavailableAlert message={printingErrorComputed} prominent />
 
       <Box
@@ -969,6 +1282,7 @@ export function QuotesPage() {
           gap: 2,
           alignItems: 'flex-start',
         }}
+        onChange={() => setDirty(true)}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack spacing={3}>
@@ -1554,9 +1868,11 @@ export function QuotesPage() {
                   <TextField
                     label="Margin (%)"
                     type="number"
-                    inputProps={{ min: 0, max: 100, step: 0.5 }}
+                    inputProps={{ min: 0, max: 100, step: 0.01 }}
                     value={quickMargin}
+                    onBlur={() => setQuickMargin((m) => roundTo2Decimals(m))}
                     onChange={(e) => {
+                      preserveLoadedPricePerKgRef.current = false
                       setQuickMargin(e.target.value)
                       setPriceDriver('margin')
                     }}
@@ -1566,7 +1882,9 @@ export function QuotesPage() {
                     type="number"
                     inputProps={{ min: 0, step: 0.01 }}
                     value={suggestedPricePerKg}
+                    onBlur={() => setSuggestedPricePerKg((p) => roundTo2Decimals(p))}
                     onChange={(e) => {
+                      preserveLoadedPricePerKgRef.current = false
                       const v = e.target.value
                       setSuggestedPricePerKg(v)
                       setPriceDriver('pricePerKg')
@@ -1577,7 +1895,7 @@ export function QuotesPage() {
                         if (Number.isFinite(totalCost)) {
                           const margin = 1 - totalCost / (priceKg * p.totals_kg)
                           const pct = Math.max(0, Math.min(99.99, margin * 100))
-                          setQuickMargin(pct.toFixed(2))
+                          setQuickMargin(roundTo2Decimals(String(pct)))
                         }
                       }
                     }}
@@ -1586,17 +1904,15 @@ export function QuotesPage() {
                 </Box>
 
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                  <Button variant="contained" onClick={() => void calcQuick(calcPayload)} disabled={!canCalculate || calcLoading}>
-                    {calcLoading ? 'Calculating…' : 'Recalculate now'}
+                  <Button component={Link} to="/quotes" variant="outlined">
+                    Cancel
                   </Button>
                   <Button
-                    variant="outlined"
-                    onClick={() => {
-                      setQuickPreview(null)
-                      lastPayloadKeyRef.current = ''
-                    }}
+                    variant="contained"
+                    disabled={saving || !customerId.trim() || !canCalculate}
+                    onClick={() => void handleSaveQuote()}
                   >
-                    Clear preview
+                    {saving ? 'Saving…' : isEditMode ? 'Update quote' : 'Save quote'}
                   </Button>
                 </Box>
               </Stack>

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Optional
 from .models import (
     SpecDTO,
@@ -33,10 +33,6 @@ def _mm_to_m(mm: Decimal) -> Decimal:
 
 def _um_to_m(um: Decimal) -> Decimal:
     return (um / Decimal("1000000"))
-
-
-def quantize_money(x: Decimal) -> Decimal:
-    return x.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def compute_dimensions(spec: SpecDTO) -> Dimensions:
@@ -228,8 +224,9 @@ def price_and_totals(
         ),
         total_cost=total_cost,
         margin=margin,
-        final_price=quantize_money(final_price),
-        unit_price=quantize_money(unit_price) if unit_price is not None else None,
+        # Do not quantize final_price/unit_price here; frontend derives price_per_kg from them and rounds to 2dp for display.
+        final_price=final_price,
+        unit_price=unit_price,
     )
 
 

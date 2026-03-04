@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Core } from './types'
 
 export function CoresAdminPage() {
+  const { setDirty } = useUnsavedChanges()
   const [rows, setRows] = useState<Core[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -51,6 +53,7 @@ export function CoresAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save core')
     } finally {
@@ -67,6 +70,7 @@ export function CoresAdminPage() {
       setSaving(trimmed)
       await apiFetch<void>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setRows((cur) => cur.filter((r) => r.core_type !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete core')
     } finally {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
@@ -9,6 +10,7 @@ import type { Additive, Colour, Resin, ResinBlend } from './types'
 import type { ResinOption } from '../../components/ResinSelect'
 
 export function ResinsAdminPage() {
+  const { setDirty } = useUnsavedChanges()
   const [resins, setResins] = useState<Resin[]>([])
   const [additives, setAdditives] = useState<Additive[]>([])
   const [colours, setColours] = useState<Colour[]>([])
@@ -104,6 +106,7 @@ export function ResinsAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin')
     } finally {
@@ -121,6 +124,7 @@ export function ResinsAdminPage() {
       setSavingKey(k)
       await apiFetch<void>(`/api/admin/rate-cards/resins/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setResins((cur) => cur.filter((r) => r.resin_code !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin')
     } finally {
@@ -146,6 +150,7 @@ export function ResinsAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save additive')
     } finally {
@@ -163,6 +168,7 @@ export function ResinsAdminPage() {
       setSavingKey(k)
       await apiFetch<void>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setAdditives((cur) => cur.filter((r) => r.additive_code !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete additive')
     } finally {
@@ -186,6 +192,7 @@ export function ResinsAdminPage() {
           const next = idx === -1 ? [...cur, saved] : cur.slice().map((r, i) => (i === idx ? saved : r))
           return next.sort((a, b) => a.sort_order - b.sort_order || a.colour_code.localeCompare(b.colour_code))
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save colour')
     } finally {
@@ -203,6 +210,7 @@ export function ResinsAdminPage() {
       setSavingKey(k)
       await apiFetch<void>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setColours((cur) => cur.filter((r) => r.colour_code !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete colour')
     } finally {
@@ -228,6 +236,7 @@ export function ResinsAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin blend')
     } finally {
@@ -245,6 +254,7 @@ export function ResinsAdminPage() {
       setSavingKey(k)
       await apiFetch<void>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setBlends((cur) => cur.filter((b) => b.blend_code !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin blend')
     } finally {

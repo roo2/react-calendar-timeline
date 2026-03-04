@@ -61,6 +61,7 @@ class Customer(Base):
 
     products: Mapped[list["Product"]] = relationship(back_populates="customer")
     orders: Mapped[list["Order"]] = relationship(back_populates="customer")
+    quotes: Mapped[list["SavedQuote"]] = relationship(back_populates="customer")
 
 
 class Product(Base):
@@ -179,6 +180,21 @@ class Order(Base):
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order")
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order")
+
+
+class SavedQuote(Base):
+    """Saved quote attached to a customer. Stores form payload + cost/price per kg; margin is recomputed on edit."""
+    __tablename__ = "saved_quotes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)  # form state for re-hydration
+    cost_per_kg: Mapped[Optional[float]] = mapped_column(Numeric(18, 10), nullable=True)
+    price_per_kg: Mapped[Optional[float]] = mapped_column(Numeric(18, 10), nullable=True)
+    created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    customer: Mapped["Customer"] = relationship(back_populates="quotes")
 
 
 class OrderItem(Base):

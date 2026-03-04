@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Extruder, ExtrusionWasteFactor } from './types'
 
 export function ExtrusionAdminPage() {
+  const { setDirty } = useUnsavedChanges()
   const [extruders, setExtruders] = useState<Extruder[]>([])
   const [wasteFactors, setWasteFactors] = useState<ExtrusionWasteFactor[]>([])
   const [loading, setLoading] = useState(false)
@@ -60,6 +62,7 @@ export function ExtrusionAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save extruder')
     } finally {
@@ -76,6 +79,7 @@ export function ExtrusionAdminPage() {
       setSavingKey(`extruder:${trimmed}`)
       await apiFetch<void>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
       setExtruders((cur) => cur.filter((r) => r.extruder_code !== trimmed))
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete extruder')
     } finally {
@@ -100,6 +104,7 @@ export function ExtrusionAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save waste factor')
     } finally {

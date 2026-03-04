@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from './SpecPayloadForm'
 import { Box, Button, Link as MuiLink, Stack, Typography } from '@mui/material'
@@ -46,6 +47,7 @@ export function ProductVersionEditor(props: {
   const errorSummary = upsert.messages
   const fieldErrors = upsert.fieldErrors
   const saving = upsert.status === 'loading'
+  const { setDirty } = useUnsavedChanges()
 
   useEffect(() => {
     void dispatch(clearNewVersionErrors())
@@ -79,6 +81,7 @@ export function ProductVersionEditor(props: {
     try {
       const res = await dispatch(createProductVersion({ productId, spec })).unwrap()
       const vid = res?.versionId as string | undefined
+      setDirty(false)
       if (onDone) {
         onDone(vid)
         return
@@ -114,6 +117,7 @@ export function ProductVersionEditor(props: {
   if (!data) return <p>Loading…</p>
 
   return (
+    <Box onChange={() => setDirty(true)}>
     <Stack spacing={2}>
       <Typography variant="h5">{title || `Edit ${product?.code || ''}`.trim()}</Typography>
 
@@ -160,6 +164,7 @@ export function ProductVersionEditor(props: {
         </Stack>
       </form>
     </Stack>
+    </Box>
   )
 }
 

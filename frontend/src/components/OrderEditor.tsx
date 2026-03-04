@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
 import {
@@ -69,6 +70,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const canEditProduct = can(roles, 'PROD_MANAGER')
   const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
   const createState = useAppSelector((s) => s.products.create)
+  const { setDirty } = useUnsavedChanges()
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -473,7 +475,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           })),
         }),
       })
-      // Stay in the editor flow after saving.
+      setDirty(false)
       nav(`/orders/${res.order_id}/edit`, { replace: true })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to create order')
@@ -522,6 +524,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       }))
       setItems(nextItems)
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save changes')
     } finally {
@@ -548,12 +551,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           }),
         })
         await apiFetch<any>(`/api/orders/${encodeURIComponent(res.order_id)}/publish`, { method: 'POST' })
+        setDirty(false)
         nav('/orders')
         return
       }
 
       if (!orderId) return
       await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/publish`, { method: 'POST' })
+      setDirty(false)
       nav('/orders')
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to publish order')
@@ -597,7 +602,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const title = mode === 'new' ? 'New Order' : 'Edit Order'
 
   return (
-    <Box>
+    <Box onChange={() => setDirty(true)}>
       <Typography variant="h5" sx={{ mb: 2 }}>
         {title}
       </Typography>

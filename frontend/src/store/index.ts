@@ -4,6 +4,7 @@ import { authReducer } from './slices/authSlice'
 import { customersReducer } from './slices/customersSlice'
 import { inventoryReducer } from './slices/inventorySlice'
 import { productsReducer } from './slices/productsSlice'
+import { quotesReducer } from './slices/quotesSlice'
 
 export const store = configureStore({
   reducer: {
@@ -11,6 +12,7 @@ export const store = configureStore({
     customers: customersReducer,
     inventory: inventoryReducer,
     products: productsReducer,
+    quotes: quotesReducer,
   },
 })
 

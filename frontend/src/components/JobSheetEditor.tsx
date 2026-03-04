@@ -17,6 +17,7 @@ import {
   Typography,
 } from '@mui/material'
 import { apiFetch } from '../api/client'
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchCustomers } from '../store/slices/customersSlice'
 import { clearCreateErrors, createProduct } from '../store/slices/productsSlice'
@@ -66,6 +67,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const customersStatus = useAppSelector((s) => s.customers.list.status)
 
   const createState = useAppSelector((s) => s.products.create)
+  const { setDirty } = useUnsavedChanges()
   const [savingJobSheet, setSavingJobSheet] = useState(false)
 
   const [customerId, setCustomerId] = useState('')
@@ -243,6 +245,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         })
         const id = res?.job_sheet?.id
         setSaveMsg(`Saved job sheet ${jobNo}.`)
+        setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${id}`)
       } else {
         if (!jobSheetId) throw new Error('Missing job sheet id')
@@ -259,6 +262,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         const id = res?.job_sheet?.id
         const jn = res?.job_sheet?.job_no
         setSaveMsg(`Saved job sheet ${jn || ''}.`)
+        setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${id}`)
       }
     } catch (e) {
@@ -298,7 +302,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const canNewProduct = mode === 'new'
 
   return (
-    <Box>
+    <Box onChange={() => setDirty(true)}>
       <Stack spacing={2}>
         {(productsErr || createState.error || saveErr) && <Alert severity="error">{productsErr || createState.error || saveErr}</Alert>}
         {saveMsg && <Alert severity="success">{saveMsg}</Alert>}

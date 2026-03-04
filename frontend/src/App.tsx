@@ -7,6 +7,8 @@ import { LoginPage } from './pages/LoginPage'
 import { OrdersPage } from './pages/OrdersPage'
 import { InventoryPage } from './pages/InventoryPage'
 import { QuotesPage } from './pages/QuotesPage'
+import { QuotesListPage } from './pages/QuotesListPage'
+import { QuoteEditPage } from './pages/QuoteEditPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { CustomersPage } from './pages/CustomersPage'
 import { ProductsPage } from './pages/ProductsPage'
@@ -40,6 +42,7 @@ import {
   Toolbar,
   Typography,
 } from '@mui/material'
+import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext'
 
 const ResinsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ResinsAdminPage')).ResinsAdminPage }))
 const ExtrusionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ExtrusionAdminPage')).ExtrusionAdminPage }))
@@ -171,6 +174,7 @@ function App() {
 
       <Box component="main" sx={{ bgcolor: 'background.default', py: 3 }}>
         <Container maxWidth="lg">
+          <UnsavedChangesProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
 
@@ -196,7 +200,9 @@ function App() {
               <Route path="/inventory/receive" element={<InventoryReceivePage />} />
               <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
               <Route path="/inventory/transactions" element={<InventoryTransactionsPage />} />
-              <Route path="/quotes" element={<QuotesPage />} />
+              <Route path="/quotes" element={<QuotesListPage />} />
+              <Route path="/quotes/new" element={<QuotesPage />} />
+              <Route path="/quotes/:id/edit" element={<QuoteEditPage />} />
               <Route path="/job-sheets" element={<JobSheetsPage />} />
               <Route path="/job-sheets/new" element={<JobSheetNewPage />} />
               <Route path="/job-sheets/:jobSheetId" element={<JobSheetShowPage />} />
@@ -251,6 +257,7 @@ function App() {
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
+          </UnsavedChangesProvider>
         </Container>
 
         <Container maxWidth="lg" sx={{ mt: 6 }}>

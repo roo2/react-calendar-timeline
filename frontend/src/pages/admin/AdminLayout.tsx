@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { Box, List, ListItemButton, ListItemText, Paper, Typography } from '@mui/material'
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 
 const items = [
   { to: '/admin/resins', label: 'Resins' },
@@ -10,8 +11,9 @@ const items = [
 ]
 
 export function AdminLayout() {
+  const { setDirty } = useUnsavedChanges()
   return (
-    <Box sx={{ display: { xs: 'block', md: 'flex' }, gap: 2, alignItems: 'flex-start' }}>
+    <Box sx={{ display: { xs: 'block', md: 'flex' }, gap: 2, alignItems: 'flex-start' }} onChange={() => setDirty(true)}>
       <Paper
         variant="outlined"
         sx={{

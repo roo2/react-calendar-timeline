@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { clearUpsertErrors, clearUpsertFieldError, createCustomer, fetchCustomer, updateCustomer } from '../store/slices/customersSlice'
 import { FormErrorAlert } from '../components/FormErrorAlert'
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import {
   Box,
   Button,
@@ -164,6 +165,7 @@ export function CustomerUpsertPage() {
   const errorSummary = upsert.messages
   const err = upsert.error
   const saving = upsert.status === 'loading'
+  const { setDirty } = useUnsavedChanges()
 
   function clearFieldError(key: string) {
     dispatch(clearUpsertFieldError(key))
@@ -261,9 +263,11 @@ export function CustomerUpsertPage() {
 
       if (isEdit) {
         await dispatch(updateCustomer({ customerId: customerId!, data: payload })).unwrap()
+        setDirty(false)
         nav(`/customers/${customerId}`)
       } else {
         const res = await dispatch(createCustomer({ data: payload })).unwrap()
+        setDirty(false)
         nav(`/customers/${res.id}`)
       }
     } catch {
@@ -274,7 +278,7 @@ export function CustomerUpsertPage() {
   if (loading) return <p>Loading…</p>
 
   return (
-    <Box>
+    <Box onChange={() => setDirty(true)}>
       <Typography variant="h5" sx={{ mb: 2 }}>
         {isEdit ? 'Edit Customer' : 'New Customer'}
       </Typography>

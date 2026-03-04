@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../components/SpecPayloadForm'
 import { apiFetch } from '../api/client'
 import { Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
@@ -28,6 +29,7 @@ export function ProductNewPage() {
   const errorSummary = upsert.messages
   const err = upsert.error
   const saving = upsert.status === 'loading'
+  const { setDirty } = useUnsavedChanges()
 
   const [customerId, setCustomerId] = useState('')
   const [code, setCode] = useState('')
@@ -127,6 +129,7 @@ export function ProductNewPage() {
         }),
       ).unwrap()
       const pid = res?.product?.id as string | undefined
+      setDirty(false)
       if (returnTo) {
         // Return to wherever we came from (e.g. New Order) and optionally signal
         // which product was created so the caller can auto-add it.
@@ -150,7 +153,7 @@ export function ProductNewPage() {
   }
 
   return (
-    <Box>
+    <Box onChange={() => setDirty(true)}>
       <Typography variant="h5" sx={{ mb: 2 }}>
         New Product
       </Typography>

@@ -25,6 +25,16 @@ type OrderRow = {
   created_at?: string | null
 }
 
+type QuoteRow = {
+  id: string
+  customer_id: string
+  payload: Record<string, unknown>
+  cost_per_kg?: number | null
+  price_per_kg?: number | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export function CustomerShowPage() {
   const { customerId } = useParams()
   const dispatch = useAppDispatch()
@@ -38,6 +48,7 @@ export function CustomerShowPage() {
 
   const [products, setProducts] = useState<ProductRow[]>([])
   const [orders, setOrders] = useState<OrderRow[]>([])
+  const [quotes, setQuotes] = useState<QuoteRow[]>([])
   const [relErr, setRelErr] = useState<string | null>(null)
 
   useEffect(() => {
@@ -50,12 +61,14 @@ export function CustomerShowPage() {
     void (async () => {
       try {
         setRelErr(null)
-        const [pRes, oRes] = await Promise.all([
+        const [pRes, oRes, qRes] = await Promise.all([
           apiFetch<{ items: ProductRow[] }>(`/api/products?customer_id=${encodeURIComponent(customerId)}`),
           apiFetch<OrderRow[]>(`/api/orders?customer_id=${encodeURIComponent(customerId)}`),
+          apiFetch<QuoteRow[]>(`/api/quotes/saved?customer_id=${encodeURIComponent(customerId)}`),
         ])
         setProducts(pRes.items || [])
         setOrders(oRes || [])
+        setQuotes(Array.isArray(qRes) ? qRes : [])
       } catch (e) {
         setRelErr(e instanceof Error ? e.message : 'Failed to load related records')
       }
@@ -119,6 +132,9 @@ export function CustomerShowPage() {
             </div>
             <div>
               <strong>{customer.orders_count ?? '-'}</strong> Orders
+            </div>
+            <div>
+              <strong>{quotes.length}</strong> Quotes
             </div>
           </div>
         </Paper>
@@ -296,6 +312,54 @@ export function CustomerShowPage() {
                 <TableRow>
                   <TableCell colSpan={5}>
                     <Typography color="text.secondary">No orders.</Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Paper>
+      </section>
+
+      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Quotes</h2>
+        {relErr && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {relErr}
+          </Alert>
+        )}
+        <Paper variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Created</TableCell>
+                <TableCell>Product type</TableCell>
+                <TableCell>Price/kg</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {quotes.map((q) => (
+                <TableRow key={q.id} hover>
+                  <TableCell>{q.created_at ? new Date(q.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '-'}</TableCell>
+                  <TableCell>{(q.payload?.product_type as string) || '-'}</TableCell>
+                  <TableCell>
+                    {q.price_per_kg != null && Number.isFinite(Number(q.price_per_kg))
+                      ? `$${Number(q.price_per_kg).toFixed(2)}`
+                      : '-'}
+                  </TableCell>
+                  <TableCell align="right">
+                    {canEdit ? (
+                      <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
+                        Edit
+                      </Button>
+                    ) : null}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {quotes.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4}>
+                    <Typography color="text.secondary">No quotes.</Typography>
                   </TableCell>
                 </TableRow>
               )}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 
@@ -41,6 +42,7 @@ function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'mi
 }
 
 export function ConversionAdminPage() {
+  const { setDirty } = useUnsavedChanges()
   const [speeds, setSpeeds] = useState<ConversionSpeed[]>([])
   const [factors, setFactors] = useState<ConversionFactor[]>([])
   const [cartonOptions, setCartonOptions] = useState<CartonOption[]>([])
@@ -154,6 +156,7 @@ export function ConversionAdminPage() {
         body: JSON.stringify({ ...patch, is_default: cartonOptions.find((c) => c.slug === slug)?.is_default ?? false }),
       })
       setCartonOptions((cur) => cur.map((c) => (c.slug === slug ? saved : c)))
+      setDirty(false)
     } finally {
       setSavingKey(null)
     }
@@ -168,6 +171,7 @@ export function ConversionAdminPage() {
         method: 'POST',
       })
       setCartonOptions((cur) => cur.map((c) => (c.slug === slug ? saved : { ...c, is_default: false })))
+      setDirty(false)
     } finally {
       setSavingKey(null)
     }
@@ -191,6 +195,7 @@ export function ConversionAdminPage() {
         next[idx] = saved
         return next
       })
+      setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save conversion factor')
     } finally {

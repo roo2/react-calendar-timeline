@@ -319,6 +319,32 @@ def upgrade() -> None:
     op.create_index("ix_order_items_order", "order_items", ["order_id"], unique=False)
     op.create_index("ix_order_items_job_sheet", "order_items", ["job_sheet_id"], unique=False)
 
+    # Saved quotes (customer-attached; payload + cost/price per kg; margin recomputed on edit)
+    op.create_table(
+        "saved_quotes",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column(
+            "customer_id",
+            sa.String(length=36),
+            sa.ForeignKey("customers.id", ondelete="RESTRICT"),
+            nullable=False,
+        ),
+        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column("cost_per_kg", sa.Numeric(18, 10), nullable=True),
+        sa.Column("price_per_kg", sa.Numeric(18, 10), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+    )
+    op.create_index("ix_saved_quotes_customer", "saved_quotes", ["customer_id"], unique=False)
+
     # Jobs (includes allocated_order_units)
     op.create_table(
         "jobs",
@@ -1096,6 +1122,8 @@ def downgrade() -> None:
     op.drop_index("ix_order_items_job_sheet", table_name="order_items")
     op.drop_index("ix_order_items_order", table_name="order_items")
     op.drop_table("order_items")
+    op.drop_index("ix_saved_quotes_customer", table_name="saved_quotes")
+    op.drop_table("saved_quotes")
     op.drop_index("ix_orders_product_version", table_name="orders")
     op.drop_index("ix_orders_customer", table_name="orders")
     op.drop_index("ix_orders_code", table_name="orders")
