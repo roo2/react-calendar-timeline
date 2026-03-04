@@ -269,3 +269,19 @@ class ExtrusionWasteFactor(Base):
         CheckConstraint("minutes >= 0", name="ck_extrusion_waste_factors_minutes_nonneg"),
     )
 
+
+class QuotePackagingSettings(Base):
+    """Singleton (id=1) for quote pallet estimation: packing factors by finish mode and pallet volume."""
+    __tablename__ = "quote_packaging_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    packing_factor_rolls: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False, default=0.7)
+    packing_factor_cartons: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False, default=0.5)
+    pallet_volume_m3: Mapped[float] = mapped_column(Numeric(10, 4), nullable=False, default=1.0)
+
+    __table_args__ = (
+        CheckConstraint("packing_factor_rolls > 0 AND packing_factor_rolls <= 1", name="ck_pack_factor_rolls"),
+        CheckConstraint("packing_factor_cartons > 0 AND packing_factor_cartons <= 1", name="ck_pack_factor_cartons"),
+        CheckConstraint("pallet_volume_m3 > 0", name="ck_pallet_volume_pos"),
+    )
+

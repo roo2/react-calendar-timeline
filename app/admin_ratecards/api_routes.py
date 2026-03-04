@@ -25,6 +25,7 @@ from app.db.models.rate_cards import (
     Resin,
     ResinBlend,
     ResinBlendComponent,
+    QuotePackagingSettings,
 )
 from app.db.session import SessionLocal
 
@@ -222,6 +223,18 @@ class PrintingPricingTierUpsertRequest(BaseModel):
     min_charge: float | None = Field(default=None, ge=0)
     setup_fee: float | None = Field(default=None, ge=0)
     cost_per_1000m: float = Field(..., ge=0)
+
+
+class QuotePackagingSettingsDTO(BaseModel):
+    packing_factor_rolls: float
+    packing_factor_cartons: float
+    pallet_volume_m3: float
+
+
+class QuotePackagingSettingsUpsertRequest(BaseModel):
+    packing_factor_rolls: float = Field(..., gt=0, le=1)
+    packing_factor_cartons: float = Field(..., gt=0, le=1)
+    pallet_volume_m3: float = Field(..., gt=0)
 
 
 @router.get(
@@ -625,6 +638,55 @@ async def delete_core(core_type: str):
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete core (in use)")
 
+
+
+@router.get(
+    "/packaging-settings",
+    response_model=QuotePackagingSettingsDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def get_packaging_settings():
+    with SessionLocal() as db:
+        row = db.execute(select(QuotePackagingSettings).where(QuotePackagingSettings.id == 1)).scalar_one_or_none()
+        if not row:
+            return QuotePackagingSettingsDTO(packing_factor_rolls=0.7, packing_factor_cartons=0.5, pallet_volume_m3=1.0)
+        return QuotePackagingSettingsDTO(
+            packing_factor_rolls=float(row.packing_factor_rolls),
+            packing_factor_cartons=float(row.packing_factor_cartons),
+            pallet_volume_m3=float(row.pallet_volume_m3),
+        )
+
+
+@router.put(
+    "/packaging-settings",
+    response_model=QuotePackagingSettingsDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_packaging_settings(payload: QuotePackagingSettingsUpsertRequest):
+    with SessionLocal.begin() as db:
+        row = db.execute(select(QuotePackagingSettings).where(QuotePackagingSettings.id == 1)).scalar_one_or_none()
+        if not row:
+            row = QuotePackagingSettings(
+                id=1,
+                packing_factor_rolls=payload.packing_factor_rolls,
+                packing_factor_cartons=payload.packing_factor_cartons,
+                pallet_volume_m3=payload.pallet_volume_m3,
+            )
+            db.add(row)
+        else:
+            row.packing_factor_rolls = payload.packing_factor_rolls
+            row.packing_factor_cartons = payload.packing_factor_cartons
+            row.pallet_volume_m3 = payload.pallet_volume_m3
+
+    with SessionLocal() as db:
+        row2 = db.execute(select(QuotePackagingSettings).where(QuotePackagingSettings.id == 1)).scalar_one_or_none()
+        if not row2:
+            return QuotePackagingSettingsDTO(packing_factor_rolls=0.7, packing_factor_cartons=0.5, pallet_volume_m3=1.0)
+        return QuotePackagingSettingsDTO(
+            packing_factor_rolls=float(row2.packing_factor_rolls),
+            packing_factor_cartons=float(row2.packing_factor_cartons),
+            pallet_volume_m3=float(row2.pallet_volume_m3),
+        )
 
 
 @router.get(

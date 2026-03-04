@@ -49,6 +49,7 @@ const ExtrusionAdminPage = lazy(async () => ({ default: (await import('./pages/a
 const ConversionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ConversionAdminPage')).ConversionAdminPage }))
 const PrintingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PrintingAdminPage')).PrintingAdminPage }))
 const CoresAdminPage = lazy(async () => ({ default: (await import('./pages/admin/CoresAdminPage')).CoresAdminPage }))
+const PackagingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PackagingAdminPage')).PackagingAdminPage }))
 
 function PageLoading() {
   return (
@@ -250,6 +251,14 @@ function App() {
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <CoresAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="packaging"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <PackagingAdminPage />
                     </Suspense>
                   }
                 />

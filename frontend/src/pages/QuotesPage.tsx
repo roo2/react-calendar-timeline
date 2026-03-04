@@ -41,6 +41,7 @@ import {
   computeLayflatWidthMm,
   computePrintingUnavailableReason,
   computeQuickQuotePreview,
+  getBlendDensityKgPerM3,
   type AppliedExtrusionWasteFactor,
   type QuickQuoteInputs,
   type QuoteRatebook,
@@ -106,8 +107,9 @@ function QuotePreview(props: {
   missing: string[]
   finishMode: 'Rolls' | 'Cartons'
   productType: string
+  estimatedPallets: number | null
 }) {
-  const { preview, loading, canCalculate, missing, finishMode, productType } = props
+  const { preview, loading, canCalculate, missing, finishMode, productType, estimatedPallets } = props
   const p = preview
   const dash = '—'
   return (
@@ -182,6 +184,11 @@ function QuotePreview(props: {
               <Typography variant="body2">
                 Cartons: {Number(p.cartons)}
                 {p.kg_per_carton != null ? ` (${Number(p.kg_per_carton).toFixed(2)}kg/carton)` : ''}
+              </Typography>
+            )}
+            {estimatedPallets != null && (
+              <Typography variant="body2">
+                Estimated pallets: {estimatedPallets}
               </Typography>
             )}
             {p.conversion_minutes_total != null && (
@@ -1183,6 +1190,18 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (next !== quickMargin) setQuickMargin(next)
   }, [quickPreview, priceDriver, suggestedPricePerKg, quickMargin])
 
+  const estimatedPallets = useMemo(() => {
+    if (!ratebook || !quickPreview?.totals_kg || Number(quickPreview.totals_kg) <= 0 || !calcPayload) return null
+    const totalsKg = Number(quickPreview.totals_kg)
+    const density = getBlendDensityKgPerM3(calcPayload as QuickQuoteInputs, ratebook)
+    const totalVolumeM3 = totalsKg / density
+    const packingFactor =
+      finishMode === 'Rolls' ? (ratebook.packing_factor_rolls ?? 0.7) : (ratebook.packing_factor_cartons ?? 0.5)
+    const packedVolumeM3 = totalVolumeM3 / packingFactor
+    const palletVol = ratebook.pallet_volume_m3 ?? 1
+    return Math.ceil(packedVolumeM3 / palletVol)
+  }, [ratebook, quickPreview?.totals_kg, finishMode, calcPayload])
+
   const customers = bootstrap?.customers ?? []
   const costPerKgForSave =
     quickPreview?.cost_per_kg != null && Number.isFinite(Number(quickPreview.cost_per_kg))
@@ -1932,7 +1951,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               alignSelf: 'flex-start',
             }}
           >
-            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} />
+            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} estimatedPallets={estimatedPallets} />
           </Box>
         ) : null}
       </Box>
@@ -1959,7 +1978,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               backgroundColor: 'background.paper',
             }}
           >
-            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} />
+            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} estimatedPallets={estimatedPallets} />
           </Paper>
         </>
       ) : null}

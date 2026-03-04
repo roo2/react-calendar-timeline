@@ -1019,11 +1019,33 @@ def upgrade() -> None:
         sa.CheckConstraint("waste_minutes >= 0", name="ck_waste_minutes_nonneg"),
     )
 
+    op.create_table(
+        "quote_packaging_settings",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=False),
+        sa.Column("packing_factor_rolls", sa.Numeric(5, 4), nullable=False, server_default=sa.text("0.7")),
+        sa.Column("packing_factor_cartons", sa.Numeric(5, 4), nullable=False, server_default=sa.text("0.5")),
+        sa.Column("pallet_volume_m3", sa.Numeric(10, 4), nullable=False, server_default=sa.text("1")),
+        sa.CheckConstraint(
+            "packing_factor_rolls > 0 AND packing_factor_rolls <= 1", name="ck_pack_factor_rolls"
+        ),
+        sa.CheckConstraint(
+            "packing_factor_cartons > 0 AND packing_factor_cartons <= 1", name="ck_pack_factor_cartons"
+        ),
+        sa.CheckConstraint("pallet_volume_m3 > 0", name="ck_pallet_volume_pos"),
+    )
+    op.execute(
+        sa.text(
+            "INSERT INTO quote_packaging_settings (id, packing_factor_rolls, packing_factor_cartons, pallet_volume_m3) "
+            "VALUES (1, 0.7, 0.5, 1.0)"
+        )
+    )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
 
     # Rate cards
+    op.drop_table("quote_packaging_settings")
     op.drop_table("waste_adders")
     op.drop_table("carton_options")
     op.drop_table("conversion_factors")

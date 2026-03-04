@@ -8,6 +8,7 @@ const items = [
   { to: '/admin/printing', label: 'Printing' },
   { to: '/admin/cores', label: 'Cores' },
   { to: '/admin/conversion', label: 'Packing / Conversion' },
+  { to: '/admin/packaging', label: 'Shipping / Pallets' },
 ]
 
 export function AdminLayout() {

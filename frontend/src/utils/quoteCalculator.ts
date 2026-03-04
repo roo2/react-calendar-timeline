@@ -35,6 +35,10 @@ export type QuoteRatebook = {
   waste_adders: Array<{ condition: string; waste_minutes: number }>
   extrusion_waste_factors?: Array<{ slug: string; minutes: number }>
   extrusion_throughput_kg_per_hr: number
+  /** Pallet estimation for quotes */
+  packing_factor_rolls?: number
+  packing_factor_cartons?: number
+  pallet_volume_m3?: number
 }
 
 export type QuickQuoteInputs = {
@@ -259,6 +263,26 @@ function convFactor(ratebook: QuoteRatebook, slug: string, fallback = 0): number
   const v = (ratebook as any)?.conversion_factors?.[slug]
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
+}
+
+/** Returns blend density in kg/m³ for pallet volume calculation (volume_m3 = totals_kg / density). */
+export function getBlendDensityKgPerM3(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): number {
+  const blendIn =
+    Array.isArray(inputs.blend) && inputs.blend.length
+      ? inputs.blend
+      : inputs.resin_code
+        ? [{ resin_code: inputs.resin_code, pct: 100 }]
+        : []
+  const blend = blendIn
+    .map((c) => {
+      const code = String((c as any).resin_code || '').trim()
+      const pct = Number((c as any).pct || 0)
+      const r = ratebook.resins?.[code]
+      const density = r?.density != null ? Number(r.density) * 1_000_000 : 920
+      return { resin_code: code, pct, density }
+    })
+    .filter((c) => c.resin_code && c.pct > 0)
+  return blend.length > 0 ? blendDensity(blend) : 920
 }
 
 export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebook: QuoteRatebook) {

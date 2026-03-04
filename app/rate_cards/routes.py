@@ -21,6 +21,7 @@ from app.db.models.rate_cards import (
     ResinBlend,
     ResinBlendComponent,
     WasteAdder,
+    QuotePackagingSettings,
 )
 from app.db.session import SessionLocal
 
@@ -162,6 +163,12 @@ async def get_ratebook():
         extrusion_waste_factors = db.execute(
             select(ExtrusionWasteFactor.slug, ExtrusionWasteFactor.minutes).order_by(ExtrusionWasteFactor.factor.asc())
         ).all()
+        packaging_row = db.execute(
+            select(QuotePackagingSettings).where(QuotePackagingSettings.id == 1)
+        ).scalar_one_or_none()
+        packing_factor_rolls = float(packaging_row.packing_factor_rolls) if packaging_row else 0.7
+        packing_factor_cartons = float(packaging_row.packing_factor_cartons) if packaging_row else 0.5
+        pallet_volume_m3 = float(packaging_row.pallet_volume_m3) if packaging_row else 1.0
 
     # Model assumptions (kept consistent with quote_engine defaults):
     # - setup_cost is treated as 1 unit per minute
@@ -245,4 +252,7 @@ async def get_ratebook():
         "waste_adders": [{"condition": str(c), "waste_minutes": int(m or 0)} for c, m in waste_adders],
         "extrusion_waste_factors": [{"slug": str(slug), "minutes": int(m or 0)} for slug, m in extrusion_waste_factors],
         "extrusion_throughput_kg_per_hr": 0,
+        "packing_factor_rolls": packing_factor_rolls,
+        "packing_factor_cartons": packing_factor_cartons,
+        "pallet_volume_m3": pallet_volume_m3,
     }
