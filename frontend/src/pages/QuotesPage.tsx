@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
@@ -296,6 +296,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const isEditMode = Boolean(quoteId && initialData)
 
   const dispatch = useAppDispatch()
@@ -386,6 +387,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     dispatch(clearUpsertErrors())
   }, [dispatch, quoteId])
 
+  // Pre-fill customer from URL when creating a new quote (e.g. from customer show page)
+  useEffect(() => {
+    if (quoteId || hydratedFromQuote) return
+    const fromUrl = searchParams.get('customerId') || searchParams.get('customer_id')
+    if (fromUrl && fromUrl.trim()) setCustomerId(fromUrl.trim())
+  }, [quoteId, hydratedFromQuote, searchParams])
+
   // Hydrate form from saved quote when editing
   useEffect(() => {
     if (!initialData?.payload || hydratedFromQuote) return
@@ -404,22 +412,30 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.trim_pct != null) setTrimPctText(String(p.trim_pct))
     if (p.run_up != null) setRunUp(Number(p.run_up) || 1)
     if (p.resin_blend_code != null) setResinBlendCode(String(p.resin_blend_code))
-    if (Array.isArray(p.colourRows)) setColourRows(p.colourRows)
-    else if (Array.isArray(p.colour_components) && p.colour_components.length > 0)
-      setColourRows(
-        p.colour_components.map((c: any) => ({
-          colour_code: c.colour_code || '',
-          strength_pct: c.strength_pct != null ? String(c.strength_pct) : '',
-        }))
-      )
-    if (Array.isArray(p.additiveRows)) setAdditiveRows(p.additiveRows)
-    else if (Array.isArray(p.additives) && p.additives.length > 0)
-      setAdditiveRows(
-        p.additives.map((a: any) => ({
-          additive_code: a.additive_code || '',
-          pct: a.pct != null ? String(a.pct) : '',
-        }))
-      )
+    if (Array.isArray(p.colourRows)) {
+      const rows = p.colourRows as Array<{ colour_code: string; strength_pct: string }>
+      const pad = rows.length >= 2 ? [] : [...Array(2 - rows.length)].map(() => ({ colour_code: '', strength_pct: '' }))
+      setColourRows(pad.length ? [...rows, ...pad] : rows)
+    } else if (Array.isArray(p.colour_components) && p.colour_components.length > 0) {
+      const rows = (p.colour_components as any[]).map((c: any) => ({
+        colour_code: c.colour_code || '',
+        strength_pct: c.strength_pct != null ? String(c.strength_pct) : '',
+      }))
+      const pad = rows.length >= 2 ? [] : [...Array(2 - rows.length)].map(() => ({ colour_code: '', strength_pct: '' }))
+      setColourRows(pad.length ? [...rows, ...pad] : rows)
+    }
+    if (Array.isArray(p.additiveRows)) {
+      const rows = p.additiveRows as Array<{ additive_code: string; pct: string }>
+      const pad = rows.length >= 2 ? [] : [...Array(2 - rows.length)].map(() => ({ additive_code: '', pct: '' }))
+      setAdditiveRows(pad.length ? [...rows, ...pad] : rows)
+    } else if (Array.isArray(p.additives) && p.additives.length > 0) {
+      const rows = (p.additives as any[]).map((a: any) => ({
+        additive_code: a.additive_code || '',
+        pct: a.pct != null ? String(a.pct) : '',
+      }))
+      const pad = rows.length >= 2 ? [] : [...Array(2 - rows.length)].map(() => ({ additive_code: '', pct: '' }))
+      setAdditiveRows(pad.length ? [...rows, ...pad] : rows)
+    }
     if (p.print_method != null) setPrintMethod(p.print_method === 'Uteco' ? 'Uteco' : p.print_method === 'Inline' ? 'Inline' : 'None')
     if (p.num_colours != null) setNumColours(p.num_colours === 0 ? '' : String(p.num_colours))
     if (p.num_colours != null) setDesiredNumColours(p.num_colours === 0 ? '' : String(p.num_colours))
@@ -1160,8 +1176,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       }
     }, 450)
     return () => window.clearTimeout(t)
+    // finishMode included so changing Roll/Carton always triggers recalc
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canCalculate, calcPayload, ratebook])
+  }, [canCalculate, calcPayload, ratebook, finishMode])
 
   // When margin is the driver, sync price-per-kg from the result. Skip when we just loaded by price_per_kg so we don't overwrite the saved value.
   useEffect(() => {
@@ -1637,31 +1654,21 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                             />
                           </TableCell>
                           <TableCell sx={{ width: '10%' }}>
-                            <Stack direction="row" spacing={1} justifyContent="flex-end">
-                              {!isDefault ? (
-                                <Button
-                                  size="small"
-                                  color="inherit"
-                                  onClick={() =>
-                                    setColourRows((prev) => {
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() =>
+                                colourRows.length > 2
+                                  ? setColourRows((prev) => prev.filter((_, i) => i !== idx))
+                                  : setColourRows((prev) => {
                                       const next = [...prev]
                                       next[idx] = defaults
                                       return next
                                     })
-                                  }
-                                >
-                                  Clear
-                                </Button>
-                              ) : null}
-                              <Button
-                                size="small"
-                                color="inherit"
-                                onClick={() => setColourRows((prev) => prev.filter((_, i) => i !== idx))}
-                                disabled={colourRows.length <= 2}
-                              >
-                                Remove
-                              </Button>
-                            </Stack>
+                              }
+                            >
+                              Remove
+                            </Button>
                           </TableCell>
                         </TableRow>
                       )
@@ -1720,31 +1727,21 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                               />
                             </TableCell>
                             <TableCell sx={{ width: '10%' }}>
-                              <Stack direction="row" spacing={1} justifyContent="flex-end">
-                                {!isDefault ? (
-                                  <Button
-                                    size="small"
-                                    color="inherit"
-                                    onClick={() =>
-                                      setAdditiveRows((prev) => {
+                              <Button
+                                size="small"
+                                color="inherit"
+                                onClick={() =>
+                                  additiveRows.length > 2
+                                    ? setAdditiveRows((prev) => prev.filter((_, i) => i !== idx))
+                                    : setAdditiveRows((prev) => {
                                         const next = [...prev]
                                         next[idx] = defaults
                                         return next
                                       })
-                                    }
-                                  >
-                                    Clear
-                                  </Button>
-                                ) : null}
-                                <Button
-                                  size="small"
-                                  color="inherit"
-                                  onClick={() => setAdditiveRows((prev) => prev.filter((_, i) => i !== idx))}
-                                  disabled={additiveRows.length <= 2}
-                                >
-                                  Remove
-                                </Button>
-                              </Stack>
+                                }
+                              >
+                                Remove
+                              </Button>
                             </TableCell>
                           </TableRow>
                         )
@@ -1956,10 +1953,10 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         ) : null}
       </Box>
 
-      {/* Mobile bottom panel */}
+      {/* Mobile bottom panel: spacer reserves space so Save button stays visible above the fixed panel when scrolled to bottom */}
       {isMobile ? (
         <>
-          <Box sx={{ height: 220 }} />
+          <Box sx={{ minHeight: 'calc(50vh + 140px)' }} />
           <Paper
             variant="outlined"
             sx={{
@@ -1972,7 +1969,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               borderRight: 0,
               borderBottom: 0,
               borderRadius: 0,
-              maxHeight: '45vh',
+              maxHeight: '40vh',
               overflow: 'auto',
               p: 1.5,
               backgroundColor: 'background.paper',

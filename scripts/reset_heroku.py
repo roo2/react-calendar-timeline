@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -23,6 +24,37 @@ SEED_CARTON_OPTIONS_SCRIPT = Path("scripts") / "seed_carton_options_from_tsv.py"
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print(f"$ {' '.join(cmd)}", flush=True)
     subprocess.check_call(cmd, cwd=str(cwd or REPO_ROOT), env=env)
+
+
+def _run_with_retry(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    max_attempts: int = 3,
+    retry_delay_sec: float = 30.0,
+) -> None:
+    """Run command; on failure retry up to max_attempts-1 times with delay (for transient 504 etc)."""
+    print(f"$ {' '.join(cmd)}", flush=True)
+    last = None
+    for attempt in range(max_attempts):
+        try:
+            subprocess.check_call(cmd, cwd=str(cwd or REPO_ROOT), env=env)
+            return
+        except subprocess.CalledProcessError as e:
+            last = e
+            if attempt < max_attempts - 1:
+                wait = retry_delay_sec * (1.5 ** attempt)
+                print(
+                    "Command failed (exit %s). Retrying in %.0fs (attempt %s/%s)…"
+                    % (e.returncode, wait, attempt + 2, max_attempts),
+                    flush=True,
+                )
+                time.sleep(wait)
+            else:
+                raise
+    if last is not None:
+        raise last
 
 
 def _require_heroku_cli() -> None:
@@ -164,7 +196,11 @@ def main(argv: list[str]) -> int:
     # 0) Reset Heroku Postgres (destructive).
     if not args.skip_reset:
         print("Resetting Heroku database…", flush=True)
-        _run(["heroku", "pg:reset", "DATABASE", "-a", app_name, "--confirm", app_name])
+        _run_with_retry(
+            ["heroku", "pg:reset", "DATABASE", "-a", app_name, "--confirm", app_name],
+            max_attempts=3,
+            retry_delay_sec=30.0,
+        )
     else:
         print("Skipping pg:reset (--skip-reset).", flush=True)
 

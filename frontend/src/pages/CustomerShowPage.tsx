@@ -221,7 +221,14 @@ export function CustomerShowPage() {
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Products</h2>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Products</h2>
+          {canEdit && (
+            <Button size="small" variant="contained" component={Link} to={`/products/new?customerId=${encodeURIComponent(customer.id)}`}>
+              Create product
+            </Button>
+          )}
+        </Box>
         {relErr && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {relErr}
@@ -267,7 +274,14 @@ export function CustomerShowPage() {
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Orders</h2>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Orders</h2>
+          {canEditOrders && (
+            <Button size="small" variant="contained" component={Link} to={`/orders/new?customerId=${encodeURIComponent(customer.id)}`}>
+              Create order
+            </Button>
+          )}
+        </Box>
         {relErr && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {relErr}
@@ -321,7 +335,14 @@ export function CustomerShowPage() {
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Quotes</h2>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Quotes</h2>
+          {canEdit && (
+            <Button size="small" variant="contained" component={Link} to={`/quotes/new?customerId=${encodeURIComponent(customer.id)}`}>
+              Create quote
+            </Button>
+          )}
+        </Box>
         {relErr && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {relErr}
