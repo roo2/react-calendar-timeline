@@ -89,14 +89,15 @@ export function ProductVersionSummary(props: { spec: any }) {
       .map((r) => ({
         ink: (r?.ink_code ?? '').toString().trim(),
         plate: (r?.plate_code ?? '').toString().trim(),
+        anilox: (r?.anilox_code ?? '').toString().trim(),
       }))
-      .filter((r) => r.ink || r.plate)
+      .filter((r) => r.ink || r.plate || (printMethod === 'Uteco' && r.anilox))
     if (cleaned.length === 0) return '-'
     return (
       <Stack spacing={0.25}>
         {cleaned.slice(0, 4).map((r, idx) => (
           <Typography key={idx} variant="body2" sx={{ fontFamily: 'monospace' }}>
-            {r.ink || '-'} | {r.plate || '-'}
+            {printMethod === 'Uteco' ? `${r.ink || '-'} | ${r.plate || '-'} | ${r.anilox || '-'}` : `${r.ink || '-'} | ${r.plate || '-'}`}
           </Typography>
         ))}
       </Stack>
@@ -225,10 +226,18 @@ export function ProductVersionSummary(props: { spec: any }) {
             { k: 'Method', v: spec?.printing?.method || '-' },
             { k: 'Side', v: printed ? spec?.printing?.side || '-' : '-' },
             { k: 'Print Description', v: printed ? spec?.printing?.print_description || '-' : '-' },
-            { k: 'Front Ink/Plate', v: printMethod === 'Inline' ? fmtPairs(frontPairs) : '-' },
-            { k: 'Back Ink/Plate', v: printMethod === 'Inline' ? fmtPairs(backPairs) : '-' },
-            { k: 'Ink Codes', v: printMethod === 'Uteco' ? fmtList(spec?.printing?.ink_codes) : '-' },
-            { k: 'Plate Codes', v: printMethod === 'Uteco' ? fmtList(spec?.printing?.plate_codes) : '-' },
+            {
+              k: 'Front Ink/Plate',
+              v: printMethod === 'Inline' || printMethod === 'Uteco' ? fmtPairs(frontPairs) : '-',
+            },
+            {
+              k: 'Back Ink/Plate',
+              v: printMethod === 'Inline' || printMethod === 'Uteco' ? fmtPairs(backPairs) : '-',
+            },
+            {
+              k: 'Cylinder size (mm)',
+              v: printMethod === 'Uteco' ? (spec?.printing?.cylinder_size_mm != null ? String(spec.printing.cylinder_size_mm) : '-') : '-',
+            },
           ]}
         />
       </SectionCard>

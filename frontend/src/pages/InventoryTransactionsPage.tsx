@@ -154,7 +154,7 @@ export function InventoryTransactionsPage() {
               <Button type="submit" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
                 Filter
               </Button>
-              <Button component={Link} to="/inventory" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
+              <Button component={Link} to="/inventory" variant="text" color="primary" size="small" sx={{ px: 2, py: 1 }}>
                 Back
               </Button>
             </Box>

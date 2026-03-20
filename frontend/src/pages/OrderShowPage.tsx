@@ -50,13 +50,24 @@ export function OrderShowPage() {
         <Alert severity="error" sx={{ mb: 2 }}>
           {err}
         </Alert>
-        <Button component={Link} to="/orders" variant="outlined">
+        <Button component={Link} to="/orders" variant="text" color="primary">
           Back to Orders
         </Button>
       </Box>
     )
   }
   if (!order) return <p>Loading…</p>
+
+  const items = order.items || []
+  const totalPriceSum = items.reduce(
+    (sum: number, it: { total_price?: number | null }) => sum + (it.total_price != null ? Number(it.total_price) : 0),
+    0
+  )
+
+  function fmtCurrency(v: number | null | undefined): string {
+    if (v == null || !Number.isFinite(v)) return '—'
+    return `$${Number(v).toFixed(2)}`
+  }
 
   async function onPublish() {
     if (!orderId) return
@@ -79,23 +90,23 @@ export function OrderShowPage() {
         Order {order.code}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Created: {order.created_at || ''}
+        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Order Date: {order.order_date || order.created_at?.slice(0, 10) || '-'}
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-        {canPublish && order.status === 'draft' && (
-          <Button variant="contained" onClick={onPublish} disabled={publishing}>
-            {publishing ? 'Publishing…' : 'Publish Order'}
-          </Button>
-        )}
+        <Button component={Link} to="/orders" variant="text" color="primary">
+          Back to Orders
+        </Button>
         {canEdit && (order.status === 'draft' || order.status === 'confirmed') && (
           <Button variant="outlined" component={Link} to={`/orders/${encodeURIComponent(order.id)}/edit`}>
             Edit Order
           </Button>
         )}
-        <Button variant="outlined" component={Link} to="/orders">
-          Back to Orders
-        </Button>
+        {canPublish && order.status === 'draft' && (
+          <Button variant="contained" onClick={onPublish} disabled={publishing}>
+            {publishing ? 'Publishing…' : 'Publish Order'}
+          </Button>
+        )}
       </Box>
 
       <Paper variant="outlined" sx={{ mb: 2 }}>
@@ -105,23 +116,25 @@ export function OrderShowPage() {
               <TableCell>Job No</TableCell>
               <TableCell>Product Code</TableCell>
               <TableCell>Product Name</TableCell>
-              <TableCell>Version</TableCell>
-              <TableCell>Due Date</TableCell>
-              <TableCell>Quantity</TableCell>
+              <TableCell>Qty Type</TableCell>
+              <TableCell>Qty Total</TableCell>
+              <TableCell align="right">Rate</TableCell>
+              <TableCell align="right">Total Price</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {(order.items || []).map((it: any) => (
+            {items.map((it: any) => (
               <TableRow key={it.id} hover>
                 <TableCell>{it.job_no || '-'}</TableCell>
                 <TableCell>{it.product_code || '-'}</TableCell>
                 <TableCell>{it.product_name || '-'}</TableCell>
-                <TableCell>{it.version_number != null ? `v${it.version_number}` : '-'}</TableCell>
-                <TableCell>{it.due_date || '-'}</TableCell>
+                <TableCell>{it.quantity_unit || '-'}</TableCell>
                 <TableCell>
-                  {it.quantity_value != null ? `${it.quantity_value} ${it.quantity_unit || ''}`.trim() : '-'}
+                  {it.quantity_value != null ? `${Number(it.quantity_value).toLocaleString()} ${it.quantity_unit || ''}`.trim() : '-'}
                 </TableCell>
+                <TableCell align="right">{fmtCurrency(it.rate)}</TableCell>
+                <TableCell align="right">{fmtCurrency(it.total_price)}</TableCell>
                 <TableCell align="right">
                   <Button
                     size="small"
@@ -133,11 +146,20 @@ export function OrderShowPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {(order.items || []).length === 0 && (
+            {items.length === 0 && (
               <TableRow>
                 <TableCell colSpan={8}>
-                  <Typography color="text.secondary">No products.</Typography>
+                  <Typography color="text.secondary">No line items.</Typography>
                 </TableCell>
+              </TableRow>
+            )}
+            {items.length > 0 && (
+              <TableRow sx={{ fontWeight: 600, bgcolor: 'action.hover' }}>
+                <TableCell colSpan={6} align="right">
+                  Total
+                </TableCell>
+                <TableCell align="right">{fmtCurrency(totalPriceSum)}</TableCell>
+                <TableCell />
               </TableRow>
             )}
           </TableBody>

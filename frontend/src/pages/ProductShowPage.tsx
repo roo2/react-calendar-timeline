@@ -45,7 +45,7 @@ export function ProductShowPage() {
       <Stack spacing={2}>
         <Typography variant="h5">Product</Typography>
         <Alert severity="error">{err}</Alert>
-        <Button component={Link} to="/products" variant="outlined">
+        <Button component={Link} to="/products" variant="text" color="primary">
           Back to Products
         </Button>
       </Stack>
@@ -102,7 +102,7 @@ export function ProductShowPage() {
       </Paper>
 
       <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button component={Link} to="/products" variant="outlined">
+        <Button component={Link} to="/products" variant="text" color="primary">
           Back to Products
         </Button>
       </Box>

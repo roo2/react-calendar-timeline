@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
@@ -35,20 +35,8 @@ export function ProductNewPage() {
   const [code, setCode] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [codeExists, setCodeExists] = useState(false)
-  const lastAutoPrefixRef = useRef<string>('')
 
-  const customerCode = useMemo(() => {
-    const c = customers.find((x) => x.id === customerId) as any
-    return (c?.code ? String(c.code) : '').trim().toUpperCase()
-  }, [customerId, customers])
-
-  const codePrefixOk = useMemo(() => {
-    if (!customerCode) return true
-    const v = (code || '').trim().toUpperCase()
-    return v.startsWith(`${customerCode}-`) || v.startsWith(`${customerCode}_`)
-  }, [code, customerCode])
-
-  const canSubmit = useMemo(() => customerId && code && codePrefixOk && !saving, [customerId, code, codePrefixOk, saving])
+  const canSubmit = useMemo(() => customerId && code && !saving, [customerId, code, saving])
 
   useEffect(() => {
     if (customersStatus !== 'idle') return
@@ -60,23 +48,6 @@ export function ProductNewPage() {
     if (customerId) return
     if (preCustomerId) setCustomerId(preCustomerId)
   }, [customerId, preCustomerId])
-
-  useEffect(() => {
-    // If a customer was preselected via query string, auto-fill the code prefix once
-    // the customer record has loaded (customerCode becomes available).
-    if (!customerId) return
-    if (!customerCode) return
-    const nextPrefix = `${customerCode}-`
-    const cur = (code || '').trim()
-    const curUp = cur.toUpperCase()
-    const lastAuto = (lastAutoPrefixRef.current || '').toUpperCase()
-    const isEmpty = !curUp
-    const isOnlyAutoPrefix = !!lastAuto && curUp === lastAuto
-    if (isEmpty || isOnlyAutoPrefix) {
-      setCode(nextPrefix)
-      lastAutoPrefixRef.current = nextPrefix
-    }
-  }, [customerId, customerCode, code])
 
   useEffect(() => {
     const v = (code || '').trim()
@@ -178,18 +149,7 @@ export function ProductNewPage() {
                 label="Customer"
                 value={customerId}
                 onChange={(e) => {
-                  const nextCustomerId = e.target.value
-                  const nextCustomer = customers.find((x) => x.id === nextCustomerId) as any
-                  const nextCustomerCode = (nextCustomer?.code ? String(nextCustomer.code) : '').trim().toUpperCase()
-
-                  const cur = (code || '').trim()
-                  const curUp = cur.toUpperCase()
-                  const oldDash = customerCode ? `${customerCode}-` : ''
-                  const oldUnderscore = customerCode ? `${customerCode}_` : ''
-                  const isJustOldPrefix = !!customerCode && (curUp === oldDash || curUp === oldUnderscore)
-
-                  setCustomerId(nextCustomerId)
-                  if (!curUp || isJustOldPrefix) setCode(nextCustomerCode ? `${nextCustomerCode}-` : '')
+                  setCustomerId(e.target.value)
                   dispatch(clearCreateFieldError('customer_id'))
                 }}
                 required
@@ -217,14 +177,9 @@ export function ProductNewPage() {
                 }}
                 required
                 helperText={
-                  fieldErrors['code'] ||
-                  (codeExists
-                    ? 'Product code already exists'
-                    : customerCode
-                    ? `Must start with ${customerCode}- (e.g. ${customerCode}-F15-123)`
-                    : 'Select a customer first to see the required prefix.')
+                  fieldErrors['code'] || (codeExists ? 'Product code already exists' : 'Unique code for this product (spec-derived codes do not include customer prefix).')
                 }
-                error={!!fieldErrors['code'] || codeExists || (customerId ? !codePrefixOk : false)}
+                error={!!fieldErrors['code'] || codeExists}
               />
 
             </Box>
@@ -242,11 +197,11 @@ export function ProductNewPage() {
           />
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <Button component={Link} to={returnTo || '/products'} variant="text" color="primary">
+              Cancel
+            </Button>
             <Button type="submit" variant="contained" disabled={!canSubmit || saving}>
               {saving ? 'Creating…' : 'Create'}
-            </Button>
-            <Button component={Link} to={returnTo || '/products'} variant="outlined">
-              Cancel
             </Button>
           </Box>
         </Stack>

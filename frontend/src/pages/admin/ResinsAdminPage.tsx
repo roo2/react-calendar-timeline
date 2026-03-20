@@ -43,6 +43,7 @@ export function ResinsAdminPage() {
   const [newColourCode, setNewColourCode] = useState('')
   const [newColourName, setNewColourName] = useState('')
   const [newColourPrice, setNewColourPrice] = useState<number | ''>('')
+  const [newColourShortCode, setNewColourShortCode] = useState('')
   const canCreateColour = useMemo(
     () => !!newColourCode.trim() && !!newColourName.trim() && newColourPrice !== '',
     [newColourCode, newColourName, newColourPrice],
@@ -424,6 +425,7 @@ export function ResinsAdminPage() {
               <TableRow>
                 <TableCell sx={{ width: 80 }}>Order</TableCell>
                 <TableCell sx={{ width: 180 }}>Code</TableCell>
+                <TableCell sx={{ width: 72 }}>Short</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
                 <TableCell sx={{ width: 180 }} />
@@ -440,8 +442,12 @@ export function ResinsAdminPage() {
                 />
               ))}
               <TableRow>
+                <TableCell />
                 <TableCell>
                   <TextField size="small" label="Code" value={newColourCode} onChange={(e) => setNewColourCode(e.target.value)} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Short" value={newColourShortCode} onChange={(e) => setNewColourShortCode((e.target.value || '').slice(0, 3))} inputProps={{ maxLength: 3 }} placeholder="3" />
                 </TableCell>
                 <TableCell>
                   <TextField size="small" fullWidth label="Name" value={newColourName} onChange={(e) => setNewColourName(e.target.value)} />
@@ -463,10 +469,11 @@ export function ResinsAdminPage() {
                     onClick={() => {
                       if (!canCreateColour) return
                       const maxOrder = colours.length === 0 ? 0 : Math.max(...colours.map((c) => c.sort_order))
-                      void saveColour(newColourCode, { name: newColourName.trim(), price_per_kg: Number(newColourPrice), sort_order: maxOrder + 1 }).then(() => {
+                      void saveColour(newColourCode, { name: newColourName.trim(), price_per_kg: Number(newColourPrice), sort_order: maxOrder + 1, short_code: newColourShortCode.trim() || null }).then(() => {
                         setNewColourCode('')
                         setNewColourName('')
                         setNewColourPrice('')
+                        setNewColourShortCode('')
                       })
                     }}
                   >
@@ -627,13 +634,18 @@ function ColourRow(props: {
   const [name, setName] = useState(row.name)
   const [price, setPrice] = useState<number | ''>(row.price_per_kg)
   const [sortOrder, setSortOrder] = useState<number | ''>(row.sort_order)
+  const [shortCode, setShortCode] = useState(row.short_code ?? '')
   useEffect(() => {
     setName(row.name)
     setPrice(row.price_per_kg)
     setSortOrder(row.sort_order)
-  }, [row.name, row.price_per_kg, row.sort_order])
+    setShortCode(row.short_code ?? '')
+  }, [row.name, row.price_per_kg, row.sort_order, row.short_code])
   const dirty =
-    name !== row.name || price !== row.price_per_kg || (sortOrder !== '' && Number(sortOrder) !== row.sort_order)
+    name !== row.name ||
+    price !== row.price_per_kg ||
+    (sortOrder !== '' && Number(sortOrder) !== row.sort_order) ||
+    shortCode !== (row.short_code ?? '')
   return (
     <TableRow hover>
       <TableCell>
@@ -655,6 +667,9 @@ function ColourRow(props: {
       </TableCell>
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.colour_code}</TableCell>
       <TableCell>
+        <TextField size="small" sx={{ width: 72 }} value={shortCode} onChange={(e) => setShortCode((e.target.value || '').slice(0, 3))} inputProps={{ maxLength: 3 }} />
+      </TableCell>
+      <TableCell>
         <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
       </TableCell>
       <TableCell>
@@ -671,6 +686,7 @@ function ColourRow(props: {
                 name: name.trim(),
                 price_per_kg: Number(price),
                 sort_order: Number(sortOrder),
+                short_code: shortCode.trim() || null,
               })
             }
           >

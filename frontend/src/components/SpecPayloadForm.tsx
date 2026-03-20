@@ -18,12 +18,35 @@ import {
   Typography,
 } from '@mui/material'
 import { apiFetch } from '../api/client'
+import { DefaultSelectField } from './DefaultSelectField'
+import { defaultRowSx, isDefaultRow } from './DefaultRowTable'
+import {
+  ensureMinRows,
+  MaterialsColoursAndAdditives,
+  type ColourRow as MaterialsColourRow,
+  type AdditiveRow as MaterialsAdditiveRow,
+} from './MaterialsColoursAndAdditives'
 import { ResinSelect, type ResinOption } from './ResinSelect'
-import { ColourSelect, type ColourOption } from './ColourSelect'
-import { AdditiveSelect, type AdditiveOption } from './AdditiveSelect'
+import type { ColourOption } from './ColourSelect'
+import type { AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
-import { computeProductDescriptionFromSpec } from '../utils/productDescription'
+
+function renderAniloxSelectValue(
+  selected: unknown,
+  options: Array<{ anilox_code: string; description: string }>,
+) {
+  const code = selected == null || selected === '' ? '' : String(selected)
+  if (!code) {
+    return (
+      <Typography component="span" variant="body2" color="text.secondary" sx={{ opacity: 0.72 }}>
+        Anilox
+      </Typography>
+    )
+  }
+  const row = options.find((x) => x.anilox_code === code)
+  return row ? `${row.anilox_code} — ${row.description}` : code
+}
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -64,17 +87,6 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
 }
 
-function csvToList(s: string): string[] {
-  return (s || '')
-    .split(',')
-    .map((x) => x.trim())
-    .filter(Boolean)
-}
-
-function listToCsv(xs: unknown): string {
-  return Array.isArray(xs) ? xs.join(', ') : ''
-}
-
 export function makeDefaultSpec(): SpecPayload {
   return {
     identity: {
@@ -86,10 +98,10 @@ export function makeDefaultSpec(): SpecPayload {
       notes: null,
     },
     dimensions: {
-      base_width_mm: 200,
+      base_width_mm: null,
       width_tolerance_mm: null,
       base_length_mm: null,
-      thickness_um: 50,
+      thickness_um: null,
       geometry: 'Flat',
       gusset_mm: null,
       ufilm_left_width_mm: null,
@@ -109,10 +121,12 @@ export function makeDefaultSpec(): SpecPayload {
       print_description: null,
       ink_codes: [],
       plate_codes: [],
-      side: null,
+      side: 'front',
       artwork_refs: [],
       front_ink_plate: [],
       back_ink_plate: [],
+      cylinder_size_mm: null,
+      anilox_code: null,
     },
     quality_expectations: {
       flags: [],
@@ -135,6 +149,7 @@ export function makeDefaultSpec(): SpecPayload {
       core_type: '7mm',
       core_policy: 'Include',
       bags_per_carton: null,
+      carton_option_slug: null,
       pallet_type: 'Chep',
       notes: null,
     },
@@ -209,21 +224,10 @@ export function SpecPayloadForm(props: {
   const [inksErr, setInksErr] = useState<string | null>(null)
   const [plates, setPlates] = useState<PlateOption[]>([])
   const [platesErr, setPlatesErr] = useState<string | null>(null)
-
-  const computedTrimSelect = useMemo(() => {
-    const v = identity.trim_pct
-    if (v == null) return ''
-    const n = Number(v)
-    if ([5, 10, 20].includes(n)) return String(n)
-    return 'custom'
-  }, [identity.trim_pct])
-  const [trimSelect, setTrimSelect] = useState<string>(computedTrimSelect)
-
-  useEffect(() => {
-    // Keep dropdown in sync with identity.trim_pct, except when the user is
-    // actively in "custom" mode (trim_pct may temporarily equal 5/10/20).
-    setTrimSelect((prev) => (prev === 'custom' ? 'custom' : computedTrimSelect))
-  }, [computedTrimSelect])
+  const [aniloxOptions, setAniloxOptions] = useState<Array<{ anilox_code: string; description: string }>>([])
+  const [aniloxErr, setAniloxErr] = useState<string | null>(null)
+  const [cartonOptions, setCartonOptions] = useState<Array<{ slug: string; name: string; cost_per_unit: number; is_default: boolean }>>([])
+  const [layflatInput, setLayflatInput] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -354,19 +358,93 @@ export function SpecPayloadForm(props: {
     }
   }, [customerId])
 
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        setAniloxErr(null)
+        const rows = await apiFetch<Array<{ anilox_code: string; description: string }>>('/api/rate-cards/anilox')
+        if (cancelled) return
+        setAniloxOptions(Array.isArray(rows) ? rows : [])
+      } catch (e) {
+        if (cancelled) return
+        setAniloxErr(e instanceof Error ? e.message : 'Failed to load anilox')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (finishMode === 'Rolls') {
+      setCartonOptions([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const rb = await apiFetch<{ carton_options?: Array<{ slug: string; name: string; cost_per_unit: number; is_default: boolean }> }>('/api/rate-cards/ratebook')
+        if (cancelled) return
+        setCartonOptions(Array.isArray(rb.carton_options) ? rb.carton_options : [])
+      } catch {
+        if (cancelled) return
+        setCartonOptions([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [finishMode])
+
+  function emptyInkPlateRow(method: string | undefined): { ink_code: string; plate_code: string; anilox_code?: string | null } {
+    if (method === 'Uteco') return { ink_code: '', plate_code: '', anilox_code: null }
+    return { ink_code: '', plate_code: '' }
+  }
+
+  /** Copy legacy printing.anilox_code onto each row once, then clear legacy field. */
+  function migrateLegacyPrintingAnilox(d: SpecPayload) {
+    const p = d.printing || {}
+    if (p.method !== 'Uteco') return
+    const legacy = (p as { anilox_code?: string | null }).anilox_code
+    if (!legacy || !String(legacy).trim()) return
+    for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
+      const arr = Array.isArray(p[key]) ? [...p[key]] : []
+      for (let i = 0; i < arr.length; i++) {
+        const row = arr[i] as { ink_code?: string; plate_code?: string; anilox_code?: string | null }
+        if (!row?.anilox_code) arr[i] = { ...row, anilox_code: legacy }
+      }
+      p[key] = arr
+    }
+    ;(p as { anilox_code?: string | null }).anilox_code = null
+  }
+
   function ensureFixedInkPlateRows(d: SpecPayload) {
     const p = d.printing || {}
-    if (p.method !== 'Inline') return
+    const m = p.method
+    if (m !== 'Inline' && m !== 'Uteco') return
     for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
       const cur = Array.isArray(p[key]) ? p[key].slice(0, 4) : []
-      while (cur.length < 4) cur.push({ ink_code: '', plate_code: '' })
-      p[key] = cur
+      while (cur.length < 5) cur.push(emptyInkPlateRow(m))
+      if (m === 'Uteco') {
+        p[key] = cur.map((row: any) => ({
+          ink_code: row?.ink_code ?? '',
+          plate_code: row?.plate_code ?? '',
+          anilox_code: row?.anilox_code ?? null,
+        }))
+      } else {
+        p[key] = cur.map((row: any) => ({
+          ink_code: row?.ink_code ?? '',
+          plate_code: row?.plate_code ?? '',
+        }))
+      }
     }
+    migrateLegacyPrintingAnilox(d)
   }
 
   function syncLegacyInkPlateFromPairs(d: SpecPayload) {
     const p = d.printing || {}
-    if (p.method !== 'Inline') return
+    if (p.method !== 'Inline' && p.method !== 'Uteco') return
     const front = Array.isArray(p.front_ink_plate) ? p.front_ink_plate : []
     const back = Array.isArray(p.back_ink_plate) ? p.back_ink_plate : []
     const all = [...front, ...back]
@@ -375,16 +453,28 @@ export function SpecPayloadForm(props: {
   }
 
   useEffect(() => {
-    if (printing.method !== 'Inline') return
+    if (!printingEnabled) return
     const fl = Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate.length : 0
     const bl = Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate.length : 0
-    if (fl === 4 && bl === 4) return
+    if (fl >= 5 && bl >= 5) return
     update((d) => {
       ensureFixedInkPlateRows(d)
       syncLegacyInkPlateFromPairs(d)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [printing.method])
+
+  /** Migrate legacy single printing.anilox_code even when ink/plate rows are already padded (5+5). */
+  useEffect(() => {
+    if (!printingEnabled || printing.method !== 'Uteco') return
+    const legacy = (spec.printing as { anilox_code?: string | null } | undefined)?.anilox_code
+    if (!legacy || !String(legacy).trim()) return
+    update((d) => {
+      migrateLegacyPrintingAnilox(d)
+      syncLegacyInkPlateFromPairs(d)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printingEnabled, printing.method, spec.printing?.anilox_code])
 
   function syncLegacyColourFromComponents(d: SpecPayload) {
     const comps = Array.isArray(d?.formulation?.colour_components) ? d.formulation.colour_components : []
@@ -402,56 +492,88 @@ export function SpecPayloadForm(props: {
     if (d.formulation.colour.opaque == null) d.formulation.colour.opaque = false
   }
 
+  const colourRowsForMaterials: MaterialsColourRow[] = useMemo(() => {
+    const rows = colourComponents.map((c: { colour_code?: string; strength_pct?: number | null }) => ({
+      colour_code: c.colour_code || '',
+      strength_pct: c.strength_pct != null ? String(c.strength_pct) : '',
+    }))
+    while (rows.length < 2) rows.push({ colour_code: '', strength_pct: '' })
+    return rows
+  }, [colourComponents])
+
+  const additiveRowsForMaterials: MaterialsAdditiveRow[] = useMemo(() => {
+    const rows = additives.map((a: { additive_code?: string; pct?: number | null }) => ({
+      additive_code: a.additive_code || '',
+      pct: a.pct != null ? String(a.pct) : '',
+    }))
+    while (rows.length < 2) rows.push({ additive_code: '', pct: '' })
+    return rows
+  }, [additives])
+
+  function handleMaterialsColourRowsChange(rows: MaterialsColourRow[]) {
+    update((d) => {
+      if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
+      d.formulation.colour_components = rows.map((r) => ({
+        colour_code: r.colour_code,
+        strength_pct: r.strength_pct === '' ? null : parseFloat(r.strength_pct),
+      }))
+      syncLegacyColourFromComponents(d)
+    })
+  }
+
+  function handleMaterialsAdditiveRowsChange(rows: MaterialsAdditiveRow[]) {
+    update((d) => {
+      if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
+      d.formulation.additives = rows.map((r) => ({
+        additive_code: r.additive_code,
+        pct: r.pct === '' ? null : parseFloat(r.pct),
+      }))
+    })
+  }
+
+  const showRunUp = productType === PRODUCT_TYPE.Centerfold || productType === PRODUCT_TYPE.Sheet
+  const runUpOptions: number[] =
+    productType === PRODUCT_TYPE.Centerfold ? [1, 2] : productType === PRODUCT_TYPE.Sheet ? [2, 4, 6] : []
+  const runUpSlug = (run.run_up as string) || 'none'
+  const runUpNum =
+    runUpSlug === '1up'
+      ? 1
+      : runUpSlug === '2up'
+        ? 2
+        : runUpSlug === '4up'
+          ? 4
+          : runUpSlug === '6up'
+            ? 6
+            : productType === PRODUCT_TYPE.Centerfold
+              ? 1
+              : productType === PRODUCT_TYPE.Sheet
+                ? 2
+                : 1
+
   const derived: DerivedDimensions = useMemo(() => {
     const width = typeof dimensions.base_width_mm === 'number' ? dimensions.base_width_mm : 0
     const gussetReturnOrSide = typeof dimensions.gusset_mm === 'number' ? dimensions.gusset_mm : 0
+    const ru = runUpNum
 
     let layflat = width
-    if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
-      layflat = 0.5 * width
-    } else if (productType === PRODUCT_TYPE.UFilm) {
+    if (productType === PRODUCT_TYPE.UFilm) {
       const l = typeof dimensions.ufilm_left_width_mm === 'number' ? dimensions.ufilm_left_width_mm : 0
       const r = typeof dimensions.ufilm_right_width_mm === 'number' ? dimensions.ufilm_right_width_mm : 0
       layflat = width + l + r
+    } else if ((productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') && ru > 0) {
+      layflat = width * (ru / 2)
+    } else if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
+      layflat = 0.5 * width
+    } else if (productType === PRODUCT_TYPE.Sheet && ru > 0) {
+      layflat = width * (ru / 2)
     } else if (gussetEnabled && gussetReturnOrSide > 0) {
-      layflat = width + 2 * gussetReturnOrSide
+      layflat = width + gussetReturnOrSide
     }
 
     return {
       layflat_mm: layflat,
     }
-  }, [dimensions.base_width_mm, dimensions.geometry, dimensions.gusset_mm, gussetEnabled, productType])
-
-  function fmtMm(v: unknown): string {
-    const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
-    if (!Number.isFinite(n)) return ''
-    if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n))
-    return String(Math.round(n * 10) / 10)
-  }
-
-  const layflatShorthand = useMemo(() => {
-    if (productType === PRODUCT_TYPE.UFilm) {
-      const l = fmtMm(dimensions.ufilm_left_width_mm)
-      const m = fmtMm(dimensions.base_width_mm)
-      const r = fmtMm(dimensions.ufilm_right_width_mm)
-      return `${l} / ${m} / ${r}`.trim()
-    }
-
-    if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
-      const w = fmtMm(dimensions.base_width_mm)
-      const lf = fmtMm(derived.layflat_mm)
-      return `${w} ( ${lf} )`.trim()
-    }
-
-    if (gussetEnabled) {
-      const w = fmtMm(dimensions.base_width_mm)
-      const g = fmtMm(dimensions.gusset_mm)
-      return `( ${w} + ${g} )`.trim()
-    }
-
-    return fmtMm(dimensions.base_width_mm)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [derived.layflat_mm, dimensions.base_width_mm, dimensions.geometry, dimensions.gusset_mm, dimensions.ufilm_left_width_mm, dimensions.ufilm_right_width_mm, gussetEnabled, productType])
+  }, [dimensions.base_width_mm, dimensions.geometry, dimensions.gusset_mm, dimensions.ufilm_left_width_mm, dimensions.ufilm_right_width_mm, gussetEnabled, productType, runUpNum])
 
   const lengthUnits = (dimensions.length_units as 'mm' | 'M' | undefined) || 'mm'
   const lengthDisplay = useMemo(() => {
@@ -460,8 +582,6 @@ export function SpecPayloadForm(props: {
     if (lengthUnits === 'M') return String(Math.round((mm / 1000) * 1000) / 1000)
     return String(mm)
   }, [dimensions.base_length_mm, lengthUnits])
-
-  const runUpAllowed = productType === PRODUCT_TYPE.Centerfold || productType === PRODUCT_TYPE.Sheet
 
   function onProductTypeChange(nextTypeRaw: string) {
     const nextType = nextTypeRaw as ProductType
@@ -472,7 +592,7 @@ export function SpecPayloadForm(props: {
       const nextRunUp = d.run_requirements?.run_up || 'none'
       const allowed =
         nextType === PRODUCT_TYPE.Centerfold
-          ? new Set(['none', '2up'])
+          ? new Set(['none', '1up', '2up'])
           : nextType === PRODUCT_TYPE.Sheet
             ? new Set(['none', '2up', '4up', '6up'])
             : new Set(['none'])
@@ -520,29 +640,26 @@ export function SpecPayloadForm(props: {
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Product Identity
+          Product Type
         </Typography>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-          <TextField
-            select
+          <DefaultSelectField
             label="Product Type"
+            defaultValue={PRODUCT_TYPE.Bag}
             value={identity.product_type || PRODUCT_TYPE.Bag}
             onChange={(e) => onProductTypeChange(e.target.value)}
-            required
-            error={!!errorFor('spec.identity.product_type')}
-            helperText={errorFor('spec.identity.product_type') || ''}
           >
             {PRODUCT_TYPES.map((v) => (
               <MenuItem key={v} value={v}>
                 {v}
               </MenuItem>
             ))}
-          </TextField>
+          </DefaultSelectField>
 
-          <TextField
-            select
+          <DefaultSelectField
             label="Finish Mode"
+            defaultValue="Rolls"
             value={identity.finish_mode || 'Rolls'}
             onChange={(e) => {
               const v = e.target.value
@@ -551,117 +668,48 @@ export function SpecPayloadForm(props: {
                 d.packaging.pack_mode = v
               })
             }}
-            required
-            error={!!errorFor('spec.identity.finish_mode')}
-            helperText={errorFor('spec.identity.finish_mode') || ''}
           >
             <MenuItem value="Rolls">Rolls</MenuItem>
             <MenuItem value="Cartons">Cartons</MenuItem>
-          </TextField>
+          </DefaultSelectField>
         </Box>
 
-        <Box sx={{ mt: 2 }}>
-          <TextField
-            label="Description (computed)"
-            value={computeProductDescriptionFromSpec(spec)}
-            multiline
-            minRows={2}
-            fullWidth
-            InputProps={{ readOnly: true }}
-            helperText="Computed from Product Version spec."
-          />
-          <TextField
-            label="Notes"
-            value={identity.notes || ''}
-            onChange={(e) => update((d) => (d.identity.notes = e.target.value || null))}
-            multiline
-            minRows={3}
-            fullWidth
-            error={!!errorFor('spec.identity.notes')}
-            helperText={errorFor('spec.identity.notes') || ''}
-            sx={{ mt: 2 }}
-          />
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Options
-          </Typography>
-          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={gussetEnabled}
-                  disabled={!canHaveGusset || isUFilm}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (!canHaveGusset || isUFilm) return
-                      if (e.target.checked) {
-                        d.dimensions.geometry = 'Gusset'
-                        d.dimensions.gusset_mm =
-                          d.dimensions.gusset_mm && d.dimensions.gusset_mm > 0 ? d.dimensions.gusset_mm : 50
-                      } else {
-                        d.dimensions.geometry = 'Flat'
-                        d.dimensions.gusset_mm = null
-                      }
-                    })
-                  }
-                />
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mt: 2 }}>
+          <DefaultSelectField
+            label="Core Type"
+            defaultValue="7mm"
+            value={packaging.core_type || '7mm'}
+            onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
+          >
+            {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </DefaultSelectField>
+          {finishMode === 'Rolls' ? (
+            <DefaultSelectField
+              label="Roll weight billing"
+              defaultValue="core_included"
+              value={identity.roll_weight_billing || 'core_included'}
+              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
+            >
+              <MenuItem value="core_included">Include core</MenuItem>
+              <MenuItem value="core_off">Exclude core</MenuItem>
+              <MenuItem value="core_half_off">Half core</MenuItem>
+            </DefaultSelectField>
+          ) : (
+            <TextField
+              label="Bags per Carton"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={packaging.bags_per_carton ?? ''}
+              onChange={(e) =>
+                update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
               }
-              label="Gusset"
+              error={!!errorFor('spec.packaging.bags_per_carton')}
             />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!printingEnabled}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (e.target.checked) {
-                        if (!d.printing.method || d.printing.method === 'None') d.printing.method = 'Inline'
-                        // Default to showing the Inline "Front print" section immediately.
-                        if (!d.printing.side) d.printing.side = 'front'
-                      } else {
-                        d.printing.method = 'None'
-                        d.printing.side = null
-                        d.printing.print_description = null
-                        d.printing.num_colours = null
-                        d.printing.ink_codes = []
-                        d.printing.plate_codes = []
-                        d.printing.artwork_refs = []
-                        d.printing.front_ink_plate = []
-                        d.printing.back_ink_plate = []
-                      }
-                    })
-                  }
-                />
-              }
-              label="Printed"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!run.inline_perforation}
-                  onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
-                />
-              }
-              label="Perforated"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox checked={!!run.inline_seal} onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))} />
-              }
-              label="Sealed"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!run.hole_punched}
-                  onChange={(e) => update((d) => (d.run_requirements.hole_punched = e.target.checked))}
-                />
-              }
-              label="Punched"
-            />
-          </FormGroup>
+          )}
         </Box>
 
       </Paper>
@@ -671,214 +719,323 @@ export function SpecPayloadForm(props: {
           Dimensions &amp; Geometry
         </Typography>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
+        <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={gussetEnabled}
+                disabled={!canHaveGusset || isUFilm}
+                onChange={(e) =>
+                  update((d) => {
+                    if (!canHaveGusset || isUFilm) return
+                    if (e.target.checked) {
+                      d.dimensions.geometry = 'Gusset'
+                      d.dimensions.gusset_mm =
+                        d.dimensions.gusset_mm && d.dimensions.gusset_mm > 0 ? d.dimensions.gusset_mm : 50
+                    } else {
+                      d.dimensions.geometry = 'Flat'
+                      d.dimensions.gusset_mm = null
+                    }
+                  })
+                }
+              />
+            }
+            label="Gusset"
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={!!printingEnabled}
+                onChange={(e) =>
+                  update((d) => {
+                    if (e.target.checked) {
+                      if (!d.printing.method || d.printing.method === 'None') d.printing.method = 'Inline'
+                      if (!d.printing.side) d.printing.side = 'front'
+                    } else {
+                      d.printing.method = 'None'
+                      d.printing.side = null
+                      d.printing.print_description = null
+                      d.printing.num_colours = null
+                      d.printing.ink_codes = []
+                      d.printing.plate_codes = []
+                      d.printing.artwork_refs = []
+                      d.printing.front_ink_plate = []
+                      d.printing.back_ink_plate = []
+                      d.printing.cylinder_size_mm = null
+                      d.printing.anilox_code = null
+                    }
+                  })
+                }
+              />
+            }
+            label="Printed"
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={!!run.inline_perforation}
+                onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
+              />
+            }
+            label="Perforated"
+          />
+          <FormControlLabel
+            control={
+              <Checkbox checked={!!run.inline_seal} onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))} />
+            }
+            label="Sealed"
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={!!run.hole_punched}
+                onChange={(e) => update((d) => (d.run_requirements.hole_punched = e.target.checked))}
+              />
+            }
+            label="Punched"
+          />
+        </FormGroup>
+
+        <Stack spacing={2}>
           {isUFilm ? (
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
-              <TextField
-                label="Left Width (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.ufilm_left_width_mm ?? ''}
-                onChange={(e) =>
-                  update((d) => (d.dimensions.ufilm_left_width_mm = e.target.value ? parseInt(e.target.value) : null))
-                }
-                error={!!errorFor('spec.dimensions.ufilm_left_width_mm')}
-                helperText={errorFor('spec.dimensions.ufilm_left_width_mm') || ''}
-              />
-              <TextField
-                label="Middle Width (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.base_width_mm ?? ''}
-                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
-                required
-                error={!!errorFor('spec.dimensions.base_width_mm')}
-                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
-              />
-              <TextField
-                label="Right Width (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.ufilm_right_width_mm ?? ''}
-                onChange={(e) =>
-                  update((d) => (d.dimensions.ufilm_right_width_mm = e.target.value ? parseInt(e.target.value) : null))
-                }
-                error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
-                helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
-              />
-              <TextField
-                label="Tolerance (mm)"
-                type="number"
-                inputProps={{ min: 0, step: 0.1 }}
-                value={dimensions.width_tolerance_mm ?? ''}
-                onChange={(e) =>
-                  update((d) => {
-                    const raw = e.target.value
-                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
-                  })
-                }
-                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
-              />
-            </Box>
-          ) : productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold' ? (
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
-              <TextField
-                label="Layflat Width (mm)"
-                value={Number.isFinite(derived.layflat_mm) ? Math.round(derived.layflat_mm) : ''}
-                InputProps={{ readOnly: true }}
-                helperText="[Layflat Width (mm)]"
-              />
-              <TextField
-                label="Product Width (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.base_width_mm ?? ''}
-                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
-                required
-                error={!!errorFor('spec.dimensions.base_width_mm')}
-                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
-              />
-              <TextField
-                label="Tolerance (mm)"
-                type="number"
-                inputProps={{ min: 0, step: 0.1 }}
-                value={dimensions.width_tolerance_mm ?? ''}
-                onChange={(e) =>
-                  update((d) => {
-                    const raw = e.target.value
-                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
-                  })
-                }
-                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
-              />
-            </Box>
-          ) : gussetEnabled ? (
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
-              <TextField
-                label="Width (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.base_width_mm ?? ''}
-                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
-                required
-                error={!!errorFor('spec.dimensions.base_width_mm')}
-                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
-              />
-              <TextField
-                label="Gusset Return (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.gusset_mm ?? ''}
-                onChange={(e) => update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))}
-                error={!!errorFor('spec.dimensions.gusset_mm')}
-                helperText={errorFor('spec.dimensions.gusset_mm') || ''}
-              />
-              <TextField
-                label="Tolerance (mm)"
-                type="number"
-                inputProps={{ min: 0, step: 0.1 }}
-                value={dimensions.width_tolerance_mm ?? ''}
-                onChange={(e) =>
-                  update((d) => {
-                    const raw = e.target.value
-                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
-                  })
-                }
-                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
-              />
-            </Box>
+            <>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
+                <TextField
+                  label="Left Width (mm)"
+                  type="number"
+                  inputProps={{ min: 1, step: 1 }}
+                  value={dimensions.ufilm_left_width_mm ?? ''}
+                  onChange={(e) =>
+                    update((d) => (d.dimensions.ufilm_left_width_mm = e.target.value ? parseInt(e.target.value) : null))
+                  }
+                  error={!!errorFor('spec.dimensions.ufilm_left_width_mm')}
+                  helperText={errorFor('spec.dimensions.ufilm_left_width_mm') || ''}
+                />
+                <TextField
+                  label="Middle Width (mm)"
+                  type="number"
+                  inputProps={{ min: 1, step: 1 }}
+                  value={dimensions.base_width_mm == null || dimensions.base_width_mm === 0 ? '' : dimensions.base_width_mm}
+                  onChange={(e) => update((d) => (d.dimensions.base_width_mm = e.target.value === '' ? null : parseInt(e.target.value, 10)))}
+                  required
+                  error={!!errorFor('spec.dimensions.base_width_mm')}
+                  helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+                />
+                <TextField
+                  label="Right Width (mm)"
+                  type="number"
+                  inputProps={{ min: 1, step: 1 }}
+                  value={dimensions.ufilm_right_width_mm ?? ''}
+                  onChange={(e) =>
+                    update((d) => (d.dimensions.ufilm_right_width_mm = e.target.value ? parseInt(e.target.value) : null))
+                  }
+                  error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
+                  helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
+                />
+              </Box>
+            </>
           ) : (
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2, gridColumn: '1 / -1' }}>
-              <TextField
-                label="Width (mm)"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={dimensions.base_width_mm ?? ''}
-                onChange={(e) => update((d) => (d.dimensions.base_width_mm = parseInt(e.target.value || '0')))}
-                required
-                error={!!errorFor('spec.dimensions.base_width_mm')}
-                helperText={errorFor('spec.dimensions.base_width_mm') || ''}
-              />
-              <TextField
-                label="Tolerance (mm)"
-                type="number"
-                inputProps={{ min: 0, step: 0.1 }}
-                value={dimensions.width_tolerance_mm ?? ''}
-                onChange={(e) =>
-                  update((d) => {
-                    const raw = e.target.value
-                    ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
-                  })
-                }
-                error={!!errorFor('spec.dimensions.width_tolerance_mm')}
-              />
-            </Box>
+            <Stack spacing={2}>
+              {showRunUp ? (
+                <>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
+                    <TextField
+                      label="Layflat Width (mm)"
+                      type="number"
+                      value={
+                        layflatInput != null
+                          ? layflatInput
+                          : derived.layflat_mm > 0
+                            ? String(Math.round(derived.layflat_mm))
+                            : ''
+                      }
+                      onFocus={() =>
+                        setLayflatInput(derived.layflat_mm > 0 ? String(Math.round(derived.layflat_mm)) : '')
+                      }
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        setLayflatInput(raw)
+                        if (raw === '') {
+                          update((d) => (d.dimensions.base_width_mm = null))
+                        } else {
+                          const v = Number(raw)
+                          if (Number.isFinite(v) && runUpNum > 0) {
+                            update((d) => (d.dimensions.base_width_mm = Math.round((v * 2) / runUpNum)))
+                          }
+                        }
+                      }}
+                      onBlur={() => setLayflatInput(null)}
+                    />
+                    <DefaultSelectField
+                      label="Run Up"
+                      defaultValue={productType === PRODUCT_TYPE.Centerfold ? '1up' : '2up'}
+                      value={
+                        runUpSlug === 'none'
+                          ? productType === PRODUCT_TYPE.Centerfold
+                            ? '1up'
+                            : '2up'
+                          : runUpSlug
+                      }
+                      onChange={(e) =>
+                        update((d) => (d.run_requirements.run_up = String(e.target.value || 'none')))
+                      }
+                    >
+                      {runUpOptions.map((n) => (
+                        <MenuItem key={n} value={n === 1 ? '1up' : `${n}up`}>
+                          {n} up
+                        </MenuItem>
+                      ))}
+                    </DefaultSelectField>
+                    <TextField
+                      label={`${productType} Width (mm)`}
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={dimensions.base_width_mm == null || dimensions.base_width_mm === 0 ? '' : dimensions.base_width_mm}
+                      onChange={(e) =>
+                        update((d) => (d.dimensions.base_width_mm = e.target.value === '' ? null : parseInt(e.target.value, 10)))
+                      }
+                      required
+                      error={!!errorFor('spec.dimensions.base_width_mm')}
+                      helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+                    />
+                  </Box>
+                </>
+              ) : canHaveGusset && gussetEnabled ? (
+                <>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                    <TextField
+                      label={`${productType} Width (mm)`}
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={dimensions.base_width_mm == null || dimensions.base_width_mm === 0 ? '' : dimensions.base_width_mm}
+                      onChange={(e) =>
+                        update((d) => (d.dimensions.base_width_mm = e.target.value === '' ? null : parseInt(e.target.value, 10)))
+                      }
+                      required
+                      error={!!errorFor('spec.dimensions.base_width_mm')}
+                      sx={{ width: 200 }}
+                    />
+                    <Typography sx={{ fontSize: '1.75rem', lineHeight: 1, color: 'text.secondary', px: 0.5 }}>+</Typography>
+                    <TextField
+                      label="Gusset Return (mm)"
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={dimensions.gusset_mm ?? ''}
+                      onChange={(e) =>
+                        update((d) => (d.dimensions.gusset_mm = e.target.value ? parseInt(e.target.value) : null))
+                      }
+                      error={!!errorFor('spec.dimensions.gusset_mm')}
+                      sx={{ width: 200 }}
+                    />
+                    <Typography sx={{ fontSize: '1.75rem', lineHeight: 1, color: 'text.secondary', px: 0.5 }}>=</Typography>
+                    <TextField
+                      label="Layflat Width (mm)"
+                      value={Number.isFinite(derived.layflat_mm) ? String(Math.round(derived.layflat_mm)) : ''}
+                      InputProps={{ readOnly: true }}
+                      disabled
+                      sx={{ width: 180 }}
+                    />
+                  </Box>
+                </>
+              ) : (
+                <>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
+                    <TextField
+                      label={`${productType} Width (mm)`}
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={dimensions.base_width_mm == null || dimensions.base_width_mm === 0 ? '' : dimensions.base_width_mm}
+                      onChange={(e) =>
+                        update((d) => (d.dimensions.base_width_mm = e.target.value === '' ? null : parseInt(e.target.value, 10)))
+                      }
+                      required
+                      error={!!errorFor('spec.dimensions.base_width_mm')}
+                      helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+                    />
+                  </Box>
+                </>
+              )}
+            </Stack>
           )}
 
-          <Paper variant="outlined" sx={{ p: 2, gridColumn: '1 / -1' }}>
-            <Typography variant="body2" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
-              Shorthand: {layflatShorthand}
-            </Typography>
-            <Typography variant="body2" sx={{ mt: 0.5 }}>
-              Layflat Width: <strong>{fmtMm(derived.layflat_mm)}mm</strong>
-            </Typography>
-          </Paper>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
+            <DefaultSelectField
+              label="Length Units"
+              defaultValue="mm"
+              value={lengthUnits}
+              onChange={(e) => update((d) => (d.dimensions.length_units = e.target.value))}
+              disabled={productType === PRODUCT_TYPE.Tube}
+            >
+              <MenuItem value="mm">mm</MenuItem>
+              <MenuItem value="M">M</MenuItem>
+            </DefaultSelectField>
+            <TextField
+              label={`Length (${lengthUnits})`}
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={lengthDisplay}
+              onChange={(e) =>
+                update((d) => {
+                  const raw = e.target.value
+                  if (!raw) {
+                    d.dimensions.base_length_mm = null
+                    return
+                  }
+                  const n = Number(raw)
+                  if (!Number.isFinite(n)) return
+                  d.dimensions.base_length_mm = lengthUnits === 'M' ? Math.round(n * 1000) : Math.round(n)
+                })
+              }
+              disabled={productType === PRODUCT_TYPE.Tube}
+              helperText={productType === PRODUCT_TYPE.Tube ? 'Not used for tubes' : ''}
+              error={!!errorFor('spec.dimensions.base_length_mm')}
+            />
+          </Box>
 
-          <TextField
-            select
-            label="Length Units"
-            value={lengthUnits}
-            onChange={(e) => update((d) => (d.dimensions.length_units = e.target.value))}
-            disabled={productType === PRODUCT_TYPE.Tube}
-          >
-            <MenuItem value="mm">mm</MenuItem>
-            <MenuItem value="M">M</MenuItem>
-          </TextField>
-
-          <TextField
-            label={`Length (${lengthUnits})`}
-            type="number"
-            inputProps={{ min: 1, step: 1 }}
-            value={lengthDisplay}
-            onChange={(e) =>
-              update((d) => {
-                const raw = e.target.value
-                if (!raw) {
-                  d.dimensions.base_length_mm = null
-                  return
-                }
-                const n = Number(raw)
-                if (!Number.isFinite(n)) return
-                d.dimensions.base_length_mm = lengthUnits === 'M' ? Math.round(n * 1000) : Math.round(n)
-              })
-            }
-            disabled={productType === PRODUCT_TYPE.Tube}
-            helperText={
-              productType === PRODUCT_TYPE.Tube
-                ? 'Not used for tubes'
-                : finishMode === 'Cartons'
-                  ? 'Required when Finish Mode = Cartons'
-                  : ''
-            }
-            error={!!errorFor('spec.dimensions.base_length_mm')}
-          />
-
-          <TextField
-            label="Thickness/Gauge (µm)"
-            type="number"
-            inputProps={{ min: 1, step: 1 }}
-            value={dimensions.thickness_um ?? ''}
-            onChange={(e) => update((d) => (d.dimensions.thickness_um = parseInt(e.target.value || '0')))}
-            required
-            error={!!errorFor('spec.dimensions.thickness_um')}
-            helperText={errorFor('spec.dimensions.thickness_um') || ''}
-          />
-        </Box>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
+            <TextField
+              label="Thickness/Gauge (µm)"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={dimensions.thickness_um == null || dimensions.thickness_um === 0 ? '' : dimensions.thickness_um}
+              onChange={(e) => update((d) => (d.dimensions.thickness_um = e.target.value === '' ? null : parseInt(e.target.value, 10)))}
+              required
+              error={!!errorFor('spec.dimensions.thickness_um')}
+              helperText={errorFor('spec.dimensions.thickness_um') || ''}
+            />
+            <TextField
+              label="Trim (%)"
+              type="number"
+              inputProps={{ min: 0, step: 0.1 }}
+              value={identity.trim_pct ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  d.identity.trim_pct = e.target.value === '' ? null : parseFloat(e.target.value)
+                })
+              }
+              error={!!errorFor('spec.identity.trim_pct')}
+              helperText={errorFor('spec.identity.trim_pct') || ''}
+            />
+            <TextField
+              label="Tolerance (mm)"
+              type="number"
+              inputProps={{ min: 0, step: 0.1 }}
+              value={dimensions.width_tolerance_mm ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  const raw = e.target.value
+                  ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
+                })
+              }
+              error={!!errorFor('spec.dimensions.width_tolerance_mm')}
+            />
+          </Box>
+        </Stack>
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Materials &amp; Formulation
+          Materials
         </Typography>
 
         {resinsErr && (
@@ -911,78 +1068,66 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ mt: 2 }}>
+        <Box sx={{ mb: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
             Resin Blend
           </Typography>
-
-          <Paper variant="outlined" sx={{ p: 2 }}>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mb: 2 }}>
-              <TextField
-                select
-                label="Resin Blend"
-                value={formulation.blend_type || 'Custom'}
-                onChange={(e) => {
-                  const v = e.target.value
-                  update((d) => {
-                    d.formulation.blend_type = v
-                    if (v === 'Custom') return
-                    const preset = resinBlends.find((b) => b.blend_code === v)
-                    if (!preset) return
-                    d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
-                  })
-                }}
-                sx={
-                  (formulation.blend_type || 'Custom') === 'LD'
-                    ? {
-                        '& .MuiSelect-select': { color: 'text.secondary' },
-                      }
-                    : undefined
-                }
-              >
-                <MenuItem value="Custom">Custom</MenuItem>
-                {resinBlends.map((b) => (
-                  <MenuItem key={b.blend_code} value={b.blend_code}>
-                    {b.blend_code === 'LD' ? 'House Blend' : b.name}
-                  </MenuItem>
-                ))}
-                {(() => {
-                  const cur = formulation.blend_type
-                  if (!cur || cur === 'Custom') return null
-                  const known = resinBlends.some((b) => b.blend_code === cur)
-                  if (known) return null
-                  return (
-                    <MenuItem value={cur} disabled>
-                      {cur}
-                    </MenuItem>
-                  )
-                })()}
-              </TextField>
-            </Box>
-
-            <Table
-              size="small"
-              sx={{
-                tableLayout: 'fixed',
-                '& th, & td': { borderBottom: 'none' },
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mb: 2 }}>
+            <DefaultSelectField
+              label="Resin Blend"
+              defaultValue="LD"
+              value={formulation.blend_type || 'LD'}
+              onChange={(e) => {
+                const v = e.target.value
+                update((d) => {
+                  d.formulation.blend_type = v
+                  if (v === 'Custom') return
+                  const preset = resinBlends.find((b) => b.blend_code === v)
+                  if (!preset) return
+                  d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
+                })
               }}
             >
-              <TableHead>
-                <TableRow>
-                  <TableCell>Resin</TableCell>
-                  <TableCell sx={{ width: 160 }}>Pct</TableCell>
-                  <TableCell sx={{ width: 140 }} />
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {blend.map((row: any, idx: number) => (
-                  <TableRow key={idx} hover>
-                    <TableCell>
+              <MenuItem value="LD">House Blend (LD)</MenuItem>
+              {resinBlends
+                .filter((b) => b.blend_code !== 'LD')
+                .map((b) => (
+                  <MenuItem key={b.blend_code} value={b.blend_code}>
+                    {b.name}
+                  </MenuItem>
+                ))}
+              <MenuItem value="Custom">Custom</MenuItem>
+            </DefaultSelectField>
+          </Box>
+
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Resin</TableCell>
+                <TableCell>Percentage (%)</TableCell>
+                <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {blend.map((row: any, idx: number) => {
+                const selectedPreset =
+                  formulation.blend_type && formulation.blend_type !== 'Custom'
+                    ? resinBlends.find((b) => b.blend_code === formulation.blend_type)
+                    : null
+                const presetComponent = selectedPreset?.components?.[idx]
+                const isDefault =
+                  !!presetComponent &&
+                  (row.resin_code || '').trim() === (presetComponent.resin_code || '').trim() &&
+                  Number(row.pct) === Number(presetComponent.pct)
+                return (
+                  <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                    <TableCell sx={{ width: '55%' }}>
                       <ResinSelect
                         options={resins}
                         valueCode={row.resin_code || ''}
                         error={
-                          !!errorFor(`spec.formulation.blend[${idx}].resin_code`) || !!firstErrorForPrefix('spec.formulation.blend')
+                          !!errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
+                          !!firstErrorForPrefix('spec.formulation.blend')
                         }
                         helperText={
                           errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
@@ -996,10 +1141,10 @@ export function SpecPayloadForm(props: {
                         }
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ width: '35%' }}>
                       <TextField
                         size="small"
-                        label="Pct"
+                        label="%"
                         type="number"
                         inputProps={{ min: 0, step: 0.1 }}
                         value={row.pct ?? ''}
@@ -1009,16 +1154,18 @@ export function SpecPayloadForm(props: {
                             d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : null
                           })
                         }
-                        error={!!errorFor(`spec.formulation.blend[${idx}].pct`) || !!firstErrorForPrefix('spec.formulation.blend')}
+                        error={
+                          !!errorFor(`spec.formulation.blend[${idx}].pct`) ||
+                          !!firstErrorForPrefix('spec.formulation.blend')
+                        }
                         helperText={errorFor(`spec.formulation.blend[${idx}].pct`) || ''}
+                        fullWidth
                       />
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell sx={{ width: '10%' }}>
                       <Button
-                        type="button"
-                        variant="outlined"
-                        color="error"
                         size="small"
+                        color="inherit"
                         onClick={() =>
                           update((d) => {
                             d.formulation.blend_type = 'Custom'
@@ -1031,237 +1178,44 @@ export function SpecPayloadForm(props: {
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                )
+              })}
+            </TableBody>
+          </Table>
+          <Box sx={{ mt: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() =>
+                update((d) => {
+                  d.formulation.blend_type = 'Custom'
+                  d.formulation.blend.push({ resin_code: '', pct: null })
+                })
+              }
+            >
+              Add component
+            </Button>
+          </Box>
 
-                <TableRow>
-                  <TableCell />
-                  <TableCell />
-                  <TableCell align="right">
-                    <Button
-                      type="button"
-                      variant="outlined"
-                      size="small"
-                      sx={{ whiteSpace: 'nowrap' }}
-                      onClick={() =>
-                        update((d) => {
-                          d.formulation.blend_type = 'Custom'
-                          d.formulation.blend.push({ resin_code: '', pct: null })
-                        })
-                      }
-                    >
-                      Add component
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-
-            {(() => {
-              const total = (blend || []).reduce((acc: number, r: any) => acc + Number(r?.pct || 0), 0)
-              const ok = Math.abs(total - 100) < 0.01
-              return (
-                <Typography variant="caption" color={ok ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 1 }}>
-                  Total: {total.toFixed(2)}% {ok ? '(OK)' : '(must sum to 100%)'}
-                </Typography>
-              )
-            })()}
-          </Paper>
+          {(() => {
+            const total = (blend || []).reduce((acc: number, r: any) => acc + Number(r?.pct || 0), 0)
+            const ok = Math.abs(total - 100) < 0.01
+            return (
+              <Typography variant="caption" color={ok ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 1 }}>
+                Total: {total.toFixed(2)}% {ok ? '(OK)' : '(must sum to 100%)'}
+              </Typography>
+            )
+          })()}
         </Box>
 
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Colour Components &amp; Additives (Pct values do not need to sum to 100%.)
-          </Typography>
-          <Paper variant="outlined" sx={{ p: 2 }}>
-            <Table
-              size="small"
-              sx={{
-                tableLayout: 'fixed',
-                '& th, & td': { borderBottom: 'none' },
-              }}
-            >
-              <TableHead>
-                <TableRow>
-                  <TableCell>Colour</TableCell>
-                  <TableCell sx={{ width: 160 }}>Pct</TableCell>
-                  <TableCell sx={{ width: 140 }} />
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {colourComponents.map((row: any, idx: number) => (
-                  <TableRow key={idx} hover>
-                    <TableCell>
-                      <ColourSelect
-                        options={colours}
-                        valueCode={row.colour_code || ''}
-                        onChangeCode={(nextCode) =>
-                          update((d) => {
-                            if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
-                            d.formulation.colour_components[idx] = {
-                              ...(d.formulation.colour_components[idx] || {}),
-                              colour_code: nextCode,
-                            }
-                            syncLegacyColourFromComponents(d)
-                          })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        label="Pct"
-                        type="number"
-                        inputProps={{ min: 0, step: 0.1 }}
-                        value={row.strength_pct ?? ''}
-                        onChange={(e) =>
-                          update((d) => {
-                            if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
-                            d.formulation.colour_components[idx] = {
-                              ...(d.formulation.colour_components[idx] || {}),
-                              strength_pct: e.target.value ? parseFloat(e.target.value) : null,
-                            }
-                            syncLegacyColourFromComponents(d)
-                          })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Button
-                        type="button"
-                        variant="outlined"
-                        color="error"
-                        size="small"
-                        onClick={() =>
-                          update((d) => {
-                            if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
-                            d.formulation.colour_components.splice(idx, 1)
-                            syncLegacyColourFromComponents(d)
-                          })
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-
-                <TableRow>
-                  <TableCell />
-                  <TableCell />
-                  <TableCell align="right">
-                    <Button
-                      type="button"
-                      variant="outlined"
-                      size="small"
-                      sx={{ whiteSpace: 'nowrap' }}
-                      onClick={() =>
-                        update((d) => {
-                          if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
-                          d.formulation.colour_components.push({ colour_code: '', strength_pct: null })
-                          syncLegacyColourFromComponents(d)
-                        })
-                      }
-                    >
-                      Add Colour
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-
-            <Box sx={{ mt: 2 }} />
-
-            <Table
-              size="small"
-              sx={{
-                tableLayout: 'fixed',
-                '& th, & td': { borderBottom: 'none' },
-              }}
-            >
-              <TableHead>
-                <TableRow>
-                  <TableCell>Additive</TableCell>
-                  <TableCell sx={{ width: 160 }}>Pct</TableCell>
-                  <TableCell sx={{ width: 140 }} />
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {additives.map((row: any, idx: number) => (
-                  <TableRow key={idx} hover>
-                    <TableCell>
-                      <AdditiveSelect
-                        options={additiveOptions}
-                        valueCode={row.additive_code || ''}
-                        onChangeCode={(nextCode) =>
-                          update((d) => {
-                            if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
-                            d.formulation.additives[idx] = { ...(d.formulation.additives[idx] || {}), additive_code: nextCode }
-                          })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        label="Pct"
-                        type="number"
-                        inputProps={{ min: 0, step: 0.1 }}
-                        value={row.pct ?? ''}
-                        onChange={(e) =>
-                          update((d) => {
-                            if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
-                            d.formulation.additives[idx] = {
-                              ...(d.formulation.additives[idx] || {}),
-                              pct: e.target.value ? parseFloat(e.target.value) : null,
-                            }
-                          })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Button
-                        type="button"
-                        variant="outlined"
-                        color="error"
-                        size="small"
-                        onClick={() =>
-                          update((d) => {
-                            if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
-                            d.formulation.additives.splice(idx, 1)
-                          })
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-
-                <TableRow>
-                  <TableCell />
-                  <TableCell />
-                  <TableCell align="right">
-                    <Button
-                      type="button"
-                      variant="outlined"
-                      size="small"
-                      sx={{ whiteSpace: 'nowrap' }}
-                      onClick={() =>
-                        update((d) => {
-                          if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
-                          const defaultCode = additiveOptions[0]?.additive_code || ''
-                          d.formulation.additives.push({ additive_code: defaultCode, pct: null })
-                        })
-                      }
-                    >
-                      Add Additive
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </Paper>
-        </Box>
+        <MaterialsColoursAndAdditives
+          colourOptions={colours}
+          additiveOptions={additiveOptions}
+          colourRows={colourRowsForMaterials}
+          onColourRowsChange={handleMaterialsColourRowsChange}
+          additiveRows={additiveRowsForMaterials}
+          onAdditiveRowsChange={handleMaterialsAdditiveRowsChange}
+        />
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1284,7 +1238,18 @@ export function SpecPayloadForm(props: {
               update((d) => {
                 const next = e.target.value
                 d.printing.method = next
-                if (next === 'Inline' && !d.printing.side) d.printing.side = 'front'
+                if ((next === 'Inline' || next === 'Uteco') && !d.printing.side) d.printing.side = 'front'
+                if (next !== 'Uteco') {
+                  d.printing.cylinder_size_mm = null
+                  d.printing.anilox_code = null
+                  for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
+                    const arr = Array.isArray(d.printing[key]) ? d.printing[key] : []
+                    d.printing[key] = arr.map((row: any) => ({
+                      ink_code: row?.ink_code ?? '',
+                      plate_code: row?.plate_code ?? '',
+                    }))
+                  }
+                }
               })
             }
             error={!!errorFor('spec.printing.method') || !!firstErrorForPrefix('spec.printing')}
@@ -1295,33 +1260,28 @@ export function SpecPayloadForm(props: {
             <MenuItem value="Uteco">Uteco</MenuItem>
           </TextField>
 
-          <TextField
-            select
-            label="Print Side"
-            value={printing.side || ''}
-            onChange={(e) => update((d) => (d.printing.side = e.target.value || null))}
-            disabled={!printingEnabled}
-          >
-            <MenuItem value="">-</MenuItem>
-            <MenuItem value="front">front</MenuItem>
-            <MenuItem value="back">back</MenuItem>
-            <MenuItem value="both">both</MenuItem>
-          </TextField>
-
-          <TextField
-            label="Print Description"
-            value={printing.print_description || ''}
-            onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
-            disabled={!printingEnabled}
-            multiline
-            minRows={2}
-          >
-          </TextField>
+          {printingEnabled && (
+            <DefaultSelectField
+              defaultValue="front"
+              label="Print Side"
+              value={printing.side || 'front'}
+              onChange={(e) => update((d) => (d.printing.side = (e.target.value || 'front') as any))}
+            >
+              <MenuItem value="front">Front</MenuItem>
+              <MenuItem value="back">Back</MenuItem>
+              <MenuItem value="both">Both</MenuItem>
+            </DefaultSelectField>
+          )}
         </Box>
 
-        {printingEnabled && printing.method === 'Inline' ? (
+        {printingEnabled ? (
           <Box sx={{ mt: 2 }}>
-            {(printing.side === 'front' || printing.side === 'both') && (
+            {printing.method === 'Uteco' && aniloxErr ? (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                {aniloxErr}
+              </Alert>
+            ) : null}
+            {((printing.side || 'front') === 'front' || printing.side === 'both') && (
               <Box sx={{ mb: 2 }}>
                 <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
                   <Typography variant="subtitle1">Front print</Typography>
@@ -1332,7 +1292,8 @@ export function SpecPayloadForm(props: {
                     onClick={() =>
                       update((d) => {
                         ensureFixedInkPlateRows(d)
-                        d.printing.front_ink_plate = Array.from({ length: 4 }, () => ({ ink_code: '', plate_code: '' }))
+                        const empty = emptyInkPlateRow(d.printing.method)
+                        d.printing.front_ink_plate = Array.from({ length: 5 }, () => ({ ...empty }))
                         syncLegacyInkPlateFromPairs(d)
                       })
                     }
@@ -1345,53 +1306,138 @@ export function SpecPayloadForm(props: {
                     {inksErr || platesErr}
                   </Alert>
                 )}
-                <Paper variant="outlined" sx={{ p: 1 }}>
-                  <Table size="small" sx={{ tableLayout: 'fixed' }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ width: '50%' }}>Ink</TableCell>
-                        <TableCell sx={{ width: '50%' }}>Plate</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {[0, 1, 2, 3].map((idx) => {
-                        const row: any = (Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate[idx] : null) || {}
-                        return (
-                          <TableRow key={idx} hover>
-                            <TableCell>
-                              <InkSelect
-                                options={inks}
-                                valueCode={row?.ink_code || ''}
-                                label={`Ink ${idx + 1}`}
-                                onChangeCode={(nextCode) =>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Ink</TableCell>
+                      <TableCell>Plate</TableCell>
+                      {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
+                      <TableCell />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {ensureMinRows(
+                      Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate : [],
+                      printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
+                      5,
+                    ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
+                      const r =
+                        printing.method === 'Uteco'
+                          ? {
+                              ink_code: row?.ink_code || '',
+                              plate_code: row?.plate_code || '',
+                              anilox_code: row?.anilox_code ?? '',
+                            }
+                          : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
+                      const defaults =
+                        printing.method === 'Uteco'
+                          ? { ink_code: '', plate_code: '', anilox_code: '' }
+                          : { ink_code: '', plate_code: '' }
+                      const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
+                      return (
+                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                          <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
+                            <InkSelect
+                              options={inks}
+                              valueCode={r.ink_code}
+                              label={`Ink ${idx + 1}`}
+                              onChangeCode={(nextCode) =>
+                                update((d) => {
+                                  ensureFixedInkPlateRows(d)
+                                  d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), ink_code: nextCode }
+                                  syncLegacyInkPlateFromPairs(d)
+                                })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
+                            <PlateSelect
+                              options={plates}
+                              valueCode={r.plate_code}
+                              label={`Plate ${idx + 1}`}
+                              onChangeCode={(nextCode) =>
+                                update((d) => {
+                                  ensureFixedInkPlateRows(d)
+                                  d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
+                                  syncLegacyInkPlateFromPairs(d)
+                                })
+                              }
+                            />
+                          </TableCell>
+                          {printing.method === 'Uteco' ? (
+                            <TableCell sx={{ width: '24%' }}>
+                              <TextField
+                                select
+                                size="small"
+                                fullWidth
+                                hiddenLabel
+                                value={(r as { anilox_code: string }).anilox_code || ''}
+                                SelectProps={{
+                                  displayEmpty: true,
+                                  renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
+                                }}
+                                onChange={(e) =>
                                   update((d) => {
                                     ensureFixedInkPlateRows(d)
-                                    d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), ink_code: nextCode }
+                                    d.printing.front_ink_plate[idx] = {
+                                      ...(d.printing.front_ink_plate[idx] || {}),
+                                      anilox_code: e.target.value || null,
+                                    }
                                     syncLegacyInkPlateFromPairs(d)
                                   })
                                 }
-                              />
+                              >
+                                <MenuItem value="">
+                                  <em>None</em>
+                                </MenuItem>
+                                {aniloxOptions.map((a) => (
+                                  <MenuItem key={a.anilox_code} value={a.anilox_code}>
+                                    {a.anilox_code} — {a.description}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
                             </TableCell>
-                            <TableCell>
-                              <PlateSelect
-                                options={plates}
-                                valueCode={row?.plate_code || ''}
-                                label={`Plate ${idx + 1}`}
-                                onChangeCode={(nextCode) =>
-                                  update((d) => {
-                                    ensureFixedInkPlateRows(d)
-                                    d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
-                                    syncLegacyInkPlateFromPairs(d)
-                                  })
-                                }
-                              />
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                </Paper>
+                          ) : null}
+                          <TableCell sx={{ width: '10%' }}>
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() =>
+                                update((d) => {
+                                  ensureFixedInkPlateRows(d)
+                                  const cur = d.printing.front_ink_plate
+                                  if (cur.length > 5) {
+                                    cur.splice(idx, 1)
+                                  } else {
+                                    cur[idx] = emptyInkPlateRow(d.printing.method)
+                                  }
+                                  syncLegacyInkPlateFromPairs(d)
+                                })
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+                <Box sx={{ mt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() =>
+                      update((d) => {
+                        ensureFixedInkPlateRows(d)
+                        d.printing.front_ink_plate.push(emptyInkPlateRow(d.printing.method))
+                        syncLegacyInkPlateFromPairs(d)
+                      })
+                    }
+                  >
+                    Add row
+                  </Button>
+                </Box>
               </Box>
             )}
 
@@ -1406,7 +1452,8 @@ export function SpecPayloadForm(props: {
                     onClick={() =>
                       update((d) => {
                         ensureFixedInkPlateRows(d)
-                        d.printing.back_ink_plate = Array.from({ length: 4 }, () => ({ ink_code: '', plate_code: '' }))
+                        const empty = emptyInkPlateRow(d.printing.method)
+                        d.printing.back_ink_plate = Array.from({ length: 5 }, () => ({ ...empty }))
                         syncLegacyInkPlateFromPairs(d)
                       })
                     }
@@ -1419,76 +1466,173 @@ export function SpecPayloadForm(props: {
                     {inksErr || platesErr}
                   </Alert>
                 )}
-                <Paper variant="outlined" sx={{ p: 1 }}>
-                  <Table size="small" sx={{ tableLayout: 'fixed' }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ width: '50%' }}>Ink</TableCell>
-                        <TableCell sx={{ width: '50%' }}>Plate</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {[0, 1, 2, 3].map((idx) => {
-                        const row: any = (Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate[idx] : null) || {}
-                        return (
-                          <TableRow key={idx} hover>
-                            <TableCell>
-                              <InkSelect
-                                options={inks}
-                                valueCode={row?.ink_code || ''}
-                                label={`Ink ${idx + 1}`}
-                                onChangeCode={(nextCode) =>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Ink</TableCell>
+                      <TableCell>Plate</TableCell>
+                      {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
+                      <TableCell />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {ensureMinRows(
+                      Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate : [],
+                      printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
+                      5,
+                    ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
+                      const r =
+                        printing.method === 'Uteco'
+                          ? {
+                              ink_code: row?.ink_code || '',
+                              plate_code: row?.plate_code || '',
+                              anilox_code: row?.anilox_code ?? '',
+                            }
+                          : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
+                      const defaults =
+                        printing.method === 'Uteco'
+                          ? { ink_code: '', plate_code: '', anilox_code: '' }
+                          : { ink_code: '', plate_code: '' }
+                      const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
+                      return (
+                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                          <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
+                            <InkSelect
+                              options={inks}
+                              valueCode={r.ink_code}
+                              label={`Ink ${idx + 1}`}
+                              onChangeCode={(nextCode) =>
+                                update((d) => {
+                                  ensureFixedInkPlateRows(d)
+                                  d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), ink_code: nextCode }
+                                  syncLegacyInkPlateFromPairs(d)
+                                })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
+                            <PlateSelect
+                              options={plates}
+                              valueCode={r.plate_code}
+                              label={`Plate ${idx + 1}`}
+                              onChangeCode={(nextCode) =>
+                                update((d) => {
+                                  ensureFixedInkPlateRows(d)
+                                  d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
+                                  syncLegacyInkPlateFromPairs(d)
+                                })
+                              }
+                            />
+                          </TableCell>
+                          {printing.method === 'Uteco' ? (
+                            <TableCell sx={{ width: '24%' }}>
+                              <TextField
+                                select
+                                size="small"
+                                fullWidth
+                                hiddenLabel
+                                value={(r as { anilox_code: string }).anilox_code || ''}
+                                SelectProps={{
+                                  displayEmpty: true,
+                                  renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
+                                }}
+                                onChange={(e) =>
                                   update((d) => {
                                     ensureFixedInkPlateRows(d)
-                                    d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), ink_code: nextCode }
+                                    d.printing.back_ink_plate[idx] = {
+                                      ...(d.printing.back_ink_plate[idx] || {}),
+                                      anilox_code: e.target.value || null,
+                                    }
                                     syncLegacyInkPlateFromPairs(d)
                                   })
                                 }
-                              />
+                              >
+                                <MenuItem value="">
+                                  <em>None</em>
+                                </MenuItem>
+                                {aniloxOptions.map((a) => (
+                                  <MenuItem key={a.anilox_code} value={a.anilox_code}>
+                                    {a.anilox_code} — {a.description}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
                             </TableCell>
-                            <TableCell>
-                              <PlateSelect
-                                options={plates}
-                                valueCode={row?.plate_code || ''}
-                                label={`Plate ${idx + 1}`}
-                                onChangeCode={(nextCode) =>
-                                  update((d) => {
-                                    ensureFixedInkPlateRows(d)
-                                    d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
-                                    syncLegacyInkPlateFromPairs(d)
-                                  })
-                                }
-                              />
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                </Paper>
+                          ) : null}
+                          <TableCell sx={{ width: '10%' }}>
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() =>
+                                update((d) => {
+                                  ensureFixedInkPlateRows(d)
+                                  const cur = d.printing.back_ink_plate
+                                  if (cur.length > 5) {
+                                    cur.splice(idx, 1)
+                                  } else {
+                                    cur[idx] = emptyInkPlateRow(d.printing.method)
+                                  }
+                                  syncLegacyInkPlateFromPairs(d)
+                                })
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+                <Box sx={{ mt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() =>
+                      update((d) => {
+                        ensureFixedInkPlateRows(d)
+                        d.printing.back_ink_plate.push(emptyInkPlateRow(d.printing.method))
+                        syncLegacyInkPlateFromPairs(d)
+                      })
+                    }
+                  >
+                    Add row
+                  </Button>
+                </Box>
+              </Box>
+            )}
+
+            {printing.method === 'Uteco' && (
+              <Box sx={{ mt: 2, maxWidth: { xs: '100%', md: 400 } }}>
+                <TextField
+                  label="Cylinder size (mm)"
+                  type="number"
+                  value={printing.cylinder_size_mm ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    update((d) => {
+                      d.printing.cylinder_size_mm = v === '' ? null : Number(v)
+                    })
+                  }}
+                  fullWidth
+                  inputProps={{ min: 0, step: 'any' }}
+                  helperText="Cylinder width in millimetres"
+                />
               </Box>
             )}
           </Box>
         ) : null}
 
-        {printingEnabled && printing.method === 'Uteco' ? (
-          <Box sx={{ mt: 2 }}>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-              <TextField
-                label="Ink Codes (comma-separated)"
-                value={listToCsv(printing.ink_codes)}
-                onChange={(e) => update((d) => (d.printing.ink_codes = csvToList(e.target.value)))}
-                disabled={!printingEnabled}
-              />
-              <TextField
-                label="Plate Codes (comma-separated)"
-                value={listToCsv(printing.plate_codes)}
-                onChange={(e) => update((d) => (d.printing.plate_codes = csvToList(e.target.value)))}
-                disabled={!printingEnabled}
-              />
-            </Box>
-          </Box>
-        ) : null}
+        {printingEnabled && (
+          <TextField
+            label="Print Description"
+            value={printing.print_description || ''}
+            onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
+            multiline
+            minRows={2}
+            fullWidth
+            sx={{ mt: 2 }}
+          />
+        )}
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1500,7 +1644,7 @@ export function SpecPayloadForm(props: {
           {[
             { id: 'tight_gauge', label: 'Tight gauge tolerance' },
             { id: 'seal_integrity', label: 'Seal integrity critical' },
-            { id: 'cosmetic', label: 'Cosmetic critical' },
+            { id: 'cosmetic', label: 'Printing Quality' },
             { id: 'colour', label: 'Colour critical' },
           ].map((f) => (
             <FormControlLabel
@@ -1579,45 +1723,7 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-          <TextField
-            select
-            label="Trim"
-            value={trimSelect}
-            onChange={(e) => {
-              const v = e.target.value
-              setTrimSelect(v)
-              update((d) => {
-                if (!v) d.identity.trim_pct = null
-                else if (v === 'custom') d.identity.trim_pct = d.identity.trim_pct ?? 5
-                else d.identity.trim_pct = parseFloat(v)
-              })
-            }}
-            error={!!errorFor('spec.identity.trim_pct')}
-            helperText={errorFor('spec.identity.trim_pct') || ''}
-          >
-            <MenuItem value="">-</MenuItem>
-            <MenuItem value="5">5%</MenuItem>
-            <MenuItem value="10">10%</MenuItem>
-            <MenuItem value="20">20%</MenuItem>
-            <MenuItem value="custom">Custom…</MenuItem>
-          </TextField>
-
-          <TextField
-            label="Custom trim (%)"
-            type="number"
-            inputProps={{ min: 0, step: 0.1 }}
-            value={trimSelect === 'custom' ? (identity.trim_pct ?? '') : ''}
-            onChange={(e) =>
-              update((d) => {
-                d.identity.trim_pct = e.target.value ? parseFloat(e.target.value) : null
-              })
-            }
-            disabled={trimSelect !== 'custom'}
-            error={!!errorFor('spec.identity.trim_pct')}
-            helperText={errorFor('spec.identity.trim_pct') || (trimSelect === 'custom' ? '' : 'Only used when Trim = Custom')}
-          />
-
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
           <TextField
             select
             label="Slit"
@@ -1642,39 +1748,6 @@ export function SpecPayloadForm(props: {
             <MenuItem value="none">none</MenuItem>
             <MenuItem value="inside">inside</MenuItem>
             <MenuItem value="outside">outside</MenuItem>
-          </TextField>
-
-          <TextField
-            select
-            label="Run Up"
-            value={(run.run_up as string | undefined) || 'none'}
-            onChange={(e) =>
-              update((d) => {
-                d.run_requirements.run_up = String(e.target.value || 'none')
-              })
-            }
-            disabled={!runUpAllowed}
-            helperText={
-              productType === PRODUCT_TYPE.Centerfold
-                ? 'Centerfold can be run 2 up'
-                : productType === PRODUCT_TYPE.Sheet
-                  ? 'Sheet can be run 2/4/6 up'
-                  : 'Not available for this product type'
-            }
-            error={!!errorFor('spec.run_requirements.run_up')}
-          >
-            <MenuItem value="none">-</MenuItem>
-            {runUpAllowed && <MenuItem value="2up">2 up</MenuItem>}
-            {productType === PRODUCT_TYPE.Sheet
-              ? [
-                  <MenuItem key="4up" value="4up">
-                    4 up
-                  </MenuItem>,
-                  <MenuItem key="6up" value="6up">
-                    6 up
-                  </MenuItem>,
-                ]
-              : null}
           </TextField>
         </Box>
 
@@ -1703,72 +1776,38 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-          <TextField
-            label="Finish Mode"
-            value={finishMode}
-            InputProps={{ readOnly: true }}
-            helperText="From Product Identity"
-            disabled
-          />
-
-          {finishMode === 'Rolls' ? (
-            <TextField
-              select
-              label="Core Type"
-              value={packaging.core_type || '7mm'}
-              onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
+        <Stack spacing={2}>
+          {finishMode === 'Cartons' && cartonOptions.length > 0 ? (
+            <DefaultSelectField
+              label="Carton option"
+              defaultValue={cartonOptions.find((o) => o.is_default)?.slug ?? cartonOptions[0]?.slug ?? ''}
+              value={packaging.carton_option_slug ?? (cartonOptions.find((o) => o.is_default)?.slug ?? cartonOptions[0]?.slug ?? '')}
+              onChange={(e) => update((d) => (d.packaging.carton_option_slug = e.target.value || null))}
             >
-              {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+              <MenuItem value="">—</MenuItem>
+              {cartonOptions.map((opt) => (
+                <MenuItem key={opt.slug} value={opt.slug}>
+                  {opt.name} (${Number(opt.cost_per_unit).toFixed(2)})
+                </MenuItem>
+              ))}
+            </DefaultSelectField>
+          ) : null}
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+            <DefaultSelectField
+              label="Pallet Type"
+              defaultValue="Chep"
+              value={packaging.pallet_type || 'Chep'}
+              onChange={(e) => update((d) => (d.packaging.pallet_type = e.target.value))}
+            >
+              {['Chep', 'Plain', 'Resin', 'None'].map((v) => (
                 <MenuItem key={v} value={v}>
                   {v}
                 </MenuItem>
               ))}
-            </TextField>
-          ) : null}
-
-          {finishMode === 'Rolls' ? (
-            <TextField
-              select
-              label="Roll weight billing"
-              value={identity.roll_weight_billing || 'core_included'}
-              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
-              helperText="How core weight is treated when billing."
-              error={!!errorFor('spec.identity.roll_weight_billing')}
-            >
-              <MenuItem value="core_included">Include core</MenuItem>
-              <MenuItem value="core_off">Exclude core</MenuItem>
-              <MenuItem value="core_half_off">Half core</MenuItem>
-            </TextField>
-          ) : null}
-
-          {finishMode !== 'Rolls' ? (
-            <TextField
-              label="Bags per Carton"
-              type="number"
-              inputProps={{ min: 1, step: 1 }}
-              value={packaging.bags_per_carton ?? ''}
-              onChange={(e) =>
-                update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
-              }
-              helperText="Required when Finish Mode = Cartons"
-              error={!!errorFor('spec.packaging.bags_per_carton')}
-            />
-          ) : null}
-
-          <TextField
-            select
-            label="Pallet Type"
-            value={packaging.pallet_type || 'Chep'}
-            onChange={(e) => update((d) => (d.packaging.pallet_type = e.target.value))}
-          >
-            {['Chep', 'Plain', 'Resin', 'None'].map((v) => (
-              <MenuItem key={v} value={v}>
-                {v}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
+            </DefaultSelectField>
+          </Box>
+        </Stack>
 
         <Box sx={{ mt: 2 }}>
           <TextField

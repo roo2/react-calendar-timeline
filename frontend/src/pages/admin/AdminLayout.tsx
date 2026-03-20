@@ -6,6 +6,7 @@ const items = [
   { to: '/admin/resins', label: 'Resins' },
   { to: '/admin/extrusion', label: 'Extrusion' },
   { to: '/admin/printing', label: 'Printing' },
+  { to: '/admin/printing/anilox', label: 'Anilox (Uteco)' },
   { to: '/admin/cores', label: 'Cores' },
   { to: '/admin/conversion', label: 'Packing / Conversion' },
   { to: '/admin/packaging', label: 'Shipping / Pallets' },

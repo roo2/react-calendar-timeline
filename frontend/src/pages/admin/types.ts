@@ -16,6 +16,7 @@ export type Colour = {
   name: string
   price_per_kg: number
   sort_order: number
+  short_code?: string | null
 }
 
 export type ResinBlend = {
@@ -67,6 +68,11 @@ export type Plate = {
   customer_id: string
   plate_code: string
   description?: string | null
+}
+
+export type Anilox = {
+  anilox_code: string
+  description: string
 }
 
 export type CustomerSummary = {

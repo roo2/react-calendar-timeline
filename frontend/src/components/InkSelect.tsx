@@ -20,13 +20,7 @@ export function InkSelect(props: {
       isOptionEqualToValue={(a, b) => a.ink_code === b.ink_code}
       onChange={(_e, v) => onChangeCode(v?.ink_code || '')}
       renderInput={(params) => (
-        <TextField
-          {...params}
-          label={label || 'Ink'}
-          error={error}
-          helperText={helperText ?? ' '}
-          FormHelperTextProps={{ sx: { minHeight: 20 } }}
-        />
+        <TextField {...params} label={label || 'Ink'} error={error} helperText={helperText} />
       )}
     />
   )

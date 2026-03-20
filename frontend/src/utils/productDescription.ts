@@ -1,5 +1,9 @@
 function up(v: unknown): string {
-  return (v == null ? '' : String(v)).trim().toUpperCase()
+  if (v == null) return ''
+  let s = String(v).trim()
+  // If a TS enum name leaks through (e.g. "ProductType.BAG"), keep the final segment.
+  if (s.includes('.')) s = s.split('.').pop() || s
+  return s.toUpperCase()
 }
 
 function intStr(v: unknown, fallback: string = '-'): string {
@@ -37,6 +41,18 @@ function deriveNumColours(printing: any): number {
     }
   }
   return inks.size
+}
+
+/** Total number of inks used for printing (front + back plate count). Used for product code xP suffix. */
+function totalPrintInks(printing: any): number {
+  const front = Array.isArray(printing?.front_ink_plate) ? printing.front_ink_plate : []
+  const back = Array.isArray(printing?.back_ink_plate) ? printing.back_ink_plate : []
+  const count = (rows: any[]) => rows.filter((r) => (r?.ink_code ?? '').toString().trim()).length
+  const n = count(front) + count(back)
+  if (n > 0) return n
+  const explicit = intOrNull(printing?.num_colours)
+  if (explicit != null && explicit > 0) return explicit
+  return deriveNumColours(printing)
 }
 
 export function computeProductDescriptionFromSpec(spec: any): string {
@@ -97,11 +113,96 @@ export function computeProductDescriptionFromSpec(spec: any): string {
   const includeLen = baseLenMm != null
   const lengthSeg = includeLen ? `${intStr(baseLenMm)}mm` : ''
 
-  const name = [resin, lfOrG, productType, colour].filter(Boolean).join(' ').trim() || 'UNKNOWN PRODUCT'
-  const dimsSeg = `W${widthSeg} X ${gauge}µm${includeLen ? ` X L${lengthSeg}` : ''}`
-  const parts = [`${name}.`]
+  // Gauge should be the last of the dimensions: W... X L... X <gauge>µm
+  const dimsSeg = includeLen ? `W${widthSeg} X L${lengthSeg} X ${gauge}µm` : `W${widthSeg} X ${gauge}µm`
+
+  // Order: product type -> dimensions -> colour -> printing attributes.
+  const typeSeg = [productType, resin, lfOrG].filter(Boolean).join(' ').trim() || 'UNKNOWN PRODUCT'
+  const parts = [`${typeSeg}.`, `${dimsSeg}.`]
+  if (colour) parts.push(`${colour}.`)
   if (printedSeg) parts.push(`${printedSeg}.`)
-  parts.push(`${dimsSeg}.`)
   return parts.join(' ')
 }
 
+/** Product type to 2-letter prefix for product code */
+const PRODUCT_TYPE_PREFIX: Record<string, string> = {
+  BAG: 'PB',
+  TUBE: 'PT',
+  SLEEVE: 'SV',
+  SHEET: 'ST',
+  CENTERFOLD: 'CF',
+  'U-FILM': 'UF',
+  UFILM: 'UF',
+}
+
+/**
+ * Compute product code from spec only (e.g. PBR-(200+50)-600-50-BLK-2P).
+ * Does not include a customer prefix; format: {Type}{R|C}-{Width}-{LengthMm}-{GaugeUm}-{Colour3}-{Print?}
+ */
+export function computeProductCodeFromSpec(spec: any): string {
+  const identity = spec?.identity || {}
+  const dims = spec?.dimensions || {}
+  const formulation = spec?.formulation || {}
+  const printing = spec?.printing || {}
+
+  const productType = up(identity?.product_type)
+  const typePrefix = PRODUCT_TYPE_PREFIX[productType] || 'XX'
+  const finishMode = up(identity?.finish_mode)
+  const finishChar = finishMode === 'CARTONS' ? 'C' : 'R'
+
+  const geometry = up(dims?.geometry)
+  const baseWidth = intOrNull(dims?.base_width_mm)
+  const gussetMm = intOrNull(dims?.gusset_mm) || 0
+  const hasGusset = geometry === 'GUSSET' || gussetMm > 0
+  const isCenterfold = productType === 'CENTERFOLD' || geometry === 'CENTREFOLD'
+  const isUFilm = productType === 'U-FILM' || productType === 'UFILM'
+
+  let widthSeg = intStr(dims?.base_width_mm, '')
+  if (widthSeg) {
+    if (hasGusset && gussetMm > 0) {
+      widthSeg = `(${intStr(dims?.base_width_mm)}+${gussetMm})`
+    } else if (isCenterfold && baseWidth != null) {
+      const layflat = Math.round(baseWidth / 2)
+      widthSeg = `${layflat}(${baseWidth})`
+    } else if (isUFilm) {
+      const l = intOrNull(dims?.ufilm_left_width_mm) ?? 0
+      const r = intOrNull(dims?.ufilm_right_width_mm) ?? 0
+      const w = baseWidth ?? 0
+      widthSeg = `${l}/${w}/${r}`
+    }
+  }
+
+  const lengthMm = intStr(dims?.base_length_mm, '')
+  const gaugeUm = intStr(dims?.thickness_um, '')
+
+  let colourCode = ''
+  const comps = formulation?.colour_components
+  if (Array.isArray(comps)) {
+    for (const row of comps) {
+      const cc = (row?.colour_code ?? '').toString().trim()
+      if (cc) {
+        colourCode = up(cc).slice(0, 3)
+        break
+      }
+    }
+  }
+  if (!colourCode && formulation?.colour?.colour_code) {
+    colourCode = up(formulation.colour.colour_code).slice(0, 3)
+  }
+
+  let printSeg = ''
+  const method = up(printing?.method)
+  if (method && method !== 'NONE') {
+    const n = totalPrintInks(printing)
+    if (n > 0) printSeg = `${n}P`
+  }
+
+  const parts = [`${typePrefix}${finishChar}`]
+  if (widthSeg) parts.push(widthSeg)
+  if (lengthMm) parts.push(lengthMm)
+  if (gaugeUm) parts.push(gaugeUm)
+  if (colourCode) parts.push(colourCode)
+  if (printSeg) parts.push(printSeg)
+
+  return parts.filter(Boolean).join('-')
+}

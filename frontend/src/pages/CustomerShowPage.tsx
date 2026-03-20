@@ -84,7 +84,7 @@ export function CustomerShowPage() {
         <Alert severity="error" sx={{ mb: 2 }}>
           {err}
         </Alert>
-        <Button component={Link} to="/customers" variant="outlined">
+        <Button component={Link} to="/customers" variant="text" color="primary">
           Back to Customers
         </Button>
       </Box>
@@ -109,7 +109,7 @@ export function CustomerShowPage() {
           </Typography>
         </Box>
         {canEdit && (
-          <Button variant="contained" component={Link} to={`/customers/${customer.id}/edit`}>
+          <Button variant="outlined" component={Link} to={`/customers/${customer.id}/edit`}>
             Edit Customer
           </Button>
         )}
@@ -472,7 +472,7 @@ export function CustomerShowPage() {
       )}
 
       <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid', borderColor: 'divider' }}>
-        <Button component={Link} to="/customers" variant="outlined">
+        <Button component={Link} to="/customers" variant="text" color="primary">
           Back to Customers
         </Button>
       </Box>

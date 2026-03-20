@@ -681,15 +681,16 @@ export function CustomerUpsertPage() {
 
         <Divider />
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Button variant="contained" onClick={submit} disabled={saving}>
-            {saving ? 'Saving…' : isEdit ? 'Update Customer' : 'Create Customer'}
-          </Button>
           <Button
-            variant="outlined"
+            variant="text"
+            color="primary"
             component={Link}
             to={isEdit && customerId ? `/customers/${customerId}` : '/customers'}
           >
             Cancel
+          </Button>
+          <Button variant="contained" onClick={submit} disabled={saving}>
+            {saving ? 'Saving…' : isEdit ? 'Update Customer' : 'Create Customer'}
           </Button>
         </Box>
       </Stack>

@@ -13,6 +13,8 @@ type JobSheetSummary = {
   quantity_value: number
   quantity_unit: string
   created_at?: string | null
+  invoice_no?: string | null
+  order_date?: string | null
 }
 
 function fmtQty(v: number, u: string) {
@@ -68,33 +70,35 @@ export function JobSheetsPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 180 }}>Job No</TableCell>
+                <TableCell sx={{ width: 180 }}>Invoice No</TableCell>
                 <TableCell sx={{ width: 220 }}>Customer</TableCell>
                 <TableCell sx={{ width: 220 }}>Product</TableCell>
                 <TableCell>Qty</TableCell>
-                <TableCell sx={{ width: 140 }}>Due</TableCell>
+                <TableCell sx={{ width: 120 }}>Order Date</TableCell>
+                <TableCell sx={{ width: 120 }}>Due Date</TableCell>
                 <TableCell sx={{ width: 200 }}>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {items.map((r) => (
                 <TableRow key={r.id} hover>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{r.job_no}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace' }}>{r.invoice_no ?? ''}</TableCell>
                   <TableCell>{r.customer_name || '-'}</TableCell>
                   <TableCell>
                     <strong>{r.product_code}</strong>
                     {r.product_description ? ` — ${r.product_description}` : ''}
                   </TableCell>
                   <TableCell>{fmtQty(Number(r.quantity_value || 0), r.quantity_unit)}</TableCell>
-                  <TableCell>{r.due_date || '-'}</TableCell>
+                  <TableCell>{r.order_date ?? '-'}</TableCell>
+                  <TableCell>{r.due_date ?? '-'}</TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <Button size="small" variant="outlined" component={Link} to={`/job-sheets/${r.id}`}>
+                      <Button size="small" variant="text" color="primary" component={Link} to={`/job-sheets/${r.id}`}>
                         View
                       </Button>
                       <Button
                         size="small"
-                        variant="contained"
+                        variant="outlined"
                         component={Link}
                         to={`/job-sheets/${r.id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
                       >
@@ -106,7 +110,7 @@ export function JobSheetsPage() {
               ))}
               {items.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} sx={{ color: 'text.secondary' }}>
+                  <TableCell colSpan={7} sx={{ color: 'text.secondary' }}>
                     No job sheets yet.
                   </TableCell>
                 </TableRow>

@@ -42,6 +42,8 @@ class PrintSide(str, Enum):
 class InkPlatePair(BaseModel):
     ink_code: Optional[str] = None
     plate_code: Optional[str] = None
+    # Uteco: anilox roll per ink/plate line (references rate-card anilox table)
+    anilox_code: Optional[str] = None
 
 
 class TreatIO(str, Enum):
@@ -104,7 +106,7 @@ class AdditiveComponent(BaseModel):
 
 
 class FormulationSpec(BaseModel):
-    # Free-form label/code (e.g. "Custom" or a preset blend_code like "HOUSE_LD").
+    # Free-form label/code (e.g. "Custom" or a preset blend_code like "LD").
     # UI only allows selecting valid options, so we don't constrain this in the schema.
     blend_type: Optional[str] = "Custom"
     blend: List[ResinComponent]
@@ -129,6 +131,10 @@ class PrintingSpec(BaseModel):
     artwork_refs: List[str] = []
     front_ink_plate: List[InkPlatePair] = []
     back_ink_plate: List[InkPlatePair] = []
+    # Uteco-only: cylinder (width) in mm. Per-line anilox is on InkPlatePair.anilox_code.
+    cylinder_size_mm: Optional[float] = None
+    # Deprecated: use front_ink_plate[].anilox_code / back_ink_plate[].anilox_code; kept for old saved specs.
+    anilox_code: Optional[str] = None
 
 
 class QualityExpectationsSpec(BaseModel):

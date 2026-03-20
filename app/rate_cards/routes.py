@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.auth.deps import allow_roles_any
 from app.db.models.rate_cards import (
     Additive,
+    Anilox,
     CartonOption,
     Colour,
     ConversionFactor,
@@ -73,6 +74,13 @@ async def list_additives():
     with SessionLocal() as db:
         rows = db.execute(select(Additive.additive_code, Additive.name).order_by(Additive.additive_code.asc())).all()
         return [{"additive_code": r[0], "name": r[1]} for r in rows]
+
+
+@router.get("/anilox", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def list_anilox():
+    with SessionLocal() as db:
+        rows = db.execute(select(Anilox.anilox_code, Anilox.description).order_by(Anilox.anilox_code.asc())).all()
+        return [{"anilox_code": r[0], "description": r[1]} for r in rows]
 
 
 @router.get("/inks", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])

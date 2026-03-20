@@ -207,6 +207,8 @@ def upgrade() -> None:
         sa.Column("due_date", sa.DateTime(timezone=True), nullable=True),
         sa.Column("quantity_value", sa.Numeric(18, 6), nullable=False),
         sa.Column("quantity_unit", sa.String(length=16), nullable=False),
+        sa.Column("unit_rate", sa.Numeric(18, 6), nullable=True),
+        sa.Column("line_total", sa.Numeric(18, 6), nullable=True),
         sa.Column("created_by", sa.String(length=100), nullable=False),
         sa.Column(
             "created_at",
@@ -286,6 +288,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("quote_id", sa.String(length=36), nullable=True),
+        sa.Column("order_date", sa.Date(), nullable=True),
         sa.Column("status", sa.Enum(name="order_status", native_enum=False), nullable=False),
         sa.Column(
             "created_at",
@@ -863,6 +866,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("price_per_kg", sa.Numeric(12, 4), nullable=False),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("short_code", sa.String(length=3), nullable=True),
         sa.CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),
     )
 

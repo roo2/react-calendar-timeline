@@ -51,7 +51,7 @@ export function ProductVersionShowPage() {
         <Alert severity="error" sx={{ mb: 2 }}>
           {err}
         </Alert>
-        <Button component={Link} to={productId ? `/products/${productId}` : '/products'} variant="outlined">
+        <Button component={Link} to={productId ? `/products/${productId}` : '/products'} variant="text" color="primary">
           Back
         </Button>
       </Box>
@@ -86,11 +86,6 @@ export function ProductVersionShowPage() {
           <MuiLink component={Link} to={`/products/${productId}`} underline="hover" sx={{ alignSelf: 'center' }}>
             View Previous Versions
           </MuiLink>
-          {isPm && (
-            <Button variant="contained" component={Link} to={`/products/${productId}/versions/new`}>
-              Edit
-            </Button>
-          )}
           <Button
             variant="outlined"
             component={Link}
@@ -100,6 +95,11 @@ export function ProductVersionShowPage() {
           >
             Print
           </Button>
+          {isPm && (
+            <Button variant="outlined" component={Link} to={`/products/${productId}/versions/new`}>
+              Edit
+            </Button>
+          )}
         </Box>
       </Box>
 

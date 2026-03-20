@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db.session import SessionLocal
 from app.db.models.domain import Customer, Product, ProductVersion, JobSheet
 from app.exceptions import DomainError
-from app.products.service import _next_version_number  # reuse version numbering helper
+from app.products.service import _next_version_number, compute_product_code_full  # reuse version numbering helper
 from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest
 
 
@@ -89,6 +89,13 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
         product.active_version_id = version.id
         db.add(product)
 
+        # Ensure product code matches the linked version spec payload.
+        if isinstance(getattr(version, "spec_payload", None), dict):
+            new_code = compute_product_code_full(product, version.spec_payload)
+            if new_code and new_code != getattr(product, "code", None):
+                product.code = new_code
+                db.add(product)
+
         due_dt: Optional[datetime] = None
         if payload.due_date is not None:
             due_dt = datetime.combine(payload.due_date, time.min)
@@ -136,6 +143,8 @@ def create_job_sheet_from_product_latest_version(
     quantity_value: float,
     quantity_unit: str,
     created_by: str,
+    unit_rate: Optional[float] = None,
+    line_total: Optional[float] = None,
 ) -> JobSheet:
     """
     Create a job sheet that references the product's *current active version*.
@@ -171,6 +180,8 @@ def create_job_sheet_from_product_latest_version(
                     due_date=due_date,
                     quantity_value=float(quantity_value),
                     quantity_unit=str(quantity_unit),
+                    unit_rate=float(unit_rate) if unit_rate is not None else None,
+                    line_total=float(line_total) if line_total is not None else None,
                     created_by=created_by or "system",
                 )
                 db.add(js)
@@ -197,7 +208,34 @@ def list_job_sheets(customer_id: Optional[str] = None) -> List[JobSheet]:
         )
         if customer_id:
             stmt = stmt.where(JobSheet.customer_id == str(customer_id))
-        return list(db.scalars(stmt).all())
+        rows = list(db.scalars(stmt).all())
+
+        # Lazily repair old stored product codes based on the spec_payload of the linked version.
+        changed = False
+        seen_product_ids: set[str] = set()
+        for js in rows:
+            p = getattr(js, "product", None)
+            v = getattr(js, "version", None)
+            if not p or not v:
+                continue
+            pid = str(getattr(p, "id", ""))
+            if not pid or pid in seen_product_ids:
+                continue
+            seen_product_ids.add(pid)
+            if not isinstance(getattr(v, "spec_payload", None), dict):
+                continue
+            new_code = compute_product_code_full(p, v.spec_payload)
+            if new_code and new_code != getattr(p, "code", None):
+                p.code = new_code
+                db.add(p)
+                changed = True
+
+        if changed:
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+        return rows
 
 
 def get_job_sheet(job_sheet_id: str) -> Optional[JobSheet]:
@@ -213,7 +251,22 @@ def get_job_sheet(job_sheet_id: str) -> Optional[JobSheet]:
             .options(joinedload(JobSheet.version))
             .where(JobSheet.id == jid)
         )
-        return db.scalar(stmt)
+        js = db.scalar(stmt)
+        if not js:
+            return None
+
+        p = getattr(js, "product", None)
+        v = getattr(js, "version", None)
+        if p and v and isinstance(getattr(v, "spec_payload", None), dict):
+            new_code = compute_product_code_full(p, v.spec_payload)
+            if new_code and new_code != getattr(p, "code", None):
+                p.code = new_code
+                db.add(p)
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+        return js
 
 
 def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updated_by: str) -> str:
@@ -232,6 +285,12 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         js.quantity_unit = str(payload.quantity_unit)
         js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
 
+        upd = payload.model_dump(exclude_unset=True)
+        if "unit_rate" in upd:
+            js.unit_rate = upd["unit_rate"]
+        if "line_total" in upd:
+            js.line_total = upd["line_total"]
+
         # Optionally create a new product version + repoint job sheet
         if payload.spec is not None:
             pid = str(js.product_id)
@@ -248,6 +307,11 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
             product = db.get(Product, pid)
             if product:
                 product.active_version_id = version.id
+                # Keep product code aligned with the new active version spec.
+                if isinstance(getattr(version, "spec_payload", None), dict):
+                    new_code = compute_product_code_full(product, version.spec_payload)
+                    if new_code and new_code != getattr(product, "code", None):
+                        product.code = new_code
                 db.add(product)
 
             js.product_version_id = str(version.id)

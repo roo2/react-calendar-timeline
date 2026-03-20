@@ -12,6 +12,7 @@ import uuid
 from app.auth.deps import require_roles, csrf_protect
 from app.db.models.rate_cards import (
     Additive,
+    Anilox,
     CartonOption,
     Colour,
     ConversionFactor,
@@ -98,12 +99,14 @@ class ColourDTO(BaseModel):
     name: str
     price_per_kg: float
     sort_order: int = 0
+    short_code: str | None = None  # 3-char code for product code (e.g. BLK, WHT)
 
 
 class ColourUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     price_per_kg: float = Field(..., ge=0)
     sort_order: int = Field(0, ge=0)
+    short_code: str | None = Field(None, max_length=3)
 
 
 class CoreDTO(BaseModel):
@@ -164,6 +167,15 @@ class InkDTO(BaseModel):
 class InkUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     printer_type: str = Field(default="inline", min_length=1, max_length=16)
+
+
+class AniloxDTO(BaseModel):
+    anilox_code: str
+    description: str
+
+
+class AniloxUpsertRequest(BaseModel):
+    description: str = Field(..., min_length=1, max_length=255)
 
 
 class PlateDTO(BaseModel):
@@ -503,6 +515,7 @@ async def list_colours():
                 name=c.name,
                 price_per_kg=float(c.price_per_kg),
                 sort_order=c.sort_order,
+                short_code=getattr(c, "short_code", None),
             )
             for c in rows
         ]
@@ -527,12 +540,14 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
                 name=payload.name,
                 price_per_kg=payload.price_per_kg,
                 sort_order=max_order + 1,
+                short_code=(payload.short_code or "").strip()[:3] or None,
             )
             db.add(c)
         else:
             c.name = payload.name
             c.price_per_kg = payload.price_per_kg
             c.sort_order = payload.sort_order
+            c.short_code = (payload.short_code or "").strip()[:3] or None
 
     with SessionLocal() as db:
         c2 = db.get(Colour, code)
@@ -542,6 +557,7 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
             name=c2.name,
             price_per_kg=float(c2.price_per_kg),
             sort_order=c2.sort_order,
+            short_code=getattr(c2, "short_code", None),
         )
 
 
@@ -1010,6 +1026,59 @@ async def delete_ink(ink_code: str):
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete ink (in use)")
 
+
+@router.get(
+    "/anilox",
+    response_model=List[AniloxDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_anilox_admin():
+    with SessionLocal() as db:
+        rows = db.execute(select(Anilox).order_by(Anilox.anilox_code.asc())).scalars().all()
+        return [AniloxDTO(anilox_code=r.anilox_code, description=r.description) for r in rows]
+
+
+@router.put(
+    "/anilox/{anilox_code}",
+    response_model=AniloxDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_anilox(anilox_code: str, payload: AniloxUpsertRequest):
+    code = (anilox_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="anilox_code is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(Anilox, code)
+        if not row:
+            row = Anilox(anilox_code=code, description=payload.description.strip())
+            db.add(row)
+        else:
+            row.description = payload.description.strip()
+
+    with SessionLocal() as db:
+        r2 = db.get(Anilox, code)
+        assert r2 is not None
+        return AniloxDTO(anilox_code=r2.anilox_code, description=r2.description)
+
+
+@router.delete(
+    "/anilox/{anilox_code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_anilox(anilox_code: str):
+    code = (anilox_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="anilox_code is required")
+    try:
+        with SessionLocal.begin() as db:
+            row = db.get(Anilox, code)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anilox not found")
+            db.delete(row)
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete anilox (in use)")
 
 
 @router.get(

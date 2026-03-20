@@ -19,6 +19,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableRow,
   TextField,
@@ -26,7 +27,8 @@ import {
 } from '@mui/material'
 import { ProductVersionEditor } from './ProductVersionEditor'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from './SpecPayloadForm'
-import { clearCreateErrors, clearCreateFieldError, createProduct } from '../store/slices/productsSlice'
+import { clearCreateErrors, createProduct } from '../store/slices/productsSlice'
+import { computeProductCodeFromSpec } from '../utils/productDescription'
 
 type Mode = 'new' | 'edit'
 
@@ -42,9 +44,56 @@ type OrderLine = {
   due_date: string
   quantity_unit: QuantityUnit
   quantity_value: string
+  rate: string
+  total_price: string
   // edit-mode only
   order_item_id?: string
   job_sheet_id?: string
+}
+
+function lineFromApiItem(it: any): OrderLine {
+  return {
+    id: String(it.id),
+    order_item_id: String(it.id),
+    job_sheet_id: String(it.job_sheet_id),
+    product_id: String(it.product_id),
+    product_code: String(it.product_code || ''),
+    product_name: (it.product_name as string | null | undefined) ?? null,
+    due_date: String(it.due_date || ''),
+    quantity_unit: (it.quantity_unit as QuantityUnit) || 'kg',
+    quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
+    rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
+    total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
+  }
+}
+
+/** Default due date: 4 weeks from today (YYYY-MM-DD). */
+function defaultDueDate(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 28)
+  return d.toISOString().slice(0, 10)
+}
+
+/** Computed line total = quantity × rate. */
+function computedLineTotal(it: OrderLine): number | null {
+  const q = Number(it.quantity_value)
+  const r = parseOptionalMoney(it.rate)
+  if (!Number.isFinite(q) || q < 0 || r == null || r < 0) return null
+  return q * r
+}
+
+function parseOptionalMoney(s: string): number | null {
+  const t = (s || '').trim()
+  if (t === '') return null
+  const n = Number(t)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
+function isValidMoneyField(s: string): boolean {
+  const t = (s || '').trim()
+  if (t === '') return true
+  const n = Number(t)
+  return Number.isFinite(n) && n >= 0
 }
 
 type OrderNewDraft = {
@@ -87,30 +136,25 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [pvTitle, setPvTitle] = useState<string>('')
 
   const [newProductOpen, setNewProductOpen] = useState(false)
-  const [newProductCode, setNewProductCode] = useState('')
   const [newProductSpec, setNewProductSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [newProductCodeExists, setNewProductCodeExists] = useState(false)
-  const lastAutoNewProductPrefixRef = useRef<string>('')
 
   const initialDraftRef = useRef<OrderNewDraft | null>(mode === 'new' ? parseOrderNewDraftState(loc.state) : null)
   const initialDraft = initialDraftRef.current
 
   const [customerId, setCustomerId] = useState(initialDraft?.customerId || '')
+  const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [productId, setProductId] = useState('')
-  const [items, setItems] = useState<OrderLine[]>(initialDraft?.items || [])
+  const [items, setItems] = useState<OrderLine[]>(() =>
+    (initialDraft?.items || []).map((it) => ({
+      ...it,
+      rate: (it as OrderLine).rate ?? '',
+      total_price: (it as OrderLine).total_price ?? '',
+    }))
+  )
 
   const originalRef = useRef<{ lines: Record<string, OrderLine> } | null>(null)
-
-  const customerCode = useMemo(() => {
-    const c = customers.find((x) => x.id === customerId) as any
-    return (c?.code ? String(c.code) : '').trim().toUpperCase()
-  }, [customerId, customers])
-
-  const newProductCodePrefixOk = useMemo(() => {
-    if (!customerCode) return true
-    const v = (newProductCode || '').trim().toUpperCase()
-    return v.startsWith(`${customerCode}-`) || v.startsWith(`${customerCode}_`)
-  }, [customerCode, newProductCode])
 
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
 
@@ -130,39 +174,19 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (!customerId) return
     dispatch(clearCreateErrors())
     setNewProductOpen(true)
-    if (!newProductCode.trim()) {
-      // leave as-is; if we later add customer code prefill, this is where it goes
-      setNewProductCode('')
-    }
   }
 
   function closeNewProductModal() {
     setNewProductOpen(false)
-    setNewProductCode('')
     setNewProductSpec(makeDefaultSpec())
     setNewProductCodeExists(false)
-    lastAutoNewProductPrefixRef.current = ''
   }
 
-  useEffect(() => {
-    // Auto-fill the product code prefix when opening the modal (or when customer code loads).
-    if (!newProductOpen) return
-    if (!customerCode) return
-    const nextPrefix = `${customerCode}-`
-    const cur = (newProductCode || '').trim()
-    const curUp = cur.toUpperCase()
-    const lastAuto = (lastAutoNewProductPrefixRef.current || '').toUpperCase()
-    const isEmpty = !curUp
-    const isOnlyAutoPrefix = !!lastAuto && curUp === lastAuto
-    if (isEmpty || isOnlyAutoPrefix) {
-      setNewProductCode(nextPrefix)
-      lastAutoNewProductPrefixRef.current = nextPrefix
-    }
-  }, [customerCode, newProductCode, newProductOpen])
+  const generatedProductCode = useMemo(() => (computeProductCodeFromSpec(newProductSpec) || '').trim(), [newProductSpec])
 
   useEffect(() => {
     // Debounced uniqueness check for product code.
-    const v = (newProductCode || '').trim()
+    const v = (generatedProductCode || '').trim()
     if (!newProductOpen || !v) {
       setNewProductCodeExists(false)
       return
@@ -184,7 +208,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       controller.abort()
       window.clearTimeout(t)
     }
-  }, [newProductCode, newProductOpen])
+  }, [generatedProductCode, newProductOpen])
 
   async function addProductFromSummary(p: Product) {
     if (!p.active_version_id) {
@@ -199,9 +223,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           product_id: p.id,
           product_code: p.code,
           product_name: p.description || null,
-          due_date: '',
+          due_date: defaultDueDate(),
           quantity_unit: 'kg',
           quantity_value: '1',
+          rate: '',
+          total_price: '',
         },
       ])
       return
@@ -214,25 +240,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         method: 'POST',
         body: JSON.stringify({
           product_id: p.id,
-          due_date: null,
+          due_date: defaultDueDate(),
           quantity_unit: 'kg',
           quantity_value: 1,
         }),
       })
       const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
-      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => ({
-        id: String(it.id),
-        order_item_id: String(it.id),
-        job_sheet_id: String(it.job_sheet_id),
-        product_id: String(it.product_id),
-        product_code: String(it.product_code || ''),
-        product_name: (it.product_name as string | null | undefined) ?? null,
-        due_date: String(it.due_date || ''),
-        quantity_unit: (it.quantity_unit as QuantityUnit) || 'kg',
-        quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
-      }))
+      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
       setItems(nextItems)
-      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
+      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to add order item')
     } finally {
@@ -243,14 +259,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   async function onCreateNewProduct(e: FormEvent) {
     e.preventDefault()
     if (!customerId) return
-    if (!newProductCode.trim() || newProductCodeExists || !newProductCodePrefixOk) return
+    if (!generatedProductCode.trim() || newProductCodeExists) return
     dispatch(clearCreateErrors())
     try {
       const res = await dispatch(
         createProduct({
           data: {
             customer_id: customerId,
-            code: newProductCode.trim(),
+            code: generatedProductCode.trim(),
             spec: newProductSpec,
           },
         }),
@@ -307,20 +323,12 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
         setOrderStatus(String(res?.status || 'draft'))
         setCustomerId(String(res?.customer_id || ''))
-        const nextItems: OrderLine[] = (res?.items || []).map((it: any) => ({
-          id: String(it.id),
-          order_item_id: String(it.id),
-          job_sheet_id: String(it.job_sheet_id),
-          product_id: String(it.product_id),
-          product_code: String(it.product_code || ''),
-          product_name: (it.product_name as string | null | undefined) ?? null,
-          due_date: String(it.due_date || ''),
-          quantity_unit: (it.quantity_unit as QuantityUnit) || 'kg',
-          quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
-        }))
+        setInvoiceNumber(String(res?.code ?? ''))
+        setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
+        const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
         setItems(nextItems)
         originalRef.current = {
-          lines: Object.fromEntries(nextItems.map((l) => [l.id, l])),
+          lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])),
         }
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Failed to load order')
@@ -389,9 +397,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         product_id: p.id,
         product_code: p.code,
         product_name: p.description || null,
-        due_date: '',
+        due_date: defaultDueDate(),
         quantity_unit: 'kg',
         quantity_value: '1',
+        rate: '',
+        total_price: '',
       },
     ])
     setProductId('')
@@ -413,24 +423,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         method: 'POST',
         body: JSON.stringify({
           product_id: p.id,
-          due_date: null,
+          due_date: defaultDueDate(),
           quantity_unit: 'kg',
           quantity_value: 1,
         }),
       })
       // reload order to pick up job_sheet_id/order_item_id
       const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
-      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => ({
-        id: String(it.id),
-        order_item_id: String(it.id),
-        job_sheet_id: String(it.job_sheet_id),
-        product_id: String(it.product_id),
-        product_code: String(it.product_code || ''),
-        product_name: (it.product_name as string | null | undefined) ?? null,
-        due_date: String(it.due_date || ''),
-        quantity_unit: (it.quantity_unit as QuantityUnit) || 'kg',
-        quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
-      }))
+      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
       setItems(nextItems)
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
     } catch (e) {
@@ -458,7 +458,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     return items.every((it) => !!it.due_date)
   }, [canPublish, canSaveDraft, items])
 
+  const grandTotal = useMemo(() => {
+    return items.reduce((sum, it) => sum + (computedLineTotal(it) ?? 0), 0)
+  }, [items])
+
   async function createDraft() {
+    if (items.some((it) => !isValidMoneyField(it.rate))) {
+      setErr('Rate must be empty or a valid non-negative number.')
+      return
+    }
     setErr(null)
     setSaving(true)
     try {
@@ -467,12 +475,20 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         body: JSON.stringify({
           customer_id: customerId,
           status: 'draft',
-          items: items.map((it) => ({
-            product_id: it.product_id,
-            due_date: it.due_date || null,
-            quantity_unit: it.quantity_unit,
-            quantity_value: Number(it.quantity_value || '0'),
-          })),
+          ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+          ...(orderDate ? { order_date: orderDate } : {}),
+          items: items.map((it) => {
+            const rate = parseOptionalMoney(it.rate)
+            const totalPrice = computedLineTotal(it)
+            return {
+              product_id: it.product_id,
+              due_date: it.due_date || null,
+              quantity_unit: it.quantity_unit,
+              quantity_value: Number(it.quantity_value || '0'),
+              ...(rate != null ? { rate } : {}),
+              ...(totalPrice != null ? { total_price: totalPrice } : {}),
+            }
+          }),
         }),
       })
       setDirty(false)
@@ -486,15 +502,35 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   async function saveEdits() {
     if (!orderId) return
+    if (items.some((it) => !isValidMoneyField(it.rate))) {
+      setErr('Rate must be empty or a valid non-negative number.')
+      return
+    }
     setErr(null)
     setSaving(true)
     try {
+      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          invoice_number: invoiceNumber.trim() || null,
+          order_date: orderDate || null,
+        }),
+      })
+
       const orig = originalRef.current
 
       const updates = items.filter((it) => {
         const o = orig?.lines?.[it.id]
         if (!o) return true
-        return o.due_date !== it.due_date || o.quantity_unit !== it.quantity_unit || o.quantity_value !== it.quantity_value
+        const totalNow = computedLineTotal(it)
+        const totalOrig = computedLineTotal(o)
+        return (
+          o.due_date !== it.due_date ||
+          o.quantity_unit !== it.quantity_unit ||
+          o.quantity_value !== it.quantity_value ||
+          o.rate !== it.rate ||
+          totalNow !== totalOrig
+        )
       })
 
       for (const it of updates) {
@@ -502,28 +538,22 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         await apiFetch<any>(`/api/job-sheets/${encodeURIComponent(it.job_sheet_id)}`, {
           method: 'PUT',
           body: JSON.stringify({
-            due_date: it.due_date,
+            due_date: it.due_date || null,
             quantity_value: Number(it.quantity_value || '0'),
             quantity_unit: it.quantity_unit,
+            unit_rate: parseOptionalMoney(it.rate),
+            line_total: computedLineTotal(it),
           }),
         })
       }
 
       const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
       setOrderStatus(String(res?.status || orderStatus))
-      const nextItems: OrderLine[] = (res?.items || []).map((x: any) => ({
-        id: String(x.id),
-        order_item_id: String(x.id),
-        job_sheet_id: String(x.job_sheet_id),
-        product_id: String(x.product_id),
-        product_code: String(x.product_code || ''),
-        product_name: (x.product_name as string | null | undefined) ?? null,
-        due_date: String(x.due_date || ''),
-        quantity_unit: (x.quantity_unit as QuantityUnit) || 'kg',
-        quantity_value: x.quantity_value != null ? String(x.quantity_value) : '1',
-      }))
+      setInvoiceNumber(String(res?.code ?? ''))
+      setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
+      const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
       setItems(nextItems)
-      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
+      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save changes')
@@ -533,6 +563,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }
 
   async function publishOrder() {
+    if (mode === 'new' && items.some((it) => !isValidMoneyField(it.rate))) {
+      setErr('Rate must be empty or a valid non-negative number.')
+      return
+    }
     setErr(null)
     setPublishing(true)
     try {
@@ -542,12 +576,20 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           body: JSON.stringify({
             customer_id: customerId,
             status: 'draft',
-            items: items.map((it) => ({
-              product_id: it.product_id,
-              due_date: it.due_date || null,
-              quantity_unit: it.quantity_unit,
-              quantity_value: Number(it.quantity_value || '0'),
-            })),
+            ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+            ...(orderDate ? { order_date: orderDate } : {}),
+            items: items.map((it) => {
+              const rate = parseOptionalMoney(it.rate)
+              const totalPrice = computedLineTotal(it)
+              return {
+                product_id: it.product_id,
+                due_date: it.due_date || null,
+                quantity_unit: it.quantity_unit,
+                quantity_value: Number(it.quantity_value || '0'),
+                ...(rate != null ? { rate } : {}),
+                ...(totalPrice != null ? { total_price: totalPrice } : {}),
+              }
+            }),
           }),
         })
         await apiFetch<any>(`/api/orders/${encodeURIComponent(res.order_id)}/publish`, { method: 'POST' })
@@ -579,19 +621,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       setSaving(true)
       await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(it.order_item_id)}`, { method: 'DELETE' })
       const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
-      const nextItems: OrderLine[] = (res?.items || []).map((x: any) => ({
-        id: String(x.id),
-        order_item_id: String(x.id),
-        job_sheet_id: String(x.job_sheet_id),
-        product_id: String(x.product_id),
-        product_code: String(x.product_code || ''),
-        product_name: (x.product_name as string | null | undefined) ?? null,
-        due_date: String(x.due_date || ''),
-        quantity_unit: (x.quantity_unit as QuantityUnit) || 'kg',
-        quantity_value: x.quantity_value != null ? String(x.quantity_value) : '1',
-      }))
+      const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
       setItems(nextItems)
-      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
+      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to remove order item')
     } finally {
@@ -631,6 +663,25 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               </MenuItem>
             ))}
           </TextField>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+            <TextField
+              label="Invoice Number"
+              value={invoiceNumber}
+              onChange={(e) => { setInvoiceNumber(e.target.value); setDirty(true) }}
+              disabled={orderLocked}
+              placeholder={mode === 'new' ? 'Leave blank to auto-generate' : undefined}
+              inputProps={{ maxLength: 32 }}
+            />
+            <TextField
+              label="Order Date"
+              type="date"
+              value={orderDate}
+              onChange={(e) => { setOrderDate(e.target.value); setDirty(true) }}
+              disabled={orderLocked}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
 
           <Paper variant="outlined" sx={{ p: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', px: 1, pt: 1 }}>
@@ -672,13 +723,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 <MenuItem value="__new_product__">New Product…</MenuItem>
               </TextField>
             </Box>
-            <Table size="small">
+            <Table size="small" sx={{ '& .MuiTableCell-root': { px: 1 } }}>
               <TableHead>
                 <TableRow>
                   <TableCell>Product</TableCell>
+                  <TableCell sx={{ width: 160 }}>Due Date</TableCell>
                   <TableCell sx={{ width: 170 }}>Qty Type</TableCell>
                   <TableCell sx={{ width: 160 }}>Qty Total</TableCell>
-                  <TableCell sx={{ width: 160 }}>Due Date</TableCell>
+                  <TableCell sx={{ width: 110 }}>Rate ($)</TableCell>
+                  <TableCell sx={{ width: 110 }}>Total ($)</TableCell>
                   <TableCell sx={{ width: 220 }}>Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -691,6 +744,19 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                     </TableCell>
                     <TableCell>
                       <TextField
+                        size="small"
+                        type="date"
+                        value={it.due_date}
+                        onChange={(e) => {
+                          const v = e.currentTarget.value
+                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, due_date: v } : x)))
+                        }}
+                        InputLabelProps={{ shrink: true }}
+                        disabled={saving || publishing || orderLocked}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
                         select
                         size="small"
                         value={it.quantity_unit}
@@ -699,7 +765,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                           setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: v } : x)))
                         }}
                         sx={{ minWidth: 140 }}
-                        disabled={saving || publishing}
+                        disabled={saving || publishing || orderLocked}
                       >
                         <MenuItem value="kg">Total KGs</MenuItem>
                         <MenuItem value="rolls">No. of Rolls</MenuItem>
@@ -717,21 +783,28 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                           setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_value: v } : x)))
                         }}
                         inputProps={{ inputMode: 'decimal' }}
-                        disabled={saving || publishing}
+                        disabled={saving || publishing || orderLocked}
                       />
                     </TableCell>
                     <TableCell>
                       <TextField
                         size="small"
-                        type="date"
-                        value={it.due_date}
+                        placeholder="—"
+                        value={it.rate}
                         onChange={(e) => {
                           const v = e.currentTarget.value
-                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, due_date: v } : x)))
+                          if (v !== '' && !/^\d*\.?\d*$/.test(v)) return
+                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, rate: v } : x)))
+                          setDirty(true)
                         }}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={saving || publishing}
+                        inputProps={{ inputMode: 'decimal' }}
+                        disabled={saving || publishing || orderLocked}
                       />
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {computedLineTotal(it) != null ? `$${Number(computedLineTotal(it)).toFixed(2)}` : '—'}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -760,35 +833,49 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 ))}
                 {items.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5}>
+                    <TableCell colSpan={7}>
                       <Typography color="text.secondary">No products added yet.</Typography>
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={5} align="right" sx={{ fontWeight: 600 }}>
+                    Total
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>
+                    ${grandTotal.toFixed(2)}
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableFooter>
             </Table>
           </Paper>
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <Button
+              variant="text"
+              color="primary"
+              component={Link}
+              to={mode === 'edit' && orderId ? `/orders/${orderId}` : '/orders'}
+            >
+              Cancel
+            </Button>
             {mode === 'new' ? (
-              <Button variant="contained" onClick={createDraft} disabled={!canSaveDraft}>
+              <Button variant="outlined" onClick={createDraft} disabled={!canSaveDraft}>
                 {saving ? 'Saving…' : 'Save Draft'}
               </Button>
             ) : (
-              <Button variant="contained" onClick={saveEdits} disabled={!canSaveDraft}>
+              <Button variant="outlined" onClick={saveEdits} disabled={!canSaveDraft}>
                 {saving ? 'Saving…' : 'Save Changes'}
               </Button>
             )}
-
             {canPublish && (mode === 'new' || orderStatus === 'draft') && (
               <Button variant="contained" color="success" onClick={publishOrder} disabled={!canPublishNow}>
                 {publishing ? 'Publishing…' : 'Publish Order'}
               </Button>
             )}
-
-            <Button variant="outlined" component={Link} to={mode === 'edit' && orderId ? `/orders/${orderId}` : '/orders'}>
-              Cancel
-            </Button>
           </Box>
         </Stack>
       </Paper>
@@ -820,25 +907,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           <DialogContent dividers>
             <Stack spacing={2}>
               {createState.error ? <Alert severity="error">{createState.error}</Alert> : null}
-              <TextField
-                label="Product Code"
-                value={newProductCode}
-                onChange={(e) => {
-                  setNewProductCode(e.target.value)
-                  dispatch(clearCreateFieldError('code'))
-                }}
-                required
-                error={newProductCodeExists || !newProductCodePrefixOk || !!createState.fieldErrors?.code}
-                helperText={
-                  newProductCodeExists
-                    ? 'Product code already exists.'
-                    : !newProductCodePrefixOk && customerCode
-                      ? `Must start with ${customerCode}- or ${customerCode}_`
-                      : customerCode
-                        ? `Suggested format: ${customerCode}-XXXX`
-                        : undefined
-                }
-              />
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>
                   Spec
@@ -850,16 +918,29 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                   fieldErrors={createState.fieldErrors}
                 />
               </Paper>
+
+              <Box sx={{ mt: 0.5 }}>
+                <Typography variant="subtitle2" sx={{ color: 'text.secondary' }}>
+                  Generated product code
+                </Typography>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                  {generatedProductCode.trim() ? generatedProductCode : '—'}
+                </Typography>
+                {newProductCodeExists ? (
+                  <Typography variant="caption" color="error">
+                    This code already exists; you may need to adjust the spec.
+                  </Typography>
+                ) : null}
+              </Box>
             </Stack>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => closeNewProductModal()}>Cancel</Button>
+            <Button variant="text" color="primary" onClick={() => closeNewProductModal()}>Cancel</Button>
             <Button
               type="submit"
               variant="contained"
               disabled={
-                !newProductCode.trim() ||
-                !newProductCodePrefixOk ||
+                !generatedProductCode.trim() ||
                 newProductCodeExists ||
                 createState.status === 'loading'
               }

@@ -245,6 +245,7 @@ export function ProductVersionPrintPage() {
                                 <tr>
                                   <th>Ink Code</th>
                                   <th>Plate Code</th>
+                                  {spec.printing?.method === 'Uteco' ? <th>Anilox</th> : null}
                                 </tr>
                               </thead>
                               <tbody>
@@ -252,6 +253,7 @@ export function ProductVersionPrintPage() {
                                   <tr key={idx}>
                                     <td>{r?.ink_code || '-'}</td>
                                     <td>{r?.plate_code || '-'}</td>
+                                    {spec.printing?.method === 'Uteco' ? <td>{r?.anilox_code || '-'}</td> : null}
                                   </tr>
                                 ))}
                               </tbody>
@@ -268,6 +270,7 @@ export function ProductVersionPrintPage() {
                                 <tr>
                                   <th>Ink Code</th>
                                   <th>Plate Code</th>
+                                  {spec.printing?.method === 'Uteco' ? <th>Anilox</th> : null}
                                 </tr>
                               </thead>
                               <tbody>
@@ -275,6 +278,7 @@ export function ProductVersionPrintPage() {
                                   <tr key={idx}>
                                     <td>{r?.ink_code || '-'}</td>
                                     <td>{r?.plate_code || '-'}</td>
+                                    {spec.printing?.method === 'Uteco' ? <td>{r?.anilox_code || '-'}</td> : null}
                                   </tr>
                                 ))}
                               </tbody>

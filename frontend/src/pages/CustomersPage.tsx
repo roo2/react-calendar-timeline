@@ -97,7 +97,7 @@ export function CustomersPage() {
                   <TableCell>{c.status}</TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <Button size="small" variant="outlined" component={Link} to={`/customers/${c.id}`}>
+                      <Button size="small" variant="text" color="primary" component={Link} to={`/customers/${c.id}`}>
                         View
                       </Button>
                       {canEdit && (

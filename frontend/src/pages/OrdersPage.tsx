@@ -26,6 +26,7 @@ type OrderRow = {
   version_number?: number | null
   item_count?: number | null
   created_at?: string | null
+  order_date?: string | null
 }
 
 export function OrdersPage() {
@@ -65,11 +66,11 @@ export function OrdersPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Code</TableCell>
+              <TableCell>Invoice Number</TableCell>
               <TableCell>Customer</TableCell>
               <TableCell>Product</TableCell>
               <TableCell>Status</TableCell>
-              <TableCell>Created</TableCell>
+              <TableCell>Order Date</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -88,13 +89,18 @@ export function OrdersPage() {
                     : '-'}
                 </TableCell>
                 <TableCell>{o.status}</TableCell>
-                <TableCell>{o.created_at || ''}</TableCell>
+                <TableCell>{o.order_date || o.created_at?.slice(0, 10) || ''}</TableCell>
                 <TableCell align="right">
-                  {canEdit && (o.status === 'draft' || o.status === 'confirmed') ? (
-                    <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
-                      Edit
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <Button size="small" variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(o.id)}`}>
+                      View
                     </Button>
-                  ) : null}
+                    {canEdit && (o.status === 'draft' || o.status === 'confirmed') ? (
+                      <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
+                        Edit
+                      </Button>
+                    ) : null}
+                  </Box>
                 </TableCell>
               </TableRow>
             ))}

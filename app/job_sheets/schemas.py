@@ -14,7 +14,7 @@ QuantityUnit = Literal["kg", "rolls", "bags", "meters"]
 class JobSheetCreateRequest(BaseModel):
     customer_id: str
     product_id: str
-    job_no: str = Field(..., min_length=1, max_length=64)
+    job_no: Optional[str] = None  # Assigned when job is queued; optional on create
     due_date: Optional[date] = None
     quantity_value: float = Field(..., gt=0)
     quantity_unit: QuantityUnit
@@ -38,6 +38,9 @@ class JobSheetSummary(BaseModel):
     product_code: str
     product_description: Optional[str] = None
     customer_name: Optional[str] = None
+    # From order when this job sheet is attached to an order line
+    invoice_no: Optional[str] = None
+    order_date: Optional[str] = None
 
 
 class JobSheetDetail(BaseModel):
@@ -52,4 +55,6 @@ class JobSheetUpdateRequest(BaseModel):
     # If provided, a new ProductVersion is created and the job sheet is updated
     # to reference it (and the product's active version is advanced).
     spec: Optional[SpecPayload] = None
+    unit_rate: Optional[float] = None
+    line_total: Optional[float] = None
 

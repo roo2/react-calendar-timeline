@@ -18,7 +18,7 @@ from app.db.models.domain import (
 )
 from app.db.models.enums import OrderStatus, JobStatus
 from app.exceptions import DomainError
-from app.orders.schemas import CreateOrderRequest, CreateJobRequest, CreateOrderItemRequest
+from app.orders.schemas import CreateOrderRequest, CreateJobRequest, CreateOrderItemRequest, UpdateOrderRequest
 from app.job_sheets import service as job_sheets_service
 
 
@@ -86,16 +86,26 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
                 quantity_value=float(it.quantity_value),
                 quantity_unit=str(it.quantity_unit),
                 created_by=created_by or "system",
+                unit_rate=float(it.rate) if it.rate is not None else None,
+                line_total=float(it.total_price) if it.total_price is not None else None,
             )
             created_job_sheets.append(js)
 
+        code = _new_order_code()
+        if payload.invoice_number and str(payload.invoice_number).strip():
+            code = str(payload.invoice_number).strip()[:32]
+        order_date = None
+        if payload.order_date is not None:
+            order_date = payload.order_date
+
         order = OrderModel(
-            code=_new_order_code(),
+            code=code,
             customer_id=customer_id,
             # Backward compatibility summary: first line's referenced version
             product_version_id=str(created_job_sheets[0].product_version_id) if created_job_sheets else None,
             quote_id=quote_id,
             status=OrderStatus.DRAFT,
+            order_date=order_date,
         )
         db.add(order)
         db.flush()
@@ -151,6 +161,30 @@ def create_job(order_id: str, payload: CreateJobRequest) -> JobModel:
         return job
 
 
+def update_order(order_id: str, payload: UpdateOrderRequest) -> OrderModel:
+    """Update order header (invoice number / order date). Draft only."""
+    updates = payload.model_dump(exclude_unset=True)
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be edited")
+        if "invoice_number" in updates:
+            code = str(payload.invoice_number or "").strip()
+            o.code = code[:32] if code else o.code
+        if "order_date" in updates:
+            o.order_date = payload.order_date
+        db.add(o)
+        db.flush()
+        db.refresh(o)
+        return o
+
+
 def publish_order(order_id: str) -> OrderModel:
     with SessionLocal.begin() as db:
         try:
@@ -193,6 +227,8 @@ def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: s
             quantity_value=float(item.quantity_value),
             quantity_unit=str(item.quantity_unit),
             created_by=created_by or "system",
+            unit_rate=float(item.rate) if item.rate is not None else None,
+            line_total=float(item.total_price) if item.total_price is not None else None,
         )
 
         oi = OrderItemModel(order_id=str(o.id), job_sheet_id=str(js.id))

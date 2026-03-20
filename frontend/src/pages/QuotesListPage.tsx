@@ -106,11 +106,16 @@ export function QuotesListPage() {
                       : '-'}
                   </TableCell>
                   <TableCell align="right">
-                    {canEdit && (
-                      <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
-                        Edit
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <Button size="small" variant="text" color="primary" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
+                        View
                       </Button>
-                    )}
+                      {canEdit && (
+                        <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
+                          Edit
+                        </Button>
+                      )}
+                    </Box>
                   </TableCell>
                 </TableRow>
               ))}

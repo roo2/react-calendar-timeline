@@ -5,9 +5,12 @@ import { apiFetch } from '../api/client'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from './SpecPayloadForm'
-import { Box, Button, Link as MuiLink, Stack, Typography } from '@mui/material'
+import { Box, Button, Link as MuiLink, Stack, Typography, useMediaQuery, useTheme } from '@mui/material'
 import { FormErrorAlert } from './FormErrorAlert'
 import { clearNewVersionErrors, createProductVersion } from '../store/slices/productsSlice'
+import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
+import { JobSheetPreviewPanel } from './JobSheetPreviewPanel'
+import { StickySideAside } from './StickySideAside'
 
 function ensureSpec(s: any): SpecPayload {
   const d = makeDefaultSpec()
@@ -96,17 +99,22 @@ export function ProductVersionEditor(props: {
 
   const product = data?.product
 
+  const previewDescription = useMemo(() => computeProductDescriptionFromSpec(spec), [spec])
+  const previewProductCode = useMemo(() => computeProductCodeFromSpec(spec), [spec])
+  const theme = useTheme()
+  const isNarrow = useMediaQuery(theme.breakpoints.down('md'))
+
   if (loadErr && !data) {
     return (
       <Stack spacing={2}>
         <Typography variant="h5">{title || 'New Version'}</Typography>
         <FormErrorAlert error={loadErr} scrollOnShow={false} />
         {onCancel ? (
-          <Button variant="outlined" onClick={onCancel}>
+          <Button variant="text" color="primary" onClick={onCancel}>
             Back
           </Button>
         ) : (
-          <Button component={Link} to={returnTo || (productId ? `/products/${productId}` : '/products')} variant="outlined">
+          <Button component={Link} to={returnTo || (productId ? `/products/${productId}` : '/products')} variant="text" color="primary">
             Back
           </Button>
         )}
@@ -118,52 +126,72 @@ export function ProductVersionEditor(props: {
 
   return (
     <Box onChange={() => setDirty(true)}>
-    <Stack spacing={2}>
-      <Typography variant="h5">{title || `Edit ${product?.code || ''}`.trim()}</Typography>
+      <Stack spacing={2}>
+        <Typography variant="h5">{title || `Edit ${product?.code || ''}`.trim()}</Typography>
 
-      <FormErrorAlert error={err} messages={errorSummary} scrollOnShow={true} scrollMarginTop={80} />
+        <FormErrorAlert error={err} messages={errorSummary} scrollOnShow={true} scrollMarginTop={80} />
 
-      <form onSubmit={onSubmit}>
-        <Stack spacing={2}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'baseline' }}>
-            <Typography variant="subtitle2" color="text.secondary">
-              Product Spec
-            </Typography>
-            <MuiLink
-              component={Link}
-              to={`/products/${encodeURIComponent(productId)}`}
-              target="_blank"
-              rel="noreferrer"
-              underline="hover"
-              sx={{ fontSize: '0.875rem' }}
-            >
-              View previous versions
-            </MuiLink>
-          </Box>
-          <SpecPayloadForm
-            value={spec}
-            onChange={setSpec}
-            fieldErrors={fieldErrors}
-            customerId={product?.customer_id || undefined}
-          />
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
+          <form onSubmit={onSubmit} style={{ flex: 1, minWidth: 0 }}>
+            <Stack spacing={2}>
+              {isNarrow ? (
+                <JobSheetPreviewPanel
+                  showJobFields={false}
+                  productCode={previewProductCode}
+                  description={previewDescription}
+                />
+              ) : null}
 
-          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <Button type="submit" variant="contained" disabled={!canSubmit || saving}>
-              {saving ? 'Saving…' : submitLabel || 'Save Changes'}
-            </Button>
-            {onCancel ? (
-              <Button type="button" variant="outlined" onClick={onCancel}>
-                Cancel
-              </Button>
-            ) : (
-              <Button component={Link} to={returnTo || `/products/${productId}`} variant="outlined">
-                Cancel
-              </Button>
-            )}
-          </Box>
-        </Stack>
-      </form>
-    </Stack>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Product Spec
+                </Typography>
+                <MuiLink
+                  component={Link}
+                  to={`/products/${encodeURIComponent(productId)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  underline="hover"
+                  sx={{ fontSize: '0.875rem' }}
+                >
+                  View previous versions
+                </MuiLink>
+              </Box>
+              <SpecPayloadForm
+                value={spec}
+                onChange={setSpec}
+                fieldErrors={fieldErrors}
+                customerId={product?.customer_id || undefined}
+              />
+
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                {onCancel ? (
+                  <Button type="button" variant="text" color="primary" onClick={onCancel}>
+                    Cancel
+                  </Button>
+                ) : (
+                  <Button component={Link} to={returnTo || `/products/${productId}`} variant="text" color="primary">
+                    Cancel
+                  </Button>
+                )}
+                <Button type="submit" variant="contained" disabled={!canSubmit || saving}>
+                  {saving ? 'Saving…' : submitLabel || 'Save Changes'}
+                </Button>
+              </Box>
+            </Stack>
+          </form>
+
+          {!isNarrow ? (
+            <StickySideAside>
+              <JobSheetPreviewPanel
+                showJobFields={false}
+                productCode={previewProductCode}
+                description={previewDescription}
+              />
+            </StickySideAside>
+          ) : null}
+        </Box>
+      </Stack>
     </Box>
   )
 }

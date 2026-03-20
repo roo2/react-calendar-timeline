@@ -294,7 +294,7 @@ Tight gauge tolerance
 
 Seal integrity critical
 
-Cosmetic critical
+Printing Quality
 
 Colour critical
 

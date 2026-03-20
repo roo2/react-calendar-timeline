@@ -251,8 +251,7 @@ def upgrade() -> None:
 
     # Resin blend presets (SQL equivalent of scripts/seed_resin_blends.py)
     blends_seed = [
-        ("HOUSE_LD", "House Blend (LD)"),
-        ("LD", "LD"),
+        ("LD",  "House Blend (LD)"),
         ("MD", "MD"),
     ]
     for blend_code, name in blends_seed:
@@ -269,10 +268,8 @@ def upgrade() -> None:
         )
 
     # Replace components for these blends to match the presets.
-    conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('HOUSE_LD','LD','MD')"))
+    conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('LD','MD')"))
     comps_seed = [
-        ("HOUSE_LD", "Q1018H", 50.0),
-        ("HOUSE_LD", "FE3000", 50.0),
         ("LD", "FD0270", 50.0),
         ("LD", "S199F", 50.0),
         ("MD", "FD0270", 30.0),
@@ -320,36 +317,38 @@ def upgrade() -> None:
         )
 
     # Order here defines display order (sort_order) in app and dropdowns.
+    # short_code: 3-char code used in product code (e.g. PBR-200-400-40-BLK-2P).
     colours_seed = [
-        # colour_code, name, price_per_kg, sort_order
-        ("WHITE", "White", 5.8, 1),
-        ("BLACK", "Black", 4.5, 2),
-        ("SILVER", "Silver", 19.88, 3),
-        ("GREY", "Grey", 14.5, 4),
-        ("BLUE", "Blue", 5.7, 5),
-        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0, 6),
-        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86, 7),
-        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1, 8),
-        ("YELLOW", "Yellow", 20.33, 9),
-        ("SIGNET_YELLOW", "Signet Yellow", 17.33, 10),
-        ("GREEN", "Green", 14.69, 11),
-        ("ORANGE", "Orange", 19.55, 12),
-        ("RED", "Red", 19.02, 13),
-        ("PURPLE", "Purple", 17.23, 14),
-        ("BROWN", "Brown", 19.42, 15),
-        ("PINK", "Pink", 32.29, 16),
-        ("OTHER", "Other", 25.0, 17),
+        # colour_code, name, price_per_kg, sort_order, short_code
+        ("WHITE", "White", 5.8, 1, "WHT"),
+        ("BLACK", "Black", 4.5, 2, "BLK"),
+        ("SILVER", "Silver", 19.88, 3, "SLV"),
+        ("GREY", "Grey", 14.5, 4, "GRY"),
+        ("BLUE", "Blue", 5.7, 5, "BLU"),
+        ("PIPE_COVER_BLUE", "Pipe Cover Blue", 16.0, 6, "PCB"),
+        ("PIPECOVER_PURPLE", "PipeCover Purple", 16.86, 7, "PRP"),
+        ("PIPECOVER_BEIGE", "PipeCover Beige", 14.1, 8, "BGE"),
+        ("YELLOW", "Yellow", 20.33, 9, "YEL"),
+        ("SIGNET_YELLOW", "Signet Yellow", 17.33, 10, "SYL"),
+        ("GREEN", "Green", 14.69, 11, "GRN"),
+        ("ORANGE", "Orange", 19.55, 12, "ORG"),
+        ("RED", "Red", 19.02, 13, "RED"),
+        ("PURPLE", "Purple", 17.23, 14, "PPL"),
+        ("BROWN", "Brown", 19.42, 15, "BRN"),
+        ("PINK", "Pink", 32.29, 16, "PNK"),
+        ("OTHER", "Other", 25.0, 17, "OTH"),
     ]
-    for colour_code, name, price_per_kg, sort_order in colours_seed:
+    for colour_code, name, price_per_kg, sort_order, short_code in colours_seed:
         conn.execute(
             sa.text(
                 """
-                INSERT INTO colours (colour_code, name, price_per_kg, sort_order)
-                VALUES (:colour_code, :name, :price_per_kg, :sort_order)
+                INSERT INTO colours (colour_code, name, price_per_kg, sort_order, short_code)
+                VALUES (:colour_code, :name, :price_per_kg, :sort_order, :short_code)
                 ON CONFLICT (colour_code) DO UPDATE SET
                   name = excluded.name,
                   price_per_kg = excluded.price_per_kg,
-                  sort_order = excluded.sort_order
+                  sort_order = excluded.sort_order,
+                  short_code = excluded.short_code
                 """
             ),
             {
@@ -357,6 +356,7 @@ def upgrade() -> None:
                 "name": name,
                 "price_per_kg": price_per_kg,
                 "sort_order": sort_order,
+                "short_code": short_code,
             },
         )
 
@@ -411,8 +411,8 @@ def downgrade() -> None:
             "DELETE FROM resins WHERE resin_code IN ('Q1018H','FD0270','FD0274','FE8004','FE3000','S199F','1018RA')"
         )
     )
-    conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('HOUSE_LD','LD','MD')"))
-    conn.execute(sa.text("DELETE FROM resin_blends WHERE blend_code IN ('HOUSE_LD','LD','MD')"))
+    conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('LD','MD')"))
+    conn.execute(sa.text("DELETE FROM resin_blends WHERE blend_code IN ('LD','MD')"))
 
     # Seeded tool types
     conn.execute(sa.text("DELETE FROM tool_types WHERE code IN ('inline_printer_1c','electra_punch')"))

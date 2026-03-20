@@ -14,7 +14,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Divider,
   FormControlLabel,
   FormGroup,
   MenuItem,
@@ -30,11 +29,12 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material'
-import { ColourSelect, type ColourOption } from '../components/ColourSelect'
-import { AdditiveSelect, type AdditiveOption } from '../components/AdditiveSelect'
-import { defaultRowSx, isDefaultRow } from '../components/DefaultRowTable'
+import type { ColourOption } from '../components/ColourSelect'
+import type { AdditiveOption } from '../components/AdditiveSelect'
+import { MaterialsColoursAndAdditives } from '../components/MaterialsColoursAndAdditives'
 import { DefaultSelectField } from '../components/DefaultSelectField'
 import { productTypeCanHaveGusset } from '../utils/specCompat'
+import { computeProductCodeFromSpec } from '../utils/productDescription'
 import {
   computeAppliedExtrusionWasteFactors,
   computeDerivedGeometryAndTotals,
@@ -46,12 +46,13 @@ import {
   type QuickQuoteInputs,
   type QuoteRatebook,
 } from '../utils/quoteCalculator'
-
-function fmtDollars(v: any, dp: number = 2) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return String(v ?? '')
-  return `$${n.toFixed(dp)}`
-}
+import {
+  buildSpecFromQuotePayload,
+  getOrderQuantityFromQuotePayload,
+} from '../utils/quoteToSpec'
+import { QuotePreviewPanel } from '../components/QuotePreviewPanel'
+import { MobileFixedBottomAside, StickySideAside } from '../components/StickySideAside'
+import { fmtHoursMinutes } from '../utils/quoteFormat'
 
 function formatKgDisplay(v: number | null | undefined): string {
   if (v == null) return ''
@@ -64,17 +65,6 @@ function roundTo2Decimals(s: string): string {
   if (s.trim() === '') return s
   const n = Number(s)
   return Number.isFinite(n) ? n.toFixed(2) : s
-}
-
-function fmtHoursMinutes(vMinutes: any) {
-  const n = Number(vMinutes)
-  if (!Number.isFinite(n)) return String(vMinutes ?? '')
-  const total = Math.max(0, Math.round(n))
-  const h = Math.floor(total / 60)
-  const m = total % 60
-  if (h === 0) return `${m}min`
-  if (m === 0) return `${h}hr`
-  return `${h}hr ${m}min`
 }
 
 /** Reusable alert for printing validation errors; show in both Printing section and at top of form. */
@@ -98,185 +88,6 @@ type ResinBlendPreset = {
   blend_code: string
   name: string
   components: Array<{ resin_code: string; pct: number }>
-}
-
-function QuotePreview(props: {
-  preview: any
-  loading: boolean
-  canCalculate: boolean
-  missing: string[]
-  finishMode: 'Rolls' | 'Cartons'
-  productType: string
-  estimatedPallets: number | null
-}) {
-  const { preview, loading, canCalculate, missing, finishMode, productType, estimatedPallets } = props
-  const p = preview
-  const dash = '—'
-  return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h6">Live Quote</Typography>
-        <Typography variant="caption" color="text.secondary">
-          {loading ? 'Calculating…' : p ? 'Up to date' : canCalculate ? 'Ready' : 'Incomplete'}
-        </Typography>
-      </Box>
-
-      {!p && missing.length > 0 ? (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-          Missing: {missing.join(', ')}
-        </Typography>
-      ) : null}
-
-      <Box sx={{ mt: 1 }}>
-        {p ? (
-          <>
-            {(() => {
-              const kgPerUnit =
-                p.kg_per_unit != null
-                  ? Number(p.kg_per_unit)
-                  : Number(p.totals_units || 0) > 0 && p.totals_kg != null
-                    ? Number(p.totals_kg) / Number(p.totals_units || 1)
-                    : null
-              const kgPer1000 = kgPerUnit != null && Number.isFinite(kgPerUnit) ? kgPerUnit * 1000 : null
-              if (kgPer1000 == null || !Number.isFinite(kgPer1000)) return null
-              return (
-                <Typography variant="body2">
-                  Yield estimate: {kgPer1000.toFixed(2)}kg / 1000 products
-                </Typography>
-              )
-            })()}
-            {p.cost_per_kg != null && (
-              <Typography variant="body2">
-                Cost / kg: {fmtDollars(p.cost_per_kg)}
-              </Typography>
-            )}
-            {p.extrusion_hours != null ? (
-              <Typography variant="body2">
-                Extrusion time: {fmtHoursMinutes(Number(p.extrusion_hours) * 60)}
-              </Typography>
-            ) : null}
-            {Number(p.extrusion_waste_minutes || 0) > 0 ? (
-              <Typography variant="body2">
-                Wasted extrusion time: {fmtHoursMinutes(Number(p.extrusion_waste_minutes || 0))}
-              </Typography>
-            ) : null}
-            {finishMode === 'Rolls' && p.kg_per_roll != null && (
-              <Typography variant="body2">
-                Weight / Roll: {Number(p.kg_per_roll).toFixed(2)}kg
-              </Typography>
-            )}
-            {finishMode === 'Rolls' && p.m_per_roll != null && (
-              <Typography variant="body2">
-                Meters / Roll: {Number(p.m_per_roll).toFixed(2)}m
-              </Typography>
-            )}
-            {p.unit_price != null && (
-              <Typography variant="body2">
-                Price per {productType}: {fmtDollars(p.unit_price, 4)}
-              </Typography>
-            )}
-            {p.totals_m != null && Number(p.totals_m) > 0 && (
-              <Typography variant="body2">
-                Total meters: {Number(p.totals_m).toFixed(2)}m
-              </Typography>
-            )}
-            {p.cartons != null && (
-              <Typography variant="body2">
-                Cartons: {Number(p.cartons)}
-                {p.kg_per_carton != null ? ` (${Number(p.kg_per_carton).toFixed(2)}kg/carton)` : ''}
-              </Typography>
-            )}
-            {estimatedPallets != null && (
-              <Typography variant="body2">
-                Estimated pallets: {estimatedPallets}
-              </Typography>
-            )}
-            {p.conversion_minutes_total != null && (
-              <Typography variant="body2">
-                Conversion time: {fmtHoursMinutes(Number(p.conversion_minutes_total))}
-                {p.conversion_minutes_run != null && p.conversion_minutes_roll_changes != null
-                  ? ` (${fmtHoursMinutes(Number(p.conversion_minutes_run))} run + ${fmtHoursMinutes(Number(p.conversion_minutes_roll_changes))} change)`
-                  : ''}
-              </Typography>
-            )}
-            {p.carton_cost_total != null && Number(p.carton_cost_total || 0) > 0 && (
-              <Typography variant="body2">Carton cost: {fmtDollars(p.carton_cost_total)}</Typography>
-            )}
-          </>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            {canCalculate ? 'Ready to calculate.' : 'Add more details to see pricing.'}
-          </Typography>
-        )}
-      </Box>
-
-      <Divider sx={{ my: 2 }} />
-
-      <Typography variant="subtitle1" sx={{ mb: 1 }}>
-        Breakdown
-      </Typography>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>Stage</TableCell>
-            <TableCell>Cost</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <TableRow>
-            <TableCell>Material</TableCell>
-            <TableCell>{p ? fmtDollars(p.cost_breakdown?.material_cost) : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell>Extrusion</TableCell>
-            <TableCell>{p ? fmtDollars(p.cost_breakdown?.extrusion_cost) : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell>Printing</TableCell>
-            <TableCell>{p ? fmtDollars(p.cost_breakdown?.printing_cost) : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell>Conversion</TableCell>
-            <TableCell>{p ? fmtDollars(p.cost_breakdown?.conversion_cost) : dash}</TableCell>
-          </TableRow>
-          {finishMode === 'Rolls' ? (
-            <TableRow>
-              <TableCell>Core</TableCell>
-              <TableCell>{p ? fmtDollars(p.cost_breakdown?.core_cost) : dash}</TableCell>
-            </TableRow>
-          ) : null}
-          <TableRow>
-            <TableCell>Waste</TableCell>
-            <TableCell>{p ? fmtDollars(p.cost_breakdown?.waste_cost) : dash}</TableCell>
-          </TableRow>
-
-          <TableRow>
-            <TableCell colSpan={2} sx={{ py: 0.5 }} />
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Total cost</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>{p ? fmtDollars(p.total_cost) : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Margin (%)</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>{p ? `${(Number(p.margin || 0) * 100).toFixed(2)}%` : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Suggested price</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>{p ? fmtDollars(p.final_price) : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Suggested price / kg</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>
-              {p && Number(p.totals_kg || 0) > 0
-                ? fmtDollars(Number(p.final_price || 0) / Number(p.totals_kg || 1))
-                : dash}
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </Paper>
-  )
 }
 
 export type SavedQuoteInitialData = {
@@ -312,6 +123,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [hydratedFromQuote, setHydratedFromQuote] = useState(false)
   const initialPayloadSnapshotRef = useRef<string | null>(null)
   const preserveLoadedPricePerKgRef = useRef(false)
+  const skipNextMarginToPriceRef = useRef(false)
   const payloadForEditDetectionRef = useRef<Record<string, unknown>>({})
 
   // Quantity (four independent values; qtyType only controls which are editable vs computed)
@@ -713,7 +525,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       num_colours: showNumColours ? Number(numColours || 0) : 0,
 
       finish_mode: finishMode,
-      core_type: finishMode === 'Rolls' ? coreType : null,
+      core_type: coreType,
       roll_weight_billing: finishMode === 'Rolls' ? rollWeightBilling : null,
       bags_per_carton: finishMode === 'Cartons' ? (bagsPerCarton ? Number(bagsPerCarton) : null) : null,
       carton_option_slug: finishMode === 'Cartons' ? (cartonOptionSlug || null) : null,
@@ -1180,21 +992,24 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canCalculate, calcPayload, ratebook, finishMode])
 
-  // When margin is the driver, sync price-per-kg from the result. Skip when we just loaded by price_per_kg so we don't overwrite the saved value.
+  // When margin is the driver, sync price-per-kg from the result. Skip when we just loaded price_per_kg or just switched from it (wait for recalc with new margin).
   useEffect(() => {
     if (priceDriver !== 'margin') return
     if (preserveLoadedPricePerKgRef.current) return
+    if (skipNextMarginToPriceRef.current) {
+      skipNextMarginToPriceRef.current = false
+      return
+    }
     const p = quickPreview
     if (!p || typeof p.totals_kg !== 'number' || p.totals_kg <= 0) return
     const fp = Number(p.final_price)
     if (Number.isFinite(fp)) setSuggestedPricePerKg(roundTo2Decimals(String(fp / p.totals_kg)))
   }, [quickPreview, priceDriver])
 
-  // When price-per-kg is the driver and we have a result, sync margin so the next recalc uses it (e.g. user set price per kg before first result).
-  // Skip when we just loaded from a saved quote: we already set margin from saved cost/price; overwriting from API result causes two-way rounding drift.
+  // When price-per-kg is the driver and we have a result, sync margin from (total_cost, price, totals_kg).
+  // If we just loaded a saved quote with price_per_kg: recompute margin from this result once, then switch to margin-as-driver so subsequent recalc uses that margin.
   useEffect(() => {
     if (priceDriver !== 'pricePerKg') return
-    if (preserveLoadedPricePerKgRef.current) return
     const priceKg = Number(suggestedPricePerKg)
     if (!Number.isFinite(priceKg) || priceKg <= 0) return
     const p = quickPreview
@@ -1205,6 +1020,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     const pct = Math.max(0, Math.min(99.99, margin * 100))
     const next = roundTo2Decimals(String(pct))
     if (next !== quickMargin) setQuickMargin(next)
+    if (preserveLoadedPricePerKgRef.current) {
+      preserveLoadedPricePerKgRef.current = false
+      skipNextMarginToPriceRef.current = true
+      setPriceDriver('margin')
+    }
   }, [quickPreview, priceDriver, suggestedPricePerKg, quickMargin])
 
   const estimatedPallets = useMemo(() => {
@@ -1232,6 +1052,101 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         : null
 
   const { setDirty } = useUnsavedChanges()
+
+  const [converting, setConverting] = useState(false)
+  const [convertErr, setConvertErr] = useState<string | null>(null)
+
+  async function handleConvertToOrder() {
+    if (!customerId.trim() || !canCalculate) {
+      setConvertErr('Select a customer and complete the quote fields before converting to order.')
+      return
+    }
+    setConvertErr(null)
+    setConverting(true)
+    try {
+      const suffix = quoteId
+        ? `${String(quoteId).slice(0, 8)}-${Date.now().toString(36).slice(-4)}`
+        : Date.now().toString(36)
+
+      const spec = buildSpecFromQuotePayload(payloadForSave as any)
+      const fromSpec = (computeProductCodeFromSpec(spec) || '').trim()
+      const productCode = fromSpec || `Q-${suffix}`
+      const createProductRes = await apiFetch<{ ok: boolean; product: { id: string } }>(
+        '/api/products',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            customer_id: customerId,
+            code: productCode,
+            spec,
+          }),
+        }
+      )
+      const productId = createProductRes?.product?.id
+      if (!productId) {
+        setConvertErr('Failed to create product')
+        return
+      }
+
+      const qty = getOrderQuantityFromQuotePayload(payloadForSave as any)
+      const pricePerKg = pricePerKgForSave != null ? Number(pricePerKgForSave) : null
+      const totalKg = quickPreview?.totals_kg != null ? Number(quickPreview.totals_kg) : null
+      const rate = pricePerKg
+      const totalPrice = totalKg != null && pricePerKg != null ? totalKg * pricePerKg : null
+
+      const today = new Date()
+      const orderDate = today.toISOString().slice(0, 10)
+      const dueDate = new Date(today)
+      dueDate.setDate(dueDate.getDate() + 28)
+      const dueDateStr = dueDate.toISOString().slice(0, 10)
+
+      const orderPayload: {
+        customer_id: string
+        quote_id?: string
+        status: string
+        order_date?: string
+        items: Array<{
+          product_id: string
+          quantity_value: number
+          quantity_unit: string
+          due_date?: string | null
+          rate?: number | null
+          total_price?: number | null
+        }>
+      } = {
+        customer_id: customerId,
+        status: 'draft',
+        order_date: orderDate,
+        items: [
+          {
+            product_id: productId,
+            quantity_value: qty.quantity_value,
+            quantity_unit: qty.quantity_unit,
+            due_date: dueDateStr,
+            ...(rate != null && Number.isFinite(rate) ? { rate } : {}),
+            ...(totalPrice != null && Number.isFinite(totalPrice) ? { total_price: totalPrice } : {}),
+          },
+        ],
+      }
+      if (quoteId) orderPayload.quote_id = quoteId
+
+      const createOrderRes = await apiFetch<{ ok: boolean; order_id: string }>('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderPayload),
+      })
+      const orderId = createOrderRes?.order_id
+      if (!orderId) {
+        setConvertErr('Failed to create order')
+        return
+      }
+      setDirty(false)
+      navigate(`/orders/${orderId}/edit`, { replace: true })
+    } catch (e) {
+      setConvertErr(e instanceof Error ? e.message : 'Convert to order failed')
+    } finally {
+      setConverting(false)
+    }
+  }
 
   async function handleSaveQuote() {
     if (!customerId.trim()) {
@@ -1267,21 +1182,36 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     }
   }
 
+  function renderQuoteActions() {
+    return (
+      <>
+        <Button component={Link} to="/quotes" variant="text" color="primary">
+          Cancel
+        </Button>
+        <Button
+          variant="outlined"
+          disabled={saving || !customerId.trim() || !canCalculate}
+          onClick={() => void handleSaveQuote()}
+        >
+          {saving ? 'Saving…' : isEditMode ? 'Update quote' : 'Save quote'}
+        </Button>
+        <Button
+          variant="contained"
+          disabled={converting || !customerId.trim() || !canCalculate}
+          onClick={() => void handleConvertToOrder()}
+        >
+          {converting ? 'Converting…' : 'Convert to order'}
+        </Button>
+      </>
+    )
+  }
+
   return (
     <Stack spacing={2}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h5">Quote Calculator</Typography>
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-          <Button component={Link} to="/quotes" variant="outlined">
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            disabled={saving || !customerId.trim() || !canCalculate}
-            onClick={() => void handleSaveQuote()}
-          >
-            {saving ? 'Saving…' : isEditMode ? 'Update quote' : 'Save quote'}
-          </Button>
+          {renderQuoteActions()}
         </Box>
       </Box>
 
@@ -1309,7 +1239,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         </Box>
       </Paper>
 
-      {(displayErr || ratebookErr) && <Alert severity="error">{displayErr || ratebookErr}</Alert>}
+      {(displayErr || ratebookErr || convertErr) && (
+        <Alert severity="error">{displayErr || ratebookErr || convertErr}</Alert>
+      )}
       <PrintingUnavailableAlert message={printingErrorComputed} prominent />
 
       <Box
@@ -1339,30 +1271,32 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <MenuItem value="Cartons">Cartons</MenuItem>
                 </DefaultSelectField>
                 {finishMode === 'Cartons' ? (
-                  <>
-                    <TextField
-                      label="Bags per Carton"
-                      type="number"
-                      inputProps={{ min: 1, step: 1 }}
-                      value={bagsPerCarton}
-                      onChange={(e) => setBagsPerCarton(e.target.value)}
-                    />
-                    {ratebook?.carton_options && ratebook.carton_options.length > 0 ? (
-                      <DefaultSelectField
-                        label="Carton option"
-                        defaultValue={ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? ''}
-                        value={cartonOptionSlug ?? (ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? '')}
-                        onChange={(e) => setCartonOptionSlug(e.target.value || null)}
-                      >
-                        <MenuItem value="">—</MenuItem>
-                        {ratebook.carton_options.map((opt) => (
-                          <MenuItem key={opt.slug} value={opt.slug}>
-                            {opt.name} (${Number(opt.cost_per_unit).toFixed(2)})
-                          </MenuItem>
-                        ))}
-                      </DefaultSelectField>
-                    ) : null}
-                  </>
+                  <TextField
+                    label="Bags per Carton"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={bagsPerCarton}
+                    onChange={(e) => setBagsPerCarton(e.target.value)}
+                  />
+                ) : null}
+                <DefaultSelectField defaultValue="7mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
+                  {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+                    <MenuItem key={v} value={v}>
+                      {v}
+                    </MenuItem>
+                  ))}
+                </DefaultSelectField>
+                {finishMode === 'Rolls' ? (
+                  <DefaultSelectField
+                    label="Roll weight billing"
+                    defaultValue="core_included"
+                    value={rollWeightBilling}
+                    onChange={(e) => setRollWeightBilling(e.target.value as any)}
+                  >
+                    <MenuItem value="core_included">Include core</MenuItem>
+                    <MenuItem value="core_off">Exclude core</MenuItem>
+                    <MenuItem value="core_half_off">Half core</MenuItem>
+                  </DefaultSelectField>
                 ) : null}
               </Box>
             </Paper>
@@ -1608,152 +1542,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   </DefaultSelectField>
                 </Box>
 
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Colour</TableCell>
-                      <TableCell>Percentage (%)</TableCell>
-                      <TableCell />
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {colourRows.map((row, idx) => {
-                      const defaults = { colour_code: '', strength_pct: '' }
-                      const isDefault = isDefaultRow(row, defaults)
-                      return (
-                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                          <TableCell sx={{ width: '55%' }}>
-                            <ColourSelect
-                              options={colourOptions}
-                              valueCode={row.colour_code}
-                              label={idx === 0 ? 'Colour 1' : `Colour ${idx + 1}`}
-                              onChangeCode={(nextCode) =>
-                                setColourRows((prev) => {
-                                  const next = [...prev]
-                                  next[idx] = { ...(next[idx] || { colour_code: '', strength_pct: '' }), colour_code: nextCode }
-                                  return next
-                                })
-                              }
-                            />
-                          </TableCell>
-                          <TableCell sx={{ width: '35%' }}>
-                            <TextField
-                              size="small"
-                              label="%"
-                              type="number"
-                              inputProps={{ min: 0, step: 0.1 }}
-                              value={row.strength_pct}
-                              onChange={(e) =>
-                                setColourRows((prev) => {
-                                  const next = [...prev]
-                                  next[idx] = { ...(next[idx] || { colour_code: '', strength_pct: '' }), strength_pct: e.target.value }
-                                  return next
-                                })
-                              }
-                              fullWidth
-                            />
-                          </TableCell>
-                          <TableCell sx={{ width: '10%' }}>
-                            <Button
-                              size="small"
-                              color="inherit"
-                              onClick={() =>
-                                colourRows.length > 2
-                                  ? setColourRows((prev) => prev.filter((_, i) => i !== idx))
-                                  : setColourRows((prev) => {
-                                      const next = [...prev]
-                                      next[idx] = defaults
-                                      return next
-                                    })
-                              }
-                            >
-                              Remove
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-                <Box sx={{ mt: 1 }}>
-                  <Button variant="outlined" size="small" onClick={() => setColourRows((prev) => [...prev, { colour_code: '', strength_pct: '' }])}>
-                    Add colour
-                  </Button>
-                </Box>
-
-                <Box>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Additive</TableCell>
-                        <TableCell>Percentage (%)</TableCell>
-                        <TableCell />
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {additiveRows.map((row, idx) => {
-                        const defaults = { additive_code: '', pct: '' }
-                        const isDefault = isDefaultRow(row, defaults)
-                        return (
-                          <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                            <TableCell sx={{ width: '55%' }}>
-                              <AdditiveSelect
-                                options={additiveOptions}
-                                valueCode={row.additive_code}
-                                label={`Additive ${idx + 1}`}
-                                onChangeCode={(nextCode) =>
-                                  setAdditiveRows((prev) => {
-                                    const next = [...prev]
-                                    next[idx] = { ...(next[idx] || { additive_code: '', pct: '' }), additive_code: nextCode }
-                                    return next
-                                  })
-                                }
-                              />
-                            </TableCell>
-                            <TableCell sx={{ width: '35%' }}>
-                              <TextField
-                                size="small"
-                                label="Pct"
-                                type="number"
-                                inputProps={{ min: 0, step: 0.1 }}
-                                value={row.pct}
-                                onChange={(e) =>
-                                  setAdditiveRows((prev) => {
-                                    const next = [...prev]
-                                    next[idx] = { ...(next[idx] || { additive_code: '', pct: '' }), pct: e.target.value }
-                                    return next
-                                  })
-                                }
-                              />
-                            </TableCell>
-                            <TableCell sx={{ width: '10%' }}>
-                              <Button
-                                size="small"
-                                color="inherit"
-                                onClick={() =>
-                                  additiveRows.length > 2
-                                    ? setAdditiveRows((prev) => prev.filter((_, i) => i !== idx))
-                                    : setAdditiveRows((prev) => {
-                                        const next = [...prev]
-                                        next[idx] = defaults
-                                        return next
-                                      })
-                                }
-                              >
-                                Remove
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
-                    </TableBody>
-                  </Table>
-                  <Box sx={{ mt: 1 }}>
-                    <Button variant="outlined" size="small" onClick={() => setAdditiveRows((prev) => [...prev, { additive_code: '', pct: '' }])}>
-                      Add additive
-                    </Button>
-                  </Box>
-                </Box>
+                <MaterialsColoursAndAdditives
+                  colourOptions={colourOptions}
+                  additiveOptions={additiveOptions}
+                  colourRows={colourRows}
+                  onColourRowsChange={setColourRows}
+                  additiveRows={additiveRows}
+                  onAdditiveRowsChange={setAdditiveRows}
+                />
               </Stack>
             </Paper>
 
@@ -1840,30 +1636,23 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                 Packaging
               </Typography>
               <Stack spacing={2}>
-                {finishMode === 'Rolls' ? (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-                    <DefaultSelectField defaultValue="7mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
-                      {['7mm', '13mm', 'PVC', 'None'].map((v) => (
-                        <MenuItem key={v} value={v}>
-                          {v}
-                        </MenuItem>
-                      ))}
-                    </DefaultSelectField>
-
-                    <DefaultSelectField
-                      label="Roll weight billing"
-                      defaultValue="core_included"
-                      value={rollWeightBilling}
-                      onChange={(e) => setRollWeightBilling(e.target.value as any)}
-                    >
-                      <MenuItem value="core_included">Include core</MenuItem>
-                      <MenuItem value="core_off">Exclude core</MenuItem>
-                      <MenuItem value="core_half_off">Half core</MenuItem>
-                    </DefaultSelectField>
-                  </Box>
+                {finishMode === 'Cartons' && ratebook?.carton_options && ratebook.carton_options.length > 0 ? (
+                  <DefaultSelectField
+                    label="Carton option"
+                    defaultValue={ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? ''}
+                    value={cartonOptionSlug ?? (ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? '')}
+                    onChange={(e) => setCartonOptionSlug(e.target.value || null)}
+                  >
+                    <MenuItem value="">—</MenuItem>
+                    {ratebook.carton_options.map((opt) => (
+                      <MenuItem key={opt.slug} value={opt.slug}>
+                        {opt.name} (${Number(opt.cost_per_unit).toFixed(2)})
+                      </MenuItem>
+                    ))}
+                  </DefaultSelectField>
                 ) : null}
 
-                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                   <DefaultSelectField defaultValue="Chep" label="Pallet Type" value={palletType} onChange={(e) => setPalletType(e.target.value as any)}>
                     {(['Chep', 'Plain', 'Resin', 'None'] as const).map((v) => (
                       <MenuItem key={v} value={v}>
@@ -1920,64 +1709,40 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                 </Box>
 
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                  <Button component={Link} to="/quotes" variant="outlined">
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="contained"
-                    disabled={saving || !customerId.trim() || !canCalculate}
-                    onClick={() => void handleSaveQuote()}
-                  >
-                    {saving ? 'Saving…' : isEditMode ? 'Update quote' : 'Save quote'}
-                  </Button>
+                  {renderQuoteActions()}
                 </Box>
               </Stack>
             </Paper>
           </Stack>
         </Box>
 
-        {/* Desktop sticky panel */}
         {!isMobile ? (
-          <Box
-            sx={{
-              width: 380,
-              flex: '0 0 auto',
-              position: 'sticky',
-              // Account for the fixed app bar (56px xs, 64px sm+) plus a small gap.
-              top: { xs: 72, sm: 80 },
-              alignSelf: 'flex-start',
-            }}
-          >
-            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} estimatedPallets={estimatedPallets} />
-          </Box>
+          <StickySideAside>
+            <QuotePreviewPanel
+              preview={quickPreview}
+              loading={calcLoading}
+              canCalculate={canCalculate}
+              missing={missingForCalc}
+              finishMode={finishMode}
+              productType={productType}
+              estimatedPallets={estimatedPallets}
+            />
+          </StickySideAside>
         ) : null}
       </Box>
 
-      {/* Mobile bottom panel: spacer reserves space so Save button stays visible above the fixed panel when scrolled to bottom */}
       {isMobile ? (
-        <>
-          <Box sx={{ minHeight: 'calc(50vh + 140px)' }} />
-          <Paper
-            variant="outlined"
-            sx={{
-              position: 'fixed',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 1200,
-              borderLeft: 0,
-              borderRight: 0,
-              borderBottom: 0,
-              borderRadius: 0,
-              maxHeight: '40vh',
-              overflow: 'auto',
-              p: 1.5,
-              backgroundColor: 'background.paper',
-            }}
-          >
-            <QuotePreview preview={quickPreview} loading={calcLoading} canCalculate={canCalculate} missing={missingForCalc} finishMode={finishMode} productType={productType} estimatedPallets={estimatedPallets} />
-          </Paper>
-        </>
+        <MobileFixedBottomAside>
+          <QuotePreviewPanel
+            preview={quickPreview}
+            loading={calcLoading}
+            canCalculate={canCalculate}
+            missing={missingForCalc}
+            finishMode={finishMode}
+            productType={productType}
+            estimatedPallets={estimatedPallets}
+          />
+        </MobileFixedBottomAside>
       ) : null}
     </Stack>
   )

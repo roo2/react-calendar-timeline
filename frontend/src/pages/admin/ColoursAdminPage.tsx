@@ -15,6 +15,7 @@ export function ColoursAdminPage() {
   const [newCode, setNewCode] = useState('')
   const [newName, setNewName] = useState('')
   const [newPrice, setNewPrice] = useState<number | ''>('')
+  const [newShortCode, setNewShortCode] = useState('')
 
   const canCreate = useMemo(() => !!newCode.trim() && !!newName.trim() && newPrice !== '', [newCode, newName, newPrice])
 
@@ -86,6 +87,7 @@ export function ColoursAdminPage() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: 180 }}>Code</TableCell>
+                <TableCell sx={{ width: 72 }}>Short</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
                 <TableCell sx={{ width: 180 }} />
@@ -100,6 +102,9 @@ export function ColoursAdminPage() {
                   <TextField size="small" label="Code" value={newCode} onChange={(e) => setNewCode(e.target.value)} />
                 </TableCell>
                 <TableCell>
+                  <TextField size="small" label="Short" value={newShortCode} onChange={(e) => setNewShortCode((e.target.value || '').slice(0, 3))} inputProps={{ maxLength: 3 }} placeholder="3" />
+                </TableCell>
+                <TableCell>
                   <TextField size="small" fullWidth label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
                 </TableCell>
                 <TableCell>
@@ -112,10 +117,11 @@ export function ColoursAdminPage() {
                     disabled={!canCreate || saving === newCode.trim()}
                     onClick={() => {
                       if (!canCreate) return
-                      void saveRow(newCode, { name: newName.trim(), price_per_kg: Number(newPrice), sort_order: rows.length }).then(() => {
+                      void saveRow(newCode, { name: newName.trim(), price_per_kg: Number(newPrice), sort_order: rows.length, short_code: newShortCode.trim() || null }).then(() => {
                         setNewCode('')
                         setNewName('')
                         setNewPrice('')
+                        setNewShortCode('')
                       })
                     }}
                   >
@@ -140,10 +146,19 @@ function ColourRow(props: {
   const { row, saving, onSave, onDelete } = props
   const [name, setName] = useState(row.name)
   const [price, setPrice] = useState<number | ''>(row.price_per_kg)
-  const dirty = name !== row.name || price !== row.price_per_kg
+  const [shortCode, setShortCode] = useState(row.short_code ?? '')
+  useEffect(() => {
+    setName(row.name)
+    setPrice(row.price_per_kg)
+    setShortCode(row.short_code ?? '')
+  }, [row.name, row.price_per_kg, row.short_code])
+  const dirty = name !== row.name || price !== row.price_per_kg || shortCode !== (row.short_code ?? '')
   return (
     <TableRow hover>
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.colour_code}</TableCell>
+      <TableCell>
+        <TextField size="small" sx={{ width: 72 }} value={shortCode} onChange={(e) => setShortCode((e.target.value || '').slice(0, 3))} inputProps={{ maxLength: 3 }} />
+      </TableCell>
       <TableCell>
         <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
       </TableCell>
@@ -152,7 +167,7 @@ function ColourRow(props: {
       </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
-          <Button size="small" variant="outlined" disabled={saving || !dirty || !name.trim() || price === ''} onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price), sort_order: row.sort_order })}>
+          <Button size="small" variant="outlined" disabled={saving || !dirty || !name.trim() || price === ''} onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price), sort_order: row.sort_order, short_code: shortCode.trim() || null })}>
             {saving ? 'Saving…' : 'Save'}
           </Button>
           <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.colour_code)}>

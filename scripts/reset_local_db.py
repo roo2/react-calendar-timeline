@@ -20,6 +20,7 @@ SEED_WASTE_FACTORS_SCRIPT = (REPO_ROOT / "scripts" / "seed_waste_factors_from_ts
 SEED_PRINTING_PRICING_SCRIPT = (REPO_ROOT / "scripts" / "seed_printing_pricing_from_tsv.py").resolve()
 SEED_CONVERSION_SCRIPT = (REPO_ROOT / "scripts" / "seed_conversion_from_tsv.py").resolve()
 SEED_CARTON_OPTIONS_SCRIPT = (REPO_ROOT / "scripts" / "seed_carton_options_from_tsv.py").resolve()
+SEED_ANILOX_SCRIPT = (REPO_ROOT / "scripts" / "seed_anilox_from_tsv.py").resolve()
 
 
 def _can_import(module: str, python_exe: str) -> bool:
@@ -152,6 +153,7 @@ def main(argv: list[str]) -> int:
         _run([py, str(SEED_PRINTING_PRICING_SCRIPT)], env=env)
         _run([py, str(SEED_CONVERSION_SCRIPT)], env=env)
         _run([py, str(SEED_CARTON_OPTIONS_SCRIPT)], env=env)
+        _run([py, str(SEED_ANILOX_SCRIPT)], env=env)
     else:
         print("Skipping TSV seeds (--no-migrations).")
 

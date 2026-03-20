@@ -17,6 +17,8 @@ type JobSheetDetail = {
     version_number: number
     product_id: string
     product_version_id: string
+    invoice_no?: string | null
+    order_date?: string | null
   }
   spec_payload: any
 }
@@ -60,7 +62,7 @@ export function JobSheetShowPage() {
       <Stack spacing={2}>
         <Typography variant="h5">Job Sheet</Typography>
         <Alert severity="error">{err}</Alert>
-        <Button component={Link} to="/job-sheets" variant="outlined">
+        <Button component={Link} to="/job-sheets" variant="text" color="primary">
           Back
         </Button>
       </Stack>
@@ -76,23 +78,24 @@ export function JobSheetShowPage() {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">Job Sheet</Typography>
           <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+            <Button component={Link} to="/job-sheets" variant="text" color="primary">
+              Back to Job Sheets
+            </Button>
             <Button
               component={Link}
               to={`/job-sheets/${encodeURIComponent(js.id)}/edit?returnTo=${encodeURIComponent(returnTo)}`}
-              variant="contained"
+              variant="outlined"
             >
               Edit Job Sheet
-            </Button>
-            <Button component={Link} to="/job-sheets" variant="outlined">
-              Back to Job Sheets
             </Button>
           </Box>
         </Box>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(4, minmax(0, 1fr))' }, gap: 2 }}>
           <TextField label="Customer" value={js.customer_name || '-'} InputProps={{ readOnly: true }} disabled />
-          <TextField label="Job No" value={js.job_no || ''} InputProps={{ readOnly: true }} disabled />
-          <TextField label="Due Date" value={js.due_date || '-'} InputProps={{ readOnly: true }} disabled />
+          <TextField label="Invoice No" value={js.invoice_no ?? ''} InputProps={{ readOnly: true }} disabled />
+          <TextField label="Order Date" value={js.order_date ?? '-'} InputProps={{ readOnly: true }} disabled />
+          <TextField label="Due Date" value={js.due_date ?? '-'} InputProps={{ readOnly: true }} disabled />
         </Box>
 
         <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>

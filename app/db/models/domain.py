@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -121,6 +122,8 @@ class JobSheet(Base):
     due_date: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
     quantity_value: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     quantity_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    unit_rate: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -176,6 +179,7 @@ class Order(Base):
     quote_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus, name="order_status"))
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    order_date: Mapped[Optional[str]] = mapped_column(Date, nullable=True)  # editable; display instead of created_at when set
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order")

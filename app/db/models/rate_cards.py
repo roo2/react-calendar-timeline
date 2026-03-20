@@ -73,6 +73,7 @@ class Colour(Base):
     name: Mapped[str] = mapped_column(String(255))
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    short_code: Mapped[str | None] = mapped_column(String(3), nullable=True)  # 3-char code for product code (e.g. BLK, WHT)
 
     __table_args__ = (
         CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),
@@ -99,6 +100,15 @@ class Ink(Base):
     ink_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     printer_type: Mapped[str] = mapped_column(String(16), default="inline")
+
+
+class Anilox(Base):
+    """Uteco anilox roll reference (code + description)."""
+
+    __tablename__ = "anilox"
+
+    anilox_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    description: Mapped[str] = mapped_column(String(255))
 
 
 class Plate(Base):

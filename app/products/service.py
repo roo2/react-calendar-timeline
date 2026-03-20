@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from enum import Enum
 import uuid
 from typing import Optional, Tuple, List, Dict, Any
 
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
 from app.db.models.domain import Product, ProductVersion, OperatorSuggestion, Customer
@@ -35,7 +37,15 @@ def compute_product_description(spec_payload: Any, *, max_len: Optional[int] = N
     printing = spec_payload.get("printing") if isinstance(spec_payload.get("printing"), dict) else {}
 
     def _up(v: Any) -> str:
-        s = ("" if v is None else str(v)).strip()
+        if v is None:
+            return ""
+        # Enums sometimes leak through as "ProductType.BAG" (enum name), but we need the enum *value*.
+        if isinstance(v, Enum):
+            v = v.value
+        if isinstance(v, str) and "." in v:
+            # If the enum name leaked as plain text, keep just the last segment.
+            v = v.split(".")[-1]
+        s = str(v).strip()
         return s.upper()
 
     def _int_str(v: Any, *, default: str = "-") -> str:
@@ -145,9 +155,11 @@ def compute_product_description(spec_payload: Any, *, max_len: Optional[int] = N
     name_parts = [p for p in [resin, lf_or_g, product_type, colour] if p]
     name = " ".join(name_parts).strip() or "UNKNOWN PRODUCT"
 
-    dims_seg = f"W{width_seg} X {gauge}µm"
+    # Gauge should be the last of the dimensions.
+    dims_seg = f"W{width_seg}"
     if include_len:
         dims_seg += f" X L{length_seg}"
+    dims_seg += f" X {gauge}µm"
     # Sentences: "<NAME>." "PRINTED ..." "<DIMS>."
     parts: list[str] = [f"{name}."]
     if printed_seg:
@@ -157,6 +169,214 @@ def compute_product_description(spec_payload: Any, *, max_len: Optional[int] = N
     if max_len is not None and len(desc) > max_len:
         desc = desc[: max_len].rstrip()
     return desc
+
+
+def _up(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, Enum):
+        v = v.value
+    if isinstance(v, str) and "." in v:
+        v = v.split(".")[-1]
+    return str(v).strip().upper()
+
+
+def _int_or_null(v: Any) -> int | None:
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    try:
+        n = float(v)
+        if not (n == n and n not in (float("inf"), float("-inf"))):
+            return None
+        return int(round(n))
+    except Exception:
+        return None
+
+
+def _int_str(v: Any, *, fallback: str) -> str:
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return fallback
+    try:
+        n = float(v)
+        if not (n == n and n not in (float("inf"), float("-inf"))):
+            return fallback
+        return str(int(round(n)))
+    except Exception:
+        return fallback
+
+
+def _derive_num_colours(printing: dict) -> int:
+    explicit = _int_or_null(printing.get("num_colours"))
+    if explicit is not None and explicit > 0:
+        return explicit
+
+    inks: set[str] = set()
+    for key in ("front_ink_plate", "back_ink_plate"):
+        rows = printing.get(key)
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            code = str(r.get("ink_code") or "").strip()
+            if code:
+                inks.add(code.upper())
+
+    codes = printing.get("ink_codes")
+    if isinstance(codes, list):
+        for c in codes:
+            code = str(c or "").strip()
+            if code:
+                inks.add(code.upper())
+
+    return len(inks)
+
+
+def _total_print_inks(printing: dict) -> int:
+    # xP suffix uses the total count of ink_code rows across BOTH sides.
+    def _count(rows: Any) -> int:
+        if not isinstance(rows, list):
+            return 0
+        n = 0
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            if str(r.get("ink_code") or "").strip():
+                n += 1
+        return n
+
+    front_n = _count(printing.get("front_ink_plate"))
+    back_n = _count(printing.get("back_ink_plate"))
+    total = front_n + back_n
+    if total > 0:
+        return total
+
+    explicit = _int_or_null(printing.get("num_colours"))
+    if explicit is not None and explicit > 0:
+        return explicit
+
+    return _derive_num_colours(printing)
+
+
+PRODUCT_TYPE_PREFIX: dict[str, str] = {
+    "BAG": "PB",
+    "TUBE": "PT",
+    "SLEEVE": "SV",
+    "SHEET": "ST",
+    "CENTERFOLD": "CF",
+    "U-FILM": "UF",
+    "UFILM": "UF",
+}
+
+
+def compute_product_code_base(spec_payload: Any) -> str:
+    """
+    Compute product code from spec only (no customer prefix).
+
+    Matches the frontend algorithm:
+    - single dashes between segments (missing segments are omitted)
+    - xP suffix where P = number of ink_code rows across both sides
+    """
+    if not isinstance(spec_payload, dict):
+        return ""
+
+    identity = spec_payload.get("identity") if isinstance(spec_payload.get("identity"), dict) else {}
+    dims = spec_payload.get("dimensions") if isinstance(spec_payload.get("dimensions"), dict) else {}
+    formulation = spec_payload.get("formulation") if isinstance(spec_payload.get("formulation"), dict) else {}
+    printing = spec_payload.get("printing") if isinstance(spec_payload.get("printing"), dict) else {}
+
+    product_type = _up(identity.get("product_type"))
+    type_prefix = PRODUCT_TYPE_PREFIX.get(product_type, "XX")
+
+    finish_mode = _up(identity.get("finish_mode"))
+    finish_char = "C" if finish_mode == "CARTONS" else "R"
+
+    geometry = _up(dims.get("geometry"))
+    base_width = _int_or_null(dims.get("base_width_mm"))
+    gusset_mm = _int_or_null(dims.get("gusset_mm")) or 0
+    has_gusset = geometry == "GUSSET" or gusset_mm > 0
+    is_centerfold = product_type == "CENTERFOLD" or geometry == "CENTREFOLD"
+    is_ufilm = product_type in {"U-FILM", "UFILM"} or geometry == "UFILM"
+
+    width_seg = _int_str(dims.get("base_width_mm"), fallback="")
+    if width_seg:
+        if has_gusset and gusset_mm > 0:
+            width_seg = f"({_int_str(dims.get('base_width_mm'), fallback='-')}+{gusset_mm})"
+        elif is_centerfold and base_width is not None:
+            layflat = int(round(base_width / 2))
+            width_seg = f"{layflat}({base_width})"
+        elif is_ufilm:
+            l = _int_or_null(dims.get("ufilm_left_width_mm")) or 0
+            r = _int_or_null(dims.get("ufilm_right_width_mm")) or 0
+            w = base_width or 0
+            width_seg = f"{l}/{w}/{r}"
+
+    length_mm = _int_str(dims.get("base_length_mm"), fallback="")
+    gauge_um = _int_str(dims.get("thickness_um"), fallback="")
+
+    colour_code = ""
+    comps = formulation.get("colour_components")
+    if isinstance(comps, list):
+        for row in comps:
+            if isinstance(row, dict):
+                cc = str(row.get("colour_code") or "").strip()
+                if cc:
+                    colour_code = _up(cc)[:3]
+                    break
+    if not colour_code:
+        legacy_colour = formulation.get("colour") if isinstance(formulation.get("colour"), dict) else {}
+        cc = legacy_colour.get("colour_code")
+        if cc:
+            colour_code = _up(cc)[:3]
+    # If no colour code is available, omit the segment entirely.
+    # Using a placeholder (e.g. '---') causes extra dashes in the final code.
+    if not colour_code:
+        colour_code = ""
+
+    print_seg = ""
+    method = _up(printing.get("method"))
+    if method and method != "NONE":
+        n = _total_print_inks(printing)
+        if n > 0:
+            print_seg = f"{n}P"
+
+    parts: list[str] = [f"{type_prefix}{finish_char}"]
+    if width_seg:
+        parts.append(width_seg)
+    if length_mm:
+        parts.append(length_mm)
+    if gauge_um:
+        parts.append(gauge_um)
+    if colour_code:
+        parts.append(colour_code)
+    if print_seg:
+        parts.append(print_seg)
+
+    return "-".join(parts)
+
+
+def compute_product_code_full(product: Product, spec_payload: Any) -> str:
+    """
+    Product code shown/stored from spec (no customer prefix).
+    `product` is kept for call-site compatibility; code is derived only from spec_payload.
+    """
+    _ = product  # unused; signature preserved for callers
+    return compute_product_code_base(spec_payload)
+
+
+def _try_update_product_code(db: Session, product: Product, new_code: str) -> None:
+    if not new_code:
+        return
+    if getattr(product, "code", None) == new_code:
+        return
+    original = product.code
+    product.code = new_code
+    try:
+        db.flush()
+    except IntegrityError:
+        # Best-effort: keep the old code if the computed one would collide.
+        db.rollback()
+        product.code = original
 
 
 def product_code_exists(code: str) -> bool:
@@ -192,14 +412,7 @@ def create_product_with_version(payload: CreateProductRequest, created_by: str) 
     with SessionLocal() as db:
         _ensure_customer_exists(db, payload.customer_id)
         cid = str(uuid.UUID(payload.customer_id))
-        customer = db.get(Customer, cid)
-        customer_code = (getattr(customer, "code", None) or "").strip().upper()
         code_in = (payload.code or "").strip()
-        if customer_code:
-            code_up = code_in.upper()
-            ok = code_up.startswith(f"{customer_code}-") or code_up.startswith(f"{customer_code}_")
-            if not ok:
-                raise DomainError(f"Product code must start with {customer_code}-")
         # Ensure unique product code
         if product_code_exists(code_in):
             raise DomainError("Product code already exists")
@@ -233,10 +446,19 @@ def get_with_versions(product_id: str) -> Optional[Product]:
         stmt = (
             select(Product)
             .options(joinedload(Product.versions))
+            .options(joinedload(Product.active_version))
             .options(joinedload(Product.customer))
             .where(Product.id == pid)
         )
-        return db.scalar(stmt)
+        product = db.scalar(stmt)
+        if not product:
+            return None
+        if product.active_version and isinstance(product.active_version.spec_payload, dict):
+            new_code = compute_product_code_full(product, product.active_version.spec_payload)
+            if new_code and new_code != product.code:
+                _try_update_product_code(db, product, new_code)
+                db.commit()
+        return product
 
 
 def get_version(version_id: str) -> Optional[ProductVersion]:
@@ -265,6 +487,10 @@ def create_new_version(product_id: str, payload: CreateProductVersionRequest, cr
         db.flush()
         product.active_version_id = version.id
         product.description = compute_product_description(spec_dict, max_len=255)
+        if isinstance(spec_dict, dict):
+            new_code = compute_product_code_full(product, spec_dict)
+            if new_code and new_code != product.code:
+                _try_update_product_code(db, product, new_code)
         db.add(product)
         db.commit()
         db.refresh(version)
@@ -346,6 +572,12 @@ def resolve_suggestion(suggestion_id: str, decision: str, resolver: str) -> Oper
             db.add(new_ver)
             db.flush()
             product.active_version_id = new_ver.id
+            # Keep product description/code aligned with the new active version spec.
+            if isinstance(new_ver.spec_payload, dict):
+                product.description = compute_product_description(new_ver.spec_payload, max_len=255)
+                new_code = compute_product_code_full(product, new_ver.spec_payload)
+                if new_code and new_code != product.code:
+                    _try_update_product_code(db, product, new_code)
             db.add(product)
             sug.status = "accepted"
         else:
@@ -360,14 +592,37 @@ def resolve_suggestion(suggestion_id: str, decision: str, resolver: str) -> Oper
 
 def search_products(query: Optional[str], *, customer_id: Optional[str] = None) -> List[Product]:
     with SessionLocal() as db:
-        stmt = select(Product).options(joinedload(Product.customer)).options(joinedload(Product.active_version))
+        stmt = (
+            select(Product)
+            .options(joinedload(Product.customer))
+            .options(joinedload(Product.active_version))
+        )
         if customer_id:
             stmt = stmt.where(Product.customer_id == str(customer_id))
         if query:
             like = f"%{query}%"
             stmt = stmt.where(or_(Product.code.ilike(like)))
         stmt = stmt.order_by(Product.created_at.desc())
-        return list(db.scalars(stmt).all())
+        products = list(db.scalars(stmt).all())
+
+        changed = False
+        for p in products:
+            if p.active_version and isinstance(p.active_version.spec_payload, dict):
+                new_code = compute_product_code_full(p, p.active_version.spec_payload)
+                if new_code and new_code != p.code:
+                    # Best-effort update; collisions are ignored.
+                    original = p.code
+                    p.code = new_code
+                    try:
+                        db.flush()
+                        changed = True
+                    except IntegrityError:
+                        db.rollback()
+                        p.code = original
+                        # continue with other products (after rollback)
+        if changed:
+            db.commit()
+        return products
 
 
 def list_suggestions(product_id: Optional[str] = None, status: Optional[str] = "open") -> List[OperatorSuggestion]:

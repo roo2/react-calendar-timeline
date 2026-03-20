@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Link } from 'react-router-dom'
+import { Alert, Button, Link as MuiLink, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { apiFetch } from '../../api/client'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { AdminDataTable } from './components/AdminDataTable'
@@ -235,7 +236,12 @@ export function PrintingAdminPage() {
 
   return (
     <Stack spacing={2}>
-      <AdminPageHeader title="Printing" subtitle="Printing pricing tiers, inks, and plates." />
+      <AdminPageHeader title="Printing" subtitle="Printing pricing tiers, inks, and plates. Manage Uteco anilox rolls separately." />
+      <Typography variant="body2">
+        <MuiLink component={Link} to="/admin/printing/anilox" underline="hover">
+          Anilox (Uteco) master data →
+        </MuiLink>
+      </Typography>
       {err ? <Alert severity="error">{err}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
