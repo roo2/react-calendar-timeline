@@ -878,6 +878,12 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "anilox",
+        sa.Column("anilox_code", sa.String(length=32), primary_key=True, nullable=False),
+        sa.Column("description", sa.String(length=255), nullable=False),
+    )
+
+    op.create_table(
         "plates",
         sa.Column(
             "customer_id",
@@ -1062,6 +1068,7 @@ def downgrade() -> None:
     op.drop_table("cores")
     op.drop_index("ix_plates_customer_id", table_name="plates")
     op.drop_table("plates")
+    op.drop_table("anilox")
     op.drop_table("inks")
     op.drop_table("colours")
     op.drop_table("additives")
