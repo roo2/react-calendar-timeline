@@ -727,12 +727,12 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               <TableHead>
                 <TableRow>
                   <TableCell>Product</TableCell>
-                  <TableCell sx={{ width: 160 }}>Due Date</TableCell>
-                  <TableCell sx={{ width: 170 }}>Qty Type</TableCell>
-                  <TableCell sx={{ width: 160 }}>Qty Total</TableCell>
-                  <TableCell sx={{ width: 110 }}>Rate ($)</TableCell>
-                  <TableCell sx={{ width: 110 }}>Total ($)</TableCell>
-                  <TableCell sx={{ width: 220 }}>Actions</TableCell>
+                  <TableCell>Due Date</TableCell>
+                  <TableCell>Qty Type</TableCell>
+                  <TableCell>Qty Total</TableCell>
+                  <TableCell>Rate ($)</TableCell>
+                  <TableCell>Total ($)</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -806,8 +806,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         {computedLineTotal(it) != null ? `$${Number(computedLineTotal(it)).toFixed(2)}` : '—'}
                       </Typography>
                     </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    <TableCell align="right">
+                      <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                         {canEditProduct && (
                           <Button
                             size="small"

@@ -54,6 +54,7 @@ def _to_summary(js, order_info: tuple[str | None, str | None] | None = None) -> 
         product_code=getattr(product, "code", ""),
         product_description=getattr(product, "description", None),
         customer_name=getattr(customer, "name", None),
+        customer_code=getattr(customer, "code", None),
         invoice_no=invoice_no,
         order_date=order_date,
     )

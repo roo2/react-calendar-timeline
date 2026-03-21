@@ -972,7 +972,11 @@ export function SpecPayloadForm(props: {
             <TextField
               label={`Length (${lengthUnits})`}
               type="number"
-              inputProps={{ min: 1, step: 1 }}
+              inputProps={
+                lengthUnits === 'M'
+                  ? { min: 0.001, step: 'any' }
+                  : { min: 1, step: 1 }
+              }
               value={lengthDisplay}
               onChange={(e) =>
                 update((d) => {
@@ -983,7 +987,12 @@ export function SpecPayloadForm(props: {
                   }
                   const n = Number(raw)
                   if (!Number.isFinite(n)) return
-                  d.dimensions.base_length_mm = lengthUnits === 'M' ? Math.round(n * 1000) : Math.round(n)
+                  if (lengthUnits === 'M') {
+                    const mm = n * 1000
+                    d.dimensions.base_length_mm = Math.round(mm)
+                  } else {
+                    d.dimensions.base_length_mm = Math.round(n)
+                  }
                 })
               }
               disabled={productType === PRODUCT_TYPE.Tube}

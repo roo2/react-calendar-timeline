@@ -27,8 +27,8 @@ type ProductSummary = {
   customer_name?: string | null
   active_version_id?: string | null
   active_version_number?: number | null
+  version_count?: number | null
   product_type?: string | null
-  pack_mode?: string | null
 }
 
 export function ProductsPage() {
@@ -97,9 +97,7 @@ export function ProductsPage() {
               <TableCell>Code</TableCell>
               <TableCell>Description</TableCell>
               <TableCell>Type</TableCell>
-              <TableCell>Packing</TableCell>
-              <TableCell sx={{ width: 140 }}>Latest</TableCell>
-              <TableCell sx={{ width: 220 }}>Actions</TableCell>
+              <TableCell sx={{ width: 220, whiteSpace: 'nowrap' }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -117,12 +115,15 @@ export function ProductsPage() {
                 </TableCell>
                 <TableCell>{p.description || '-'}</TableCell>
                 <TableCell>{p.product_type || '-'}</TableCell>
-                <TableCell>{p.pack_mode || '-'}</TableCell>
-                <TableCell>{p.active_version_number ?? '-'}</TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <MuiLink component={Link} to={`/products/${p.id}`} underline="hover">
-                      Previous versions
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                    <MuiLink
+                      component={Link}
+                      to={`/products/${p.id}`}
+                      underline="hover"
+                      sx={{ whiteSpace: 'nowrap' }}
+                    >
+                      Previous versions ({typeof p.version_count === 'number' ? p.version_count : 0})
                     </MuiLink>
                     {isPm ? (
                       <Button size="small" variant="outlined" component={Link} to={`/products/${p.id}/versions/new`}>

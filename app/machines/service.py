@@ -13,9 +13,10 @@ def _compute_width_mm_from_spec(spec: Any) -> Optional[float]:
     """
     Compute machine "web width" (mm) from a spec payload.
 
-    Rules mirror the frontend/local derived-dimensions logic:
+    Rules mirror the frontend quoteCalculator / SpecPayloadForm:
     - CentreFold: layflat = 0.5 * base_width_mm
-    - Gusset/BottomGusset: layflat = base_width_mm + 2 * gusset_mm
+    - Gusset: layflat = base_width_mm + gusset_mm (gusset is additional layflat once)
+    - BottomGusset: layflat = base_width_mm (matches quote_engine bottom_gusset)
     - Otherwise: layflat = base_width_mm
     """
     if not isinstance(spec, dict):
@@ -34,8 +35,10 @@ def _compute_width_mm_from_spec(spec: Any) -> Optional[float]:
             return None
         if geometry == "CentreFold":
             return float(width) / 2.0
-        if geometry in ("Gusset", "BottomGusset"):
-            return float(width) + 2.0 * float(gusset or 0)
+        if geometry == "Gusset":
+            return float(width) + float(gusset or 0)
+        if geometry == "BottomGusset":
+            return float(width)
         return float(width)
     except Exception:
         return None

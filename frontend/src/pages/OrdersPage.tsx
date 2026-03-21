@@ -91,7 +91,7 @@ export function OrdersPage() {
                 <TableCell>{o.status}</TableCell>
                 <TableCell>{o.order_date || o.created_at?.slice(0, 10) || ''}</TableCell>
                 <TableCell align="right">
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
                     <Button size="small" variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(o.id)}`}>
                       View
                     </Button>

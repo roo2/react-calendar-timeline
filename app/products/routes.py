@@ -17,6 +17,20 @@ from app.products.schemas import (
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 
+def _product_version_count(p) -> int:
+    """Version count for list/detail summaries (batch-set on list; or loaded `versions` relationship)."""
+    explicit = getattr(p, "_version_count", None)
+    if explicit is not None:
+        return int(explicit)
+    try:
+        vd = p.__dict__.get("versions")
+        if vd is not None:
+            return len(vd)
+    except Exception:
+        pass
+    return 0
+
+
 def _product_summary(p) -> dict:
     # NOTE: Some code paths return ORM objects after their session has closed.
     # Accessing lazy relationships (like p.customer) on a detached instance raises
@@ -51,6 +65,7 @@ def _product_summary(p) -> dict:
         "customer_id": p.customer_id,
         "active_version_id": p.active_version_id,
         "active_version_number": active_version_number,
+        "version_count": _product_version_count(p),
         "created_at": str(getattr(p, "created_at", "")),
         "customer_name": customer_name,
         "product_type": product_type,
@@ -90,6 +105,7 @@ async def create_product(payload: CreateProductRequest, identity=Depends(current
         u = identity.get("user")
         created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
         product, version = service.create_product_with_version(payload, created_by=created_by)
+        setattr(product, "_version_count", 1)
         return {"ok": True, "product": _product_summary(product), "version": _version_summary(version)}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)

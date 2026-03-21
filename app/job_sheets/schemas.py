@@ -38,6 +38,7 @@ class JobSheetSummary(BaseModel):
     product_code: str
     product_description: Optional[str] = None
     customer_name: Optional[str] = None
+    customer_code: Optional[str] = None
     # From order when this job sheet is attached to an order line
     invoice_no: Optional[str] = None
     order_date: Optional[str] = None

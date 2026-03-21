@@ -1,8 +1,4 @@
-import { Paper, Stack, Table, TableBody, TableCell, TableRow, Typography } from '@mui/material'
-
-function fmtList(x: unknown): string {
-  return Array.isArray(x) && x.length > 0 ? x.join(', ') : '-'
-}
+import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 
 function fmtMm(v: unknown): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
@@ -16,6 +12,7 @@ function computeLayflatMm(spec: any): number {
   const middle = typeof dims.base_width_mm === 'number' ? dims.base_width_mm : 0
   const gusset = typeof dims.gusset_mm === 'number' ? dims.gusset_mm : 0
   const geometry = String(dims.geometry || 'Flat')
+  const geomLower = geometry.toLowerCase()
 
   if (productType === 'Centerfold' || geometry === 'CentreFold') return 0.5 * middle
   if (productType === 'U-Film') {
@@ -23,30 +20,22 @@ function computeLayflatMm(spec: any): number {
     const r = typeof dims.ufilm_right_width_mm === 'number' ? dims.ufilm_right_width_mm : 0
     return middle + l + r
   }
-  if (geometry === 'Gusset' || (productType === 'Bag' || productType === 'Tube')) {
-    if (gusset > 0) return middle + 2 * gusset
-  }
+  // Match quoteCalculator / SpecPayloadForm: gusset_mm is additional layflat once (width + gusset).
+  if (geomLower === 'gusset') return middle + gusset
   return middle
 }
 
-function layflatShorthand(spec: any, layflatMm: number): string {
-  const productType = spec?.identity?.product_type as string | undefined
-  const dims = spec?.dimensions || {}
-  const middle = fmtMm(dims.base_width_mm)
-  const geometry = String(dims.geometry || 'Flat')
+const QUALITY_FLAG_LABELS: Record<string, string> = {
+  tight_gauge: 'Tight gauge tolerance',
+  seal_integrity: 'Seal integrity critical',
+  cosmetic: 'Printing Quality',
+  colour: 'Colour critical',
+}
 
-  if (productType === 'U-Film') {
-    const l = fmtMm(dims.ufilm_left_width_mm)
-    const r = fmtMm(dims.ufilm_right_width_mm)
-    return `${l} / ${middle} / ${r}`
-  }
-  if (productType === 'Centerfold' || geometry === 'CentreFold') {
-    return `${middle} ( ${fmtMm(layflatMm)} )`
-  }
-  if (geometry === 'Gusset') {
-    return `( ${middle} + ${fmtMm(dims.gusset_mm)} )`
-  }
-  return middle
+const INDUSTRY_FLAG_LABELS: Record<string, string> = {
+  food_contact: 'Food Contact',
+  medical: 'Medical',
+  chemical_industrial: 'Chemical / Industrial',
 }
 
 function SectionCard(props: { title: string; children: React.ReactNode }) {
@@ -75,36 +64,91 @@ function KVTable(props: { rows: Array<{ k: string; v: React.ReactNode }> }) {
   )
 }
 
-export function ProductVersionSummary(props: { spec: any }) {
-  const { spec } = props
-  const layflatMm = computeLayflatMm(spec)
-  const shorthand = layflatShorthand(spec, layflatMm)
+function formatRunUp(slug: unknown): string {
+  if (slug == null || slug === '' || slug === 'none') return '—'
+  const s = String(slug)
+  if (s === '1up' || s === '2up' || s.endsWith('up')) return s.replace('up', ' up')
+  return s
+}
 
-  const printed = spec?.printing?.method && spec.printing.method !== 'None'
-  const printMethod = (spec?.printing?.method as string | undefined) || 'None'
-  const frontPairs = Array.isArray(spec?.printing?.front_ink_plate) ? spec.printing.front_ink_plate : []
-  const backPairs = Array.isArray(spec?.printing?.back_ink_plate) ? spec.printing.back_ink_plate : []
-  const fmtPairs = (pairs: any[]) => {
-    const cleaned = pairs
-      .map((r) => ({
-        ink: (r?.ink_code ?? '').toString().trim(),
-        plate: (r?.plate_code ?? '').toString().trim(),
-        anilox: (r?.anilox_code ?? '').toString().trim(),
-      }))
-      .filter((r) => r.ink || r.plate || (printMethod === 'Uteco' && r.anilox))
-    if (cleaned.length === 0) return '-'
+/** Non-empty ink/plate/anilox rows for display (same idea as edit form rows). */
+function meaningfulInkPlateRows(pairs: unknown[], printMethod: string): Array<{ ink: string; plate: string; anilox: string }> {
+  const isUteco = printMethod === 'Uteco'
+  return (Array.isArray(pairs) ? pairs : [])
+    .map((r: any) => ({
+      ink: (r?.ink_code ?? '').toString().trim(),
+      plate: (r?.plate_code ?? '').toString().trim(),
+      anilox: (r?.anilox_code ?? '').toString().trim(),
+    }))
+    .filter((row) => row.ink || row.plate || (isUteco && row.anilox))
+}
+
+function InkPlateTable(props: { title: string; rows: Array<{ ink: string; plate: string; anilox: string }>; printMethod: string }) {
+  const { title, rows, printMethod } = props
+  const isUteco = printMethod === 'Uteco'
+  if (rows.length === 0) {
     return (
-      <Stack spacing={0.25}>
-        {cleaned.slice(0, 4).map((r, idx) => (
-          <Typography key={idx} variant="body2" sx={{ fontFamily: 'monospace' }}>
-            {printMethod === 'Uteco' ? `${r.ink || '-'} | ${r.plate || '-'} | ${r.anilox || '-'}` : `${r.ink || '-'} | ${r.plate || '-'}`}
-          </Typography>
-        ))}
+      <Stack spacing={0.5} sx={{ mb: 2 }}>
+        <Typography variant="subtitle2" color="text.secondary">
+          {title}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          —
+        </Typography>
       </Stack>
     )
   }
+  return (
+    <Stack spacing={1} sx={{ mb: 2 }}>
+      <Typography variant="subtitle2" color="text.secondary">
+        {title}
+      </Typography>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell sx={{ width: 48 }}>#</TableCell>
+            <TableCell>Ink</TableCell>
+            <TableCell>Plate</TableCell>
+            {isUteco ? <TableCell>Anilox</TableCell> : null}
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((r, i) => (
+            <TableRow key={i}>
+              <TableCell>{i + 1}</TableCell>
+              <TableCell sx={{ fontFamily: 'monospace' }}>{r.ink || '—'}</TableCell>
+              <TableCell sx={{ fontFamily: 'monospace' }}>{r.plate || '—'}</TableCell>
+              {isUteco ? <TableCell sx={{ fontFamily: 'monospace' }}>{r.anilox || '—'}</TableCell> : null}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Stack>
+  )
+}
+
+export function ProductVersionSummary(props: { spec: any }) {
+  const { spec } = props
+  const layflatMm = computeLayflatMm(spec)
+
+  const printed = spec?.printing?.method && spec.printing.method !== 'None'
+  const printMethod = (spec?.printing?.method as string | undefined) || 'None'
+  const printSide = (spec?.printing?.side as string | undefined) || 'front'
+  const showFrontPrint = printed && (printSide === 'front' || printSide === 'both')
+  const showBackPrint = printed && (printSide === 'back' || printSide === 'both')
+
+  const frontRows = meaningfulInkPlateRows(spec?.printing?.front_ink_plate, printMethod)
+  const backRows = meaningfulInkPlateRows(spec?.printing?.back_ink_plate, printMethod)
+  const legacyAnilox = printMethod === 'Uteco' ? (spec?.printing?.anilox_code as string | null | undefined) : null
+  const legacyAniloxStr = legacyAnilox != null && String(legacyAnilox).trim() ? String(legacyAnilox).trim() : ''
+
+  const inkCodesLegacy = Array.isArray(spec?.printing?.ink_codes) ? spec.printing.ink_codes.filter(Boolean) : []
+  const plateCodesLegacy = Array.isArray(spec?.printing?.plate_codes) ? spec.printing.plate_codes.filter(Boolean) : []
+  const artworkRefs = Array.isArray(spec?.printing?.artwork_refs) ? spec.printing.artwork_refs.filter(Boolean) : []
+
+  const gussetOn = spec?.dimensions?.geometry === 'Gusset'
   const options = [
-    spec?.dimensions?.geometry === 'Gusset' ? 'Gusset' : null,
+    gussetOn ? 'Gusset' : null,
     printed ? 'Printed' : null,
     spec?.run_requirements?.inline_perforation ? 'Perforated' : null,
     spec?.run_requirements?.inline_seal ? 'Sealed' : null,
@@ -120,58 +164,73 @@ export function ProductVersionSummary(props: { spec: any }) {
         ? `${(Number(baseLenMm) / 1000).toFixed(3).replace(/\.?0+$/, '')} M`
         : `${baseLenMm} mm`
 
+  const productType = spec?.identity?.product_type as string | undefined
+  const isUFilm = productType === 'U-Film'
+  const finishMode = spec?.identity?.finish_mode || '-'
+
+  const qualityFlags = Array.isArray(spec?.quality_expectations?.flags) ? spec.quality_expectations.flags : []
+  const qualityLabels = qualityFlags.map((id: string) => QUALITY_FLAG_LABELS[id] || id)
+
+  const industryFlags = Array.isArray(spec?.identity?.industry_flags) ? spec.identity.industry_flags : []
+  const industryLabels = industryFlags.map((id: string) => INDUSTRY_FLAG_LABELS[id] || id)
+
   return (
     <Stack spacing={2}>
-      <SectionCard title="1. Product Identity">
+      {/* 1. Product Type — matches SpecPayloadForm first Paper */}
+      <SectionCard title="1. Product Type">
         <KVTable
           rows={[
             { k: 'Product Type', v: spec?.identity?.product_type || '-' },
-            { k: 'Finish Mode', v: spec?.identity?.finish_mode || '-' },
-            { k: 'Industry / Compliance Intent', v: fmtList(spec?.identity?.industry_flags) },
-            { k: 'Options', v: options.length ? options.join(', ') : '-' },
-            { k: 'Notes', v: spec?.identity?.notes || '-' },
+            { k: 'Finish Mode', v: finishMode },
+            { k: 'Core Type', v: spec?.packaging?.core_type || '-' },
+            {
+              k: finishMode === 'Cartons' ? 'Bags per carton' : 'Roll weight billing',
+              v:
+                finishMode === 'Cartons'
+                  ? (spec?.packaging?.bags_per_carton ?? '-')
+                  : (spec?.identity?.roll_weight_billing || '-'),
+            },
+            ...(spec?.identity?.notes
+              ? [{ k: 'Product notes', v: spec.identity.notes }]
+              : []),
           ]}
         />
       </SectionCard>
 
+      {/* 2. Dimensions & Geometry — matches SpecPayloadForm second Paper (checkboxes → widths → length → thickness/trim/tolerance) */}
       <SectionCard title="2. Dimensions & Geometry">
         <KVTable
           rows={[
-            { k: 'Geometry', v: spec?.dimensions?.geometry || '-' },
-            { k: 'Width', v: `${spec?.dimensions?.base_width_mm ?? '-'} mm` },
-            { k: 'Width tolerance', v: spec?.dimensions?.width_tolerance_mm != null ? `${spec.dimensions.width_tolerance_mm} mm` : '-' },
-            {
-              k: 'U-Film Left / Right',
-              v:
-                spec?.identity?.product_type === 'U-Film'
-                  ? `${spec?.dimensions?.ufilm_left_width_mm ?? '-'} / ${spec?.dimensions?.ufilm_right_width_mm ?? '-'} mm`
-                  : '-',
-            },
-            { k: 'Gusset Return', v: spec?.dimensions?.gusset_mm != null ? `${spec.dimensions.gusset_mm} mm` : '-' },
+            { k: 'Options', v: options.length ? options.join(', ') : '-' },
+            ...(isUFilm
+              ? [
+                  { k: 'Left width (mm)', v: spec?.dimensions?.ufilm_left_width_mm ?? '-' },
+                  { k: 'Middle width (mm)', v: spec?.dimensions?.base_width_mm ?? '-' },
+                  { k: 'Right width (mm)', v: spec?.dimensions?.ufilm_right_width_mm ?? '-' },
+                ]
+              : gussetOn
+                ? [
+                    { k: `${productType || 'Product'} width (mm)`, v: spec?.dimensions?.base_width_mm ?? '-' },
+                    { k: 'Gusset return (mm)', v: spec?.dimensions?.gusset_mm ?? '-' },
+                    { k: 'Layflat width (mm)', v: fmtMm(layflatMm) },
+                  ]
+                : [{ k: `${productType || 'Product'} width (mm)`, v: spec?.dimensions?.base_width_mm ?? '-' }]),
+            { k: 'Length units', v: lengthUnits },
             { k: 'Length', v: lengthDisplay },
-            { k: 'Thickness/Gauge', v: `${spec?.dimensions?.thickness_um ?? '-'} µm` },
+            { k: 'Thickness/Gauge (µm)', v: spec?.dimensions?.thickness_um ?? '-' },
+            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
+            { k: 'Tolerance (mm)', v: spec?.dimensions?.width_tolerance_mm ?? '-' },
           ]}
         />
-
-        <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Geometry
-          </Typography>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-            Shorthand: {shorthand}
-          </Typography>
-          <Typography variant="body2" sx={{ mt: 0.5 }}>
-            Layflat Width: <strong>{fmtMm(layflatMm)}mm</strong>
-          </Typography>
-        </Paper>
       </SectionCard>
 
-      <SectionCard title="3. Materials & Formulation">
+      {/* 3. Materials */}
+      <SectionCard title="3. Materials">
         <KVTable
           rows={[
-            { k: 'Resin Blend', v: spec?.formulation?.blend_type || 'Custom' },
+            { k: 'Resin blend', v: spec?.formulation?.blend_type || 'Custom' },
             {
-              k: 'Resin Components',
+              k: 'Resin components',
               v:
                 Array.isArray(spec?.formulation?.blend) && spec.formulation.blend.length > 0 ? (
                   <Stack spacing={0.5}>
@@ -186,7 +245,7 @@ export function ProductVersionSummary(props: { spec: any }) {
                 ),
             },
             {
-              k: 'Colour Components',
+              k: 'Colour components',
               v:
                 Array.isArray(spec?.formulation?.colour_components) && spec.formulation.colour_components.length > 0 ? (
                   <Stack spacing={0.5}>
@@ -220,62 +279,110 @@ export function ProductVersionSummary(props: { spec: any }) {
         />
       </SectionCard>
 
+      {/* 4. Printing & Artwork — method, side, ink/plate/anilox tables, Uteco extras, description */}
       <SectionCard title="4. Printing & Artwork">
         <KVTable
           rows={[
-            { k: 'Method', v: spec?.printing?.method || '-' },
-            { k: 'Side', v: printed ? spec?.printing?.side || '-' : '-' },
-            { k: 'Print Description', v: printed ? spec?.printing?.print_description || '-' : '-' },
-            {
-              k: 'Front Ink/Plate',
-              v: printMethod === 'Inline' || printMethod === 'Uteco' ? fmtPairs(frontPairs) : '-',
-            },
-            {
-              k: 'Back Ink/Plate',
-              v: printMethod === 'Inline' || printMethod === 'Uteco' ? fmtPairs(backPairs) : '-',
-            },
-            {
-              k: 'Cylinder size (mm)',
-              v: printMethod === 'Uteco' ? (spec?.printing?.cylinder_size_mm != null ? String(spec.printing.cylinder_size_mm) : '-') : '-',
-            },
+            { k: 'Printing method', v: printMethod },
+            { k: 'Print side', v: printed ? printSide : '-' },
           ]}
         />
+
+        {printed && (printMethod === 'Inline' || printMethod === 'Uteco') ? (
+          <Stack sx={{ mt: 2 }}>
+            {showFrontPrint ? <InkPlateTable title="Front print" rows={frontRows} printMethod={printMethod} /> : null}
+            {showBackPrint ? <InkPlateTable title="Back print" rows={backRows} printMethod={printMethod} /> : null}
+
+            {frontRows.length === 0 && backRows.length === 0 && (inkCodesLegacy.length > 0 || plateCodesLegacy.length > 0) ? (
+              <Stack spacing={1} sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Legacy ink / plate codes
+                </Typography>
+                <Typography variant="body2">
+                  Inks: {inkCodesLegacy.length ? inkCodesLegacy.join(', ') : '—'}
+                </Typography>
+                <Typography variant="body2">
+                  Plates: {plateCodesLegacy.length ? plateCodesLegacy.join(', ') : '—'}
+                </Typography>
+              </Stack>
+            ) : null}
+
+            {printMethod === 'Uteco' && legacyAniloxStr ? (
+              <Typography variant="body2" sx={{ mb: 2 }}>
+                <strong>Default anilox (legacy):</strong> {legacyAniloxStr}
+              </Typography>
+            ) : null}
+
+            {printMethod === 'Uteco' ? (
+              <KVTable
+                rows={[
+                  {
+                    k: 'Cylinder size (mm)',
+                    v: spec?.printing?.cylinder_size_mm != null ? String(spec.printing.cylinder_size_mm) : '-',
+                  },
+                ]}
+              />
+            ) : null}
+
+            {spec?.printing?.num_colours != null && spec.printing.num_colours !== '' ? (
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>Number of colours:</strong> {String(spec.printing.num_colours)}
+              </Typography>
+            ) : null}
+
+            {artworkRefs.length > 0 ? (
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>Artwork refs:</strong> {artworkRefs.join(', ')}
+              </Typography>
+            ) : null}
+          </Stack>
+        ) : null}
+
+        {printed ? (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+              Print description
+            </Typography>
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+              {spec?.printing?.print_description?.trim() ? spec.printing.print_description : '—'}
+            </Typography>
+          </Box>
+        ) : null}
       </SectionCard>
 
+      {/* 5. Quality Expectations */}
       <SectionCard title="5. Quality Expectations">
         <KVTable
           rows={[
-            { k: 'Quality Flags', v: fmtList(spec?.quality_expectations?.flags) },
-            { k: 'Known Issues', v: spec?.quality_expectations?.known_issues || '-' },
+            { k: 'Quality flags', v: qualityLabels.length ? qualityLabels.join(', ') : '-' },
+            { k: 'Industry / compliance intent', v: industryLabels.length ? industryLabels.join(', ') : '-' },
+            { k: 'Known issues', v: spec?.quality_expectations?.known_issues || '-' },
           ]}
         />
       </SectionCard>
 
+      {/* 6. Run Requirements */}
       <SectionCard title="6. Run Requirements">
         <KVTable
           rows={[
-            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
-            { k: 'Run Up', v: spec?.run_requirements?.run_up || '-' },
+            { k: 'Run up', v: formatRunUp(spec?.run_requirements?.run_up) },
             { k: 'Slit', v: spec?.run_requirements?.slit || '-' },
-            { k: 'Treat Inside/Outside', v: spec?.run_requirements?.treat_inside_outside || '-' },
+            { k: 'Treat inside/outside', v: spec?.run_requirements?.treat_inside_outside || '-' },
             { k: 'Notes', v: spec?.run_requirements?.notes || '-' },
           ]}
         />
       </SectionCard>
 
+      {/* 7. Packaging & Logistics */}
       <SectionCard title="7. Packaging & Logistics">
         <KVTable
           rows={[
-            { k: 'Finish Mode', v: spec?.identity?.finish_mode || '-' },
-            { k: 'Core Type', v: spec?.packaging?.core_type || '-' },
-            { k: 'Roll weight billing', v: spec?.identity?.roll_weight_billing || '-' },
-            { k: 'Bags per carton', v: spec?.packaging?.bags_per_carton ?? '-' },
-            { k: 'Pallet Type', v: spec?.packaging?.pallet_type || '-' },
-            { k: 'Packing Notes', v: spec?.packaging?.notes || '-' },
+            { k: 'Carton option', v: spec?.packaging?.carton_option_slug || '-' },
+            { k: 'Pallet type', v: spec?.packaging?.pallet_type || '-' },
+            { k: 'Packing notes', v: spec?.packaging?.notes || '-' },
           ]}
         />
       </SectionCard>
     </Stack>
   )
 }
-

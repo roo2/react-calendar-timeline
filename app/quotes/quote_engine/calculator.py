@@ -45,7 +45,8 @@ def compute_dimensions(spec: SpecDTO) -> Dimensions:
         layflat_mm = spec.base_width_mm
     elif spec.geometry == "gusset":
         g = spec.gusset_mm or Decimal("0")
-        layflat_mm = spec.base_width_mm + (g * 2)
+        # gusset_mm is additional layflat once (matches frontend quoteCalculator / spec form).
+        layflat_mm = spec.base_width_mm + g
     elif spec.geometry == "bottom_gusset":
         layflat_mm = spec.base_width_mm
     elif spec.geometry == "centre_fold":

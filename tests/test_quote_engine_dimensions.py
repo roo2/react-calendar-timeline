@@ -24,7 +24,7 @@ def test_dimensions_flat():
 
 def test_dimensions_gusset():
     dims = compute_dimensions(_spec("gusset", 200, 400, gusset=50))
-    assert dims.layflat_mm == Decimal(200 + 2 * 50)
+    assert dims.layflat_mm == Decimal(200 + 50)
 
 
 def test_dimensions_bottom_gusset():

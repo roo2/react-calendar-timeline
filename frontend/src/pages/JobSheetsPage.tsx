@@ -1,12 +1,25 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { apiFetch } from '../api/client'
-import { Alert, Box, Button, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import {
+  Alert,
+  Box,
+  Button,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material'
 
 type JobSheetSummary = {
   id: string
   job_no: string
   customer_name?: string | null
+  customer_code?: string | null
   product_code: string
   product_description?: string | null
   due_date?: string | null
@@ -71,8 +84,8 @@ export function JobSheetsPage() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: 180 }}>Invoice No</TableCell>
-                <TableCell sx={{ width: 220 }}>Customer</TableCell>
-                <TableCell sx={{ width: 220 }}>Product</TableCell>
+                <TableCell sx={{ width: 72, maxWidth: 88, whiteSpace: 'nowrap' }}>Customer</TableCell>
+                <TableCell sx={{ minWidth: 280 }}>Product</TableCell>
                 <TableCell>Qty</TableCell>
                 <TableCell sx={{ width: 120 }}>Order Date</TableCell>
                 <TableCell sx={{ width: 120 }}>Due Date</TableCell>
@@ -83,10 +96,23 @@ export function JobSheetsPage() {
               {items.map((r) => (
                 <TableRow key={r.id} hover>
                   <TableCell sx={{ fontFamily: 'monospace' }}>{r.invoice_no ?? ''}</TableCell>
-                  <TableCell>{r.customer_name || '-'}</TableCell>
-                  <TableCell>
-                    <strong>{r.product_code}</strong>
-                    {r.product_description ? ` — ${r.product_description}` : ''}
+                  <TableCell
+                    sx={{ width: 72, maxWidth: 88, whiteSpace: 'nowrap', fontFamily: 'monospace' }}
+                    title={
+                      (r.customer_code || '').trim() && r.customer_name ? r.customer_name : undefined
+                    }
+                  >
+                    {(r.customer_code || '').trim().toUpperCase() || r.customer_name || '—'}
+                  </TableCell>
+                  <TableCell sx={{ minWidth: 280, verticalAlign: 'top' }}>
+                    <Typography variant="body2" component="div" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
+                      {r.product_code}
+                    </Typography>
+                    {r.product_description ? (
+                      <Typography variant="body2" component="div" color="text.secondary" sx={{ mt: 0.5 }}>
+                        {r.product_description}
+                      </Typography>
+                    ) : null}
                   </TableCell>
                   <TableCell>{fmtQty(Number(r.quantity_value || 0), r.quantity_unit)}</TableCell>
                   <TableCell>{r.order_date ?? '-'}</TableCell>

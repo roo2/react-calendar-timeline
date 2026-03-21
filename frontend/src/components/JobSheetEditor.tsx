@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Alert,
@@ -41,6 +40,16 @@ type ProductVersionSummary = {
 }
 
 type QuantityUnit = 'kg' | 'rolls' | 'bags' | 'meters'
+
+/** Placeholder select value while composing a new product (not a real product id until save). */
+const NEW_PRODUCT_DRAFT_VALUE = '__new_product_draft__'
+
+function formatProductMenuLabel(code: string, description: string): string {
+  const c = (code || '').trim()
+  const d = (description || '').trim()
+  if (!c && !d) return 'New product (complete spec for code)'
+  return d ? `${c} — ${d}` : c
+}
 
 function ensureSpec(s: any): SpecPayload {
   const d = makeDefaultSpec()
@@ -167,7 +176,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   // When product changes, load latest spec (new mode only)
   useEffect(() => {
     if (mode !== 'new') return
-    if (!productId) return
+    if (!productId || productId === NEW_PRODUCT_DRAFT_VALUE) return
     setSaveMsg(null)
     setSpecDirty(false)
     void (async () => {
@@ -217,12 +226,50 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     try {
       setSavingJobSheet(true)
 
+      let effectiveProductId = productId
+      if (mode === 'new' && productId === NEW_PRODUCT_DRAFT_VALUE) {
+        const code = previewProductCode.trim()
+        if (!code) {
+          setSaveErr('Complete the product spec so a product code is generated before saving.')
+          setSavingJobSheet(false)
+          return
+        }
+        dispatch(clearCreateErrors())
+        try {
+          const created = await dispatch(
+            createProduct({
+              data: {
+                customer_id: customerId,
+                code,
+                spec,
+              },
+            }),
+          ).unwrap()
+          const pid = created?.product?.id as string | undefined
+          if (!pid) throw new Error('Product was created but no id was returned')
+          effectiveProductId = pid
+          setProductId(pid)
+          setWantsNewProductFlow(false)
+          setProductInfo({
+            id: pid,
+            code,
+            description: computeProductDescriptionFromSpec(spec),
+            customer_id: customerId,
+            active_version_id: (created?.version?.id as string | undefined) ?? null,
+          })
+          await loadProducts(customerId)
+        } catch {
+          setSavingJobSheet(false)
+          return
+        }
+      }
+
       if (mode === 'new') {
         const res = await apiFetch<{ ok: boolean; job_sheet: { id: string; job_no?: string } }>('/api/job-sheets', {
           method: 'POST',
           body: JSON.stringify({
             customer_id: customerId,
-            product_id: productId,
+            product_id: effectiveProductId,
             due_date: dueDate,
             quantity_value: Number(qtyValue),
             quantity_unit: qtyUnit,
@@ -257,33 +304,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     }
   }
 
-  async function onCreateNewProduct(e?: FormEvent) {
-    e?.preventDefault()
-    if (!customerId) return
-    setSaveMsg(null)
-    dispatch(clearCreateErrors())
-    try {
-      const res = await dispatch(
-        createProduct({
-          data: {
-            customer_id: customerId,
-            code: previewProductCode.trim(),
-            spec,
-          },
-        }),
-      ).unwrap()
-      const pid = res?.product?.id as string | undefined
-      setWantsNewProductFlow(false)
-      await loadProducts(customerId)
-      if (pid) setProductId(pid)
-    } catch {
-      // Errors are in products.create
-    }
-  }
-
   const disableIdentity = mode === 'edit'
-  const canNewProduct = mode === 'new'
-  const showProductSpec = mode === 'edit' || !!productId || wantsNewProductFlow
+  /** New job sheet: Product Spec card is always shown; spec form only after a product (or draft) is chosen. */
+  const showSpecForm = mode === 'edit' || (mode === 'new' && !!productId)
 
   function renderJobSheetActions() {
     const cancelTo = mode === 'edit' && jobSheetId ? `/job-sheets/${jobSheetId}` : '/job-sheets'
@@ -368,8 +391,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             />
           </Box>
 
-          <Box sx={{ mt: 2 }}>
-            {mode === 'edit' ? (
+          {mode === 'edit' ? (
+            <Box sx={{ mt: 2 }}>
               <TextField
                 label="Product"
                 value={
@@ -378,68 +401,21 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                     : productId || ''
                 }
                 InputProps={{ readOnly: true }}
-                disabled
                 fullWidth
+                sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
               />
-            ) : (
-              <TextField
-                select
-                label="Product"
-                value={productId}
-                onChange={(e) => {
-                  const v = e.target.value
-                  setProductId(v)
-                  setWantsNewProductFlow(false)
-                }}
-                required
-                disabled={!customerId || productsStatus === 'loading' || disableIdentity}
-                fullWidth
-              >
-                <MenuItem value="" disabled>
-                  Select…
-                </MenuItem>
-                {products.map((p) => (
-                  <MenuItem key={p.id} value={p.id}>
-                    {p.code} {p.description ? `— ${p.description}` : ''}
-                  </MenuItem>
-                ))}
-              </TextField>
-            )}
-          </Box>
-
-          {canNewProduct && (
-            <Box sx={{ mt: 1 }}>
-              <Button
-                variant="outlined"
-                disabled={!customerId}
-                onClick={() => {
-                  setWantsNewProductFlow(true)
-                  setProductId('')
-                  setProductInfo(null)
-                  setSpec(makeDefaultSpec())
-                  setSpecDirty(false)
-                  setSaveMsg(null)
-                }}
-              >
-                New Product
-              </Button>
             </Box>
-          )}
+          ) : null}
 
-          {productInfo && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Selected: <strong>{productInfo.code}</strong> {productInfo.description ? `— ${productInfo.description}` : ''}
-            </Typography>
-          )}
         </Paper>
 
         {isNarrow ? <JobSheetPreviewPanel invoiceNo={invoiceNo} orderDate={orderDate} dueDate={dueDate} productCode={previewProductCode} description={previewDescription} /> : null}
 
-        {showProductSpec ? (
+        {mode === 'edit' || mode === 'new' ? (
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
               <Typography variant="h6">Product Spec</Typography>
-              {productId ? (
+              {productId && productId !== NEW_PRODUCT_DRAFT_VALUE ? (
                 <MuiLink
                   component={Link}
                   to={`/products/${productId}`}
@@ -452,33 +428,89 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 </MuiLink>
               ) : null}
             </Box>
-            <SpecPayloadForm
-              customerId={customerId || undefined}
-              value={spec}
-              onChange={(next) => {
-                setSpec(next)
-                setSpecDirty(true)
-              }}
-            />
-            {canNewProduct && wantsNewProductFlow && !productId ? (
-              <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
-                <Box sx={{ flex: '1 1 200px', minWidth: 0 }}>
-                  <Typography variant="subtitle2" sx={{ color: 'text.secondary' }}>
-                    Generated product code
-                  </Typography>
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                    {previewProductCode.trim() ? previewProductCode : '—'}
-                  </Typography>
-                </Box>
-                <Button
-                  type="button"
-                  variant="contained"
-                  disabled={!previewProductCode.trim() || createState.status === 'loading'}
-                  onClick={() => void onCreateNewProduct()}
+
+            {mode === 'new' ? (
+              <Stack spacing={2} sx={{ mb: showSpecForm ? 2 : 0 }}>
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', sm: '1fr auto' },
+                    gap: 2,
+                    alignItems: 'flex-start',
+                  }}
                 >
-                  {createState.status === 'loading' ? 'Creating…' : 'Create product'}
-                </Button>
-              </Box>
+                  <TextField
+                    select
+                    label="Product"
+                    value={productId}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setProductId(v)
+                      setWantsNewProductFlow(v === NEW_PRODUCT_DRAFT_VALUE)
+                    }}
+                    required
+                    disabled={!customerId || productsStatus === 'loading' || disableIdentity}
+                    fullWidth
+                    SelectProps={{
+                      renderValue: (selected) => {
+                        const s = selected as string
+                        if (s === NEW_PRODUCT_DRAFT_VALUE) {
+                          return formatProductMenuLabel(previewProductCode, previewDescription)
+                        }
+                        const p = products.find((x) => x.id === s)
+                        return p ? formatProductMenuLabel(p.code, p.description ?? '') : s || 'Select…'
+                      },
+                    }}
+                  >
+                    <MenuItem value="" disabled>
+                      Select…
+                    </MenuItem>
+                    {wantsNewProductFlow ? (
+                      <MenuItem value={NEW_PRODUCT_DRAFT_VALUE}>
+                        {formatProductMenuLabel(previewProductCode, previewDescription)}
+                      </MenuItem>
+                    ) : null}
+                    {products.map((p) => (
+                      <MenuItem key={p.id} value={p.id}>
+                        {formatProductMenuLabel(p.code, p.description ?? '')}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <Button
+                    variant="outlined"
+                    disabled={!customerId}
+                    onClick={() => {
+                      setWantsNewProductFlow(true)
+                      setProductId(NEW_PRODUCT_DRAFT_VALUE)
+                      setProductInfo(null)
+                      setSpec(makeDefaultSpec())
+                      setSpecDirty(false)
+                      setSaveMsg(null)
+                    }}
+                    sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}
+                  >
+                    New Product
+                  </Button>
+                </Box>
+                {!showSpecForm ? (
+                  <Typography variant="body2">
+                    {!customerId
+                      ? 'Select a customer first, then choose a product or click New Product to define a spec for this job sheet.'
+                      : 'Select a product or click New Product to define a spec for this job sheet.'}
+                  </Typography>
+                ) : null}
+              </Stack>
+            ) : null}
+
+            {showSpecForm ? (
+              <SpecPayloadForm
+                customerId={customerId || undefined}
+                value={spec}
+                onChange={(next) => {
+                  setSpec(next)
+                  setSpecDirty(true)
+                }}
+              />
             ) : null}
           </Paper>
         ) : null}

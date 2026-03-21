@@ -92,19 +92,44 @@ export function JobSheetShowPage() {
         </Box>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(4, minmax(0, 1fr))' }, gap: 2 }}>
-          <TextField label="Customer" value={js.customer_name || '-'} InputProps={{ readOnly: true }} disabled />
-          <TextField label="Invoice No" value={js.invoice_no ?? ''} InputProps={{ readOnly: true }} disabled />
-          <TextField label="Order Date" value={js.order_date ?? '-'} InputProps={{ readOnly: true }} disabled />
-          <TextField label="Due Date" value={js.due_date ?? '-'} InputProps={{ readOnly: true }} disabled />
+          <TextField
+            label="Customer"
+            value={js.customer_name || '-'}
+            InputProps={{ readOnly: true }}
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
+          />
+          <TextField
+            label="Invoice No"
+            value={js.invoice_no ?? ''}
+            InputProps={{ readOnly: true }}
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
+          />
+          <TextField
+            label="Order Date"
+            value={js.order_date ?? '-'}
+            InputProps={{ readOnly: true }}
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
+          />
+          <TextField
+            label="Due Date"
+            value={js.due_date ?? '-'}
+            InputProps={{ readOnly: true }}
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
+          />
         </Box>
 
         <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-          <TextField label="Quantity Type" value={js.quantity_unit || ''} InputProps={{ readOnly: true }} disabled />
+          <TextField
+            label="Quantity Type"
+            value={js.quantity_unit || ''}
+            InputProps={{ readOnly: true }}
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
+          />
           <TextField
             label={qtyTypeLabel(js.quantity_unit)}
             value={fmtQty(Number(js.quantity_value || 0), js.quantity_unit)}
             InputProps={{ readOnly: true }}
-            disabled
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
           />
         </Box>
 
@@ -113,9 +138,9 @@ export function JobSheetShowPage() {
             label="Product"
             value={`${js.product_code}${js.product_description ? ` — ${js.product_description}` : ''}`}
             InputProps={{ readOnly: true }}
-            disabled
             fullWidth
             helperText={`Version: ${js.version_number}`}
+            sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
           />
         </Box>
       </Paper>

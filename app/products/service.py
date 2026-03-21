@@ -622,6 +622,21 @@ def search_products(query: Optional[str], *, customer_id: Optional[str] = None) 
                         # continue with other products (after rollback)
         if changed:
             db.commit()
+
+        ids = [str(p.id) for p in products]
+        if ids:
+            cnt_rows = db.execute(
+                select(ProductVersion.product_id, func.count())
+                .where(ProductVersion.product_id.in_(ids))
+                .group_by(ProductVersion.product_id)
+            ).all()
+            cnt_map = {str(r[0]): int(r[1]) for r in cnt_rows}
+            for p in products:
+                setattr(p, "_version_count", cnt_map.get(str(p.id), 0))
+        else:
+            for p in products:
+                setattr(p, "_version_count", 0)
+
         return products
 
 

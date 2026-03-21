@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { computeProductDescriptionFromSpec } from '../utils/productDescription'
 import { useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
 import {
@@ -77,16 +78,32 @@ export function ProductShowPage() {
           <TableHead>
             <TableRow>
               <TableCell>Version</TableCell>
+              <TableCell>Description</TableCell>
               <TableCell>Created By</TableCell>
               <TableCell>Created At</TableCell>
               <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {versions.map((v: any) => (
+            {versions.map((v: any) => {
+              const fromSpec = computeProductDescriptionFromSpec(v.spec_payload).trim()
+              const fromApi = typeof v.description === 'string' ? v.description.trim() : ''
+              const versionDescription = fromSpec || fromApi || '—'
+              return (
               <TableRow key={v.id} hover>
                 <TableCell>
                   <Typography fontWeight={600}>{v.version_number}</Typography>
+                </TableCell>
+                <TableCell
+                  sx={{
+                    maxWidth: { xs: 280, sm: 420, md: 560 },
+                    whiteSpace: 'normal',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  <Typography variant="body2" component="span">
+                    {versionDescription}
+                  </Typography>
                 </TableCell>
                 <TableCell>{v.created_by}</TableCell>
                 <TableCell>{v.created_at}</TableCell>
@@ -96,7 +113,8 @@ export function ProductShowPage() {
                   </MuiLink>
                 </TableCell>
               </TableRow>
-            ))}
+              )
+            })}
           </TableBody>
         </Table>
       </Paper>
