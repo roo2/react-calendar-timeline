@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { computeProductDescriptionFromSpec } from '../utils/productDescription'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchProduct } from '../store/slices/productsSlice'
 import { can } from '../auth/permissions'
 import {
   Alert,
@@ -21,27 +21,21 @@ import {
 
 export function ProductShowPage() {
   const { productId } = useParams()
+  const dispatch = useAppDispatch()
 
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const isPm = can(roles, 'PROD_MANAGER')
 
-  const [data, setData] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const entry = useAppSelector((s) => (productId ? s.products.detail.byId[productId] : undefined))
+  const data = entry?.data
+  const err = entry?.error
 
   useEffect(() => {
     if (!productId) return
-    void (async () => {
-      try {
-        setErr(null)
-        const res = await apiFetch<any>(`/api/products/${productId}`)
-        setData(res)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load product')
-      }
-    })()
-  }, [productId])
+    void dispatch(fetchProduct(productId))
+  }, [productId, dispatch])
 
-  if (err) {
+  if (err && !data && entry?.status === 'failed') {
     return (
       <Stack spacing={2}>
         <Typography variant="h5">Product</Typography>
@@ -90,29 +84,29 @@ export function ProductShowPage() {
               const fromApi = typeof v.description === 'string' ? v.description.trim() : ''
               const versionDescription = fromSpec || fromApi || '—'
               return (
-              <TableRow key={v.id} hover>
-                <TableCell>
-                  <Typography fontWeight={600}>{v.version_number}</Typography>
-                </TableCell>
-                <TableCell
-                  sx={{
-                    maxWidth: { xs: 280, sm: 420, md: 560 },
-                    whiteSpace: 'normal',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  <Typography variant="body2" component="span">
-                    {versionDescription}
-                  </Typography>
-                </TableCell>
-                <TableCell>{v.created_by}</TableCell>
-                <TableCell>{v.created_at}</TableCell>
-                <TableCell>
-                  <MuiLink component={Link} to={`/products/${productId}/versions/${v.id}`} underline="hover">
-                    View
-                  </MuiLink>
-                </TableCell>
-              </TableRow>
+                <TableRow key={v.id} hover>
+                  <TableCell>
+                    <Typography fontWeight={600}>{v.version_number}</Typography>
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      maxWidth: { xs: 280, sm: 420, md: 560 },
+                      whiteSpace: 'normal',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    <Typography variant="body2" component="span">
+                      {versionDescription}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{v.created_by}</TableCell>
+                  <TableCell>{v.created_at}</TableCell>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/products/${productId}/versions/${v.id}`} underline="hover">
+                      View
+                    </MuiLink>
+                  </TableCell>
+                </TableRow>
               )
             })}
           </TableBody>
@@ -127,4 +121,3 @@ export function ProductShowPage() {
     </Stack>
   )
 }
-

@@ -24,6 +24,13 @@ export type AdjustInventoryPayload = {
   note: string | null
 }
 
+export type InventoryDashboardSnapshot = {
+  raw_kg: string
+  wip_extrusion_kg: string
+  wip_printing_kg: string
+  fg_units: string
+}
+
 type InventoryState = {
   receive: {
     status: Status
@@ -33,11 +40,24 @@ type InventoryState = {
     status: Status
     error: string | null
   }
+  dashboard: {
+    status: Status
+    error: string | null
+    data: InventoryDashboardSnapshot | null
+  }
+  transactions: {
+    status: Status
+    error: string | null
+    data: unknown | null
+    lastQuery: string
+  }
 }
 
 const initialState: InventoryState = {
   receive: { status: 'idle', error: null },
   adjust: { status: 'idle', error: null },
+  dashboard: { status: 'idle', error: null, data: null },
+  transactions: { status: 'idle', error: null, data: null, lastQuery: '' },
 }
 
 export const receiveInventory = createAsyncThunk('inventory/receive', async (payload: ReceiveInventoryPayload) => {
@@ -54,6 +74,16 @@ export const adjustInventory = createAsyncThunk('inventory/adjust', async (paylo
     body: JSON.stringify(payload),
   })
   return { ok: true }
+})
+
+export const fetchInventoryDashboard = createAsyncThunk('inventory/dashboard', async () => {
+  return await apiFetch<InventoryDashboardSnapshot>('/api/inventory/dashboard')
+})
+
+export const fetchInventoryTransactions = createAsyncThunk('inventory/transactions', async (queryString: string) => {
+  const qs = queryString.startsWith('?') ? queryString.slice(1) : queryString
+  const data = await apiFetch<unknown>(`/api/inventory/transactions?${qs}`)
+  return { queryString: qs, data }
 })
 
 const slice = createSlice({
@@ -92,6 +122,41 @@ const slice = createSlice({
     b.addCase(adjustInventory.rejected, (s, a) => {
       s.adjust.status = 'failed'
       s.adjust.error = toErrorMessage(a.error, 'Failed to adjust inventory')
+    })
+
+    b.addCase(fetchInventoryDashboard.pending, (s) => {
+      s.dashboard.status = 'loading'
+      s.dashboard.error = null
+    })
+    b.addCase(fetchInventoryDashboard.fulfilled, (s, a) => {
+      s.dashboard.status = 'succeeded'
+      s.dashboard.data = a.payload
+      s.dashboard.error = null
+    })
+    b.addCase(fetchInventoryDashboard.rejected, (s, a) => {
+      s.dashboard.status = 'failed'
+      s.dashboard.error = toErrorMessage(a.error, 'Failed to load inventory')
+      s.dashboard.data = null
+    })
+
+    b.addCase(fetchInventoryTransactions.pending, (s, a) => {
+      s.transactions.status = 'loading'
+      s.transactions.error = null
+      const nextQs = a.meta.arg.startsWith('?') ? a.meta.arg.slice(1) : a.meta.arg
+      if (s.transactions.lastQuery !== nextQs) {
+        s.transactions.data = null
+      }
+    })
+    b.addCase(fetchInventoryTransactions.fulfilled, (s, a) => {
+      s.transactions.status = 'succeeded'
+      s.transactions.data = a.payload.data
+      s.transactions.lastQuery = a.payload.queryString
+      s.transactions.error = null
+    })
+    b.addCase(fetchInventoryTransactions.rejected, (s, a) => {
+      s.transactions.status = 'failed'
+      s.transactions.error = toErrorMessage(a.error, 'Failed to load transactions')
+      s.transactions.data = null
     })
   },
 })

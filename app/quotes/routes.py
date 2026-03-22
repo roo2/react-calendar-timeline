@@ -1,27 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
-from fastapi.responses import JSONResponse
-from app.auth.deps import require_roles, allow_roles_any, csrf_protect
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
+
+from app.auth.deps import allow_roles_any, csrf_protect, require_roles
+
 try:
     from app.auth.deps import current_identity  # type: ignore
 except Exception:
+
     async def current_identity(_request: Request):  # type: ignore
         return {"user": None, "roles": [], "csrf": None}
-from app.quotes.schemas import (
-    QuoteCalculateRequest,
-    QuickQuoteCalculateRequest,
-    QuotePreviewResult,
-    SavedQuoteCreateRequest,
-    SavedQuoteUpdateRequest,
-    SavedQuoteResponse,
-)
-from app.quotes.service import calculate_preview as svc_calculate_preview, quick_calculate_preview as svc_quick_calc
-from app.db.session import SessionLocal
-from sqlalchemy import select
-from app.db.models.domain import Product, ProductVersion, Customer, Machine, SavedQuote
-from app.db.models.rate_cards import Resin, Colour, Additive, Core
-from app.products.schemas import ProductType, Geometry, PrintMethod, FinishMode
+
+
+from app.db.models.domain import Customer, Machine, Product, ProductVersion, SavedQuote
 from app.db.models.enums import MachineType
-from typing import Optional
+from app.db.models.rate_cards import Additive, Colour, Core, Resin
+from app.db.session import SessionLocal
+from app.products.schemas import FinishMode, Geometry, PrintMethod, ProductType
+from app.quotes.schemas import (
+    SavedQuoteCreateRequest,
+    SavedQuoteResponse,
+    SavedQuoteUpdateRequest,
+)
 
 router = APIRouter(prefix="/api/quotes", tags=["quotes"])
 
@@ -32,44 +33,8 @@ async def approve_quote(quote_id: int):
     return {"ok": True, "approved_quote_id": quote_id}
 
 
-def get_product_service():
-    class _Stub:
-        def get_version(self, product_version_id: int):
-            raise NotImplementedError("ProductService.get_version not implemented")
-    return _Stub()
-
-
-def get_ratecard_service():
-    class _Stub:
-        def get_ratebook(self):
-            raise NotImplementedError("RateCardService.get_ratebook not implemented")
-    return _Stub()
-
-
-@router.post(
-    "/calculate",
-    response_model=QuotePreviewResult,
-    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
-)
-async def calculate_quote_preview(
-    payload: QuoteCalculateRequest,
-    product_service=Depends(get_product_service),
-    ratecard_service=Depends(get_ratecard_service),
-):
-    return svc_calculate_preview(payload, product_service=product_service, ratecard_service=ratecard_service)
-
-
-@router.post(
-    "/quick/calculate",
-    response_model=QuotePreviewResult,
-    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
-)
-async def quick_quote_calculate(payload: QuickQuoteCalculateRequest, ratecard_service=Depends(get_ratecard_service)):
-    return svc_quick_calc(payload, ratecard_service=ratecard_service)
-
-
 @router.get("/bootstrap", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def quotes_bootstrap(identity=Depends(current_identity)):
+async def quotes_bootstrap(_identity=Depends(current_identity)):
     product_versions: list[dict] = []
     resins: list[dict] = []
     colours: list[dict] = []

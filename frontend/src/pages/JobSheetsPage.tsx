@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { apiFetch } from '../api/client'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchJobSheets, type JobSheetSummary } from '../store/slices/jobSheetsSlice'
 import {
   Alert,
   Box,
@@ -15,21 +16,6 @@ import {
   Typography,
 } from '@mui/material'
 
-type JobSheetSummary = {
-  id: string
-  job_no: string
-  customer_name?: string | null
-  customer_code?: string | null
-  product_code: string
-  product_description?: string | null
-  due_date?: string | null
-  quantity_value: number
-  quantity_unit: string
-  created_at?: string | null
-  invoice_no?: string | null
-  order_date?: string | null
-}
-
 function fmtQty(v: number, u: string) {
   const unit =
     u === 'kg' ? 'kg' : u === 'rolls' ? 'rolls' : u === 'bags' ? 'bags' : u === 'meters' ? 'm' : u
@@ -37,26 +23,15 @@ function fmtQty(v: number, u: string) {
 }
 
 export function JobSheetsPage() {
+  const dispatch = useAppDispatch()
   const loc = useLocation()
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
-  const [items, setItems] = useState<JobSheetSummary[]>([])
-  const [err, setErr] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const { items, status, error } = useAppSelector((s) => s.jobSheets.list)
+  const loading = status === 'loading'
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const res = await apiFetch<{ items: JobSheetSummary[] }>('/api/job-sheets')
-        setItems(res.items || [])
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load job sheets')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchJobSheets())
+  }, [dispatch])
 
   return (
     <Stack spacing={2}>
@@ -72,10 +47,10 @@ export function JobSheetsPage() {
         </Button>
       </Box>
 
-      {err && <Alert severity="error">{err}</Alert>}
+      {error && <Alert severity="error">{error}</Alert>}
 
       <Paper variant="outlined">
-        {loading ? (
+        {loading && items.length === 0 ? (
           <Typography sx={{ p: 2 }} color="text.secondary">
             Loading…
           </Typography>
@@ -93,7 +68,7 @@ export function JobSheetsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((r) => (
+              {(items as JobSheetSummary[]).map((r) => (
                 <TableRow key={r.id} hover>
                   <TableCell sx={{ fontFamily: 'monospace' }}>{r.invoice_no ?? ''}</TableCell>
                   <TableCell
@@ -134,7 +109,7 @@ export function JobSheetsPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {items.length === 0 && (
+              {items.length === 0 && !loading && (
                 <TableRow>
                   <TableCell colSpan={7} sx={{ color: 'text.secondary' }}>
                     No job sheets yet.
@@ -148,4 +123,3 @@ export function JobSheetsPage() {
     </Stack>
   )
 }
-

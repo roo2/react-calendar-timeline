@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { createOrder } from '../store/slices/ordersSlice'
+import { createProduct } from '../store/slices/productsSlice'
 import {
   clearUpsertErrors,
   createSavedQuote,
+  fetchQuoteRatebook,
+  fetchQuoteResinBlends,
   fetchQuotesBootstrap,
   updateSavedQuote,
 } from '../store/slices/quotesSlice'
@@ -44,7 +47,6 @@ import {
   getBlendDensityKgPerM3,
   type AppliedExtrusionWasteFactor,
   type QuickQuoteInputs,
-  type QuoteRatebook,
 } from '../utils/quoteCalculator'
 import {
   buildSpecFromQuotePayload,
@@ -84,12 +86,6 @@ function PrintingUnavailableAlert({ message, prominent = false }: { message: str
   )
 }
 
-type ResinBlendPreset = {
-  blend_code: string
-  name: string
-  components: Array<{ resin_code: string; pct: number }>
-}
-
 export type SavedQuoteInitialData = {
   customer_id: string
   payload: Record<string, unknown>
@@ -113,10 +109,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const dispatch = useAppDispatch()
   const bootstrapState = useAppSelector((s) => s.quotes.bootstrap)
   const upsertState = useAppSelector((s) => s.quotes.upsert)
+  const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
+  const quoteResinBlendsState = useAppSelector((s) => s.quotes.quoteResinBlends)
   const bootstrap = bootstrapState.data
+  const ratebook = quoteRatebookState.data
+  const ratebookErr = quoteRatebookState.status === 'failed' ? quoteRatebookState.error : null
+  const resinBlends = quoteResinBlendsState.items
+  const resinBlendsErr = quoteResinBlendsState.status === 'failed' ? quoteResinBlendsState.error : null
   const [err, setErr] = useState<string | null>(null)
-  const [ratebook, setRatebook] = useState<QuoteRatebook | null>(null)
-  const [ratebookErr, setRatebookErr] = useState<string | null>(null)
   const [customerId, setCustomerId] = useState<string>('')
   const saving = upsertState.status === 'loading'
   const displayErr = err || bootstrapState.error || upsertState.error || null
@@ -155,8 +155,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [layflatInput, setLayflatInput] = useState<string | null>(null)
 
   // Materials
-  const [resinBlends, setResinBlends] = useState<ResinBlendPreset[]>([])
-  const [resinBlendsErr, setResinBlendsErr] = useState<string | null>(null)
   const [resinBlendCode, setResinBlendCode] = useState<string>('LD')
   const [colourRows, setColourRows] = useState<Array<{ colour_code: string; strength_pct: string }>>([
     { colour_code: '', strength_pct: '' },
@@ -320,17 +318,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   }, [initialData, hydratedFromQuote])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setRatebookErr(null)
-        const rb = await apiFetch<QuoteRatebook>('/api/rate-cards/ratebook')
-        setRatebook(rb)
-      } catch (e) {
-        setRatebookErr(e instanceof Error ? e.message : 'Failed to load pricing rates')
-        setRatebook(null)
-      }
-    })()
-  }, [])
+    void dispatch(fetchQuoteRatebook())
+  }, [dispatch])
+
+  useEffect(() => {
+    void dispatch(fetchQuoteResinBlends())
+  }, [dispatch])
 
   useEffect(() => {
     const opts = ratebook?.carton_options
@@ -338,24 +331,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     const defaultOpt = opts.find((o) => o?.is_default)
     if (defaultOpt && cartonOptionSlug === null) setCartonOptionSlug(defaultOpt.slug)
   }, [ratebook?.carton_options, cartonOptionSlug])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setResinBlendsErr(null)
-        const rows = await apiFetch<ResinBlendPreset[]>('/api/rate-cards/resin-blends')
-        if (cancelled) return
-        setResinBlends(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setResinBlendsErr(e instanceof Error ? e.message : 'Failed to load resin blends')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   useEffect(() => {
     if (!Array.isArray(resinBlends) || resinBlends.length === 0) return
@@ -1071,17 +1046,15 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       const spec = buildSpecFromQuotePayload(payloadForSave as any)
       const fromSpec = (computeProductCodeFromSpec(spec) || '').trim()
       const productCode = fromSpec || `Q-${suffix}`
-      const createProductRes = await apiFetch<{ ok: boolean; product: { id: string } }>(
-        '/api/products',
-        {
-          method: 'POST',
-          body: JSON.stringify({
+      const createProductRes = await dispatch(
+        createProduct({
+          data: {
             customer_id: customerId,
             code: productCode,
             spec,
-          }),
-        }
-      )
+          },
+        }),
+      ).unwrap()
       const productId = createProductRes?.product?.id
       if (!productId) {
         setConvertErr('Failed to create product')
@@ -1130,10 +1103,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       }
       if (quoteId) orderPayload.quote_id = quoteId
 
-      const createOrderRes = await apiFetch<{ ok: boolean; order_id: string }>('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify(orderPayload),
-      })
+      const createOrderRes = await dispatch(createOrder(orderPayload)).unwrap()
       const orderId = createOrderRes?.order_id
       if (!orderId) {
         setConvertErr('Failed to create order')

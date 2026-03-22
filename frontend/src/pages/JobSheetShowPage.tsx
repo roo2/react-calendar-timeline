@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchJobSheet } from '../store/slices/jobSheetsSlice'
 import { Alert, Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
 import { ProductVersionSummary } from '../components/ProductVersionSummary'
 
@@ -41,23 +42,17 @@ export function JobSheetShowPage() {
   const { jobSheetId } = useParams()
   const loc = useLocation()
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
-  const [data, setData] = useState<JobSheetDetail | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const dispatch = useAppDispatch()
+  const entry = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
+  const data = entry?.data as JobSheetDetail | null
+  const err = entry?.error
 
   useEffect(() => {
     if (!jobSheetId) return
-    void (async () => {
-      try {
-        setErr(null)
-        const res = await apiFetch<JobSheetDetail>(`/api/job-sheets/${encodeURIComponent(jobSheetId)}`)
-        setData(res)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load job sheet')
-      }
-    })()
-  }, [jobSheetId])
+    void dispatch(fetchJobSheet(jobSheetId))
+  }, [jobSheetId, dispatch])
 
-  if (err) {
+  if (err && !data && entry?.status === 'failed') {
     return (
       <Stack spacing={2}>
         <Typography variant="h5">Job Sheet</Typography>
@@ -154,4 +149,3 @@ export function JobSheetShowPage() {
     </Stack>
   )
 }
-

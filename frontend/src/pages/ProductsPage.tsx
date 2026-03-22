@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchProducts } from '../store/slices/productsSlice'
 import { can } from '../auth/permissions'
 import {
   Alert,
@@ -19,45 +18,29 @@ import {
   Typography,
   Link as MuiLink,
 } from '@mui/material'
-
-type ProductSummary = {
-  id: string
-  code: string
-  description?: string | null
-  customer_name?: string | null
-  active_version_id?: string | null
-  active_version_number?: number | null
-  version_count?: number | null
-  product_type?: string | null
-}
-
 export function ProductsPage() {
+  const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
+  const { items, status, error, lastQuery } = useAppSelector((s) => s.products.list)
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const isPm = can(roles, 'PROD_MANAGER')
 
   const [q, setQ] = useState('')
-  const [items, setItems] = useState<ProductSummary[]>([])
-  const [err, setErr] = useState<string | null>(null)
-
-  async function load(query: string) {
-    setErr(null)
-    const res = await apiFetch<{ items: ProductSummary[] }>(`/api/products${query ? `?q=${encodeURIComponent(query)}` : ''}`)
-    setItems(res.items)
-  }
 
   useEffect(() => {
-    void load('')
-  }, [])
+    void dispatch(fetchProducts(undefined))
+  }, [dispatch])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     try {
-      await load(q)
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : 'Failed to load products')
+      await dispatch(fetchProducts({ q })).unwrap()
+    } catch {
+      // error in slice
     }
   }
+
+  const listErr = lastQuery === q.trim() && status === 'failed' ? error : null
 
   return (
     <Stack spacing={2}>
@@ -87,57 +70,62 @@ export function ProductsPage() {
         </form>
       </Paper>
 
-      {err && <Alert severity="error">{err}</Alert>}
+      {listErr && <Alert severity="error">{listErr}</Alert>}
 
       <Paper variant="outlined">
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Customer</TableCell>
-              <TableCell>Code</TableCell>
-              <TableCell>Description</TableCell>
-              <TableCell>Type</TableCell>
-              <TableCell sx={{ width: 220, whiteSpace: 'nowrap' }}>Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {items.map((p) => (
-              <TableRow key={p.id} hover>
-                <TableCell>{p.customer_name || '-'}</TableCell>
-                <TableCell>
-                  <MuiLink
-                    component={Link}
-                    to={p.active_version_id ? `/products/${p.id}/versions/${p.active_version_id}` : `/products/${p.id}`}
-                    underline="hover"
-                  >
-                    {p.code}
-                  </MuiLink>
-                </TableCell>
-                <TableCell>{p.description || '-'}</TableCell>
-                <TableCell>{p.product_type || '-'}</TableCell>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', alignItems: 'center', whiteSpace: 'nowrap' }}>
+        {status === 'loading' && items.length === 0 ? (
+          <Typography sx={{ p: 2 }} color="text.secondary">
+            Loading…
+          </Typography>
+        ) : (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Customer</TableCell>
+                <TableCell>Code</TableCell>
+                <TableCell>Description</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell sx={{ width: 220, whiteSpace: 'nowrap' }}>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {items.map((p) => (
+                <TableRow key={p.id} hover>
+                  <TableCell>{p.customer_name || '-'}</TableCell>
+                  <TableCell>
                     <MuiLink
                       component={Link}
-                      to={`/products/${p.id}`}
+                      to={p.active_version_id ? `/products/${p.id}/versions/${p.active_version_id}` : `/products/${p.id}`}
                       underline="hover"
-                      sx={{ whiteSpace: 'nowrap' }}
                     >
-                      Previous versions ({typeof p.version_count === 'number' ? p.version_count : 0})
+                      {p.code}
                     </MuiLink>
-                    {isPm ? (
-                      <Button size="small" variant="outlined" component={Link} to={`/products/${p.id}/versions/new`}>
-                        Edit
-                      </Button>
-                    ) : null}
-                  </Box>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                  </TableCell>
+                  <TableCell>{p.description || '-'}</TableCell>
+                  <TableCell>{p.product_type || '-'}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                      <MuiLink
+                        component={Link}
+                        to={`/products/${p.id}`}
+                        underline="hover"
+                        sx={{ whiteSpace: 'nowrap' }}
+                      >
+                        Previous versions ({typeof p.version_count === 'number' ? p.version_count : 0})
+                      </MuiLink>
+                      {isPm ? (
+                        <Button size="small" variant="outlined" component={Link} to={`/products/${p.id}/versions/new`}>
+                          Edit
+                        </Button>
+                      ) : null}
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </Paper>
     </Stack>
   )
 }
-

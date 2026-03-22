@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { adminDeleteResinBlend, adminSaveResinBlend, fetchAdminResinBlendsTab } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import { BlendComponentsEditor, type BlendComponentDraft } from './components/BlendComponentsEditor'
-import type { Resin, ResinBlend } from './types'
+import type { ResinBlend } from './types'
 import type { ResinOption } from '../../components/ResinSelect'
 
 export function ResinBlendsAdminPage() {
-  const [resins, setResins] = useState<Resin[]>([])
-  const [blends, setBlends] = useState<ResinBlend[]>([])
-  const [loading, setLoading] = useState(false)
+  const dispatch = useAppDispatch()
+  const resins = useAppSelector((s) => s.adminRateCards.resins.items)
+  const blends = useAppSelector((s) => s.adminRateCards.resinBlends.items)
+  const { status, error: loadErr } = useAppSelector((s) => s.adminRateCards.resinBlendsTab)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
 
@@ -32,23 +35,10 @@ export function ResinBlendsAdminPage() {
   }, [newCode, newComponents, newName])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const [resinRows, blendRows] = await Promise.all([
-          apiFetch<Resin[]>('/api/admin/rate-cards/resins'),
-          apiFetch<ResinBlend[]>('/api/admin/rate-cards/resin-blends'),
-        ])
-        setResins(resinRows)
-        setBlends(blendRows)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load resin blends')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminResinBlendsTab())
+  }, [dispatch])
+
+  const displayErr = err || loadErr
 
   async function saveBlend(blendCode: string, patch: Omit<ResinBlend, 'blend_code'>) {
     const trimmed = blendCode.trim()
@@ -56,17 +46,7 @@ export function ResinBlendsAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      const saved = await apiFetch<ResinBlend>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setBlends((cur) => {
-        const idx = cur.findIndex((b) => b.blend_code === saved.blend_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.blend_code.localeCompare(b.blend_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveResinBlend({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin blend')
     } finally {
@@ -81,8 +61,7 @@ export function ResinBlendsAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setBlends((cur) => cur.filter((b) => b.blend_code !== trimmed))
+      await dispatch(adminDeleteResinBlend(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin blend')
     } finally {
@@ -93,10 +72,10 @@ export function ResinBlendsAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Resin blends" subtitle="Define named blends used for quoting (components must sum to 100%)." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        {loading ? (
+        {loading && blends.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -265,4 +244,3 @@ function NewResinBlendRow(props: {
     </>
   )
 }
-

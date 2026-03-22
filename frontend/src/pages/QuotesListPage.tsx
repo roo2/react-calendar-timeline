@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchSavedQuotesList } from '../store/slices/quotesSlice'
 import { can } from '../auth/permissions'
 import {
   Alert,
@@ -17,40 +17,17 @@ import {
   Link as MuiLink,
 } from '@mui/material'
 
-type QuoteRow = {
-  id: string
-  customer_id: string
-  customer_name?: string | null
-  payload: Record<string, unknown>
-  cost_per_kg?: number | null
-  price_per_kg?: number | null
-  created_at?: string | null
-  updated_at?: string | null
-}
-
 export function QuotesListPage() {
+  const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
+  const { items, status, error } = useAppSelector((s) => s.quotes.savedList)
   const canCreate = can(roles, 'SALES', 'PROD_MANAGER')
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
-
-  const [items, setItems] = useState<QuoteRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const loading = status === 'loading'
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const res = await apiFetch<QuoteRow[]>('/api/quotes/saved')
-        setItems(Array.isArray(res) ? res : [])
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load quotes')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchSavedQuotesList(undefined))
+  }, [dispatch])
 
   return (
     <Box>
@@ -68,10 +45,10 @@ export function QuotesListPage() {
         )}
       </Box>
 
-      {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Paper variant="outlined">
-        {loading ? (
+        {loading && items.length === 0 ? (
           <Typography sx={{ p: 2 }} color="text.secondary">
             Loading…
           </Typography>

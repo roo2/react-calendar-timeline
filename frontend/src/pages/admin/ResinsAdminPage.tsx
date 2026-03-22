@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import {
+  adminDeleteAdditive,
+  adminDeleteColour,
+  adminDeleteResin,
+  adminDeleteResinBlend,
+  adminSaveAdditive,
+  adminSaveColour,
+  adminSaveResin,
+  adminSaveResinBlend,
+  fetchAdminResinsMaterials,
+} from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
@@ -10,13 +21,15 @@ import type { Additive, Colour, Resin, ResinBlend } from './types'
 import type { ResinOption } from '../../components/ResinSelect'
 
 export function ResinsAdminPage() {
+  const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
-  const [resins, setResins] = useState<Resin[]>([])
-  const [additives, setAdditives] = useState<Additive[]>([])
-  const [colours, setColours] = useState<Colour[]>([])
-  const [blends, setBlends] = useState<ResinBlend[]>([])
+  const resins = useAppSelector((s) => s.adminRateCards.resins.items)
+  const additives = useAppSelector((s) => s.adminRateCards.additives.items)
+  const colours = useAppSelector((s) => s.adminRateCards.colours.items)
+  const blends = useAppSelector((s) => s.adminRateCards.resinBlends.items)
+  const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.resinsMaterials)
+  const loading = status === 'loading'
 
-  const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
 
@@ -67,27 +80,10 @@ export function ResinsAdminPage() {
   }, [newBlendCode, newBlendComponents, newBlendName])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const [resinRows, additiveRows, colourRows, blendRows] = await Promise.all([
-          apiFetch<Resin[]>('/api/admin/rate-cards/resins'),
-          apiFetch<Additive[]>('/api/admin/rate-cards/additives'),
-          apiFetch<Colour[]>('/api/admin/rate-cards/colours'),
-          apiFetch<ResinBlend[]>('/api/admin/rate-cards/resin-blends'),
-        ])
-        setResins(resinRows)
-        setAdditives(additiveRows)
-        setColours(colourRows)
-        setBlends(blendRows)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load resins admin data')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminResinsMaterials())
+  }, [dispatch])
+
+  const displayErr = err || tabErr
 
   async function saveResin(code: string, patch: Omit<Resin, 'resin_code'>) {
     const trimmed = code.trim()
@@ -96,17 +92,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<Resin>(`/api/admin/rate-cards/resins/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setResins((cur) => {
-        const idx = cur.findIndex((r) => r.resin_code === saved.resin_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.resin_code.localeCompare(b.resin_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveResin({ code: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin')
@@ -123,8 +109,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      await apiFetch<void>(`/api/admin/rate-cards/resins/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setResins((cur) => cur.filter((r) => r.resin_code !== trimmed))
+      await dispatch(adminDeleteResin(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin')
@@ -140,17 +125,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<Additive>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setAdditives((cur) => {
-        const idx = cur.findIndex((r) => r.additive_code === saved.additive_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.additive_code.localeCompare(b.additive_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveAdditive({ code: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save additive')
@@ -167,8 +142,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      await apiFetch<void>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setAdditives((cur) => cur.filter((r) => r.additive_code !== trimmed))
+      await dispatch(adminDeleteAdditive(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete additive')
@@ -184,15 +158,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<Colour>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-        setColours((cur) => {
-          const idx = cur.findIndex((r) => r.colour_code === saved.colour_code)
-          const next = idx === -1 ? [...cur, saved] : cur.slice().map((r, i) => (i === idx ? saved : r))
-          return next.sort((a, b) => a.sort_order - b.sort_order || a.colour_code.localeCompare(b.colour_code))
-      })
+      await dispatch(adminSaveColour({ code: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save colour')
@@ -209,8 +175,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      await apiFetch<void>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setColours((cur) => cur.filter((r) => r.colour_code !== trimmed))
+      await dispatch(adminDeleteColour(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete colour')
@@ -226,17 +191,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<ResinBlend>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setBlends((cur) => {
-        const idx = cur.findIndex((b) => b.blend_code === saved.blend_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.blend_code.localeCompare(b.blend_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveResinBlend({ code: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin blend')
@@ -253,8 +208,7 @@ export function ResinsAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      await apiFetch<void>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setBlends((cur) => cur.filter((b) => b.blend_code !== trimmed))
+      await dispatch(adminDeleteResinBlend(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin blend')
@@ -266,7 +220,7 @@ export function ResinsAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Resins" subtitle="Resins, additives, colours, and resin blends." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>

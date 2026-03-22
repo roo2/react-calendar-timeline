@@ -540,7 +540,7 @@ Declare installed machinery and capabilities so scheduling and execution can val
 
 Machine Types (recap)
 
-Extruder (may have inline 1‑colour printing and/or perforation)
+Extruder (may have attached "tools" for inline printing, punching or perforation)
 
 Printer — Uteco (out‑of‑line, up to 6 colours, duplex)
 
@@ -620,7 +620,7 @@ The system records QC evidence manually. No automated device data capture entiti
 
 source = manual
 
-4.14 Tooling & Shared Equipment (MVP+)
+4.14 Tooling & Shared Equipment
 Purpose
 
 Model movable equipment (“tools”) that can be mounted to multiple machines over time, but used by only one job at a time.
@@ -628,53 +628,31 @@ Model movable equipment (“tools”) that can be mounted to multiple machines o
 New Entities
 
 Tool
-
 tool_id
-
 tool_code (human-visible)
-
 type (enum): inline_printer_1c | inline_printer_4c | inline_printer_silver | perforation_seal_vicro | perforation_seal_orion | perforation_only_orion | winder | electra_punch | v_folder | conversion_punch
-
 stages_supported (array enum): extrusion | conversion
-
 compatible_machine_types (array): [extruder], [converter], or both
-
 icon_ref (static asset name)
-
 active (boolean)
-
 notes
 
 ToolMount (current placement)
-
 tool_id
-
 machine_id (nullable)
-
 mounted_at (timestamp)
-
 unmounted_at (nullable)
-
 notes
 
 ToolReservation (append-only)
-
 reservation_id
-
 tool_id
-
 operation_run_id (nullable until run starts)
-
 job_id
-
 machine_id (intended mount)
-
 stage (extrusion | conversion)
-
 reserved_from (planned)
-
 reserved_to (planned)
-
 status: planned | active | released | cancelled
 
 created_by, created_at

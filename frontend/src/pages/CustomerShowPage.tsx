@@ -1,39 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
 import { fetchCustomer } from '../store/slices/customersSlice'
-import { apiFetch } from '../api/client'
+import { fetchOrders } from '../store/slices/ordersSlice'
+import { fetchProducts } from '../store/slices/productsSlice'
+import { fetchSavedQuotesList } from '../store/slices/quotesSlice'
 import { Alert, Box, Button, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
-
-type ProductRow = {
-  id: string
-  code: string
-  description?: string | null
-  active_version_id?: string | null
-  product_type?: string | null
-  pack_mode?: string | null
-}
-
-type OrderRow = {
-  id: string
-  code: string
-  status: string
-  product_code?: string | null
-  version_number?: number | null
-  item_count?: number | null
-  created_at?: string | null
-}
-
-type QuoteRow = {
-  id: string
-  customer_id: string
-  payload: Record<string, unknown>
-  cost_per_kg?: number | null
-  price_per_kg?: number | null
-  created_at?: string | null
-  updated_at?: string | null
-}
 
 export function CustomerShowPage() {
   const { customerId } = useParams()
@@ -46,10 +19,39 @@ export function CustomerShowPage() {
   const customer = entry?.customer || null
   const err = entry?.error || null
 
-  const [products, setProducts] = useState<ProductRow[]>([])
-  const [orders, setOrders] = useState<OrderRow[]>([])
-  const [quotes, setQuotes] = useState<QuoteRow[]>([])
-  const [relErr, setRelErr] = useState<string | null>(null)
+  const productsState = useAppSelector((s) => s.products.list)
+  const ordersState = useAppSelector((s) => s.orders.list)
+  const quotesState = useAppSelector((s) => s.quotes.savedList)
+
+  const products = useMemo(() => {
+    if (!customerId || productsState.lastCustomerId !== customerId) return []
+    return productsState.items
+  }, [customerId, productsState.items, productsState.lastCustomerId])
+
+  const orders = useMemo(() => {
+    if (!customerId || ordersState.lastCustomerId !== customerId) return []
+    return ordersState.items
+  }, [customerId, ordersState.items, ordersState.lastCustomerId])
+
+  const quotes = useMemo(() => {
+    if (!customerId || quotesState.lastCustomerId !== customerId) return []
+    return quotesState.items
+  }, [customerId, quotesState.items, quotesState.lastCustomerId])
+
+  const relErr = useMemo(() => {
+    if (!customerId) return null
+    const msgs: string[] = []
+    if (productsState.lastCustomerId === customerId && productsState.status === 'failed' && productsState.error) {
+      msgs.push(`Products: ${productsState.error}`)
+    }
+    if (ordersState.lastCustomerId === customerId && ordersState.status === 'failed' && ordersState.error) {
+      msgs.push(`Orders: ${ordersState.error}`)
+    }
+    if (quotesState.lastCustomerId === customerId && quotesState.status === 'failed' && quotesState.error) {
+      msgs.push(`Quotes: ${quotesState.error}`)
+    }
+    return msgs.length ? msgs.join(' ') : null
+  }, [customerId, productsState, ordersState, quotesState])
 
   useEffect(() => {
     if (!customerId) return
@@ -58,22 +60,10 @@ export function CustomerShowPage() {
 
   useEffect(() => {
     if (!customerId) return
-    void (async () => {
-      try {
-        setRelErr(null)
-        const [pRes, oRes, qRes] = await Promise.all([
-          apiFetch<{ items: ProductRow[] }>(`/api/products?customer_id=${encodeURIComponent(customerId)}`),
-          apiFetch<OrderRow[]>(`/api/orders?customer_id=${encodeURIComponent(customerId)}`),
-          apiFetch<QuoteRow[]>(`/api/quotes/saved?customer_id=${encodeURIComponent(customerId)}`),
-        ])
-        setProducts(pRes.items || [])
-        setOrders(oRes || [])
-        setQuotes(Array.isArray(qRes) ? qRes : [])
-      } catch (e) {
-        setRelErr(e instanceof Error ? e.message : 'Failed to load related records')
-      }
-    })()
-  }, [customerId])
+    void dispatch(fetchProducts({ customer_id: customerId }))
+    void dispatch(fetchOrders({ customer_id: customerId }))
+    void dispatch(fetchSavedQuotesList({ customer_id: customerId }))
+  }, [customerId, dispatch])
 
   if (err) {
     return (

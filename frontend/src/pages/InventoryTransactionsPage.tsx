@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { apiFetch } from '../api/client'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchInventoryTransactions } from '../store/slices/inventorySlice'
 import {
   Alert,
   Box,
@@ -28,10 +29,17 @@ type Filters = {
   page_size?: number
 }
 
+/** Shape returned by GET /api/inventory/transactions */
+type TransactionsApiResponse = {
+  items?: Array<Record<string, unknown> & { id?: string }>
+  total?: number
+  filters?: { page?: number; page_size?: number }
+}
+
 export function InventoryTransactionsPage() {
+  const dispatch = useAppDispatch()
+  const tx = useAppSelector((s) => s.inventory.transactions)
   const [filters, setFilters] = useState<Filters>({ page: 1, page_size: 25 })
-  const [data, setData] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
 
   const qs = useMemo(() => {
     const p = new URLSearchParams()
@@ -47,19 +55,12 @@ export function InventoryTransactionsPage() {
     return p.toString()
   }, [filters])
 
-  async function load() {
-    try {
-      setErr(null)
-      const res = await apiFetch<any>(`/api/inventory/transactions?${qs}`)
-      setData(res)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to load transactions')
-    }
-  }
-
   useEffect(() => {
-    void load()
-  }, [qs])
+    void dispatch(fetchInventoryTransactions(qs))
+  }, [dispatch, qs])
+
+  const data = (tx.lastQuery === qs ? tx.data : null) as TransactionsApiResponse | null
+  const err = tx.status === 'failed' ? tx.error : null
 
   function onSubmit(e: FormEvent) {
     e.preventDefault()

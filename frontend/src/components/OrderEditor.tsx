@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ProductListItem } from '../store/slices/productsSlice'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { can } from '../auth/permissions'
@@ -27,13 +27,23 @@ import {
 } from '@mui/material'
 import { ProductVersionEditor } from './ProductVersionEditor'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from './SpecPayloadForm'
-import { clearCreateErrors, createProduct } from '../store/slices/productsSlice'
+import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '../store/slices/productsSlice'
+import {
+  addOrderItem,
+  createOrder,
+  deleteOrderItem,
+  fetchOrder,
+  fetchOrdersBootstrap,
+  patchOrder,
+  publishOrderBare,
+} from '../store/slices/ordersSlice'
+import { checkProductCodeExists } from '../store/slices/productsSlice'
+import { updateJobSheet } from '../store/slices/jobSheetsSlice'
 import { computeProductCodeFromSpec } from '../utils/productDescription'
 
 type Mode = 'new' | 'edit'
 
-type Customer = { id: string; name: string; code?: string | null }
-type Product = { id: string; code: string; description?: string | null; customer_id: string; active_version_id?: string | null }
+type Product = ProductListItem
 type QuantityUnit = 'kg' | 'rolls' | 'bags' | 'meters'
 
 type OrderLine = {
@@ -119,11 +129,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const canEditProduct = can(roles, 'PROD_MANAGER')
   const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
   const createState = useAppSelector((s) => s.products.create)
+  const productList = useAppSelector((s) => s.products.list)
+  const ordersBootstrap = useAppSelector((s) => s.orders.bootstrap)
   const { setDirty } = useUnsavedChanges()
 
-  const [customers, setCustomers] = useState<Customer[]>([])
-  const [products, setProducts] = useState<Product[]>([])
-  const [loadingProducts, setLoadingProducts] = useState(false)
+  const customers = ordersBootstrap.customers || []
   const [err, setErr] = useState<string | null>(null)
 
   const [saving, setSaving] = useState(false)
@@ -158,6 +168,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
 
+  const products = useMemo((): Product[] => {
+    if (!customerId || productList.lastCustomerId !== customerId) return []
+    return productList.items as Product[]
+  }, [customerId, productList.items, productList.lastCustomerId])
+  const loadingProducts = Boolean(customerId && productList.status === 'loading')
+  const bootstrapErr = ordersBootstrap.status === 'failed' ? ordersBootstrap.error : null
+  const productListErr =
+    customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
+
   function openProductVersionModal(p: { product_id: string; product_code?: string | null }) {
     setPvProductId(p.product_id)
     setPvTitle(p.product_code ? `Edit ${p.product_code}` : 'Edit product')
@@ -184,31 +203,30 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const generatedProductCode = useMemo(() => (computeProductCodeFromSpec(newProductSpec) || '').trim(), [newProductSpec])
 
+  const codeExistsReq = useRef(0)
   useEffect(() => {
-    // Debounced uniqueness check for product code.
     const v = (generatedProductCode || '').trim()
     if (!newProductOpen || !v) {
       setNewProductCodeExists(false)
       return
     }
-    const controller = new AbortController()
     const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await apiFetch<{ exists: boolean }>(`/api/products/code-exists?code=${encodeURIComponent(v)}`, {
-            signal: controller.signal as any,
-          })
-          setNewProductCodeExists(!!res?.exists)
-        } catch {
+      const id = ++codeExistsReq.current
+      void dispatch(checkProductCodeExists(v))
+        .unwrap()
+        .then((r) => {
+          if (id !== codeExistsReq.current) return
+          setNewProductCodeExists(!!r.exists)
+        })
+        .catch(() => {
+          if (id !== codeExistsReq.current) return
           setNewProductCodeExists(false)
-        }
-      })()
+        })
     }, 250)
     return () => {
-      controller.abort()
       window.clearTimeout(t)
     }
-  }, [generatedProductCode, newProductOpen])
+  }, [dispatch, generatedProductCode, newProductOpen])
 
   async function addProductFromSummary(p: Product) {
     if (!p.active_version_id) {
@@ -236,16 +254,18 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     try {
       setErr(null)
       setSaving(true)
-      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/items`, {
-        method: 'POST',
-        body: JSON.stringify({
-          product_id: p.id,
-          due_date: defaultDueDate(),
-          quantity_unit: 'kg',
-          quantity_value: 1,
+      await dispatch(
+        addOrderItem({
+          orderId,
+          body: {
+            product_id: p.id,
+            due_date: defaultDueDate(),
+            quantity_unit: 'kg',
+            quantity_value: 1,
+          },
         }),
-      })
-      const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+      ).unwrap()
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
       setItems(nextItems)
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
@@ -276,11 +296,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       if (!pid) return
 
       // Fetch full product summary (incl active_version_id) and add it immediately.
-      const pres = await apiFetch<any>(`/api/products/${encodeURIComponent(pid)}`)
+      const { data: pres } = await dispatch(fetchProduct(pid)).unwrap()
       const p = pres?.product as Product | undefined
       if (!p) return
 
-      setProducts((prev) => [p, ...prev.filter((x) => x.id !== p.id)])
+      await dispatch(fetchProducts({ customer_id: customerId })).unwrap()
       closeNewProductModal()
       await addProductFromSummary(p)
     } catch {
@@ -289,15 +309,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const res = await apiFetch<{ customers: Customer[] }>('/api/orders/bootstrap')
-        setCustomers(res.customers)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load form data')
-      }
-    })()
-  }, [])
+    void dispatch(fetchOrdersBootstrap())
+  }, [dispatch])
 
   useEffect(() => {
     if (mode !== 'new') return
@@ -308,7 +321,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (pre === customerId && items.length > 0) return
     setCustomerId(pre)
     setItems([])
-    setProducts([])
     setProductId('')
     setErr(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -320,7 +332,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     void (async () => {
       try {
         setErr(null)
-        const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+        const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
         setOrderStatus(String(res?.status || 'draft'))
         setCustomerId(String(res?.customer_id || ''))
         setInvoiceNumber(String(res?.code ?? ''))
@@ -334,43 +346,22 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         setErr(e instanceof Error ? e.message : 'Failed to load order')
       }
     })()
-  }, [mode, orderId])
+  }, [mode, orderId, dispatch])
 
   async function loadProductsForCustomer(id: string) {
     if (!id) return
     if (loadingProducts) return
     try {
-      setLoadingProducts(true)
-      const qs = new URLSearchParams()
-      qs.set('customer_id', id)
-      const res = await apiFetch<{ items: Product[] }>(`/api/products?${qs.toString()}`)
-      setProducts(res.items || [])
+      await dispatch(fetchProducts({ customer_id: id })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load products')
-    } finally {
-      setLoadingProducts(false)
     }
   }
 
   useEffect(() => {
     if (!customerId) return
-    const controller = new AbortController()
-    void (async () => {
-      try {
-        setLoadingProducts(true)
-        const qs = new URLSearchParams()
-        qs.set('customer_id', customerId)
-        const res = await apiFetch<{ items: Product[] }>(`/api/products?${qs.toString()}`, { signal: controller.signal as any })
-        setProducts(res.items || [])
-      } catch (e) {
-        if (e instanceof Error && /aborted/i.test(e.message)) return
-        setErr(e instanceof Error ? e.message : 'Failed to load products')
-      } finally {
-        setLoadingProducts(false)
-      }
-    })()
-    return () => controller.abort()
-  }, [customerId])
+    void dispatch(fetchProducts({ customer_id: customerId }))
+  }, [customerId, dispatch])
 
   useEffect(() => {
     if (mode !== 'new') return
@@ -378,7 +369,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (prevCustomerId.current === customerId) return
     prevCustomerId.current = customerId
     setProductId('')
-    setProducts([])
     setItems([])
   }, [customerId, mode])
 
@@ -419,17 +409,19 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     try {
       setErr(null)
       setSaving(true)
-      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/items`, {
-        method: 'POST',
-        body: JSON.stringify({
-          product_id: p.id,
-          due_date: defaultDueDate(),
-          quantity_unit: 'kg',
-          quantity_value: 1,
+      await dispatch(
+        addOrderItem({
+          orderId,
+          body: {
+            product_id: p.id,
+            due_date: defaultDueDate(),
+            quantity_unit: 'kg',
+            quantity_value: 1,
+          },
         }),
-      })
+      ).unwrap()
       // reload order to pick up job_sheet_id/order_item_id
-      const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
       setItems(nextItems)
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
@@ -470,9 +462,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setErr(null)
     setSaving(true)
     try {
-      const res = await apiFetch<{ ok: boolean; order_id: string }>('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({
+      const res = await dispatch(
+        createOrder({
           customer_id: customerId,
           status: 'draft',
           ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
@@ -490,7 +481,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             }
           }),
         }),
-      })
+      ).unwrap()
       setDirty(false)
       nav(`/orders/${res.order_id}/edit`, { replace: true })
     } catch (e) {
@@ -509,13 +500,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setErr(null)
     setSaving(true)
     try {
-      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          invoice_number: invoiceNumber.trim() || null,
-          order_date: orderDate || null,
+      await dispatch(
+        patchOrder({
+          orderId,
+          body: {
+            invoice_number: invoiceNumber.trim() || null,
+            order_date: orderDate || null,
+          },
         }),
-      })
+      ).unwrap()
 
       const orig = originalRef.current
 
@@ -535,19 +528,21 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
       for (const it of updates) {
         if (!it.job_sheet_id) continue
-        await apiFetch<any>(`/api/job-sheets/${encodeURIComponent(it.job_sheet_id)}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            due_date: it.due_date || null,
-            quantity_value: Number(it.quantity_value || '0'),
-            quantity_unit: it.quantity_unit,
-            unit_rate: parseOptionalMoney(it.rate),
-            line_total: computedLineTotal(it),
+        await dispatch(
+          updateJobSheet({
+            jobSheetId: it.job_sheet_id,
+            body: {
+              due_date: it.due_date || null,
+              quantity_value: Number(it.quantity_value || '0'),
+              quantity_unit: it.quantity_unit,
+              unit_rate: parseOptionalMoney(it.rate),
+              line_total: computedLineTotal(it),
+            },
           }),
-        })
+        ).unwrap()
       }
 
-      const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       setOrderStatus(String(res?.status || orderStatus))
       setInvoiceNumber(String(res?.code ?? ''))
       setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
@@ -571,9 +566,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setPublishing(true)
     try {
       if (mode === 'new') {
-        const res = await apiFetch<{ ok: boolean; order_id: string }>('/api/orders', {
-          method: 'POST',
-          body: JSON.stringify({
+        const res = await dispatch(
+          createOrder({
             customer_id: customerId,
             status: 'draft',
             ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
@@ -591,15 +585,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               }
             }),
           }),
-        })
-        await apiFetch<any>(`/api/orders/${encodeURIComponent(res.order_id)}/publish`, { method: 'POST' })
+        ).unwrap()
+        await dispatch(publishOrderBare(res.order_id)).unwrap()
         setDirty(false)
         nav('/orders')
         return
       }
 
       if (!orderId) return
-      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/publish`, { method: 'POST' })
+      await dispatch(publishOrderBare(orderId)).unwrap()
       setDirty(false)
       nav('/orders')
     } catch (e) {
@@ -619,8 +613,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     try {
       setErr(null)
       setSaving(true)
-      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(it.order_item_id)}`, { method: 'DELETE' })
-      const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+      await dispatch(deleteOrderItem({ orderId, orderItemId: it.order_item_id })).unwrap()
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
       setItems(nextItems)
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
@@ -639,9 +633,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         {title}
       </Typography>
 
-      {err && (
+      {(err || bootstrapErr || productListErr) && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {err}
+          {err || bootstrapErr || productListErr}
         </Alert>
       )}
 

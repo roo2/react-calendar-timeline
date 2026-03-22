@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchProduct, fetchProductVersion, productVersionCacheKey } from '../store/slices/productsSlice'
 import { can } from '../auth/permissions'
 import { ProductVersionSummary } from '../components/ProductVersionSummary'
 import {
@@ -16,33 +16,30 @@ import {
 
 export function ProductVersionShowPage() {
   const { productId, versionId } = useParams()
+  const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const isPm = can(roles, 'PROD_MANAGER')
 
-  const [productData, setProductData] = useState<any>(null)
-  const [versionData, setVersionData] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const productEntry = useAppSelector((s) => (productId ? s.products.detail.byId[productId] : undefined))
+  const vKey = productId && versionId ? productVersionCacheKey(productId, versionId) : ''
+  const versionEntry = useAppSelector((s) => (vKey ? s.products.versionDetail.byKey[vKey] : undefined))
+
+  const productData = productEntry?.data
+  const versionData = versionEntry?.data
+  const err =
+    (productEntry?.status === 'failed' && productEntry.error) ||
+    (versionEntry?.status === 'failed' && versionEntry.error) ||
+    null
 
   useEffect(() => {
     if (!productId || !versionId) return
-    void (async () => {
-      try {
-        setErr(null)
-        const [p, v] = await Promise.all([
-          apiFetch<any>(`/api/products/${productId}`),
-          apiFetch<any>(`/api/products/${productId}/versions/${versionId}`),
-        ])
-        setProductData(p)
-        setVersionData(v)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load version')
-      }
-    })()
-  }, [productId, versionId])
+    void dispatch(fetchProduct(productId))
+    void dispatch(fetchProductVersion({ productId, versionId }))
+  }, [productId, versionId, dispatch])
 
   const spec = useMemo(() => versionData?.version?.spec_payload || null, [versionData])
 
-  if (err) {
+  if (err && (!productData || !versionData)) {
     return (
       <Box>
         <Typography variant="h5" sx={{ mb: 2 }}>
@@ -152,4 +149,3 @@ export function ProductVersionShowPage() {
     </Stack>
   )
 }
-

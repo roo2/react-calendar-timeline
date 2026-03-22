@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Alert, Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import {
+  adminSavePackagingSettings,
+  fetchAdminPackagingSettings,
+  type PackagingSettings,
+} from '../../store/slices/adminRateCardsSlice'
 import { AdminPageHeader } from './components/AdminPageHeader'
 
-export type PackagingSettings = {
-  packing_factor_rolls: number
-  packing_factor_cartons: number
-  pallet_volume_m3: number
-}
+export type { PackagingSettings }
 
 export function PackagingAdminPage() {
+  const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
-  const [settings, setSettings] = useState<PackagingSettings | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data: settings, status, error: loadErr } = useAppSelector((s) => s.adminRateCards.packaging)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -22,22 +24,15 @@ export function PackagingAdminPage() {
   const [palletVolume, setPalletVolume] = useState<number | ''>(1)
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const data = await apiFetch<PackagingSettings>('/api/admin/rate-cards/packaging-settings')
-        setSettings(data)
-        setPackingRolls(data.packing_factor_rolls)
-        setPackingCartons(data.packing_factor_cartons)
-        setPalletVolume(data.pallet_volume_m3)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load packaging settings')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminPackagingSettings())
+  }, [dispatch])
+
+  useEffect(() => {
+    if (!settings) return
+    setPackingRolls(settings.packing_factor_rolls)
+    setPackingCartons(settings.packing_factor_cartons)
+    setPalletVolume(settings.pallet_volume_m3)
+  }, [settings])
 
   const dirty =
     settings != null &&
@@ -48,6 +43,8 @@ export function PackagingAdminPage() {
   useEffect(() => {
     setDirty(dirty)
   }, [dirty, setDirty])
+
+  const displayErr = err || loadErr
 
   async function handleSave() {
     const rolls = Number(packingRolls)
@@ -60,18 +57,13 @@ export function PackagingAdminPage() {
     try {
       setErr(null)
       setSaving(true)
-      const data = await apiFetch<PackagingSettings>('/api/admin/rate-cards/packaging-settings', {
-        method: 'PUT',
-        body: JSON.stringify({
+      await dispatch(
+        adminSavePackagingSettings({
           packing_factor_rolls: rolls,
           packing_factor_cartons: cartons,
           pallet_volume_m3: vol,
         }),
-      })
-      setSettings(data)
-      setPackingRolls(data.packing_factor_rolls)
-      setPackingCartons(data.packing_factor_cartons)
-      setPalletVolume(data.pallet_volume_m3)
+      ).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save')
@@ -86,10 +78,10 @@ export function PackagingAdminPage() {
         title="Shipping / Pallets"
         subtitle="Packing factors and pallet volume used to estimate number of pallets for quotes. Packing factor: fraction of pallet space occupied by product (Rolls vs Cartons)."
       />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2, maxWidth: 480 }}>
-        {loading ? (
+        {loading && !settings ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <Stack spacing={2}>

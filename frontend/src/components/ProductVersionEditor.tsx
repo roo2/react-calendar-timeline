@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from './SpecPayloadForm'
 import { Box, Button, Link as MuiLink, Stack, Typography, useMediaQuery, useTheme } from '@mui/material'
 import { FormErrorAlert } from './FormErrorAlert'
-import { clearNewVersionErrors, createProductVersion } from '../store/slices/productsSlice'
+import { clearNewVersionErrors, createProductVersion, fetchProduct } from '../store/slices/productsSlice'
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
 import { JobSheetPreviewPanel } from './JobSheetPreviewPanel'
 import { StickySideAside } from './StickySideAside'
@@ -41,9 +40,11 @@ export function ProductVersionEditor(props: {
   const nav = useNavigate()
   const dispatch = useAppDispatch()
 
-  const [data, setData] = useState<any>(null)
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [loadErr, setLoadErr] = useState<string | null>(null)
+
+  const productDetail = useAppSelector((s) => s.products.detail.byId[productId])
+  const data = productDetail?.data
 
   const upsert = useAppSelector((s) => s.products.newVersion)
   const err = upsert.error
@@ -51,30 +52,41 @@ export function ProductVersionEditor(props: {
   const fieldErrors = upsert.fieldErrors
   const saving = upsert.status === 'loading'
   const { setDirty } = useUnsavedChanges()
+  const specHydratedRef = useRef(false)
 
   useEffect(() => {
     void dispatch(clearNewVersionErrors())
   }, [dispatch, productId])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setLoadErr(null)
-        const res = await apiFetch<any>(`/api/products/${encodeURIComponent(productId)}`)
-        setData(res)
-
-        const product = res.product
-        const versions = res.versions || []
-        const activeId = product?.active_version_id
-        const active = activeId ? versions.find((v: any) => v.id === activeId) : null
-        const latest = versions.slice().sort((a: any, b: any) => (b.version_number || 0) - (a.version_number || 0))[0]
-        const srcSpec = (active?.spec_payload || latest?.spec_payload) ?? null
-        setSpec(ensureSpec(srcSpec))
-      } catch (e) {
-        setLoadErr(e instanceof Error ? e.message : 'Failed to load product')
-      }
-    })()
+    specHydratedRef.current = false
+    setSpec(makeDefaultSpec())
   }, [productId])
+
+  useEffect(() => {
+    void dispatch(fetchProduct(productId))
+  }, [dispatch, productId])
+
+  useEffect(() => {
+    if (productDetail?.status === 'failed') {
+      setLoadErr(productDetail.error || 'Failed to load product')
+      return
+    }
+    if (productDetail?.status === 'loading' || !data) {
+      if (productDetail?.status === 'loading') setLoadErr(null)
+      return
+    }
+    setLoadErr(null)
+    if (specHydratedRef.current) return
+    specHydratedRef.current = true
+    const product = data.product
+    const versions = data.versions || []
+    const activeId = product?.active_version_id
+    const active = activeId ? versions.find((v: any) => v.id === activeId) : null
+    const latest = versions.slice().sort((a: any, b: any) => (b.version_number || 0) - (a.version_number || 0))[0]
+    const srcSpec = (active?.spec_payload || latest?.spec_payload) ?? null
+    setSpec(ensureSpec(srcSpec))
+  }, [data, productDetail?.status, productDetail?.error])
 
   const canSubmit = useMemo(() => !!productId && !saving, [productId, saving])
 

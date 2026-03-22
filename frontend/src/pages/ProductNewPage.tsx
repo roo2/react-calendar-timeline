@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../components/SpecPayloadForm'
-import { apiFetch } from '../api/client'
 import { Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import { FormErrorAlert } from '../components/FormErrorAlert'
 import { fetchCustomers } from '../store/slices/customersSlice'
-import { clearCreateErrors, clearCreateFieldError, createProduct } from '../store/slices/productsSlice'
+import { checkProductCodeExists, clearCreateErrors, clearCreateFieldError, createProduct } from '../store/slices/productsSlice'
 
 export function ProductNewPage() {
   const nav = useNavigate()
@@ -35,6 +34,7 @@ export function ProductNewPage() {
   const [code, setCode] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [codeExists, setCodeExists] = useState(false)
+  const codeExistsReq = useRef(0)
 
   const canSubmit = useMemo(() => customerId && code && !saving, [customerId, code, saving])
 
@@ -55,25 +55,23 @@ export function ProductNewPage() {
       setCodeExists(false)
       return
     }
-    const controller = new AbortController()
     const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await apiFetch<{ exists: boolean }>(`/api/products/code-exists?code=${encodeURIComponent(v)}`, {
-            signal: controller.signal as any,
-          })
-          setCodeExists(!!res?.exists)
-        } catch {
-          // If the check fails (offline/server), don't block the form.
+      const id = ++codeExistsReq.current
+      void dispatch(checkProductCodeExists(v))
+        .unwrap()
+        .then((r) => {
+          if (id !== codeExistsReq.current) return
+          setCodeExists(!!r.exists)
+        })
+        .catch(() => {
+          if (id !== codeExistsReq.current) return
           setCodeExists(false)
-        }
-      })()
+        })
     }, 250)
     return () => {
-      controller.abort()
       window.clearTimeout(t)
     }
-  }, [code])
+  }, [code, dispatch])
 
   useEffect(() => {
     // Reset product create errors when entering the page.

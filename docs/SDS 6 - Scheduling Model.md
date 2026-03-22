@@ -50,13 +50,11 @@ Machine types (MVP):
 
 Extruder (multiple)
 
-Printer (Uteco / Inline)
-
-Punch/Perforation (hole punch / perforation machine)
-
-
+Printer (Uteco)
 
 Converter (Bagging machines)
+
+There are also Inline Printers and Hole punches but for the purpose of scheduling, these do not need to be modelled.
 
 Each machine has:
 
@@ -82,8 +80,6 @@ extrusion queue
 
 printing queue
 
-perforation queue
-
 conversion queue
 
 at different times in its lifecycle.
@@ -99,6 +95,7 @@ Roll 1 is extruded and moved to printing while Roll 2 is being extruded.
 Scheduling remains job-level (priority/order), while execution records multiple OperationRuns per job across time.
 
 4. Scheduling Data Model
+
 4.1 MachineQueueItem
 
 Represents a job’s position in a machine’s queue.
@@ -106,23 +103,10 @@ Represents a job’s position in a machine’s queue.
 Fields:
 
 machine_id
-
 job_id
-
 position (integer, 1-based)
-
-status:
-
-queued
-
-running
-
-completed
-
-removed
-
+status:(queued|running|completed|removed)
 created_at
-
 updated_at
 
 Invariant:
@@ -139,9 +123,9 @@ Job status = planned
 
 Production actions:
 
-assign job to machine queue
+Assign job to machine queue
 
-choose machine (extruder/printer/punch/converter)
+Choose machine (extruder/printer/converter)
 
 5.2 Scheduling to Execution
 
@@ -249,6 +233,7 @@ Out-of-order execution
 Human judgement overrides
 
 11. UI Expectations (MVP)
+
 Production View
 
 List of machines
@@ -279,7 +264,7 @@ Current running job
 
 Next job (read-only)
 
-12. Future Extensions (Explicitly Deferred)
+12. Future Extensions
 
 Designed so these can be added without refactoring:
 
@@ -331,10 +316,6 @@ Printing Method = None AND at least one completed Extrusion run exists; OR
 
 Printing Method = Uteco AND at least one completed Uteco Printing run exists.
 
-Punch/Perforation may start only if:
-
-At least one completed upstream run exists that produces the required input roll type (extruded roll if no printing; printed roll if printing required by the ProductVersion).
-
 UI Expectations
 
 Disable “Start” on Uteco if no Extrusion run exists for the job.
@@ -347,7 +328,7 @@ Notes
 
 These constraints reflect site reality: 8 extruders (with possible inline 1‑colour printing and perforation), one out‑of‑line Uteco printer (up to 6 colours front/back), and 3 bagging machines.
 
-15. Gantt Scheduling UI (MVP+)
+15. Gantt Scheduling UI
 Purpose
 
 Provide a visual, drag‑and‑drop timeline for planning jobs across all machines, with duration estimates per operation and clear visual emphasis for colour/printing work.
@@ -359,8 +340,6 @@ One lane per installed machine, auto‑generated from the Machine catalog:
 Extrusion: EX01 … EX08
 
 Printing: UTECO01
-
-Punch/Perforation: PUNCH01 (if installed)
 
 Conversion: BGR01 … BGR03
 
@@ -378,7 +357,7 @@ Bars (Job Operations)
 
 Each required operation appears as a separate bar in its machine lane:
 
-Extrusion → Uteco Printing (if applicable) → Punch/Perforation (if applicable) → Conversion/Bagging (if applicable).
+Extrusion → Uteco Printing (if applicable) → Conversion/Bagging (if applicable).
 
 A single Job can therefore appear multiple times on the Gantt (one bar per required operation).
 
@@ -420,13 +399,7 @@ Move extrusion bars between extruder lanes if machine capabilities match (width/
 
 Disallowed:
 
-Dragging an extrusion bar to UTECO or bagger lanes.
-
-Dragging a UTECO bar onto a bagger lane unless extrusion is completed.
-
-Dragging a bagger bar onto UTECO lane.
-
-Cross‑type moves are only permitted when they represent valid operation steps and prerequisites are satisfied.
+Dragging an extrusion bar to UTECO or bagger lanes. Or dragging bars to a different machine type in general.
 
 Interactions & Constraints
 
@@ -446,17 +419,15 @@ Printing & Export (Future)
 
 Printable weekly view for production meetings.
 
-CSV snapshot export (deferred).
-
-15.1 Tooling Constraints & Visualisation (MVP+)
+15.1 Tooling Constraints & Visualisation
 
 Visuals
 
-Each operation bar shows badges for required tools (icons from Tool.icon_ref).
+Each operation bar shows badges for required tools and a thin coloured bar below the machine's lane indicating that the tool is required for the duration of that job.
+
+When tools are unused, they will be represented in "tool box" lanes (one lane for extrusion tools, one land for conversion tools)
 
 Hover shows tool name and availability.
-
-Optional “Tool availability strip” per day showing remaining counts by tool_type (future).
 
 Planning & Reservation
 

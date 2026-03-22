@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ProductListItem } from '../store/slices/productsSlice'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Alert,
@@ -13,11 +14,11 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material'
-import { apiFetch } from '../api/client'
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchCustomers } from '../store/slices/customersSlice'
-import { clearCreateErrors, createProduct } from '../store/slices/productsSlice'
+import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '../store/slices/productsSlice'
+import { createJobSheet, fetchJobSheet, updateJobSheet } from '../store/slices/jobSheetsSlice'
 import { computeProductDescriptionFromSpec, computeProductCodeFromSpec } from '../utils/productDescription'
 import { JobSheetPreviewPanel } from './JobSheetPreviewPanel'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from './SpecPayloadForm'
@@ -25,13 +26,7 @@ import { StickySideAside } from './StickySideAside'
 
 type Mode = 'new' | 'edit'
 
-type ProductSummary = {
-  id: string
-  code: string
-  description?: string | null
-  customer_id: string
-  active_version_id?: string | null
-}
+type ProductSummary = ProductListItem
 
 type ProductVersionSummary = {
   id: string
@@ -77,6 +72,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const customersStatus = useAppSelector((s) => s.customers.list.status)
 
   const createState = useAppSelector((s) => s.products.create)
+  const productList = useAppSelector((s) => s.products.list)
+  const jobSheetDetail = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
   const { setDirty } = useUnsavedChanges()
   const [savingJobSheet, setSavingJobSheet] = useState(false)
 
@@ -88,11 +85,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [orderDate, setOrderDate] = useState('')
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
 
-  const [products, setProducts] = useState<ProductSummary[]>([])
-  const [productsStatus, setProductsStatus] = useState<'idle' | 'loading' | 'failed' | 'succeeded'>('idle')
-  const [productsErr, setProductsErr] = useState<string | null>(null)
-
   const [productId, setProductId] = useState('')
+  const productDetail = useAppSelector((s) =>
+    productId && productId !== NEW_PRODUCT_DRAFT_VALUE ? s.products.detail.byId[productId] : undefined,
+  )
   const [productInfo, setProductInfo] = useState<ProductSummary | null>(null)
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [specDirty, setSpecDirty] = useState(false)
@@ -108,60 +104,73 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     void dispatch(fetchCustomers(undefined))
   }, [customersStatus, dispatch])
 
-  async function loadProducts(cid: string) {
-    setProductsErr(null)
-    setProductsStatus('loading')
-    try {
-      const res = await apiFetch<{ items: ProductSummary[] }>(`/api/products?customer_id=${encodeURIComponent(cid)}`)
-      setProducts(res.items || [])
-      setProductsStatus('succeeded')
-    } catch (e) {
-      setProductsStatus('failed')
-      setProductsErr(e instanceof Error ? e.message : 'Failed to load products')
-    }
-  }
+  const products = useMemo((): ProductSummary[] => {
+    if (!customerId || productList.lastCustomerId !== customerId) return []
+    return productList.items as ProductSummary[]
+  }, [customerId, productList.items, productList.lastCustomerId])
 
-  // For edit mode: seed from API
+  const productsErr =
+    customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
+
+  const productsLoading = Boolean(customerId && productList.status === 'loading')
+
+  const jobHydratedRef = useRef<string | null>(null)
+  const productSpecHydratedRef = useRef<string | null>(null)
+
   useEffect(() => {
-    if (mode !== 'edit') return
-    if (!jobSheetId) return
-    setSaveErr(null)
+    jobHydratedRef.current = null
+  }, [jobSheetId])
+
+  useEffect(() => {
+    productSpecHydratedRef.current = null
+  }, [productId])
+
+  useEffect(() => {
+    if (mode !== 'edit' || !jobSheetId) return
+    void dispatch(fetchJobSheet(jobSheetId))
+  }, [mode, jobSheetId, dispatch])
+
+  // Edit mode: hydrate form from job sheet detail in the store
+  useEffect(() => {
+    if (mode !== 'edit' || !jobSheetId) return
     setSaveMsg(null)
     setSpecDirty(false)
-    void (async () => {
-      try {
-        const res = await apiFetch<any>(`/api/job-sheets/${encodeURIComponent(jobSheetId)}`)
-        const js = res?.job_sheet
-        setCustomerId(js?.customer_id || '')
-        setProductId(js?.product_id || '')
-        setProductInfo(
-          js?.product_id
-            ? {
-                id: String(js.product_id),
-                code: String(js.product_code || ''),
-                description: (js.product_description as string | null | undefined) ?? null,
-                customer_id: String(js.customer_id || ''),
-                active_version_id: String(js.product_version_id || ''),
-              }
-            : null,
-        )
-        setDueDate(js?.due_date || '')
-        setInvoiceNo(js?.invoice_no ?? '')
-        setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
-        setQtyUnit((js?.quantity_unit as QuantityUnit) || 'kg')
-        setQtyValue(typeof js?.quantity_value === 'number' ? js.quantity_value : Number(js?.quantity_value || '') || '')
-        setSpec(ensureSpec(res?.spec_payload))
-      } catch (e) {
-        setSaveErr(e instanceof Error ? e.message : 'Failed to load job sheet')
-      } finally {
-      }
-    })()
-  }, [jobSheetId, mode])
+    const st = jobSheetDetail
+    if (!st) return
+    if (st.status === 'failed') {
+      setSaveErr(st.error || 'Failed to load job sheet')
+      return
+    }
+    if (st.status !== 'succeeded' || !st.data) return
+    if (jobHydratedRef.current === jobSheetId) return
+    jobHydratedRef.current = jobSheetId
+    setSaveErr(null)
+    const res = st.data
+    const js = res?.job_sheet
+    setCustomerId(js?.customer_id || '')
+    setProductId(js?.product_id || '')
+    setProductInfo(
+      js?.product_id
+        ? {
+            id: String(js.product_id),
+            code: String(js.product_code || ''),
+            description: (js.product_description as string | null | undefined) ?? null,
+            customer_id: String(js.customer_id || ''),
+            active_version_id: String(js.product_version_id || ''),
+          }
+        : null,
+    )
+    setDueDate(js?.due_date || '')
+    setInvoiceNo(js?.invoice_no ?? '')
+    setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
+    setQtyUnit((js?.quantity_unit as QuantityUnit) || 'kg')
+    setQtyValue(typeof js?.quantity_value === 'number' ? js.quantity_value : Number(js?.quantity_value || '') || '')
+    setSpec(ensureSpec(res?.spec_payload))
+  }, [mode, jobSheetId, jobSheetDetail])
 
-  // When customer changes (new mode), reload products
+  // New mode: when customer changes, reload product list and reset selection
   useEffect(() => {
     if (mode !== 'new') return
-    setProducts([])
     setProductId('')
     setProductInfo(null)
     setSpec(makeDefaultSpec())
@@ -169,32 +178,41 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setSaveMsg(null)
     setWantsNewProductFlow(false)
     if (!customerId) return
-    void loadProducts(customerId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId, mode])
+    void dispatch(fetchProducts({ customer_id: customerId }))
+  }, [customerId, mode, dispatch])
 
-  // When product changes, load latest spec (new mode only)
+  // New mode: request product detail when a product is selected
   useEffect(() => {
     if (mode !== 'new') return
     if (!productId || productId === NEW_PRODUCT_DRAFT_VALUE) return
     setSaveMsg(null)
     setSpecDirty(false)
-    void (async () => {
-      try {
-        const res = await apiFetch<{ product: ProductSummary; versions: ProductVersionSummary[] }>(`/api/products/${productId}`)
-        setProductInfo(res.product || null)
-        const vs = Array.isArray(res.versions) ? res.versions : []
-        const activeId = res.product?.active_version_id
-        const active = activeId ? vs.find((v) => v.id === activeId) : null
-        const latest = vs.slice().sort((a, b) => (b.version_number || 0) - (a.version_number || 0))[0]
-        const srcSpec = (active?.spec_payload || latest?.spec_payload) ?? null
-        setSpec(ensureSpec(srcSpec))
-      } catch (e) {
-        setProductsErr(e instanceof Error ? e.message : 'Failed to load product details')
-      } finally {
-      }
-    })()
-  }, [mode, productId])
+    void dispatch(fetchProduct(productId))
+  }, [mode, productId, dispatch])
+
+  // New mode: apply product detail (spec + productInfo) once per selection
+  useEffect(() => {
+    if (mode !== 'new') return
+    if (!productId || productId === NEW_PRODUCT_DRAFT_VALUE) return
+    const st = productDetail
+    if (!st) return
+    if (st.status === 'failed') {
+      setSaveErr(st.error || 'Failed to load product details')
+      return
+    }
+    if (st.status !== 'succeeded' || !st.data) return
+    if (productSpecHydratedRef.current === productId) return
+    productSpecHydratedRef.current = productId
+    setSaveErr(null)
+    const res = st.data
+    setProductInfo(res.product || null)
+    const vs = Array.isArray(res.versions) ? res.versions : []
+    const activeId = res.product?.active_version_id
+    const active = activeId ? vs.find((v: ProductVersionSummary) => v.id === activeId) : null
+    const latest = vs.slice().sort((a: ProductVersionSummary, b: ProductVersionSummary) => (b.version_number || 0) - (a.version_number || 0))[0]
+    const srcSpec = (active?.spec_payload || latest?.spec_payload) ?? null
+    setSpec(ensureSpec(srcSpec))
+  }, [mode, productId, productDetail])
 
   const qtyLabel = useMemo(() => {
     if (qtyUnit === 'kg') return 'Total KGs'
@@ -257,7 +275,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             customer_id: customerId,
             active_version_id: (created?.version?.id as string | undefined) ?? null,
           })
-          await loadProducts(customerId)
+          await dispatch(fetchProducts({ customer_id: customerId })).unwrap()
         } catch {
           setSavingJobSheet(false)
           return
@@ -265,9 +283,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       }
 
       if (mode === 'new') {
-        const res = await apiFetch<{ ok: boolean; job_sheet: { id: string; job_no?: string } }>('/api/job-sheets', {
-          method: 'POST',
-          body: JSON.stringify({
+        const res = await dispatch(
+          createJobSheet({
             customer_id: customerId,
             product_id: effectiveProductId,
             due_date: dueDate,
@@ -275,23 +292,20 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             quantity_unit: qtyUnit,
             spec,
           }),
-        })
+        ).unwrap()
         const id = res?.job_sheet?.id
         setSaveMsg('Saved job sheet.')
         setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${id}`)
       } else {
         if (!jobSheetId) throw new Error('Missing job sheet id')
-        const body: any = {
+        const body: Record<string, unknown> = {
           due_date: dueDate,
           quantity_value: Number(qtyValue),
           quantity_unit: qtyUnit,
         }
         if (specDirty) body.spec = spec
-        const res = await apiFetch<{ ok: boolean; job_sheet: { id: string } }>(`/api/job-sheets/${jobSheetId}`, {
-          method: 'PUT',
-          body: JSON.stringify(body),
-        })
+        const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
         const id = res?.job_sheet?.id
         setSaveMsg('Saved job sheet.')
         setDirty(false)
@@ -449,7 +463,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                       setWantsNewProductFlow(v === NEW_PRODUCT_DRAFT_VALUE)
                     }}
                     required
-                    disabled={!customerId || productsStatus === 'loading' || disableIdentity}
+                    disabled={!customerId || productsLoading || disableIdentity}
                     fullWidth
                     SelectProps={{
                       renderValue: (selected) => {

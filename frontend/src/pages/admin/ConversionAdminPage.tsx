@@ -1,30 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import {
+  adminSaveCartonOption,
+  adminSaveConversionFactor,
+  adminSaveConversionSpeed,
+  adminSetDefaultCartonOption,
+  fetchAdminConversionTab,
+  type CartonOption,
+  type ConversionFactor,
+  type ConversionSpeed,
+} from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
-
-type ConversionSpeed = {
-  min_gauge_um: number
-  max_gauge_um: number
-  min_length_mm: number
-  max_length_mm: number
-  bags_per_minute: number
-}
-
-type ConversionFactor = {
-  slug: string
-  name: string
-  value: number
-}
-
-type CartonOption = {
-  slug: string
-  name: string
-  cost_per_unit: number
-  is_default: boolean
-}
 
 type GaugeRange = { min_gauge_um: number; max_gauge_um: number }
 type LengthRange = { min_length_mm: number; max_length_mm: number }
@@ -42,11 +31,13 @@ function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'mi
 }
 
 export function ConversionAdminPage() {
+  const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
-  const [speeds, setSpeeds] = useState<ConversionSpeed[]>([])
-  const [factors, setFactors] = useState<ConversionFactor[]>([])
-  const [cartonOptions, setCartonOptions] = useState<CartonOption[]>([])
-  const [loading, setLoading] = useState(false)
+  const speeds = useAppSelector((s) => s.adminRateCards.conversionSpeeds.items)
+  const factors = useAppSelector((s) => s.adminRateCards.conversionFactors.items)
+  const cartonOptions = useAppSelector((s) => s.adminRateCards.cartonOptions.items)
+  const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.conversionTab)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [speedSavedFlash, setSpeedSavedFlash] = useState(false)
@@ -95,25 +86,10 @@ export function ConversionAdminPage() {
   }, [factors])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const [s, f, co] = await Promise.all([
-          apiFetch<ConversionSpeed[]>('/api/admin/rate-cards/conversion-speeds'),
-          apiFetch<ConversionFactor[]>('/api/admin/rate-cards/conversion-factors'),
-          apiFetch<CartonOption[]>('/api/admin/rate-cards/carton-options'),
-        ])
-        setSpeeds(Array.isArray(s) ? s : [])
-        setFactors(Array.isArray(f) ? f : [])
-        setCartonOptions(Array.isArray(co) ? co : [])
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load conversion admin data')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminConversionTab())
+  }, [dispatch])
+
+  const displayErr = err || tabErr
 
   async function saveSpeed(
     key: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'min_length_mm' | 'max_length_mm'>,
@@ -123,19 +99,7 @@ export function ConversionAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<ConversionSpeed>(
-        `/api/admin/rate-cards/conversion-speeds/${encodeURIComponent(String(key.min_gauge_um))}/${encodeURIComponent(
-          String(key.max_gauge_um),
-        )}/${encodeURIComponent(String(key.min_length_mm))}/${encodeURIComponent(String(key.max_length_mm))}`,
-        { method: 'PUT', body: JSON.stringify(patch) },
-      )
-      setSpeeds((cur) => {
-        const idx = cur.findIndex((s) => speedKey(s) === speedKey(saved))
-        if (idx === -1) return [...cur, saved]
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveConversionSpeed({ key, patch })).unwrap()
       if (speedSavedTimerRef.current != null) window.clearTimeout(speedSavedTimerRef.current)
       setSpeedSavedFlash(true)
       speedSavedTimerRef.current = window.setTimeout(() => setSpeedSavedFlash(false), 1500)
@@ -151,12 +115,17 @@ export function ConversionAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<CartonOption>(`/api/admin/rate-cards/carton-options/${encodeURIComponent(slug)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ ...patch, is_default: cartonOptions.find((c) => c.slug === slug)?.is_default ?? false }),
-      })
-      setCartonOptions((cur) => cur.map((c) => (c.slug === slug ? saved : c)))
+      await dispatch(
+        adminSaveCartonOption({
+          slug,
+          name: patch.name,
+          cost_per_unit: patch.cost_per_unit,
+          is_default: cartonOptions.find((c) => c.slug === slug)?.is_default ?? false,
+        }),
+      ).unwrap()
       setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save carton option')
     } finally {
       setSavingKey(null)
     }
@@ -167,11 +136,10 @@ export function ConversionAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<CartonOption>(`/api/admin/rate-cards/carton-options/${encodeURIComponent(slug)}/set-default`, {
-        method: 'POST',
-      })
-      setCartonOptions((cur) => cur.map((c) => (c.slug === slug ? saved : { ...c, is_default: false })))
+      await dispatch(adminSetDefaultCartonOption(slug)).unwrap()
       setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to set default carton')
     } finally {
       setSavingKey(null)
     }
@@ -184,17 +152,7 @@ export function ConversionAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<ConversionFactor>(`/api/admin/rate-cards/conversion-factors/${encodeURIComponent(s)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setFactors((cur) => {
-        const idx = cur.findIndex((f) => f.slug === saved.slug)
-        if (idx === -1) return [...cur, saved]
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveConversionFactor({ slug: s, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save conversion factor')
@@ -206,7 +164,7 @@ export function ConversionAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Packing / Conversion" subtitle="Conversion speeds (bags/minute), conversion factors, and carton options used for carton estimates." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
@@ -218,7 +176,7 @@ export function ConversionAdminPage() {
             {savingKey?.startsWith('speed:') ? 'Saving…' : speedSavedFlash ? 'Saved' : ''}
           </Typography>
         </Stack>
-        {loading ? (
+        {loading && speeds.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -296,7 +254,7 @@ export function ConversionAdminPage() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Carton options
         </Typography>
-        {loading ? (
+        {loading && cartonOptions.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -328,7 +286,7 @@ export function ConversionAdminPage() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Conversion factors
         </Typography>
-        {loading ? (
+        {loading && factorsSorted.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>

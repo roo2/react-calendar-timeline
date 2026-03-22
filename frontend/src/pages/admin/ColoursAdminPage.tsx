@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { adminDeleteColour, adminSaveColour, fetchAdminColours } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Colour } from './types'
 
 export function ColoursAdminPage() {
-  const [rows, setRows] = useState<Colour[]>([])
-  const [loading, setLoading] = useState(false)
+  const dispatch = useAppDispatch()
+  const { items: rows, status, error: loadErr } = useAppSelector((s) => s.adminRateCards.colours)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
 
@@ -20,19 +22,10 @@ export function ColoursAdminPage() {
   const canCreate = useMemo(() => !!newCode.trim() && !!newName.trim() && newPrice !== '', [newCode, newName, newPrice])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const res = await apiFetch<Colour[]>('/api/admin/rate-cards/colours')
-        setRows(res)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load colours')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminColours())
+  }, [dispatch])
+
+  const displayErr = err || loadErr
 
   async function saveRow(code: string, patch: Omit<Colour, 'colour_code'>) {
     const trimmed = code.trim()
@@ -40,17 +33,7 @@ export function ColoursAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      const saved = await apiFetch<Colour>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setRows((cur) => {
-        const idx = cur.findIndex((r) => r.colour_code === saved.colour_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.colour_code.localeCompare(b.colour_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveColour({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save colour')
     } finally {
@@ -65,8 +48,7 @@ export function ColoursAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setRows((cur) => cur.filter((r) => r.colour_code !== trimmed))
+      await dispatch(adminDeleteColour(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete colour')
     } finally {
@@ -77,10 +59,10 @@ export function ColoursAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Colours" subtitle="Add or update colour master data." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        {loading ? (
+        {loading && rows.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -117,7 +99,12 @@ export function ColoursAdminPage() {
                     disabled={!canCreate || saving === newCode.trim()}
                     onClick={() => {
                       if (!canCreate) return
-                      void saveRow(newCode, { name: newName.trim(), price_per_kg: Number(newPrice), sort_order: rows.length, short_code: newShortCode.trim() || null }).then(() => {
+                      void saveRow(newCode, {
+                        name: newName.trim(),
+                        price_per_kg: Number(newPrice),
+                        sort_order: rows.length,
+                        short_code: newShortCode.trim() || null,
+                      }).then(() => {
                         setNewCode('')
                         setNewName('')
                         setNewPrice('')
@@ -167,7 +154,12 @@ function ColourRow(props: {
       </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
-          <Button size="small" variant="outlined" disabled={saving || !dirty || !name.trim() || price === ''} onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price), sort_order: row.sort_order, short_code: shortCode.trim() || null })}>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || !name.trim() || price === ''}
+            onClick={() => void onSave(row.colour_code, { name: name.trim(), price_per_kg: Number(price), sort_order: row.sort_order, short_code: shortCode.trim() || null })}
+          >
             {saving ? 'Saving…' : 'Save'}
           </Button>
           <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.colour_code)}>
@@ -178,4 +170,3 @@ function ColourRow(props: {
     </TableRow>
   )
 }
-

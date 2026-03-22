@@ -48,7 +48,6 @@ const ResinsAdminPage = lazy(async () => ({ default: (await import('./pages/admi
 const ExtrusionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ExtrusionAdminPage')).ExtrusionAdminPage }))
 const ConversionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ConversionAdminPage')).ConversionAdminPage }))
 const PrintingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PrintingAdminPage')).PrintingAdminPage }))
-const AniloxAdminPage = lazy(async () => ({ default: (await import('./pages/admin/AniloxAdminPage')).AniloxAdminPage }))
 const CoresAdminPage = lazy(async () => ({ default: (await import('./pages/admin/CoresAdminPage')).CoresAdminPage }))
 const PackagingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PackagingAdminPage')).PackagingAdminPage }))
 
@@ -239,24 +238,15 @@ function App() {
                     </Suspense>
                   }
                 />
-                <Route path="printing" element={<Outlet />}>
-                  <Route
-                    index
-                    element={
-                      <Suspense fallback={<PageLoading />}>
-                        <PrintingAdminPage />
-                      </Suspense>
-                    }
-                  />
-                  <Route
-                    path="anilox"
-                    element={
-                      <Suspense fallback={<PageLoading />}>
-                        <AniloxAdminPage />
-                      </Suspense>
-                    }
-                  />
-                </Route>
+                <Route
+                  path="printing"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <PrintingAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route path="printing/anilox" element={<Navigate to="/admin/printing" replace />} />
                 <Route
                   path="cores"
                   element={

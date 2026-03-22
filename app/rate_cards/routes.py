@@ -178,7 +178,7 @@ async def get_ratebook():
         packing_factor_cartons = float(packaging_row.packing_factor_cartons) if packaging_row else 0.5
         pallet_volume_m3 = float(packaging_row.pallet_volume_m3) if packaging_row else 1.0
 
-    # Model assumptions (kept consistent with quote_engine defaults):
+    # Model assumptions (aligned with quotes UI / ratebook pricing):
     # - setup_cost is treated as 1 unit per minute
     # - minimum_charge is approximated by min_meters at the per-1000m rate (+ setup)
     out_printing: dict[str, dict] = {}

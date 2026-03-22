@@ -1,34 +1,30 @@
-import { useEffect, useMemo, useState } from 'react'
-import { apiFetch } from '../api/client'
+import { useEffect, useMemo } from 'react'
 import { Alert, Box, Paper, Typography } from '@mui/material'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchDashboardPartials } from '../store/slices/dashboardSlice'
 
 export function DashboardPage() {
-  const [inventory, setInventory] = useState<any>(null)
-  const [throughput, setThroughput] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const dispatch = useAppDispatch()
+  const inv = useAppSelector((s) => s.dashboard.inventorySnapshot)
+  const tp = useAppSelector((s) => s.dashboard.throughputWeekly)
 
   const refresh = useMemo(
-    () => async () => {
-      try {
-        setErr(null)
-        const [inv, tp] = await Promise.all([
-          apiFetch<any>(`/api/dashboard/partial/inventory_snapshot`),
-          apiFetch<any>(`/api/dashboard/partial/throughput_weekly`),
-        ])
-        setInventory(inv)
-        setThroughput(tp)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load dashboard')
-      }
+    () => () => {
+      void dispatch(fetchDashboardPartials())
     },
-    [],
+    [dispatch],
   )
 
   useEffect(() => {
-    void refresh()
-    const t = window.setInterval(() => void refresh(), 60_000)
+    refresh()
+    const t = window.setInterval(() => {
+      void dispatch(fetchDashboardPartials())
+    }, 60_000)
     return () => window.clearInterval(t)
-  }, [refresh])
+  }, [dispatch, refresh])
+
+  const err = inv.error || tp.error
+  const loading = inv.status === 'loading' || tp.status === 'loading'
 
   return (
     <Box>
@@ -48,7 +44,7 @@ export function DashboardPage() {
             Inventory &amp; WIP
           </Typography>
           <Box component="pre" sx={{ m: 0, overflowX: 'auto', fontSize: 12 }}>
-            {inventory ? JSON.stringify(inventory, null, 2) : 'Loading…'}
+            {loading && !inv.data ? 'Loading…' : JSON.stringify(inv.data, null, 2)}
           </Box>
         </Paper>
 
@@ -57,11 +53,10 @@ export function DashboardPage() {
             Throughput (Weekly)
           </Typography>
           <Box component="pre" sx={{ m: 0, overflowX: 'auto', fontSize: 12 }}>
-            {throughput ? JSON.stringify(throughput, null, 2) : 'Loading…'}
+            {loading && !tp.data ? 'Loading…' : JSON.stringify(tp.data, null, 2)}
           </Box>
         </Paper>
       </Box>
     </Box>
   )
 }
-

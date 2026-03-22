@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import {
+  adminDeleteExtruder,
+  adminSaveExtruder,
+  adminSaveExtrusionWasteFactor,
+  fetchAdminExtrusionTab,
+} from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Extruder, ExtrusionWasteFactor } from './types'
 
 export function ExtrusionAdminPage() {
+  const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
-  const [extruders, setExtruders] = useState<Extruder[]>([])
-  const [wasteFactors, setWasteFactors] = useState<ExtrusionWasteFactor[]>([])
-  const [loading, setLoading] = useState(false)
+  const extruders = useAppSelector((s) => s.adminRateCards.extruders.items)
+  const wasteFactors = useAppSelector((s) => s.adminRateCards.extrusionWasteFactors.items)
+  const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.extrusionTab)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
 
@@ -27,23 +35,10 @@ export function ExtrusionAdminPage() {
   const canCreateExtruder = useMemo(() => !!newExtruderCode.trim(), [newExtruderCode])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const [ex, wf] = await Promise.all([
-          apiFetch<Extruder[]>('/api/admin/rate-cards/extruders'),
-          apiFetch<ExtrusionWasteFactor[]>('/api/admin/rate-cards/extrusion-waste-factors'),
-        ])
-        setExtruders(ex)
-        setWasteFactors(wf)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load extrusion admin data')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminExtrusionTab())
+  }, [dispatch])
+
+  const displayErr = err || tabErr
 
   async function saveExtruder(code: string, patch: Omit<Extruder, 'extruder_code'>) {
     const trimmed = code.trim()
@@ -51,17 +46,7 @@ export function ExtrusionAdminPage() {
     try {
       setErr(null)
       setSavingKey(`extruder:${trimmed}`)
-      const saved = await apiFetch<Extruder>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setExtruders((cur) => {
-        const idx = cur.findIndex((r) => r.extruder_code === saved.extruder_code)
-        if (idx === -1) return [...cur, saved]
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveExtruder({ code: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save extruder')
@@ -77,8 +62,7 @@ export function ExtrusionAdminPage() {
     try {
       setErr(null)
       setSavingKey(`extruder:${trimmed}`)
-      await apiFetch<void>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setExtruders((cur) => cur.filter((r) => r.extruder_code !== trimmed))
+      await dispatch(adminDeleteExtruder(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete extruder')
@@ -93,17 +77,7 @@ export function ExtrusionAdminPage() {
     try {
       setErr(null)
       setSavingKey(`wf:${trimmed}`)
-      const saved = await apiFetch<ExtrusionWasteFactor>(`/api/admin/rate-cards/extrusion-waste-factors/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setWasteFactors((cur) => {
-        const idx = cur.findIndex((r) => r.factor === saved.factor)
-        if (idx === -1) return [...cur, saved]
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveExtrusionWasteFactor({ factor: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save waste factor')
@@ -119,13 +93,13 @@ export function ExtrusionAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Extrusion" subtitle="Extruders and extrusion waste factors (minutes)." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Extruders
         </Typography>
-        {loading ? (
+        {loading && extruders.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -217,7 +191,7 @@ export function ExtrusionAdminPage() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Extrusion waste factors
         </Typography>
-        {loading ? (
+        {loading && wasteFactors.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>

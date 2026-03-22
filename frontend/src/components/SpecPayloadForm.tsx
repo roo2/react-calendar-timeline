@@ -17,7 +17,13 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { apiFetch } from '../api/client'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import {
+  fetchProductSpecBundle,
+  fetchProductSpecCartonOptions,
+  fetchProductSpecInks,
+  fetchProductSpecPlates,
+} from '../store/slices/productSpecSlice'
 import { DefaultSelectField } from './DefaultSelectField'
 import { defaultRowSx, isDefaultRow } from './DefaultRowTable'
 import {
@@ -53,12 +59,6 @@ type DerivedDimensions = {
 }
 
 export type SpecPayload = any
-
-type ResinBlendPreset = {
-  blend_code: string
-  name: string
-  components: Array<{ resin_code: string; pct: number }>
-}
 
 const PRODUCT_TYPE = {
   Bag: 'Bag',
@@ -163,6 +163,12 @@ export function SpecPayloadForm(props: {
   fieldErrors?: Record<string, string>
   customerId?: string
 }) {
+  const dispatch = useAppDispatch()
+  const bundle = useAppSelector((s) => s.productSpec.bundle)
+  const inksState = useAppSelector((s) => s.productSpec.inks)
+  const platesState = useAppSelector((s) => s.productSpec.plates)
+  const cartonState = useAppSelector((s) => s.productSpec.cartonOptions)
+
   const { value, onChange, fieldErrors, customerId } = props
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
@@ -212,40 +218,43 @@ export function SpecPayloadForm(props: {
     canHaveGusset &&
     (((dimensions.geometry as string) || 'Flat') === 'Gusset' || Number(dimensions.gusset_mm || 0) > 0)
 
-  const [resinBlends, setResinBlends] = useState<ResinBlendPreset[]>([])
-  const [resinBlendsErr, setResinBlendsErr] = useState<string | null>(null)
-  const [resins, setResins] = useState<ResinOption[]>([])
-  const [resinsErr, setResinsErr] = useState<string | null>(null)
-  const [colours, setColours] = useState<ColourOption[]>([])
-  const [coloursErr, setColoursErr] = useState<string | null>(null)
-  const [additiveOptions, setAdditiveOptions] = useState<AdditiveOption[]>([])
-  const [additivesErr, setAdditivesErr] = useState<string | null>(null)
-  const [inks, setInks] = useState<InkOption[]>([])
-  const [inksErr, setInksErr] = useState<string | null>(null)
-  const [plates, setPlates] = useState<PlateOption[]>([])
-  const [platesErr, setPlatesErr] = useState<string | null>(null)
-  const [aniloxOptions, setAniloxOptions] = useState<Array<{ anilox_code: string; description: string }>>([])
-  const [aniloxErr, setAniloxErr] = useState<string | null>(null)
-  const [cartonOptions, setCartonOptions] = useState<Array<{ slug: string; name: string; cost_per_unit: number; is_default: boolean }>>([])
+  const resinBlends = bundle.resinBlends
+  const resins = bundle.resins as ResinOption[]
+  const colours = bundle.colours as ColourOption[]
+  const additiveOptions = bundle.additives as AdditiveOption[]
+  const inks = inksState.items as InkOption[]
+  const plates = platesState.items as PlateOption[]
+  const aniloxOptions = bundle.anilox
+  const cartonOptions =
+    finishMode === 'Rolls' ? [] : cartonState.items
+
+  const bundleErr = bundle.status === 'failed' ? bundle.error : null
+  const resinsErr = bundleErr
+  const resinBlendsErr = bundleErr
+  const coloursErr = bundleErr
+  const additivesErr = bundleErr
+  const aniloxErr = bundleErr
+  const inksErr = inksState.status === 'failed' ? inksState.error : null
+  const platesErr = platesState.status === 'failed' ? platesState.error : null
+
   const [layflatInput, setLayflatInput] = useState<string | null>(null)
 
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setResinBlendsErr(null)
-        const rows = await apiFetch<ResinBlendPreset[]>('/api/rate-cards/resin-blends')
-        if (cancelled) return
-        setResinBlends(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setResinBlendsErr(e instanceof Error ? e.message : 'Failed to load resin blends')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    if (bundle.status === 'idle') void dispatch(fetchProductSpecBundle())
+  }, [bundle.status, dispatch])
+
+  useEffect(() => {
+    void dispatch(fetchProductSpecInks(inkPrinterType))
+  }, [dispatch, inkPrinterType])
+
+  useEffect(() => {
+    void dispatch(fetchProductSpecPlates(customerId || ''))
+  }, [customerId, dispatch])
+
+  useEffect(() => {
+    if (finishMode === 'Rolls') return
+    void dispatch(fetchProductSpecCartonOptions())
+  }, [dispatch, finishMode])
 
   useEffect(() => {
     if (!Array.isArray(resinBlends) || resinBlends.length === 0) return
@@ -265,137 +274,6 @@ export function SpecPayloadForm(props: {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resinBlends])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setResinsErr(null)
-        const rows = await apiFetch<ResinOption[]>('/api/rate-cards/resins')
-        if (cancelled) return
-        setResins(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setResinsErr(e instanceof Error ? e.message : 'Failed to load resins')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setColoursErr(null)
-        const rows = await apiFetch<ColourOption[]>('/api/rate-cards/colours')
-        if (cancelled) return
-        setColours(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setColoursErr(e instanceof Error ? e.message : 'Failed to load colours')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setAdditivesErr(null)
-        const rows = await apiFetch<AdditiveOption[]>('/api/rate-cards/additives')
-        if (cancelled) return
-        setAdditiveOptions(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setAdditivesErr(e instanceof Error ? e.message : 'Failed to load additives')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setInksErr(null)
-        const q = inkPrinterType ? `?printer_type=${encodeURIComponent(inkPrinterType)}` : ''
-        const rows = await apiFetch<InkOption[]>(`/api/rate-cards/inks${q}`)
-        if (cancelled) return
-        setInks(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setInksErr(e instanceof Error ? e.message : 'Failed to load inks')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [inkPrinterType])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setPlatesErr(null)
-        const q = customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ''
-        const rows = await apiFetch<Array<{ plate_code: string; description?: string | null }>>(`/api/rate-cards/plates${q}`)
-        if (cancelled) return
-        setPlates(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setPlatesErr(e instanceof Error ? e.message : 'Failed to load plates')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [customerId])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        setAniloxErr(null)
-        const rows = await apiFetch<Array<{ anilox_code: string; description: string }>>('/api/rate-cards/anilox')
-        if (cancelled) return
-        setAniloxOptions(Array.isArray(rows) ? rows : [])
-      } catch (e) {
-        if (cancelled) return
-        setAniloxErr(e instanceof Error ? e.message : 'Failed to load anilox')
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (finishMode === 'Rolls') {
-      setCartonOptions([])
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      try {
-        const rb = await apiFetch<{ carton_options?: Array<{ slug: string; name: string; cost_per_unit: number; is_default: boolean }> }>('/api/rate-cards/ratebook')
-        if (cancelled) return
-        setCartonOptions(Array.isArray(rb.carton_options) ? rb.carton_options : [])
-      } catch {
-        if (cancelled) return
-        setCartonOptions([])
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [finishMode])
 
   function emptyInkPlateRow(method: string | undefined): { ink_code: string; plate_code: string; anilox_code?: string | null } {
     if (method === 'Uteco') return { ink_code: '', plate_code: '', anilox_code: null }

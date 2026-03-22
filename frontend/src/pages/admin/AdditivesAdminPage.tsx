@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { adminDeleteAdditive, adminSaveAdditive, fetchAdminAdditives } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Additive } from './types'
 
 export function AdditivesAdminPage() {
-  const [rows, setRows] = useState<Additive[]>([])
-  const [loading, setLoading] = useState(false)
+  const dispatch = useAppDispatch()
+  const { items: rows, status, error: loadErr } = useAppSelector((s) => s.adminRateCards.additives)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
 
@@ -19,19 +21,10 @@ export function AdditivesAdminPage() {
   const canCreate = useMemo(() => !!newCode.trim() && !!newName.trim() && newPrice !== '', [newCode, newName, newPrice])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const res = await apiFetch<Additive[]>('/api/admin/rate-cards/additives')
-        setRows(res)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load additives')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminAdditives())
+  }, [dispatch])
+
+  const displayErr = err || loadErr
 
   async function saveRow(code: string, patch: Omit<Additive, 'additive_code'>) {
     const trimmed = code.trim()
@@ -39,17 +32,7 @@ export function AdditivesAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      const saved = await apiFetch<Additive>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setRows((cur) => {
-        const idx = cur.findIndex((r) => r.additive_code === saved.additive_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.additive_code.localeCompare(b.additive_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveAdditive({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save additive')
     } finally {
@@ -64,8 +47,7 @@ export function AdditivesAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setRows((cur) => cur.filter((r) => r.additive_code !== trimmed))
+      await dispatch(adminDeleteAdditive(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete additive')
     } finally {
@@ -76,10 +58,10 @@ export function AdditivesAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Additives" subtitle="Add or update additive master data." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        {loading ? (
+        {loading && rows.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -163,4 +145,3 @@ function AdditiveRow(props: {
     </TableRow>
   )
 }
-

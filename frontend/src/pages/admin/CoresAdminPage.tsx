@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { adminDeleteCore, adminSaveCore, fetchAdminCores } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Core } from './types'
 
 export function CoresAdminPage() {
+  const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
-  const [rows, setRows] = useState<Core[]>([])
-  const [loading, setLoading] = useState(false)
+  const { items: rows, status, error: loadErr } = useAppSelector((s) => s.adminRateCards.cores)
+  const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
 
@@ -22,19 +24,10 @@ export function CoresAdminPage() {
   const canCreate = useMemo(() => !!newType.trim() && newCostPerM !== '' && newKgPerM !== '', [newCostPerM, newKgPerM, newType])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const res = await apiFetch<Core[]>('/api/admin/rate-cards/cores')
-        setRows(res)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load cores')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminCores())
+  }, [dispatch])
+
+  const displayErr = err || loadErr
 
   async function saveRow(coreType: string, patch: Omit<Core, 'core_type'>) {
     const trimmed = coreType.trim()
@@ -42,17 +35,7 @@ export function CoresAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      const saved = await apiFetch<Core>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setRows((cur) => {
-        const idx = cur.findIndex((r) => r.core_type === saved.core_type)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.core_type.localeCompare(b.core_type))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveCore({ coreType: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save core')
@@ -68,8 +51,7 @@ export function CoresAdminPage() {
     try {
       setErr(null)
       setSaving(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setRows((cur) => cur.filter((r) => r.core_type !== trimmed))
+      await dispatch(adminDeleteCore(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete core')
@@ -81,10 +63,10 @@ export function CoresAdminPage() {
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Cores" subtitle="Core types used for roll estimating." />
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        {loading ? (
+        {loading && rows.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -192,4 +174,3 @@ function CoreRow(props: {
     </TableRow>
   )
 }
-

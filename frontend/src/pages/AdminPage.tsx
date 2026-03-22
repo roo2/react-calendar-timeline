@@ -14,8 +14,45 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { apiFetch } from '../api/client'
 import { ResinSelect, type ResinOption } from '../components/ResinSelect'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchCustomers } from '../store/slices/customersSlice'
+import {
+  adminDeleteAdditive,
+  adminDeleteColour,
+  adminDeleteCore,
+  adminDeleteExtruder,
+  adminDeleteExtrusionWasteFactor,
+  adminDeleteInk,
+  adminDeletePlate,
+  adminDeletePrintingTier,
+  adminDeleteResin,
+  adminDeleteResinBlend,
+  adminSaveAdditive,
+  adminSaveColour,
+  adminSaveCore,
+  adminSaveExtruder,
+  adminSaveExtrusionWasteFactor,
+  adminSaveInk,
+  adminSavePlate,
+  adminSavePrintingTier,
+  adminSaveResin,
+  adminSaveResinBlend,
+  fetchAdminHub,
+} from '../store/slices/adminRateCardsSlice'
+import type {
+  Additive,
+  Colour,
+  Core,
+  CustomerSummary,
+  Extruder,
+  ExtrusionWasteFactor,
+  Ink,
+  Plate,
+  PrintingPricingTier,
+  Resin,
+  ResinBlend,
+} from './admin/types'
 
 function AdminDataTable(props: { children: ReactNode }) {
   return (
@@ -25,94 +62,21 @@ function AdminDataTable(props: { children: ReactNode }) {
   )
 }
 
-type Resin = {
-  resin_code: string
-  name: string
-  density: number
-  price_per_kg: number
-}
-
-type ResinBlend = {
-  blend_code: string
-  name: string
-  components: Array<{ resin_code: string; pct: number }>
-}
-
-type Additive = {
-  additive_code: string
-  name: string
-  price_per_kg: number
-}
-
-type Colour = {
-  colour_code: string
-  name: string
-  price_per_kg: number
-}
-
-type Core = {
-  core_type: string
-  description?: string | null
-  cost_per_meter: number
-  kg_per_meter: number
-}
-
-type Ink = {
-  ink_code: string
-  name: string
-  printer_type: string
-}
-
-type Plate = {
-  customer_id: string
-  plate_code: string
-  description?: string | null
-}
-
-type PrintingPricingTier = {
-  method: 'inline' | 'uteco'
-  max_print_width_mm: number
-  num_colours: number
-  min_meters: number
-  min_charge?: number | null
-  setup_fee?: number | null
-  cost_per_1000m: number
-}
-
-type Extruder = {
-  extruder_code: string
-  model?: string | null
-  film_width_min_mm?: number | null
-  film_width_max_mm?: number | null
-  decision_width_mm?: number | null
-  average_kg_hr?: number | null
-  ave_width?: number | null
-  cost_per_hr?: number | null
-}
-
-type ExtrusionWasteFactor = {
-  factor: string
-  minutes: number
-}
-
-type CustomerSummary = {
-  id: string
-  code?: string | null
-  name: string
-}
-
 export function AdminPage() {
-  const [resins, setResins] = useState<Resin[]>([])
-  const [additives, setAdditives] = useState<Additive[]>([])
-  const [colours, setColours] = useState<Colour[]>([])
-  const [cores, setCores] = useState<Core[]>([])
-  const [extruders, setExtruders] = useState<Extruder[]>([])
-  const [extrusionWasteFactors, setExtrusionWasteFactors] = useState<ExtrusionWasteFactor[]>([])
-  const [inks, setInks] = useState<Ink[]>([])
-  const [plates, setPlates] = useState<Plate[]>([])
-  const [printingPricingTiers, setPrintingPricingTiers] = useState<PrintingPricingTier[]>([])
-  const [customers, setCustomers] = useState<CustomerSummary[]>([])
-  const [loading, setLoading] = useState(false)
+  const dispatch = useAppDispatch()
+  const resins = useAppSelector((s) => s.adminRateCards.resins.items)
+  const additives = useAppSelector((s) => s.adminRateCards.additives.items)
+  const colours = useAppSelector((s) => s.adminRateCards.colours.items)
+  const cores = useAppSelector((s) => s.adminRateCards.cores.items)
+  const extruders = useAppSelector((s) => s.adminRateCards.extruders.items)
+  const extrusionWasteFactors = useAppSelector((s) => s.adminRateCards.extrusionWasteFactors.items)
+  const inks = useAppSelector((s) => s.adminRateCards.inks.items)
+  const plates = useAppSelector((s) => s.adminRateCards.plates.items)
+  const printingPricingTiers = useAppSelector((s) => s.adminRateCards.printingPricingTiers.items)
+  const customers = useAppSelector((s) => s.customers.list.items) as CustomerSummary[]
+  const { status: hubStatus, error: hubErr } = useAppSelector((s) => s.adminRateCards.hub)
+  const custListErr = useAppSelector((s) => s.customers.list.error)
+  const loading = hubStatus === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [savingCode, setSavingCode] = useState<string | null>(null)
   const [savingAdditiveCode, setSavingAdditiveCode] = useState<string | null>(null)
@@ -123,7 +87,7 @@ export function AdminPage() {
   const [savingInkCode, setSavingInkCode] = useState<string | null>(null)
   const [savingPlateKey, setSavingPlateKey] = useState<string | null>(null)
   const [savingPrintingTierKey, setSavingPrintingTierKey] = useState<string | null>(null)
-  const [resinBlends, setResinBlends] = useState<ResinBlend[]>([])
+  const resinBlends = useAppSelector((s) => s.adminRateCards.resinBlends.items)
   const [savingBlendCode, setSavingBlendCode] = useState<string | null>(null)
 
   const [newCode, setNewCode] = useState('')
@@ -138,6 +102,7 @@ export function AdminPage() {
   const [newColourCode, setNewColourCode] = useState('')
   const [newColourName, setNewColourName] = useState('')
   const [newColourPrice, setNewColourPrice] = useState<number | ''>('')
+  const [newColourShortCode, setNewColourShortCode] = useState('')
 
   const [newCoreType, setNewCoreType] = useState('')
   const [newCoreDescription, setNewCoreDescription] = useState('')
@@ -258,39 +223,11 @@ export function AdminPage() {
   }, [customers])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const rows = await apiFetch<Resin[]>('/api/admin/rate-cards/resins')
-        setResins(rows)
-        const adds = await apiFetch<Additive[]>('/api/admin/rate-cards/additives')
-        setAdditives(adds)
-        const cols = await apiFetch<Colour[]>('/api/admin/rate-cards/colours')
-        setColours(cols)
-        const cs = await apiFetch<Core[]>('/api/admin/rate-cards/cores')
-        setCores(cs)
-        const ex = await apiFetch<Extruder[]>('/api/admin/rate-cards/extruders')
-        setExtruders(ex)
-        const wf = await apiFetch<ExtrusionWasteFactor[]>('/api/admin/rate-cards/extrusion-waste-factors')
-        setExtrusionWasteFactors(wf)
-        const inkRows = await apiFetch<Ink[]>('/api/admin/rate-cards/inks')
-        setInks(inkRows)
-        const plateRows = await apiFetch<Plate[]>('/api/admin/rate-cards/plates')
-        setPlates(plateRows)
-        const pt = await apiFetch<PrintingPricingTier[]>('/api/admin/rate-cards/printing-pricing-tiers')
-        setPrintingPricingTiers(pt)
-        const custRes = await apiFetch<{ items: CustomerSummary[] }>('/api/customers')
-        setCustomers(custRes.items || [])
-        const blends = await apiFetch<ResinBlend[]>('/api/admin/rate-cards/resin-blends')
-        setResinBlends(blends)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load resins')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminHub())
+    void dispatch(fetchCustomers(undefined))
+  }, [dispatch])
+
+  const displayErr = err || hubErr || custListErr
 
   async function saveResin(code: string, patch: Omit<Resin, 'resin_code'>) {
     const trimmed = code.trim()
@@ -298,17 +235,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingCode(trimmed)
-      const saved = await apiFetch<Resin>(`/api/admin/rate-cards/resins/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setResins((cur) => {
-        const idx = cur.findIndex((r) => r.resin_code === saved.resin_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.resin_code.localeCompare(b.resin_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveResin({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin')
     } finally {
@@ -323,8 +250,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingCode(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/resins/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setResins((cur) => cur.filter((r) => r.resin_code !== trimmed))
+      await dispatch(adminDeleteResin(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin')
     } finally {
@@ -338,17 +264,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingBlendCode(trimmed)
-      const saved = await apiFetch<ResinBlend>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setResinBlends((cur) => {
-        const idx = cur.findIndex((b) => b.blend_code === saved.blend_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.blend_code.localeCompare(b.blend_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveResinBlend({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save resin blend')
     } finally {
@@ -363,8 +279,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingBlendCode(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/resin-blends/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setResinBlends((cur) => cur.filter((b) => b.blend_code !== trimmed))
+      await dispatch(adminDeleteResinBlend(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete resin blend')
     } finally {
@@ -378,17 +293,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingAdditiveCode(trimmed)
-      const saved = await apiFetch<Additive>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setAdditives((cur) => {
-        const idx = cur.findIndex((a) => a.additive_code === saved.additive_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.additive_code.localeCompare(b.additive_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveAdditive({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save additive')
     } finally {
@@ -403,8 +308,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingAdditiveCode(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/additives/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setAdditives((cur) => cur.filter((a) => a.additive_code !== trimmed))
+      await dispatch(adminDeleteAdditive(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete additive')
     } finally {
@@ -418,17 +322,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingColourCode(trimmed)
-      const saved = await apiFetch<Colour>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setColours((cur) => {
-        const idx = cur.findIndex((c) => c.colour_code === saved.colour_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.colour_code.localeCompare(b.colour_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveColour({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save colour')
     } finally {
@@ -443,8 +337,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingColourCode(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/colours/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setColours((cur) => cur.filter((c) => c.colour_code !== trimmed))
+      await dispatch(adminDeleteColour(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete colour')
     } finally {
@@ -458,17 +351,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingCoreType(trimmed)
-      const saved = await apiFetch<Core>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setCores((cur) => {
-        const idx = cur.findIndex((c) => c.core_type === saved.core_type)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.core_type.localeCompare(b.core_type))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveCore({ coreType: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save core')
     } finally {
@@ -483,8 +366,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingCoreType(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/cores/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setCores((cur) => cur.filter((c) => c.core_type !== trimmed))
+      await dispatch(adminDeleteCore(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete core')
     } finally {
@@ -498,23 +380,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingExtruderCode(trimmed)
-      const saved = await apiFetch<Extruder>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setExtruders((cur) => {
-        const idx = cur.findIndex((e) => e.extruder_code === saved.extruder_code)
-        const sortFn = (a: Extruder, b: Extruder) => {
-          const aw = a.decision_width_mm == null ? -Infinity : Number(a.decision_width_mm)
-          const bw = b.decision_width_mm == null ? -Infinity : Number(b.decision_width_mm)
-          if (bw !== aw) return bw - aw
-          return String(a.extruder_code).localeCompare(String(b.extruder_code))
-        }
-        if (idx === -1) return [...cur, saved].sort(sortFn)
-        const next = cur.slice()
-        next[idx] = saved
-        return next.sort(sortFn)
-      })
+      await dispatch(adminSaveExtruder({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save extruder')
     } finally {
@@ -529,8 +395,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingExtruderCode(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/extruders/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setExtruders((cur) => cur.filter((e) => e.extruder_code !== trimmed))
+      await dispatch(adminDeleteExtruder(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete extruder')
     } finally {
@@ -544,17 +409,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingExtrusionWasteFactor(trimmed)
-      const saved = await apiFetch<ExtrusionWasteFactor>(`/api/admin/rate-cards/extrusion-waste-factors/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setExtrusionWasteFactors((cur) => {
-        const idx = cur.findIndex((w) => w.factor === saved.factor)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.factor.localeCompare(b.factor))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveExtrusionWasteFactor({ factor: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save waste factor')
     } finally {
@@ -569,8 +424,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingExtrusionWasteFactor(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/extrusion-waste-factors/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setExtrusionWasteFactors((cur) => cur.filter((w) => w.factor !== trimmed))
+      await dispatch(adminDeleteExtrusionWasteFactor(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete waste factor')
     } finally {
@@ -584,17 +438,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingInkCode(trimmed)
-      const saved = await apiFetch<Ink>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setInks((cur) => {
-        const idx = cur.findIndex((i) => i.ink_code === saved.ink_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.ink_code.localeCompare(b.ink_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveInk({ code: trimmed, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save ink')
     } finally {
@@ -609,8 +453,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingInkCode(trimmed)
-      await apiFetch<void>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setInks((cur) => cur.filter((i) => i.ink_code !== trimmed))
+      await dispatch(adminDeleteInk(trimmed)).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete ink')
     } finally {
@@ -626,26 +469,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingPlateKey(key)
-      const saved = await apiFetch<Plate>(
-        `/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(patch),
-        },
-      )
-      setPlates((cur) => {
-        const idx = cur.findIndex((p) => p.customer_id === saved.customer_id && p.plate_code === saved.plate_code)
-        if (idx === -1) {
-          return [...cur, saved].sort((a, b) => {
-            const ak = `${customersById.get(a.customer_id)?.code || ''}__${a.plate_code}`
-            const bk = `${customersById.get(b.customer_id)?.code || ''}__${b.plate_code}`
-            return ak.localeCompare(bk)
-          })
-        }
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSavePlate({ customerId: cid, plateCode: code, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save plate')
     } finally {
@@ -662,11 +486,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingPlateKey(key)
-      await apiFetch<void>(
-        `/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`,
-        { method: 'DELETE' },
-      )
-      setPlates((cur) => cur.filter((p) => !(p.customer_id === cid && p.plate_code === code)))
+      await dispatch(adminDeletePlate({ customerId: cid, plateCode: code })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete plate')
     } finally {
@@ -684,24 +504,7 @@ export function AdminPage() {
       setErr(null)
       const k = `${m}:${key.max_print_width_mm}:${key.num_colours}`
       setSavingPrintingTierKey(k)
-      const saved = await apiFetch<PrintingPricingTier>(
-        `/api/admin/rate-cards/printing-pricing-tiers/${encodeURIComponent(m)}/${encodeURIComponent(String(key.max_print_width_mm))}/${encodeURIComponent(
-          String(key.num_colours),
-        )}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(patch),
-        },
-      )
-      setPrintingPricingTiers((cur) => {
-        const idx = cur.findIndex(
-          (t) => t.method === saved.method && t.max_print_width_mm === saved.max_print_width_mm && t.num_colours === saved.num_colours,
-        )
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.method.localeCompare(b.method) || a.max_print_width_mm - b.max_print_width_mm || a.num_colours - b.num_colours)
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSavePrintingTier({ key: { ...key, method: m }, patch })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save printing tier')
     } finally {
@@ -717,15 +520,7 @@ export function AdminPage() {
     try {
       setErr(null)
       setSavingPrintingTierKey(k)
-      await apiFetch<void>(
-        `/api/admin/rate-cards/printing-pricing-tiers/${encodeURIComponent(m)}/${encodeURIComponent(String(key.max_print_width_mm))}/${encodeURIComponent(
-          String(key.num_colours),
-        )}`,
-        { method: 'DELETE' },
-      )
-      setPrintingPricingTiers((cur) =>
-        cur.filter((t) => !(t.method === m && t.max_print_width_mm === key.max_print_width_mm && t.num_colours === key.num_colours)),
-      )
+      await dispatch(adminDeletePrintingTier({ ...key, method: m })).unwrap()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete printing tier')
     } finally {
@@ -745,7 +540,7 @@ export function AdminPage() {
       </Typography>
 
       <Stack spacing={2}>
-        {err && <Alert severity="error">{err}</Alert>}
+        {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Stack spacing={2}>
@@ -928,6 +723,7 @@ export function AdminPage() {
                     <TableCell sx={{ width: 180 }}>Code</TableCell>
                     <TableCell>Name</TableCell>
                     <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
+                    <TableCell sx={{ width: 80 }}>Short</TableCell>
                     <TableCell sx={{ width: 140 }} />
                   </TableRow>
                 </TableHead>
@@ -957,6 +753,15 @@ export function AdminPage() {
                         onChange={(e) => setNewColourPrice(e.target.value ? parseFloat(e.target.value) : '')}
                       />
                     </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        label="Short"
+                        value={newColourShortCode}
+                        onChange={(e) => setNewColourShortCode((e.target.value || '').slice(0, 3))}
+                        inputProps={{ maxLength: 3 }}
+                      />
+                    </TableCell>
                     <TableCell align="right">
                       <Button
                         size="small"
@@ -967,10 +772,13 @@ export function AdminPage() {
                           void saveColour(newColourCode, {
                             name: newColourName.trim(),
                             price_per_kg: Number(newColourPrice),
+                            sort_order: colours.length,
+                            short_code: newColourShortCode.trim() || null,
                           }).then(() => {
                             setNewColourCode('')
                             setNewColourName('')
                             setNewColourPrice('')
+                            setNewColourShortCode('')
                           })
                         }}
                       >
@@ -1806,8 +1614,16 @@ function ColourRow(props: {
   const { colour, saving, onSave, onDelete } = props
   const [name, setName] = useState(colour.name)
   const [price, setPrice] = useState<number | ''>(colour.price_per_kg)
+  const [shortCode, setShortCode] = useState(colour.short_code ?? '')
 
-  const dirty = name !== colour.name || price !== colour.price_per_kg
+  useEffect(() => {
+    setName(colour.name)
+    setPrice(colour.price_per_kg)
+    setShortCode(colour.short_code ?? '')
+  }, [colour.colour_code, colour.name, colour.price_per_kg, colour.short_code])
+
+  const dirty =
+    name !== colour.name || price !== colour.price_per_kg || shortCode !== (colour.short_code ?? '')
 
   return (
     <TableRow hover>
@@ -1823,6 +1639,15 @@ function ColourRow(props: {
           onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')}
         />
       </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          sx={{ width: 72 }}
+          value={shortCode}
+          onChange={(e) => setShortCode((e.target.value || '').slice(0, 3))}
+          inputProps={{ maxLength: 3 }}
+        />
+      </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
@@ -1833,6 +1658,8 @@ function ColourRow(props: {
               void onSave(colour.colour_code, {
                 name: name.trim(),
                 price_per_kg: Number(price),
+                sort_order: colour.sort_order,
+                short_code: shortCode.trim() || null,
               })
             }
           >

@@ -16,7 +16,7 @@ def _compute_width_mm_from_spec(spec: Any) -> Optional[float]:
     Rules mirror the frontend quoteCalculator / SpecPayloadForm:
     - CentreFold: layflat = 0.5 * base_width_mm
     - Gusset: layflat = base_width_mm + gusset_mm (gusset is additional layflat once)
-    - BottomGusset: layflat = base_width_mm (matches quote_engine bottom_gusset)
+    - BottomGusset: layflat = base_width_mm (matches quotes UI geometry for bottom gusset)
     - Otherwise: layflat = base_width_mm
     """
     if not isinstance(spec, dict):

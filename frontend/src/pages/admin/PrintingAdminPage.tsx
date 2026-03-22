@@ -1,12 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Alert, Button, Link as MuiLink, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
+import { Alert, Button, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { fetchCustomers } from '../../store/slices/customersSlice'
+import {
+  adminDeleteAnilox,
+  adminDeleteInk,
+  adminDeletePlate,
+  adminDeletePrintingTier,
+  adminSaveAnilox,
+  adminSaveInk,
+  adminSavePlate,
+  adminSavePrintingTier,
+  fetchAdminAnilox,
+  fetchAdminPrintingBundle,
+} from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
-import type { CustomerSummary, Ink, Plate, PrintingPricingTier } from './types'
+import type { Anilox, CustomerSummary, Ink, Plate, PrintingPricingTier } from './types'
 
 function tierKey(t: { method: string; max_print_width_mm: number; num_colours: number }) {
   const m = (t.method || '').trim().toLowerCase()
@@ -14,14 +26,22 @@ function tierKey(t: { method: string; max_print_width_mm: number; num_colours: n
 }
 
 export function PrintingAdminPage() {
+  const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
-  const [tiers, setTiers] = useState<PrintingPricingTier[]>([])
-  const [inks, setInks] = useState<Ink[]>([])
-  const [plates, setPlates] = useState<Plate[]>([])
-  const [customers, setCustomers] = useState<CustomerSummary[]>([])
+  const tiers = useAppSelector((s) => s.adminRateCards.printingPricingTiers.items)
+  const inks = useAppSelector((s) => s.adminRateCards.inks.items)
+  const plates = useAppSelector((s) => s.adminRateCards.plates.items)
+  const customers = useAppSelector((s) => s.customers.list.items) as CustomerSummary[]
   const customersById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers])
+  const { status, error: bundleErr } = useAppSelector((s) => s.adminRateCards.printingBundle)
+  const {
+    items: aniloxRows,
+    status: aniloxStatus,
+    error: aniloxLoadErr,
+  } = useAppSelector((s) => s.adminRateCards.anilox)
+  const loading = status === 'loading'
+  const aniloxLoading = aniloxStatus === 'loading'
 
-  const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
 
@@ -53,28 +73,20 @@ export function PrintingAdminPage() {
   const [newPlateDescription, setNewPlateDescription] = useState('')
   const canCreatePlate = useMemo(() => !!newPlateCustomerId.trim() && !!newPlateCode.trim(), [newPlateCode, newPlateCustomerId])
 
+  const [newAniloxCode, setNewAniloxCode] = useState('')
+  const [newAniloxDescription, setNewAniloxDescription] = useState('')
+  const canCreateAnilox = useMemo(
+    () => !!newAniloxCode.trim() && !!newAniloxDescription.trim(),
+    [newAniloxCode, newAniloxDescription],
+  )
+
   useEffect(() => {
-    void (async () => {
-      try {
-        setErr(null)
-        setLoading(true)
-        const [pt, inkRows, plateRows, custRes] = await Promise.all([
-          apiFetch<PrintingPricingTier[]>('/api/admin/rate-cards/printing-pricing-tiers'),
-          apiFetch<Ink[]>('/api/admin/rate-cards/inks'),
-          apiFetch<Plate[]>('/api/admin/rate-cards/plates'),
-          apiFetch<{ items: CustomerSummary[] }>('/api/customers'),
-        ])
-        setTiers(pt)
-        setInks(inkRows)
-        setPlates(plateRows)
-        setCustomers(custRes.items || [])
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load printing admin data')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    void dispatch(fetchAdminPrintingBundle())
+    void dispatch(fetchAdminAnilox())
+    void dispatch(fetchCustomers(undefined))
+  }, [dispatch])
+
+  const displayErr = err || bundleErr || aniloxLoadErr
 
   async function saveInk(code: string, patch: Omit<Ink, 'ink_code'>) {
     const trimmed = code.trim()
@@ -82,17 +94,7 @@ export function PrintingAdminPage() {
     try {
       setErr(null)
       setSavingKey(`ink:${trimmed}`)
-      const saved = await apiFetch<Ink>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setInks((cur) => {
-        const idx = cur.findIndex((i) => i.ink_code === saved.ink_code)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.ink_code.localeCompare(b.ink_code))
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSaveInk({ code: trimmed, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save ink')
@@ -108,8 +110,7 @@ export function PrintingAdminPage() {
     try {
       setErr(null)
       setSavingKey(`ink:${trimmed}`)
-      await apiFetch<void>(`/api/admin/rate-cards/inks/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-      setInks((cur) => cur.filter((i) => i.ink_code !== trimmed))
+      await dispatch(adminDeleteInk(trimmed)).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete ink')
@@ -126,17 +127,7 @@ export function PrintingAdminPage() {
     try {
       setErr(null)
       setSavingKey(key)
-      const saved = await apiFetch<Plate>(`/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`, {
-        method: 'PUT',
-        body: JSON.stringify(patch),
-      })
-      setPlates((cur) => {
-        const idx = cur.findIndex((p) => p.customer_id === saved.customer_id && p.plate_code === saved.plate_code)
-        if (idx === -1) return [...cur, saved]
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSavePlate({ customerId: cid, plateCode: code, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save plate')
@@ -154,8 +145,7 @@ export function PrintingAdminPage() {
     try {
       setErr(null)
       setSavingKey(key)
-      await apiFetch<void>(`/api/admin/rate-cards/plates/${encodeURIComponent(cid)}/${encodeURIComponent(code)}`, { method: 'DELETE' })
-      setPlates((cur) => cur.filter((p) => !(p.customer_id === cid && p.plate_code === code)))
+      await dispatch(adminDeletePlate({ customerId: cid, plateCode: code })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete plate')
@@ -174,25 +164,41 @@ export function PrintingAdminPage() {
     try {
       setErr(null)
       setSavingKey(k)
-      const saved = await apiFetch<PrintingPricingTier>(
-        `/api/admin/rate-cards/printing-pricing-tiers/${encodeURIComponent(m)}/${encodeURIComponent(String(key.max_print_width_mm))}/${encodeURIComponent(
-          String(key.num_colours),
-        )}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(patch),
-        },
-      )
-      setTiers((cur) => {
-        const idx = cur.findIndex((t) => t.method === saved.method && t.max_print_width_mm === saved.max_print_width_mm && t.num_colours === saved.num_colours)
-        if (idx === -1) return [...cur, saved].sort((a, b) => a.method.localeCompare(b.method) || a.max_print_width_mm - b.max_print_width_mm || a.num_colours - b.num_colours)
-        const next = cur.slice()
-        next[idx] = saved
-        return next
-      })
+      await dispatch(adminSavePrintingTier({ key: { ...key, method: m }, patch })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save printing tier')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  async function saveAnilox(code: string, patch: Omit<Anilox, 'anilox_code'>) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    try {
+      setErr(null)
+      setSavingKey(`anilox:${trimmed}`)
+      await dispatch(adminSaveAnilox({ code: trimmed, patch })).unwrap()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save anilox')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  async function deleteAnilox(code: string) {
+    const trimmed = code.trim()
+    if (!trimmed) return
+    if (!confirmDelete(`anilox '${trimmed}'`)) return
+    try {
+      setErr(null)
+      setSavingKey(`anilox:${trimmed}`)
+      await dispatch(adminDeleteAnilox(trimmed)).unwrap()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete anilox')
     } finally {
       setSavingKey(null)
     }
@@ -207,13 +213,7 @@ export function PrintingAdminPage() {
     try {
       setErr(null)
       setSavingKey(savingK)
-      await apiFetch<void>(
-        `/api/admin/rate-cards/printing-pricing-tiers/${encodeURIComponent(m)}/${encodeURIComponent(String(key.max_print_width_mm))}/${encodeURIComponent(
-          String(key.num_colours),
-        )}`,
-        { method: 'DELETE' },
-      )
-      setTiers((cur) => cur.filter((t) => !(t.method === m && t.max_print_width_mm === key.max_print_width_mm && t.num_colours === key.num_colours)))
+      await dispatch(adminDeletePrintingTier({ ...key, method: m })).unwrap()
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to delete printing tier')
@@ -236,19 +236,17 @@ export function PrintingAdminPage() {
 
   return (
     <Stack spacing={2}>
-      <AdminPageHeader title="Printing" subtitle="Printing pricing tiers, inks, and plates. Manage Uteco anilox rolls separately." />
-      <Typography variant="body2">
-        <MuiLink component={Link} to="/admin/printing/anilox" underline="hover">
-          Anilox (Uteco) master data →
-        </MuiLink>
-      </Typography>
-      {err ? <Alert severity="error">{err}</Alert> : null}
+      <AdminPageHeader
+        title="Printing"
+        subtitle="Printing pricing tiers, Uteco anilox master data, inks, and plates."
+      />
+      {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Printing pricing tiers
         </Typography>
-        {loading ? (
+        {loading && tiers.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -335,9 +333,72 @@ export function PrintingAdminPage() {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
+          Anilox (Uteco)
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Master list for Uteco printing specs: code and description (used in product spec dropdown).
+        </Typography>
+        {aniloxLoading && aniloxRows.length === 0 ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : (
+          <AdminDataTable>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ width: 200 }}>Code</TableCell>
+                <TableCell>Description</TableCell>
+                <TableCell sx={{ width: 220 }} />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {aniloxRows.map((r) => (
+                <AniloxRow
+                  key={r.anilox_code}
+                  row={r}
+                  saving={savingKey === `anilox:${r.anilox_code}`}
+                  onSave={saveAnilox}
+                  onDelete={deleteAnilox}
+                />
+              ))}
+              <TableRow>
+                <TableCell>
+                  <TextField size="small" label="Code" value={newAniloxCode} onChange={(e) => setNewAniloxCode(e.target.value)} />
+                </TableCell>
+                <TableCell>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label="Description"
+                    value={newAniloxDescription}
+                    onChange={(e) => setNewAniloxDescription(e.target.value)}
+                  />
+                </TableCell>
+                <TableCell align="right">
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={!canCreateAnilox || savingKey === `anilox:${newAniloxCode.trim()}`}
+                    onClick={() => {
+                      if (!canCreateAnilox) return
+                      void saveAnilox(newAniloxCode, { description: newAniloxDescription.trim() }).then(() => {
+                        setNewAniloxCode('')
+                        setNewAniloxDescription('')
+                      })
+                    }}
+                  >
+                    Add anilox
+                  </Button>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </AdminDataTable>
+        )}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Inks
         </Typography>
-        {loading ? (
+        {loading && inks.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -394,7 +455,7 @@ export function PrintingAdminPage() {
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Plates
         </Typography>
-        {loading ? (
+        {loading && plates.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
@@ -550,6 +611,40 @@ function InkRow(props: {
             {saving ? 'Saving…' : 'Save'}
           </Button>
           <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.ink_code)}>
+            Delete
+          </Button>
+        </Stack>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function AniloxRow(props: {
+  row: Anilox
+  saving: boolean
+  onSave: (code: string, patch: Omit<Anilox, 'anilox_code'>) => Promise<void>
+  onDelete: (code: string) => Promise<void>
+}) {
+  const { row, saving, onSave, onDelete } = props
+  const [description, setDescription] = useState(row.description)
+  const dirty = description !== row.description
+  return (
+    <TableRow hover>
+      <TableCell sx={{ fontFamily: 'monospace' }}>{row.anilox_code}</TableCell>
+      <TableCell>
+        <TextField size="small" fullWidth value={description} onChange={(e) => setDescription(e.target.value)} />
+      </TableCell>
+      <TableCell align="right">
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={saving || !dirty || !description.trim()}
+            onClick={() => void onSave(row.anilox_code, { description: description.trim() })}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.anilox_code)}>
             Delete
           </Button>
         </Stack>

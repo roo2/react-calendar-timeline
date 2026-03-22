@@ -1,5 +1,6 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { apiFetch } from '../../api/client'
+import type { QuoteRatebook } from '../../utils/quoteCalculator'
 
 export type QuotesBootstrap = {
   product_versions?: Array<{ version_id: string; display_name: string; product_code: string; version_number: number }>
@@ -27,6 +28,13 @@ export type SavedQuoteResponse = {
   updated_at?: string | null
 }
 
+/** GET /api/rate-cards/resin-blends row (used by quick quote UI). */
+export type ResinBlendPresetRow = {
+  blend_code: string
+  name: string
+  components: Array<{ resin_code: string; pct: number }>
+}
+
 type Status = 'idle' | 'loading' | 'succeeded' | 'failed'
 
 type QuotesState = {
@@ -49,12 +57,31 @@ type QuotesState = {
     status: Status
     error: string | null
   }
+  savedList: {
+    status: Status
+    error: string | null
+    items: SavedQuoteResponse[]
+    lastCustomerId: string | null
+  }
+  quoteRatebook: {
+    status: Status
+    error: string | null
+    data: QuoteRatebook | null
+  }
+  quoteResinBlends: {
+    status: Status
+    error: string | null
+    items: ResinBlendPresetRow[]
+  }
 }
 
 const initialState: QuotesState = {
   bootstrap: { status: 'idle', error: null, data: null },
   detail: { byId: {} },
   upsert: { status: 'idle', error: null },
+  savedList: { status: 'idle', error: null, items: [], lastCustomerId: null },
+  quoteRatebook: { status: 'idle', error: null, data: null },
+  quoteResinBlends: { status: 'idle', error: null, items: [] },
 }
 
 export const fetchQuotesBootstrap = createAsyncThunk(
@@ -64,6 +91,25 @@ export const fetchQuotesBootstrap = createAsyncThunk(
     return data
   },
 )
+
+export const fetchSavedQuotesList = createAsyncThunk(
+  'quotes/savedList',
+  async (params: { customer_id?: string } | undefined) => {
+    const cid = params?.customer_id?.trim()
+    const url = cid ? `/api/quotes/saved?customer_id=${encodeURIComponent(cid)}` : '/api/quotes/saved'
+    const rows = await apiFetch<SavedQuoteResponse[]>(url)
+    return { customer_id: cid ?? null, items: Array.isArray(rows) ? rows : [] }
+  },
+)
+
+export const fetchQuoteRatebook = createAsyncThunk('quotes/ratebook', async () => {
+  return await apiFetch<QuoteRatebook>('/api/rate-cards/ratebook')
+})
+
+export const fetchQuoteResinBlends = createAsyncThunk('quotes/resinBlends', async () => {
+  const rows = await apiFetch<ResinBlendPresetRow[]>('/api/rate-cards/resin-blends')
+  return Array.isArray(rows) ? rows : []
+})
 
 export const fetchSavedQuote = createAsyncThunk(
   'quotes/detail',
@@ -179,6 +225,52 @@ const slice = createSlice({
     b.addCase(updateSavedQuote.rejected, (s, a) => {
       s.upsert.status = 'failed'
       s.upsert.error = a.error.message || 'Failed to update quote'
+    })
+
+    b.addCase(fetchSavedQuotesList.pending, (s) => {
+      s.savedList.status = 'loading'
+      s.savedList.error = null
+    })
+    b.addCase(fetchSavedQuotesList.fulfilled, (s, a) => {
+      s.savedList.status = 'succeeded'
+      s.savedList.items = a.payload.items
+      s.savedList.lastCustomerId = a.payload.customer_id
+      s.savedList.error = null
+    })
+    b.addCase(fetchSavedQuotesList.rejected, (s, a) => {
+      s.savedList.status = 'failed'
+      s.savedList.error = a.error.message || 'Failed to load quotes'
+      s.savedList.lastCustomerId = a.meta.arg?.customer_id?.trim() ?? null
+    })
+
+    b.addCase(fetchQuoteRatebook.pending, (s) => {
+      s.quoteRatebook.status = 'loading'
+      s.quoteRatebook.error = null
+    })
+    b.addCase(fetchQuoteRatebook.fulfilled, (s, a) => {
+      s.quoteRatebook.status = 'succeeded'
+      s.quoteRatebook.data = a.payload
+      s.quoteRatebook.error = null
+    })
+    b.addCase(fetchQuoteRatebook.rejected, (s, a) => {
+      s.quoteRatebook.status = 'failed'
+      s.quoteRatebook.error = a.error.message || 'Failed to load pricing rates'
+      s.quoteRatebook.data = null
+    })
+
+    b.addCase(fetchQuoteResinBlends.pending, (s) => {
+      s.quoteResinBlends.status = 'loading'
+      s.quoteResinBlends.error = null
+    })
+    b.addCase(fetchQuoteResinBlends.fulfilled, (s, a) => {
+      s.quoteResinBlends.status = 'succeeded'
+      s.quoteResinBlends.items = a.payload
+      s.quoteResinBlends.error = null
+    })
+    b.addCase(fetchQuoteResinBlends.rejected, (s, a) => {
+      s.quoteResinBlends.status = 'failed'
+      s.quoteResinBlends.error = a.error.message || 'Failed to load resin blends'
+      s.quoteResinBlends.items = []
     })
   },
 })

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useAppSelector } from '../store/hooks'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchOrder, publishOrder } from '../store/slices/ordersSlice'
 import { can } from '../auth/permissions'
 import {
   Alert,
@@ -20,28 +20,27 @@ export function OrderShowPage() {
   const { orderId } = useParams()
   const loc = useLocation()
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
+  const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
+  const detailEntry = useAppSelector((s) => (orderId ? s.orders.detail.byId[orderId] : undefined))
+  const order = detailEntry?.order
+  const loadErr = detailEntry?.error
+  const loading = detailEntry?.status === 'loading' || detailEntry?.status === 'idle'
+
   const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
   const canEdit = canPublish
 
-  const [order, setOrder] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const [publishErr, setPublishErr] = useState<string | null>(null)
   const [publishing, setPublishing] = useState(false)
 
   useEffect(() => {
     if (!orderId) return
-    void (async () => {
-      try {
-        setErr(null)
-        const res = await apiFetch<any>(`/api/orders/${orderId}`)
-        setOrder(res)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load order')
-      }
-    })()
-  }, [orderId])
+    void dispatch(fetchOrder(orderId))
+  }, [orderId, dispatch])
 
-  if (err) {
+  const err = loadErr || publishErr
+
+  if (err && !order && detailEntry?.status === 'failed') {
     return (
       <Box>
         <Typography variant="h5" sx={{ mb: 2 }}>
@@ -56,12 +55,12 @@ export function OrderShowPage() {
       </Box>
     )
   }
-  if (!order) return <p>Loading…</p>
+  if (!order || loading) return <p>Loading…</p>
 
   const items = order.items || []
   const totalPriceSum = items.reduce(
     (sum: number, it: { total_price?: number | null }) => sum + (it.total_price != null ? Number(it.total_price) : 0),
-    0
+    0,
   )
 
   function fmtCurrency(v: number | null | undefined): string {
@@ -73,12 +72,11 @@ export function OrderShowPage() {
     if (!orderId) return
     if (publishing) return
     try {
+      setPublishErr(null)
       setPublishing(true)
-      await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}/publish`, { method: 'POST' })
-      const res = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
-      setOrder(res)
+      await dispatch(publishOrder(orderId)).unwrap()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to publish order')
+      setPublishErr(e instanceof Error ? e.message : 'Failed to publish order')
     } finally {
       setPublishing(false)
     }
@@ -90,8 +88,15 @@ export function OrderShowPage() {
         Order {order.code}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Order Date: {order.order_date || order.created_at?.slice(0, 10) || '-'}
+        Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Order Date:{' '}
+        {order.order_date || order.created_at?.slice(0, 10) || '-'}
       </Typography>
+
+      {publishErr && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {publishErr}
+        </Alert>
+      )}
 
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
         <Button component={Link} to="/orders" variant="text" color="primary">
@@ -165,8 +170,6 @@ export function OrderShowPage() {
           </TableBody>
         </Table>
       </Paper>
-
     </Box>
   )
 }
-

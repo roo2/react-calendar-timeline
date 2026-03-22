@@ -52,13 +52,7 @@ app/
     schemas.py
   quotes/
     routes.py
-    service.py
-    quote_engine/         # pure calculation
-      models.py
-      calculator.py
-      selectors.py
-      validators.py
-      tests/
+    schemas.py            # saved-quote payloads
   orders/
     routes.py
     service.py
@@ -326,13 +320,7 @@ choose currency
 
 No calculations yet
 
-POST /quotes/calculate (HTMX)
-
-Sales, Production Manager
-
-Returns HTML partial breakdown (no DB write)
-
-QuoteService.calculate_preview(inputs) → calls quote engine
+Quote preview (costs, dimensions) is computed in the SPA from `GET /api/rate-cards/ratebook` and client-side logic (no server calculate endpoint).
 
 POST /quotes
 
@@ -857,8 +845,6 @@ CreateCustomerRequest
 CreateProductRequest (wizard)
 
 CreateProductVersionRequest
-
-QuoteCalculateRequest → QuotePreviewResult
 
 CreateQuoteRequest (includes snapshot outputs)
 

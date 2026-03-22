@@ -1,14 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { Alert, Box, Button, Paper, Stack, Typography } from '@mui/material'
-
-type Snapshot = {
-  raw_kg: string
-  wip_extrusion_kg: string
-  wip_printing_kg: string
-  fg_units: string
-}
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchInventoryDashboard, type InventoryDashboardSnapshot } from '../store/slices/inventorySlice'
 
 function StatCard({ title, value }: { title: string; value: string }) {
   return (
@@ -24,24 +18,18 @@ function StatCard({ title, value }: { title: string; value: string }) {
 }
 
 export function InventoryPage() {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-
-  async function load() {
-    try {
-      setErr(null)
-      const res = await apiFetch<Snapshot>('/api/inventory/dashboard')
-      setSnapshot(res)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to load inventory')
-    }
-  }
+  const dispatch = useAppDispatch()
+  const dash = useAppSelector((s) => s.inventory.dashboard)
+  const snapshot: InventoryDashboardSnapshot | null = dash.data
+  const err = dash.status === 'failed' ? dash.error : null
 
   useEffect(() => {
-    void load()
-    const t = window.setInterval(() => void load(), 45_000)
+    void dispatch(fetchInventoryDashboard())
+    const t = window.setInterval(() => {
+      void dispatch(fetchInventoryDashboard())
+    }, 45_000)
     return () => window.clearInterval(t)
-  }, [])
+  }, [dispatch])
 
   return (
     <Box>

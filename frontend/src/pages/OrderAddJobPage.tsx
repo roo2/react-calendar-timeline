@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
 import { Alert, Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
+import { useAppDispatch } from '../store/hooks'
+import { addOrderJob } from '../store/slices/ordersSlice'
 
 export function OrderAddJobPage() {
   const { orderId } = useParams()
   const nav = useNavigate()
+  const dispatch = useAppDispatch()
 
   const [plannedQty, setPlannedQty] = useState('')
   const [allocated, setAllocated] = useState('')
@@ -17,13 +19,15 @@ export function OrderAddJobPage() {
     setErr(null)
     setSaving(true)
     try {
-      await apiFetch(`/api/orders/${orderId}/jobs`, {
-        method: 'POST',
-        body: JSON.stringify({
-          planned_qty: plannedQty,
-          allocated_order_units: allocated ? allocated : null,
+      await dispatch(
+        addOrderJob({
+          orderId,
+          body: {
+            planned_qty: plannedQty,
+            allocated_order_units: allocated.trim() ? allocated : null,
+          },
         }),
-      })
+      ).unwrap()
       nav(`/orders/${orderId}`)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to create job')

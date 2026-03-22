@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { apiFetch } from '../api/client'
+import { useAppDispatch, useAppSelector } from '../store/hooks'
+import { fetchProduct, fetchProductVersion, productVersionCacheKey } from '../store/slices/productsSlice'
 
 function fmtList(x: unknown): string {
   return Array.isArray(x) && x.length > 0 ? x.join(', ') : '-'
@@ -8,28 +9,26 @@ function fmtList(x: unknown): string {
 
 export function ProductVersionPrintPage() {
   const { productId, versionId } = useParams()
-  const [productData, setProductData] = useState<any>(null)
-  const [versionData, setVersionData] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const dispatch = useAppDispatch()
+
+  const productEntry = useAppSelector((s) => (productId ? s.products.detail.byId[productId] : undefined))
+  const vKey = productId && versionId ? productVersionCacheKey(productId, versionId) : ''
+  const versionEntry = useAppSelector((s) => (vKey ? s.products.versionDetail.byKey[vKey] : undefined))
+
+  const productData = productEntry?.data
+  const versionData = versionEntry?.data
+  const err =
+    (productEntry?.status === 'failed' && productEntry.error) ||
+    (versionEntry?.status === 'failed' && versionEntry.error) ||
+    null
 
   useEffect(() => {
     if (!productId || !versionId) return
-    void (async () => {
-      try {
-        setErr(null)
-        const [p, v] = await Promise.all([
-          apiFetch<any>(`/api/products/${productId}`),
-          apiFetch<any>(`/api/products/${productId}/versions/${versionId}`),
-        ])
-        setProductData(p)
-        setVersionData(v)
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Failed to load job sheet')
-      }
-    })()
-  }, [productId, versionId])
+    void dispatch(fetchProduct(productId))
+    void dispatch(fetchProductVersion({ productId, versionId }))
+  }, [productId, versionId, dispatch])
 
-  if (err) {
+  if (err && (!productData || !versionData)) {
     return (
       <div className="container">
         <h1>Print — Job Sheet</h1>
