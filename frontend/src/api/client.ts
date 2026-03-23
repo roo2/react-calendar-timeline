@@ -1,3 +1,5 @@
+import { parseFastApiValidationDetail } from './validation'
+
 export type ApiErrorBody = {
   // FastAPI may return `detail` as a string OR a list of validation issues.
   detail?: unknown
@@ -59,12 +61,16 @@ export async function apiFetch<T>(
   if (!resp.ok) {
     const body = (data as ApiErrorBody | undefined) || undefined
     const detail = body?.detail
-    const msg =
+    let msg =
       (typeof detail === 'string' ? detail : undefined) ||
       body?.error ||
       body?.message ||
       resp.statusText ||
       `HTTP ${resp.status}`
+    if (Array.isArray(detail)) {
+      const { messages: vm } = parseFastApiValidationDetail(detail)
+      if (vm.length) msg = vm.join(' · ')
+    }
     throw new ApiError(resp.status, msg, body)
   }
 

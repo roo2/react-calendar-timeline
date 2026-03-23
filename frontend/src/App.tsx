@@ -50,6 +50,10 @@ const ConversionAdminPage = lazy(async () => ({ default: (await import('./pages/
 const PrintingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PrintingAdminPage')).PrintingAdminPage }))
 const CoresAdminPage = lazy(async () => ({ default: (await import('./pages/admin/CoresAdminPage')).CoresAdminPage }))
 const PackagingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PackagingAdminPage')).PackagingAdminPage }))
+const ProductionCalendarAdminPage = lazy(async () => ({
+  default: (await import('./pages/admin/ProductionCalendarAdminPage')).ProductionCalendarAdminPage,
+}))
+const ToolsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ToolsAdminPage')).ToolsAdminPage }))
 
 function PageLoading() {
   return (
@@ -82,7 +86,9 @@ function RequireAuth() {
 function App() {
   const dispatch = useAppDispatch()
   const nav = useNavigate()
+  const location = useLocation()
   const auth = useAppSelector((s) => s.auth)
+  const scheduleFullWidth = location.pathname === '/schedule'
   const roles = auth.identity?.roles || []
   const isSalesOrPm = can(roles, 'SALES', 'PROD_MANAGER')
   const isPm = can(roles, 'PROD_MANAGER')
@@ -173,8 +179,22 @@ function App() {
         </Toolbar>
       </AppBar>
 
-      <Box component="main" sx={{ bgcolor: 'background.default', py: 3 }}>
-        <Container maxWidth="lg">
+      <Box
+        component="main"
+        sx={{
+          bgcolor: 'background.default',
+          py: scheduleFullWidth ? 2 : 3,
+          ...(scheduleFullWidth ? { overflow: 'hidden', minHeight: 0 } : {}),
+        }}
+      >
+        <Container
+          maxWidth={scheduleFullWidth ? false : 'lg'}
+          sx={
+            scheduleFullWidth
+              ? { px: { xs: 1, sm: 1.5, md: 2 }, width: '100%', maxWidth: '100%', boxSizing: 'border-box' }
+              : undefined
+          }
+        >
           <UnsavedChangesProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -256,10 +276,26 @@ function App() {
                   }
                 />
                 <Route
+                  path="tools"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <ToolsAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
                   path="packaging"
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <PackagingAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="production-calendar"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <ProductionCalendarAdminPage />
                     </Suspense>
                   }
                 />

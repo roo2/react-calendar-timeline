@@ -19,7 +19,7 @@ def _run_summary(run) -> dict:
     return {
         "id": str(run.id),
         "job_id": str(run.job_id),
-        "machine_id": str(run.machine_id),
+        "machine_id": run.extruder_code or run.uteco_printer_id or run.bagging_machine_id or "",
         "operation_type": run.operation_type.value if hasattr(run.operation_type, "value") else str(run.operation_type),
         "status": run.status.value if hasattr(run.status, "value") else str(run.status),
         "started_at": run.started_at.isoformat() if getattr(run, "started_at", None) else None,
@@ -32,7 +32,7 @@ async def start_run(payload: dict, identity=Depends(current_identity)):
     try:
         run = ProductionService.start_run(
             job_id=uuid.UUID(payload["job_id"]),
-            machine_id=uuid.UUID(payload["machine_id"]),
+            machine_id=str(payload["machine_id"]),
             operation_type=OperationType(payload["operation_type"]),
         )
         return {"ok": True, "run": _run_summary(run)}

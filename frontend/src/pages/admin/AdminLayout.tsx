@@ -7,8 +7,10 @@ const items = [
   { to: '/admin/extrusion', label: 'Extrusion' },
   { to: '/admin/printing', label: 'Printing' },
   { to: '/admin/cores', label: 'Cores' },
+  { to: '/admin/tools', label: 'Tools' },
   { to: '/admin/conversion', label: 'Packing / Conversion' },
   { to: '/admin/packaging', label: 'Shipping / Pallets' },
+  { to: '/admin/production-calendar', label: 'Production hours' },
 ]
 
 export function AdminLayout() {

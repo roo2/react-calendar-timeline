@@ -18,6 +18,7 @@ import {
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
+import { ScheduleMachinesSection, SCHEDULE_CAPABILITY_DEFAULTS } from './components/ScheduleMachinesSection'
 import type { Anilox, CustomerSummary, Ink, Plate, PrintingPricingTier } from './types'
 
 function tierKey(t: { method: string; max_print_width_mm: number; num_colours: number }) {
@@ -238,9 +239,17 @@ export function PrintingAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Printing"
-        subtitle="Printing pricing tiers, Uteco anilox master data, inks, and plates."
+        subtitle="Uteco schedule lane, printing pricing tiers, anilox master data, inks, and plates."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
+
+      <ScheduleMachinesSection
+        machineType="printer_uteco"
+        title="Production schedule — Uteco (out-of-line printer)"
+        description="Lanes shown on the Schedule board for Uteco printing. Typically one machine; add another row if you run multiple Uteco lines."
+        defaultCapability={SCHEDULE_CAPABILITY_DEFAULTS.printer_uteco}
+        footerHint="Inactive printers are hidden from the schedule. Capability JSON drives future width/colour checks — adjust to match your Uteco line."
+      />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import (
@@ -22,21 +23,24 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.db.models import Base
+from app.db.models.rate_cards import Extruder
+from app.db.models.sql_types import OrderStatusColumn
 from app.db.models.enums import (
     DispatchStatus,
     InventoryCategory,
     JobQCSummaryStatus,
     JobStatus,
-    QueueStatus,
     MachineType,
     OperationType,
     OrderStatus,
     QCCheckResult,
     QCSource,
+    QueueStatus,
     RunStatus,
     SensorProtocol,
     SensorType,
     ToolReservationStatus,
+    enum_db_values,
 )
 
 
@@ -122,6 +126,10 @@ class JobSheet(Base):
     due_date: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
     quantity_value: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     quantity_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    qty_type: Mapped[str] = mapped_column(String(16), nullable=False, default="kg")
+    num_product_units: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    weight_per_roll_kg: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    num_rolls: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     unit_rate: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -130,6 +138,9 @@ class JobSheet(Base):
     customer: Mapped["Customer"] = relationship()
     product: Mapped["Product"] = relationship()
     version: Mapped["ProductVersion"] = relationship()
+    standalone_jobs: Mapped[list["Job"]] = relationship(
+        back_populates="job_sheet", foreign_keys="Job.job_sheet_id"
+    )
 
 
 class OperatorSuggestion(Base):
@@ -158,11 +169,11 @@ class Machine(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
-    type: Mapped[MachineType] = mapped_column(SAEnum(MachineType, name="machine_type"))
+    type: Mapped[MachineType] = mapped_column(
+        SAEnum(MachineType, name="machine_type", native_enum=False, values_callable=enum_db_values)
+    )
     capability: Mapped[dict] = mapped_column(JSON, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    runs: Mapped[list["OperationRun"]] = relationship(back_populates="machine")
 
 
 class Order(Base):
@@ -177,12 +188,12 @@ class Order(Base):
         ForeignKey("product_versions.id", ondelete="RESTRICT"), index=True, nullable=True
     )
     quote_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus, name="order_status"))
+    status: Mapped[OrderStatus] = mapped_column(OrderStatusColumn(), nullable=False)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     order_date: Mapped[Optional[str]] = mapped_column(Date, nullable=True)  # editable; display instead of created_at when set
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
-    jobs: Mapped[list["Job"]] = relationship(back_populates="order")
+    jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order")
 
 
@@ -217,26 +228,32 @@ class OrderItem(Base):
 
 
 class Job(Base):
+    """Manufacturing job. Either tied to an order line (order_id + job_code) or standalone (job_sheet_id only)."""
+
     __tablename__ = "jobs"
-    __table_args__ = (UniqueConstraint("order_id", "job_code", name="uq_job_order_jobcode"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
+    order_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    job_sheet_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("job_sheets.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     job_code: Mapped[int] = mapped_column(Integer)
     run_index: Mapped[int] = mapped_column(Integer, default=0)
     planned_qty: Mapped[float] = mapped_column(Numeric(18, 6))
     produced_qty: Mapped[float] = mapped_column(Numeric(18, 6), default=0)
     allocated_order_units: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
-    status: Mapped[JobStatus] = mapped_column(SAEnum(JobStatus, name="job_status"))
+    status: Mapped[JobStatus] = mapped_column(
+        SAEnum(JobStatus, name="job_status", native_enum=False, values_callable=enum_db_values)
+    )
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    order: Mapped["Order"] = relationship(back_populates="jobs")
-    runs: Mapped[list["OperationRun"]] = relationship(back_populates="job")
-
-    __table_args__ = (
-        UniqueConstraint("order_id", "job_code", name="uq_job_order_jobcode"),
-        Index("ix_job_order", "order_id"),
+    order: Mapped[Optional["Order"]] = relationship(back_populates="jobs", foreign_keys=[order_id])
+    job_sheet: Mapped[Optional["JobSheet"]] = relationship(
+        back_populates="standalone_jobs", foreign_keys=[job_sheet_id]
     )
+    runs: Mapped[list["OperationRun"]] = relationship(back_populates="job")
 
 
 class OperationRun(Base):
@@ -244,14 +261,29 @@ class OperationRun(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), index=True)
-    operation_type: Mapped[OperationType] = mapped_column(SAEnum(OperationType, name="operation_type"))
-    machine_id: Mapped[str] = mapped_column(ForeignKey("machines.id", ondelete="RESTRICT"), index=True)
-    status: Mapped[RunStatus] = mapped_column(SAEnum(RunStatus, name="run_status"))
+    operation_type: Mapped[OperationType] = mapped_column(
+        SAEnum(OperationType, name="operation_type", native_enum=False, values_callable=enum_db_values)
+    )
+    # Exactly one lane target should be set per run (extrusion rate card vs Uteco printer vs bagging machine).
+    extruder_code: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("extruders.extruder_code", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    uteco_printer_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("uteco_printers.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    bagging_machine_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("bagging_machines.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    status: Mapped[RunStatus] = mapped_column(
+        SAEnum(RunStatus, name="run_status", native_enum=False, values_callable=enum_db_values)
+    )
     started_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     job: Mapped["Job"] = relationship(back_populates="runs")
-    machine: Mapped["Machine"] = relationship(back_populates="runs")
+    extruder: Mapped[Optional["Extruder"]] = relationship(foreign_keys=[extruder_code])
+    uteco_printer: Mapped[Optional["UtecoPrinter"]] = relationship(foreign_keys=[uteco_printer_id])
+    bagging_machine: Mapped[Optional["BaggingMachine"]] = relationship(foreign_keys=[bagging_machine_id])
     outputs: Mapped[list["RunOutputEntry"]] = relationship(back_populates="run")
 
 
@@ -270,22 +302,95 @@ class RunOutputEntry(Base):
     run: Mapped["OperationRun"] = relationship(back_populates="outputs")
 
 
-# Scheduling queue
-class MachineQueueItem(Base):
-    __tablename__ = "machine_queue_items"
+# Scheduling lanes (extrusion uses rate-card extruders; Uteco / bagging have dedicated tables)
+class UtecoPrinter(Base):
+    __tablename__ = "uteco_printers"
+    __table_args__ = (UniqueConstraint("code", name="uq_uteco_printers_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    capability: Mapped[dict] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class BaggingMachine(Base):
+    __tablename__ = "bagging_machines"
+    __table_args__ = (UniqueConstraint("code", name="uq_bagging_machines_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    capability: Mapped[dict] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ExtrusionQueueItem(Base):
+    __tablename__ = "extrusion_queue_items"
     __table_args__ = (
-        UniqueConstraint("machine_id", "position", name="uq_queue_machine_position"),
-        Index("ix_queue_machine", "machine_id"),
-        Index("ix_queue_job", "job_id"),
+        UniqueConstraint("extruder_code", "position", name="uq_extrusion_queue_lane_position"),
+        Index("ix_extrusion_queue_extruder", "extruder_code"),
+        Index("ix_extrusion_queue_job", "job_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    machine_id: Mapped[str] = mapped_column(ForeignKey("machines.id", ondelete="RESTRICT"), index=True)
+    extruder_code: Mapped[str] = mapped_column(
+        ForeignKey("extruders.extruder_code", ondelete="RESTRICT"), index=True
+    )
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), index=True)
     position: Mapped[int] = mapped_column(Integer)
-    status: Mapped[QueueStatus] = mapped_column(SAEnum(QueueStatus, name="queue_status"))
+    status: Mapped[QueueStatus] = mapped_column(
+        SAEnum(QueueStatus, name="queue_status", native_enum=False, values_callable=enum_db_values)
+    )
+    operating_hours_lead_before: Mapped[float] = mapped_column(Numeric(14, 4), default=0, server_default="0")
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    extruder: Mapped["Extruder"] = relationship(back_populates="extrusion_queue_items", foreign_keys=[extruder_code])
+
+
+class UtecoQueueItem(Base):
+    __tablename__ = "uteco_queue_items"
+    __table_args__ = (
+        UniqueConstraint("uteco_printer_id", "position", name="uq_uteco_queue_lane_position"),
+        Index("ix_uteco_queue_printer", "uteco_printer_id"),
+        Index("ix_uteco_queue_job", "job_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    uteco_printer_id: Mapped[str] = mapped_column(ForeignKey("uteco_printers.id", ondelete="RESTRICT"), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    status: Mapped[QueueStatus] = mapped_column(
+        SAEnum(QueueStatus, name="queue_status", native_enum=False, values_callable=enum_db_values)
+    )
+    operating_hours_lead_before: Mapped[float] = mapped_column(Numeric(14, 4), default=0, server_default="0")
+    created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    uteco_printer: Mapped["UtecoPrinter"] = relationship(foreign_keys=[uteco_printer_id])
+
+
+class BaggingQueueItem(Base):
+    __tablename__ = "bagging_queue_items"
+    __table_args__ = (
+        UniqueConstraint("bagging_machine_id", "position", name="uq_bagging_queue_lane_position"),
+        Index("ix_bagging_queue_machine", "bagging_machine_id"),
+        Index("ix_bagging_queue_job", "job_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    bagging_machine_id: Mapped[str] = mapped_column(ForeignKey("bagging_machines.id", ondelete="RESTRICT"), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    status: Mapped[QueueStatus] = mapped_column(
+        SAEnum(QueueStatus, name="queue_status", native_enum=False, values_callable=enum_db_values)
+    )
+    operating_hours_lead_before: Mapped[float] = mapped_column(Numeric(14, 4), default=0, server_default="0")
+    created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    bagging_machine: Mapped["BaggingMachine"] = relationship(foreign_keys=[bagging_machine_id])
 
 
 # QC evidence
@@ -299,9 +404,14 @@ class QCReading(Base):
     sensor_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     check_type: Mapped[str] = mapped_column(String(100))
     value: Mapped[dict] = mapped_column(JSON)
-    result: Mapped[QCCheckResult] = mapped_column(SAEnum(QCCheckResult, name="qc_check_result"))
+    result: Mapped[QCCheckResult] = mapped_column(
+        SAEnum(QCCheckResult, name="qc_check_result", native_enum=False, values_callable=enum_db_values)
+    )
     recorded_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    source: Mapped[QCSource] = mapped_column(SAEnum(QCSource, name="qc_source"), default=QCSource.SENSOR)
+    source: Mapped[QCSource] = mapped_column(
+        SAEnum(QCSource, name="qc_source", native_enum=False, values_callable=enum_db_values),
+        default=QCSource.SENSOR,
+    )
 
 
 class QCCheck(Base):
@@ -314,12 +424,15 @@ class QCCheck(Base):
     check_type: Mapped[str] = mapped_column(String(100))
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     result: Mapped[Optional[QCCheckResult]] = mapped_column(
-        SAEnum(QCCheckResult, name="qc_check_result"), nullable=True
+        SAEnum(QCCheckResult, name="qc_check_result", native_enum=False, values_callable=enum_db_values),
+        nullable=True,
     )
     numeric_values: Mapped[dict] = mapped_column(JSON, default=dict)
     measured_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     timestamp: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    source: Mapped[QCSource] = mapped_column(SAEnum(QCSource, name="qc_source"))
+    source: Mapped[QCSource] = mapped_column(
+        SAEnum(QCSource, name="qc_source", native_enum=False, values_callable=enum_db_values)
+    )
     reading_ref: Mapped[Optional[str]] = mapped_column(
         ForeignKey("qc_readings.id", ondelete="RESTRICT"), nullable=True
     )
@@ -336,7 +449,7 @@ class JobQCSummary(Base):
     final_checklist: Mapped[dict] = mapped_column(JSON, default=dict)
     deviations: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[JobQCSummaryStatus] = mapped_column(
-        SAEnum(JobQCSummaryStatus, name="job_qc_summary_status")
+        SAEnum(JobQCSummaryStatus, name="job_qc_summary_status", native_enum=False, values_callable=enum_db_values)
     )
     created_by: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -349,7 +462,9 @@ class InventoryItem(Base):
     __tablename__ = "inventory_items"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    category: Mapped[InventoryCategory] = mapped_column(SAEnum(InventoryCategory, name="inventory_category"))
+    category: Mapped[InventoryCategory] = mapped_column(
+        SAEnum(InventoryCategory, name="inventory_category", native_enum=False, values_callable=enum_db_values)
+    )
     uom: Mapped[str] = mapped_column(String(32))
     name: Mapped[str] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -362,7 +477,9 @@ class InventoryTransaction(Base):
     item_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=True, index=True
     )
-    category: Mapped[InventoryCategory] = mapped_column(SAEnum(InventoryCategory, name="inventory_category"))
+    category: Mapped[InventoryCategory] = mapped_column(
+        SAEnum(InventoryCategory, name="inventory_category", native_enum=False, values_callable=enum_db_values)
+    )
     quantity: Mapped[float] = mapped_column(Numeric(18, 6))
     uom: Mapped[str] = mapped_column(String(32))
     job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=True)
@@ -382,7 +499,9 @@ class DispatchRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), unique=True)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
-    dispatch_status: Mapped[DispatchStatus] = mapped_column(SAEnum(DispatchStatus, name="dispatch_status"))
+    dispatch_status: Mapped[DispatchStatus] = mapped_column(
+        SAEnum(DispatchStatus, name="dispatch_status", native_enum=False, values_callable=enum_db_values)
+    )
     packaging: Mapped[dict] = mapped_column(JSON, default=dict)
     dispatch_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -419,13 +538,17 @@ class ToolMount(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tool_id: Mapped[str] = mapped_column(ForeignKey("tools.id", ondelete="RESTRICT"), index=True)
-    machine_id: Mapped[str] = mapped_column(ForeignKey("machines.id", ondelete="RESTRICT"), index=True)
+    extruder_code: Mapped[str] = mapped_column(
+        ForeignKey("extruders.extruder_code", ondelete="RESTRICT"), index=True
+    )
     mounted_from: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True))
     mounted_to: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("mounted_to IS NULL OR mounted_to >= mounted_from", name="ck_tool_mount_window"),
     )
+
+    extruder: Mapped["Extruder"] = relationship(foreign_keys=[extruder_code])
 
 
 class ToolReservation(Base):
@@ -436,18 +559,38 @@ class ToolReservation(Base):
     tool_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("tools.id", ondelete="RESTRICT"), nullable=True, index=True
     )
-    machine_id: Mapped[str] = mapped_column(ForeignKey("machines.id", ondelete="RESTRICT"), index=True)
+    extruder_code: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("extruders.extruder_code", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    uteco_printer_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("uteco_printers.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    bagging_machine_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("bagging_machines.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     planned_from: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True))
     planned_to: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True))
     status: Mapped[ToolReservationStatus] = mapped_column(
-        SAEnum(ToolReservationStatus, name="tool_reservation_status"), default=ToolReservationStatus.PLANNED
+        SAEnum(
+            ToolReservationStatus,
+            name="tool_reservation_status",
+            native_enum=False,
+            values_callable=enum_db_values,
+        ),
+        default=ToolReservationStatus.PLANNED,
     )
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), index=True)
-    operation_type: Mapped[OperationType] = mapped_column(SAEnum(OperationType, name="operation_type"))
+    operation_type: Mapped[OperationType] = mapped_column(
+        SAEnum(OperationType, name="operation_type", native_enum=False, values_callable=enum_db_values)
+    )
 
     __table_args__ = (
         CheckConstraint("planned_to >= planned_from", name="ck_tool_reservation_window"),
     )
+
+    extruder: Mapped[Optional["Extruder"]] = relationship(foreign_keys=[extruder_code])
+    uteco_printer: Mapped[Optional["UtecoPrinter"]] = relationship(foreign_keys=[uteco_printer_id])
+    bagging_machine: Mapped[Optional["BaggingMachine"]] = relationship(foreign_keys=[bagging_machine_id])
 
 
 # MVP+ Sensors/Telemetry
@@ -456,8 +599,12 @@ class Sensor(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     machine_id: Mapped[str] = mapped_column(ForeignKey("machines.id", ondelete="RESTRICT"), index=True)
-    type: Mapped[SensorType] = mapped_column(SAEnum(SensorType, name="sensor_type"))
-    protocol: Mapped[SensorProtocol] = mapped_column(SAEnum(SensorProtocol, name="sensor_protocol"))
+    type: Mapped[SensorType] = mapped_column(
+        SAEnum(SensorType, name="sensor_type", native_enum=False, values_callable=enum_db_values)
+    )
+    protocol: Mapped[SensorProtocol] = mapped_column(
+        SAEnum(SensorProtocol, name="sensor_protocol", native_enum=False, values_callable=enum_db_values)
+    )
     unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sensor_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -488,5 +635,31 @@ class TelemetryEvent(Base):
     value: Mapped[dict] = mapped_column(JSON)
     quality_flag: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+
+
+class ProductionOperatingSettings(Base):
+    """Singleton (id=1): default weekly hours + timezone for Gantt / scheduling."""
+
+    __tablename__ = "production_operating_settings"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_production_operating_settings_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Australia/Brisbane")
+    gantt_preview_weeks: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    week_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ProductionCalendarException(Base):
+    """Per-date overrides: public holiday (closed), early close, late open."""
+
+    __tablename__ = "production_calendar_exceptions"
+    __table_args__ = (UniqueConstraint("exception_date", name="uq_production_calendar_exception_date"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    exception_date: Mapped[date] = mapped_column(Date, nullable=False)
+    closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    open_time: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    close_time: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
 

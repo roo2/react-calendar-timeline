@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import Boolean, CheckConstraint, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 
 from app.db.models import Base
-from app.db.models.enums import PrintingMethod
+
+if TYPE_CHECKING:
+    from app.db.models.domain import ExtrusionQueueItem
+from app.db.models.enums import PrintingMethod, enum_db_values
 
 
 class Resin(Base):
@@ -128,7 +133,9 @@ class PrintingRate(Base):
     __tablename__ = "printing_rates"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    method: Mapped[PrintingMethod] = mapped_column(SAEnum(PrintingMethod, name="printing_method"))
+    method: Mapped[PrintingMethod] = mapped_column(
+        SAEnum(PrintingMethod, name="printing_method", native_enum=False, values_callable=enum_db_values)
+    )
     min_meters: Mapped[float] = mapped_column(Numeric(12, 2))
     cost_per_1000m: Mapped[float] = mapped_column(Numeric(12, 4))
     setup_minutes: Mapped[int] = mapped_column(Integer)
@@ -261,6 +268,10 @@ class Extruder(Base):
     average_kg_hr: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ave_width: Mapped[float | None] = mapped_column(Numeric(12, 3), nullable=True)
     cost_per_hr: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+
+    extrusion_queue_items: Mapped[list["ExtrusionQueueItem"]] = relationship(
+        back_populates="extruder", foreign_keys="ExtrusionQueueItem.extruder_code"
+    )
 
     __table_args__ = (
         CheckConstraint("cost_per_hr IS NULL OR cost_per_hr >= 0", name="ck_extruders_cost_per_hr_nonneg"),

@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from 'react'
+import { Fragment, StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Provider } from 'react-redux'
 import { BrowserRouter } from 'react-router-dom'
@@ -59,16 +59,22 @@ function GlobalWheelGuard() {
   return null
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Provider store={store}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <GlobalWheelGuard />
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </ThemeProvider>
-    </Provider>
-  </StrictMode>,
+/**
+ * StrictMode double-invokes effects in dev (e.g. schedule page fetches gantt twice).
+ * Set VITE_REACT_STRICT_MODE=true to re-enable. Production behaviour is unchanged.
+ */
+const AppTree = (
+  <Provider store={store}>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <GlobalWheelGuard />
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ThemeProvider>
+  </Provider>
 )
+
+const RootWrapper = import.meta.env.VITE_REACT_STRICT_MODE === 'true' ? StrictMode : Fragment
+
+createRoot(document.getElementById('root')!).render(<RootWrapper>{AppTree}</RootWrapper>)

@@ -21,7 +21,12 @@ function toUpsertError(e: unknown): UpsertError | null {
   const { fieldErrors, messages } = parseFastApiValidationDetail(e.body?.detail)
   const hasFieldErrors = Object.keys(fieldErrors).length > 0
   return {
-    message: hasFieldErrors ? 'Please fix the highlighted fields and try again.' : e.message || 'Request failed',
+    message:
+      hasFieldErrors && messages.length > 0
+        ? messages.join(' · ')
+        : hasFieldErrors
+          ? 'Please fix the highlighted fields and try again.'
+          : e.message || 'Request failed',
     fieldErrors,
     messages,
   }

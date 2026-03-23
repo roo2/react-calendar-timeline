@@ -585,7 +585,16 @@ export function SpecPayloadForm(props: {
               onChange={(e) =>
                 update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
               }
-              error={!!errorFor('spec.packaging.bags_per_carton')}
+              required
+              error={
+                !!errorFor('spec.packaging.bags_per_carton') ||
+                (!!errorFor('spec.packaging') && finishMode === 'Cartons')
+              }
+              helperText={
+                errorFor('spec.packaging.bags_per_carton') ||
+                (finishMode === 'Cartons' ? errorFor('spec.packaging') : '') ||
+                ''
+              }
             />
           )}
         </Box>
@@ -1670,6 +1679,8 @@ export function SpecPayloadForm(props: {
               defaultValue={cartonOptions.find((o) => o.is_default)?.slug ?? cartonOptions[0]?.slug ?? ''}
               value={packaging.carton_option_slug ?? (cartonOptions.find((o) => o.is_default)?.slug ?? cartonOptions[0]?.slug ?? '')}
               onChange={(e) => update((d) => (d.packaging.carton_option_slug = e.target.value || null))}
+              error={!!errorFor('spec.packaging.carton_option_slug')}
+              helperText={errorFor('spec.packaging.carton_option_slug') || ''}
             >
               <MenuItem value="">—</MenuItem>
               {cartonOptions.map((opt) => (

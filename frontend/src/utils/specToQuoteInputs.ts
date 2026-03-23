@@ -1,0 +1,148 @@
+/**
+ * Build QuickQuoteInputs from a product SpecPayload + quantity slice (for Job Sheet / shared tooling).
+ */
+
+import type { SpecPayload } from '../components/SpecPayloadForm'
+import type { QuickQuoteInputs } from './quoteCalculator'
+import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
+import { productTypeCanHaveGusset } from './specCompat'
+
+function baseLengthMmFromDimensions(dim: any): number {
+  const raw = Number(dim?.base_length_mm || 0)
+  const units = dim?.length_units === 'm' ? 'm' : 'mm'
+  if (units === 'm') return Math.round(raw * 1000)
+  return Math.round(raw)
+}
+
+function runUpToNumber(runUp: string | undefined): number | null {
+  if (!runUp || runUp === 'none') return 1
+  if (runUp === '2up') return 2
+  if (runUp === '4up') return 4
+  if (runUp === '6up') return 6
+  return 1
+}
+
+function mapPrintMethod(m: string | undefined): 'None' | 'Inline' | 'Uteco' {
+  if (m === 'Inline') return 'Inline'
+  if (m === 'Uteco') return 'Uteco'
+  return 'None'
+}
+
+function mapRollBilling(
+  v: string | undefined,
+): 'core_included' | 'core_off' | 'core_half_off' | null {
+  if (v === 'core_half_off') return 'core_half_off'
+  if (v === 'core_off') return 'core_off'
+  if (v === 'core_included') return 'core_included'
+  return 'core_included'
+}
+
+export type SpecQuantitySlice = {
+  qtyType: QtyType
+  totalKg: number
+  numUnits: number
+  numRolls: number
+  weightPerRoll: number
+}
+
+/**
+ * Convert SpecPayload + quantity numbers into QuickQuoteInputs for computeDerivedGeometryAndTotals.
+ */
+export function buildQuickQuoteInputsFromSpec(
+  spec: SpecPayload,
+  quantity: SpecQuantitySlice,
+  opts?: { extruderCode?: string | null },
+): QuickQuoteInputs {
+  const id = (spec as any).identity || {}
+  const dim = (spec as any).dimensions || {}
+  const form = (spec as any).formulation || {}
+  const print = (spec as any).printing || {}
+  const pack = (spec as any).packaging || {}
+  const run = (spec as any).run_requirements || {}
+
+  const productType = id.product_type || 'Bag'
+  const canHaveGusset = productTypeCanHaveGusset(productType)
+  const flagGusset = dim.geometry === 'Gusset' && canHaveGusset
+  const derivedGeometry: 'Flat' | 'Gusset' = flagGusset ? 'Gusset' : 'Flat'
+
+  const finishMode: FinishMode = id.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+  const baseLengthMm = baseLengthMmFromDimensions(dim)
+  const widthMmNum = Math.round(Number(dim.base_width_mm || 0))
+  const ufilmLeftWidthMmNum = Math.round(Number(dim.ufilm_left_width_mm || 0))
+  const ufilmRightWidthMmNum = Math.round(Number(dim.ufilm_right_width_mm || 0))
+  const thicknessUmNum = Math.round(Number(dim.thickness_um || 0))
+  const gussetReturnMmNum = Math.round(Number(dim.gusset_mm || 0))
+  const isUFilm = productType === 'U-Film'
+
+  const showRunUp = !isUFilm && (productType === 'Sheet' || productType === 'Centerfold')
+  const runUp = showRunUp ? runUpToNumber(run.run_up) : 1
+
+  const blend = Array.isArray(form.blend)
+    ? form.blend.map((c: any) => ({ resin_code: String(c.resin_code || '').trim(), pct: Number(c.pct) || 0 }))
+    : []
+
+  const colourComponents = Array.isArray(form.colour_components)
+    ? form.colour_components
+        .map((c: any) => ({
+          colour_code: String(c.colour_code || '').trim(),
+          strength_pct: c.strength_pct != null ? Number(c.strength_pct) : null,
+        }))
+        .filter((c: any) => c.colour_code && c.strength_pct != null && Number(c.strength_pct) > 0)
+    : []
+
+  const additives = Array.isArray(form.additives)
+    ? form.additives
+        .filter((a: any) => (a.additive_code || '').trim())
+        .map((a: any) => ({
+          additive_code: String(a.additive_code || '').trim(),
+          pct: a.pct != null ? Number(a.pct) : null,
+        }))
+    : []
+
+  const printMethod = mapPrintMethod(print.method)
+  const numColours = printMethod !== 'None' ? Math.max(0, Math.round(Number(print.num_colours || 0))) : 0
+
+  const trimPct = id.trim_pct != null && id.trim_pct !== '' ? Number(id.trim_pct) : null
+
+  const qty = buildQuantityObjectForCalculator(
+    quantity.qtyType,
+    finishMode,
+    quantity.totalKg,
+    quantity.numRolls,
+    quantity.weightPerRoll,
+    quantity.numUnits,
+    baseLengthMm,
+  )
+
+  return {
+    requested_margin: 0,
+    product_type: productType,
+    geometry: derivedGeometry,
+    base_width_mm: widthMmNum,
+    run_up: showRunUp ? runUp : null,
+    ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
+    ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+    thickness_um: thicknessUmNum,
+    base_length_mm: baseLengthMm,
+    continuous_roll: false,
+    inline_perforation: !!run.inline_perforation,
+    inline_seal: !!run.inline_seal,
+    hole_punched: !!run.hole_punched,
+    gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
+    trim_pct: trimPct,
+    resin_blend_code: form.blend_type != null ? String(form.blend_type) : null,
+    print_method: printMethod,
+    num_colours: numColours,
+    finish_mode: finishMode,
+    bags_per_carton: finishMode === 'Cartons' ? (pack.bags_per_carton != null ? Number(pack.bags_per_carton) : null) : null,
+    carton_option_slug: finishMode === 'Cartons' ? (pack.carton_option_slug ?? null) : null,
+    core_type: pack.core_type != null ? String(pack.core_type) : '7mm',
+    roll_weight_billing: finishMode === 'Rolls' ? mapRollBilling(id.roll_weight_billing) : null,
+    extruder_code: opts?.extruderCode ?? null,
+    colour_components: colourComponents,
+    additives,
+    blend: blend.length ? blend : undefined,
+    resin_code: blend.length ? null : 'LDPE',
+    quantity: qty,
+  }
+}

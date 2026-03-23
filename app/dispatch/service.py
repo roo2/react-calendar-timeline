@@ -46,14 +46,12 @@ def _now() -> datetime:
 
 
 def _get_job_ctx(session: Session, job_id: uuid.UUID) -> Tuple[Job, Order, Optional[ProductVersion], Optional[Customer]]:
-	job: Optional[Job] = session.get(Job, job_id)
-	if not job:
-		raise DomainError("Job not found")
-	order: Optional[Order] = session.get(Order, job.order_id)
+	from app.job_context import resolve_job_context
+
+	job, order, pv = resolve_job_context(session, job_id)
 	if not order:
-		raise DomainError("Order not found for job")
-	pv: Optional[ProductVersion] = session.get(ProductVersion, order.product_version_id)
-	customer: Optional[Customer] = session.get(Customer, order.customer_id) if order else None
+		raise DomainError("Dispatch is only available for jobs linked to an order")
+	customer: Optional[Customer] = session.get(Customer, order.customer_id)
 	return job, order, pv, customer
 
 

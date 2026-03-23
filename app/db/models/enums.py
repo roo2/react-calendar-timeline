@@ -113,10 +113,6 @@ class PrintingMethod(str, Enum):
     UTECO = "uteco"
 
 
-class QueueStatus(str, Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    REMOVED = "removed"
-
-
+def enum_db_values(py_enum: type[Enum]) -> list[str]:
+    """Strings persisted in VARCHAR enum columns (Alembic uses native_enum=False)."""
+    return [member.value for member in py_enum]

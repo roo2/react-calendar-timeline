@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class StartRunRequest(BaseModel):
     job_id: uuid.UUID
-    machine_id: uuid.UUID
+    machine_id: str  # lane id: extruder_code or Uteco/bagger UUID
     operation_type: str
 
 

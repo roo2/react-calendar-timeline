@@ -117,6 +117,10 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
                         due_date=due_dt,
                         quantity_value=float(payload.quantity_value),
                         quantity_unit=str(payload.quantity_unit),
+                        qty_type=str(payload.qty_type),
+                        num_product_units=payload.num_product_units,
+                        weight_per_roll_kg=payload.weight_per_roll_kg,
+                        num_rolls=int(payload.num_rolls),
                         created_by=created_by or "system",
                     )
                     db.add(js)
@@ -145,6 +149,10 @@ def create_job_sheet_from_product_latest_version(
     created_by: str,
     unit_rate: Optional[float] = None,
     line_total: Optional[float] = None,
+    qty_type: Optional[str] = None,
+    num_product_units: Optional[float] = None,
+    weight_per_roll_kg: Optional[float] = None,
+    num_rolls: Optional[int] = None,
 ) -> JobSheet:
     """
     Create a job sheet that references the product's *current active version*.
@@ -164,6 +172,12 @@ def create_job_sheet_from_product_latest_version(
     if not product.active_version_id:
         raise DomainError("Product has no active version")
 
+    qt, npu0, wpr0, nr0 = _infer_qty_fields_for_order_line(
+        float(quantity_value), str(quantity_unit), qty_type, num_rolls
+    )
+    npu = float(num_product_units) if num_product_units is not None else npu0
+    wpr = float(weight_per_roll_kg) if weight_per_roll_kg is not None else wpr0
+
     js: Optional[JobSheet] = None
     last_err: Optional[Exception] = None
     for _ in range(5):
@@ -180,6 +194,10 @@ def create_job_sheet_from_product_latest_version(
                     due_date=due_date,
                     quantity_value=float(quantity_value),
                     quantity_unit=str(quantity_unit),
+                    qty_type=qt,
+                    num_product_units=npu,
+                    weight_per_roll_kg=wpr,
+                    num_rolls=int(nr0),
                     unit_rate=float(unit_rate) if unit_rate is not None else None,
                     line_total=float(line_total) if line_total is not None else None,
                     created_by=created_by or "system",
@@ -195,6 +213,34 @@ def create_job_sheet_from_product_latest_version(
     if js is None:
         raise DomainError("Failed to allocate job number") from last_err
     return js
+
+
+def _infer_qty_fields_for_order_line(
+    quantity_value: float,
+    quantity_unit: str,
+    qty_type: Optional[str],
+    num_rolls: Optional[int],
+) -> tuple[str, Optional[float], Optional[float], int]:
+    """Defaults for job sheets created from orders when extended fields are not passed."""
+    qu = str(quantity_unit).lower()
+    if qty_type:
+        qt = str(qty_type)
+    elif qu == "rolls":
+        qt = "total_rolls"
+    elif qu == "kg":
+        qt = "kg"
+    elif qu in ("bags", "meters"):
+        qt = "units"
+    else:
+        qt = "kg"
+    nr = num_rolls if num_rolls is not None and int(num_rolls) >= 1 else None
+    if nr is None:
+        if qt == "total_rolls" or qu == "rolls":
+            nr = max(1, int(round(float(quantity_value))))
+        else:
+            nr = 1
+    npu: Optional[float] = float(quantity_value) if qt == "units" else None
+    return qt, npu, None, int(nr)
 
 
 def list_job_sheets(customer_id: Optional[str] = None) -> List[JobSheet]:
@@ -283,6 +329,10 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         # Update scalar fields
         js.quantity_value = float(payload.quantity_value)
         js.quantity_unit = str(payload.quantity_unit)
+        js.qty_type = str(payload.qty_type)
+        js.num_product_units = payload.num_product_units
+        js.weight_per_roll_kg = payload.weight_per_roll_kg
+        js.num_rolls = int(payload.num_rolls)
         js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
 
         upd = payload.model_dump(exclude_unset=True)

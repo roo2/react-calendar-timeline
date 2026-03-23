@@ -9,6 +9,7 @@ from app.products.schemas import SpecPayload
 
 
 QuantityUnit = Literal["kg", "rolls", "bags", "meters"]
+QtyType = Literal["kg", "units", "total_rolls"]
 
 
 class JobSheetCreateRequest(BaseModel):
@@ -18,6 +19,10 @@ class JobSheetCreateRequest(BaseModel):
     due_date: Optional[date] = None
     quantity_value: float = Field(..., gt=0)
     quantity_unit: QuantityUnit
+    qty_type: QtyType = "kg"
+    num_product_units: Optional[float] = None
+    weight_per_roll_kg: Optional[float] = None
+    num_rolls: int = Field(..., ge=1, description="Roll count for scheduling (required for production Gantt).")
     spec: SpecPayload
 
 
@@ -32,6 +37,10 @@ class JobSheetSummary(BaseModel):
     due_date: Optional[str] = None
     quantity_value: float
     quantity_unit: str
+    qty_type: str = "kg"
+    num_product_units: Optional[float] = None
+    weight_per_roll_kg: Optional[float] = None
+    num_rolls: int = 1
     created_by: str
     created_at: Optional[str] = None
     # Product summary fields (denormalized for listing UI)
@@ -53,6 +62,10 @@ class JobSheetUpdateRequest(BaseModel):
     due_date: Optional[date] = None
     quantity_value: float = Field(..., gt=0)
     quantity_unit: QuantityUnit
+    qty_type: QtyType = "kg"
+    num_product_units: Optional[float] = None
+    weight_per_roll_kg: Optional[float] = None
+    num_rolls: int = Field(..., ge=1)
     # If provided, a new ProductVersion is created and the job sheet is updated
     # to reference it (and the product's active version is advanced).
     spec: Optional[SpecPayload] = None

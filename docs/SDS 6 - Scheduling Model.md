@@ -309,11 +309,12 @@ Adding a new machine automatically creates a new lane.
 
 Timeline & Operating Calendar
 
-Default operating window: 24 hours/day, 4 days/week, starting Monday 04:30 through Friday 04:30.
+Production hours are configured in **Admin → Production hours** (singleton settings + per-date exceptions).
 
-Configurable to up to 24/7 operation.
-
-Calendar exceptions are also configurable. e.g. public holidays, maintenance windows
+- **Weekly pattern**: For each weekday, enable/disable and set open/close times (HH:MM; use `24:00` for end of day). Default: Mon–Thu 24h, Fri until 16:30, Sat–Sun closed (factory timezone fixed to `Australia/Brisbane`).
+- **Exceptions**: Public holidays (`closed`), or **early close** / **late open** via optional open/close overrides for that date.
+- **Gantt**: Tentative bar start/finish times advance only during **operating** hours (nights, weekends, and closed days are skipped). Example: a 24h job starting Friday afternoon completes across the weekend on the following Monday evening in wall-clock terms.
+- **Preview window**: Axis spans at least `gantt_preview_weeks` (default 4) and extends if queued work finishes later.
 
 Bars (Job Operations)
 
@@ -343,7 +344,7 @@ This aids grouping like‑for‑like jobs to reduce changeover waste.
 
 Duration Estimates (Displayed on Bars)
 
-Extrusion: estimated_time = estimated_kg / extruder_rate_kg_per_hour (from rate cards), adjusted by width/thickness yields.
+Extrusion (implemented): `estimated_kg` from product spec, in order: `run_requirements.total_kg` / `extrusion_kg` / `film_kg`, else `totals.total_kg`, else heuristic `max(planned_qty × 0.5, 1)` kg. For each **queue lane**, `extruder_rate_kg_per_hour` is `extruders.average_kg_hr` where `extruders.extruder_code` = that lane’s `machines.code` (Admin → Extrusion rate cards). If there is no matching extruder row or `average_kg_hr` is null, **100** kg/h is used. Bar duration = `max(0.25 h, estimated_kg / rate)`. (Width/gauge–specific yields are not applied in code yet.)
 
 Uteco printing: estimated_time = web_length_m / printer_speed_m_per_min + setup_allowance; colour count influences setup.
 
@@ -388,6 +389,8 @@ Visuals
 Each operation bar shows badges for required tools and a thin coloured bar below the machine's lane indicating that the tool is required for the duration of that job.
 
 When tools are unused, they will be represented in a "tool box" lane (one lane for extrusion tools, one lane for conversion tools). The unused tools will be represented as a thin bar within this lane, colour coded for the tool type.
+
+**Implemented (MVP):** Extruder schedule cards show a horizontal colour strip at the bottom of each bar for required extrusion tools (inline print, inline perforation, hole punch — derived from product spec). A **Tools** row below the extruder lanes shows pool balance (available / total active; reserved = queued extrusion reservations). **Admin → Tools** registers physical units (`tools` table) per `tool_type`; tool types are seeded in migrations (`inline_printer_1c`, `inline_perforator`, `inline_hole_punch`, `electra_punch`, …).
 
 Hover shows tool name and highlights availability.
 

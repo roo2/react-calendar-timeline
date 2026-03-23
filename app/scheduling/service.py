@@ -1,35 +1,57 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
-from typing import Iterable, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, func, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import exists, func, select
+from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.db.models.domain import (
+	BaggingQueueItem,
+	Customer,
+	ExtrusionQueueItem,
 	Job,
-	Machine,
-	MachineQueueItem,
 	OperationRun,
 	Order,
+	OrderItem,
+	Product,
 	ProductVersion,
 	Tool,
 	ToolReservation,
 	ToolType,
+	UtecoQueueItem,
+	JobSheet,
 )
 from app.db.models.enums import (
 	JobStatus,
-	MachineType,
 	OperationType,
 	QueueStatus,
 	RunStatus,
 	ToolReservationStatus,
 	PrintingMethod,
 )
+from app.job_context import (
+	ensure_jobs_for_orphan_standalone_sheets,
+	ensure_scheduling_job_for_job_sheet,
+	resolve_job_context,
+)
+from app.db.models.rate_cards import Extruder
 from app.exceptions import DomainError
-from app.machines.service import validate_machine_capability
+from app.machines.service import (
+	layflat_width_mm_from_product_version,
+	validate_capability_dict,
+	validate_extruder_for_spec,
+)
+from app.scheduling.lane_context import ScheduleLane, list_active_lanes, resolve_schedule_lane
+from app.production_calendar.logic import (
+	add_operating_hours,
+	calendar_dict_for_gantt,
+	operating_hours_between,
+	snap_to_operating_instant,
+)
+from app.production_calendar.repository import load_operating_context
 from app.scheduling.schemas import (
 	LaneDTO,
 	MachineQueueItemDTO,
@@ -38,55 +60,169 @@ from app.scheduling.schemas import (
 	GanttOverviewDTO,
 	GanttLaneDTO,
 	GanttBarDTO,
+	ToolStripDTO,
+	ToolboxBalanceDTO,
 	JobEstimatesDTO,
 	OperationEstimateDTO,
+	UnqueuedScheduleJobDTO,
 )
 
 
-def _dto_from_item(item: MachineQueueItem) -> MachineQueueItemDTO:
+def _str_id(value: uuid.UUID | str) -> str:
+	"""SQLite binds string PK/FK columns; uuid.UUID objects are not accepted by pysqlite."""
+	return str(value)
+
+
+# UI colours for Gantt tool strips / toolbox (matches frontend fallback)
+_TOOL_STRIP_COLORS: dict[str, str] = {
+	"inline_printer_1c": "#1565c0",
+	"inline_perforator": "#ed6c02",
+	"inline_hole_punch": "#7b1fa2",
+	"electra_punch": "#2e7d32",
+}
+
+
+def _dto_from_item(lane_id: str, item: ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem) -> MachineQueueItemDTO:
 	status_value = item.status.value if hasattr(item.status, "value") else str(item.status)
 	return MachineQueueItemDTO(
 		id=item.id,
-		machine_id=item.machine_id,
+		machine_id=lane_id,
 		job_id=item.job_id,
 		position=item.position,
 		status=status_value,
 	)
 
 
-def _lane_dto(machine_id: uuid.UUID, items: Iterable[MachineQueueItem], warnings: Optional[List[str]] = None, conflicts: Optional[List[ToolConflictDTO]] = None) -> LaneDTO:
+def _queue_item_lead_hours(item: ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem) -> float:
+	v = getattr(item, "operating_hours_lead_before", None)
+	if v is None:
+		return 0.0
+	return float(v)
+
+
+def _cursor_after_queue_prefix(
+	session: Session,
+	lane: ScheduleLane,
+	prefix_items: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem],
+	ctx,
+	anchor_local: datetime,
+) -> datetime:
+	cursor = anchor_local
+	for qi in prefix_items:
+		cursor = add_operating_hours(cursor, _queue_item_lead_hours(qi), ctx)
+		job, _, pv = _get_job_with_context(session, uuid.UUID(str(qi.job_id)))
+		dur = _estimate_lane_duration_hours(session, lane, job, pv)
+		cursor = add_operating_hours(cursor, dur, ctx)
+	return cursor
+
+
+def _best_extruder_insert_for_target_start(
+	session: Session,
+	lane: ScheduleLane,
+	ordered_items_without_new: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem],
+	desired_start_utc: datetime,
+	ctx,
+	anchor_local: datetime,
+) -> Tuple[int, float]:
+	"""
+	Choose insert position (1-based) and operating_hours_lead_before for a new item so its
+	tentative start is as close as possible to desired_start (factory-local interpretation).
+	"""
+	desired_local = desired_start_utc.astimezone(ctx.tz)
+	n = len(ordered_items_without_new)
+	best: Optional[Tuple[float, int, float]] = None
+	for p in range(n + 1):
+		prefix = ordered_items_without_new[:p]
+		cursor_before = _cursor_after_queue_prefix(session, lane, prefix, ctx, anchor_local)
+		ts = snap_to_operating_instant(cursor_before, ctx)
+		if desired_local < ts:
+			lead_new = 0.0
+		else:
+			lead_new = operating_hours_between(ts, desired_local, ctx)
+		start_new = add_operating_hours(cursor_before, lead_new, ctx)
+		diff = abs((start_new - desired_local).total_seconds())
+		if best is None or diff < best[0]:
+			best = (diff, p, lead_new)
+	assert best is not None
+	_, p0, lead_new = best
+	return p0 + 1, lead_new
+
+
+def _gantt_anchor_local(session: Session) -> Tuple[Any, datetime]:
+	ctx = load_operating_context(session)
+	now_utc = datetime.now(tz=timezone.utc)
+	now_local = now_utc.astimezone(ctx.tz)
+	anchor_local = snap_to_operating_instant(now_local, ctx)
+	return ctx, anchor_local
+
+
+def _lane_dto(lane_id: str, items: Iterable[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem], warnings: Optional[List[str]] = None, conflicts: Optional[List[ToolConflictDTO]] = None) -> LaneDTO:
 	return LaneDTO(
-		machine_id=machine_id,
-		items=[_dto_from_item(i) for i in sorted(items, key=lambda x: x.position)],
+		machine_id=lane_id,
+		items=[_dto_from_item(lane_id, i) for i in sorted(items, key=lambda x: x.position)],
 		warnings=warnings or [],
 		conflicts=conflicts or [],
 	)
 
 
-def _load_lane_items_for_update(session: Session, machine_id: uuid.UUID) -> List[MachineQueueItem]:
-	q = (
-		select(MachineQueueItem)
-		.where(MachineQueueItem.machine_id == machine_id)
-		.order_by(MachineQueueItem.position.asc())
-		.with_for_update()
-	)
+def _load_lane_items_for_update(session: Session, lane: ScheduleLane) -> List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem]:
+	if lane.kind == "extrusion" and lane.extruder:
+		q = (
+			select(ExtrusionQueueItem)
+			.where(ExtrusionQueueItem.extruder_code == lane.extruder.extruder_code)
+			.order_by(ExtrusionQueueItem.position.asc())
+			.with_for_update()
+		)
+	elif lane.kind == "uteco" and lane.uteco_printer:
+		q = (
+			select(UtecoQueueItem)
+			.where(UtecoQueueItem.uteco_printer_id == lane.uteco_printer.id)
+			.order_by(UtecoQueueItem.position.asc())
+			.with_for_update()
+		)
+	elif lane.kind == "bagging" and lane.bagging_machine:
+		q = (
+			select(BaggingQueueItem)
+			.where(BaggingQueueItem.bagging_machine_id == lane.bagging_machine.id)
+			.order_by(BaggingQueueItem.position.asc())
+			.with_for_update()
+		)
+	else:
+		raise DomainError("Invalid schedule lane")
 	return list(session.execute(q).scalars().all())
 
 
-def _reindex_lane(items: List[MachineQueueItem]) -> None:
+def _load_lane_items_read(session: Session, lane: ScheduleLane) -> List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem]:
+	if lane.kind == "extrusion" and lane.extruder:
+		q = (
+			select(ExtrusionQueueItem)
+			.where(ExtrusionQueueItem.extruder_code == lane.extruder.extruder_code)
+			.order_by(ExtrusionQueueItem.position.asc())
+		)
+	elif lane.kind == "uteco" and lane.uteco_printer:
+		q = (
+			select(UtecoQueueItem)
+			.where(UtecoQueueItem.uteco_printer_id == lane.uteco_printer.id)
+			.order_by(UtecoQueueItem.position.asc())
+		)
+	elif lane.kind == "bagging" and lane.bagging_machine:
+		q = (
+			select(BaggingQueueItem)
+			.where(BaggingQueueItem.bagging_machine_id == lane.bagging_machine.id)
+			.order_by(BaggingQueueItem.position.asc())
+		)
+	else:
+		raise DomainError("Invalid schedule lane")
+	return list(session.execute(q).scalars().all())
+
+
+def _reindex_lane(items: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem]) -> None:
 	for idx, itm in enumerate(sorted(items, key=lambda x: x.position), start=1):
 		itm.position = idx
 
 
-def _get_job_with_context(session: Session, job_id: uuid.UUID) -> Tuple[Job, Order, Optional[ProductVersion]]:
-	job: Job = session.get(Job, job_id)
-	if not job:
-		raise DomainError("Job not found")
-	order: Order = session.get(Order, job.order_id)
-	if not order:
-		raise DomainError("Order not found for job")
-	product_version: Optional[ProductVersion] = session.get(ProductVersion, order.product_version_id)
-	return job, order, product_version
+def _get_job_with_context(session: Session, job_id: uuid.UUID) -> Tuple[Job, Optional[Order], Optional[ProductVersion]]:
+	return resolve_job_context(session, job_id)
 
 
 def _get_printing_method_from_spec(product_version: Optional[ProductVersion]) -> PrintingMethod:
@@ -110,9 +246,9 @@ def _get_printing_method_from_spec(product_version: Optional[ProductVersion]) ->
 	return PrintingMethod.NONE
 
 
-def _routing_warnings_for_enqueue(session: Session, machine: Machine, job: Job, product_version: Optional[ProductVersion]) -> List[str]:
+def _routing_warnings_for_enqueue(session: Session, lane: ScheduleLane, job: Job, product_version: Optional[ProductVersion]) -> List[str]:
 	warnings: List[str] = []
-	if machine.type == MachineType.PRINTER_UTECO:
+	if lane.kind == "uteco":
 		# Uteco queued before any Extrusion run exists
 		q = select(OperationRun).where(
 			OperationRun.job_id == job.id,
@@ -122,7 +258,7 @@ def _routing_warnings_for_enqueue(session: Session, machine: Machine, job: Job, 
 		has_completed_extrusion = session.execute(q).scalars().first() is not None
 		if not has_completed_extrusion:
 			warnings.append("Uteco queued before any Extrusion run exists for this job")
-	elif machine.type == MachineType.CONVERTER_BAGGER:
+	elif lane.kind == "bagging":
 		pm = _get_printing_method_from_spec(product_version)
 		if pm == PrintingMethod.NONE:
 			# Needs at least one completed extrusion
@@ -147,31 +283,267 @@ def _routing_warnings_for_enqueue(session: Session, machine: Machine, job: Job, 
 
 
 def _required_tool_type_codes(job: Job, operation_type: OperationType, product_version: Optional[ProductVersion]) -> List[str]:
-	# Minimal heuristic (pluggable later)
 	if operation_type == OperationType.EXTRUSION:
 		spec = (product_version.spec_payload if product_version else {}) or {}
-		inline_req = (spec.get("run_requirements") or {}).get("inline_print_1c") or (spec.get("extrusion") or {}).get("inline_print_1c")
-		if inline_req:
-			return ["inline_printer_1c"]
-		return []
+		rr = spec.get("run_requirements") or {}
+		if not isinstance(rr, dict):
+			rr = {}
+		codes: List[str] = []
+		pm = _get_printing_method_from_spec(product_version)
+		if pm == PrintingMethod.INLINE or rr.get("inline_print_1c") or (spec.get("extrusion") or {}).get("inline_print_1c"):
+			codes.append("inline_printer_1c")
+		if rr.get("inline_perforation"):
+			codes.append("inline_perforator")
+		if rr.get("hole_punched"):
+			codes.append("inline_hole_punch")
+		seen: set[str] = set()
+		out: List[str] = []
+		for c in codes:
+			if c not in seen:
+				seen.add(c)
+				out.append(c)
+		return out
 	if operation_type == OperationType.PRINTING_UTECO:
-		# Example: electra_punch may be needed based on spec
 		spec = (product_version.spec_payload if product_version else {}) or {}
 		if (spec.get("printing") or {}).get("requires_electra_punch"):
 			return ["electra_punch"]
 		return []
-	# Conversion defaults to no special tool for MVP
 	return []
 
 
-def _operation_type_for_machine(machine: Machine) -> OperationType:
-	if machine.type == MachineType.EXTRUDER:
+def _operation_type_for_lane(lane: ScheduleLane) -> OperationType:
+	if lane.kind == "extrusion":
 		return OperationType.EXTRUSION
-	if machine.type == MachineType.PRINTER_UTECO:
+	if lane.kind == "uteco":
 		return OperationType.PRINTING_UTECO
-	if machine.type == MachineType.CONVERTER_BAGGER:
+	if lane.kind == "bagging":
 		return OperationType.CONVERSION
-	raise DomainError("Unsupported machine type for scheduling")
+	raise DomainError("Unsupported schedule lane kind")
+
+
+def _extruder_lane_sort_parts(extruder: Extruder) -> Tuple[int, int, str]:
+	"""Match ratebook + list_active_lanes: decision width ascending, null widths last, then extruder_code."""
+	if extruder.decision_width_mm is None:
+		return (1, 0, extruder.extruder_code)
+	return (0, int(extruder.decision_width_mm), extruder.extruder_code)
+
+
+def _lane_sort_key(lane: ScheduleLane) -> Tuple[int, int, int, str]:
+	kind_rank = {"extrusion": 0, "uteco": 1, "bagging": 2}
+	k = kind_rank.get(lane.kind, 9)
+	if lane.kind == "extrusion" and lane.extruder:
+		g, w, code = _extruder_lane_sort_parts(lane.extruder)
+		return (k, g, w, code)
+	if lane.kind == "uteco" and lane.uteco_printer:
+		return (k, 0, 0, lane.uteco_printer.code)
+	if lane.kind == "bagging" and lane.bagging_machine:
+		return (k, 0, 0, lane.bagging_machine.code)
+	return (k, 0, 0, "")
+
+
+def _num_rolls_for_job(session: Session, job: Job, product_version: Optional[ProductVersion]) -> int:
+	"""Prefer JobSheet.num_rolls for scheduling; fall back to spec run_requirements."""
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	fallback = _roll_count_from_spec(spec)
+	jid = getattr(job, "job_sheet_id", None)
+	if jid:
+		js = session.get(JobSheet, str(jid))
+		if js is not None:
+			nr = getattr(js, "num_rolls", None)
+			if nr is not None:
+				try:
+					v = int(nr)
+					if v >= 1:
+						return max(1, min(v, 500))
+				except (TypeError, ValueError):
+					pass
+	oid = getattr(job, "order_id", None)
+	if oid:
+		items = list(
+			session.execute(select(OrderItem).where(OrderItem.order_id == oid).order_by(OrderItem.id.asc())).scalars().all()
+		)
+		try:
+			idx = int(job.job_code) - 1
+		except (TypeError, ValueError):
+			idx = -1
+		if 0 <= idx < len(items) and getattr(items[idx], "job_sheet_id", None):
+			js = session.get(JobSheet, str(items[idx].job_sheet_id))
+			if js is not None:
+				nr = getattr(js, "num_rolls", None)
+				if nr is not None:
+					try:
+						v = int(nr)
+						if v >= 1:
+							return max(1, min(v, 500))
+					except (TypeError, ValueError):
+						pass
+	return max(1, min(fallback, 500))
+
+
+def _roll_count_from_spec(spec: dict) -> int:
+	if not isinstance(spec, dict):
+		return 1
+	rr = spec.get("run_requirements") or {}
+	if not isinstance(rr, dict):
+		rr = {}
+	for key in ("num_rolls", "rolls", "number_of_rolls"):
+		v = rr.get(key)
+		if v is not None:
+			try:
+				return max(1, min(int(float(v)), 500))
+			except (TypeError, ValueError):
+				pass
+	dims = spec.get("dimensions") or {}
+	if isinstance(dims, dict):
+		v = dims.get("num_rolls")
+		if v is not None:
+			try:
+				return max(1, min(int(float(v)), 500))
+			except (TypeError, ValueError):
+				pass
+	return 1
+
+
+def _find_extruder_for_queued_job(session: Session, job_id: uuid.UUID | str) -> Optional[Extruder]:
+	"""If the job is on an extrusion lane, return that rate-card extruder (for kg/hr)."""
+	jid = _str_id(job_id)
+	q = (
+		select(Extruder)
+		.join(ExtrusionQueueItem, ExtrusionQueueItem.extruder_code == Extruder.extruder_code)
+		.where(
+			ExtrusionQueueItem.job_id == jid,
+			ExtrusionQueueItem.status.in_([QueueStatus.QUEUED, QueueStatus.RUNNING]),
+		)
+		.limit(1)
+	)
+	return session.execute(q).scalars().first()
+
+
+def _estimated_extrusion_kg(job: Job, product_version: Optional[ProductVersion]) -> float:
+	planned_qty = float(job.planned_qty)
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	rr = spec.get("run_requirements") or {}
+	if isinstance(rr, dict):
+		for key in ("total_kg", "extrusion_kg", "film_kg"):
+			if rr.get(key) is not None:
+				try:
+					return max(float(rr[key]), 0.01)
+				except (TypeError, ValueError):
+					pass
+	totals = spec.get("totals") or {}
+	if isinstance(totals, dict) and totals.get("total_kg") is not None:
+		try:
+			return max(float(totals["total_kg"]), 0.01)
+		except (TypeError, ValueError):
+			pass
+	return max(planned_qty * 0.5, 1.0)
+
+
+def _extrusion_duration_hours_for_extruder(
+	session: Session, extruder: Extruder, job: Job, product_version: Optional[ProductVersion]
+) -> float:
+	"""
+	Extrusion runtime for the Gantt bar on this lane: job weight (kg) ÷ that extruder's average kg/hr.
+	Missing rate card → 100 kg/h default.
+	"""
+	ext = extruder
+	kg_hr = float(ext.average_kg_hr) if ext and ext.average_kg_hr is not None else 100.0
+	kg_hr = max(kg_hr, 1.0)
+	kg = _estimated_extrusion_kg(job, product_version)
+	return max(0.25, kg / kg_hr)
+
+
+def _job_sheet_job_no_for_job(session: Session, job: Job) -> Optional[str]:
+	if job.job_sheet_id:
+		js = session.get(JobSheet, job.job_sheet_id)
+		return js.job_no if js else None
+	if not job.order_id:
+		return None
+	items = list(
+		session.execute(
+			select(OrderItem).where(OrderItem.order_id == job.order_id).order_by(OrderItem.id.asc())
+		).scalars().all()
+	)
+	idx = int(job.job_code) - 1
+	if idx < 0 or idx >= len(items):
+		return None
+	js = session.get(JobSheet, items[idx].job_sheet_id)
+	return js.job_no if js else None
+
+
+def _estimate_job_operations_core(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	*,
+	extrusion_extruder: Optional[Extruder] = None,
+) -> List[OperationEstimateDTO]:
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	operations: List[OperationEstimateDTO] = []
+	printing_method = _get_printing_method_from_spec(product_version)
+	requires_extrusion = True
+	requires_uteco = printing_method == PrintingMethod.UTECO
+	requires_conversion = True
+	planned_qty = float(job.planned_qty)
+
+	if requires_extrusion:
+		estimated_kg = _estimated_extrusion_kg(job, product_version)
+		if extrusion_extruder is not None:
+			duration_hours = _extrusion_duration_hours_for_extruder(
+				session, extrusion_extruder, job, product_version
+			)
+		else:
+			extruder_rate_kg_per_hour = 100.0
+			duration_hours = estimated_kg / extruder_rate_kg_per_hour if extruder_rate_kg_per_hour > 0 else 1.0
+		operations.append(
+			OperationEstimateDTO(
+				operation_type=OperationType.EXTRUSION.value,
+				estimated_duration_hours=max(0.5, duration_hours),
+				estimated_kg=estimated_kg,
+			)
+		)
+
+	if requires_uteco:
+		web_length_m = planned_qty * 0.1
+		printer_speed_m_per_min = 50.0
+		num_colours = (spec.get("printing") or {}).get("num_colours", 1) or 1
+		setup_allowance_hours = 0.5 + (num_colours * 0.1)
+		runtime_hours = (web_length_m / printer_speed_m_per_min) / 60.0
+		duration_hours = setup_allowance_hours + runtime_hours
+		operations.append(
+			OperationEstimateDTO(
+				operation_type=OperationType.PRINTING_UTECO.value,
+				estimated_duration_hours=max(0.5, duration_hours),
+				estimated_metres=web_length_m,
+			)
+		)
+
+	if requires_conversion:
+		bagger_rate_units_per_hour = 1000.0
+		setup_allowance_hours = 0.25
+		runtime_hours = planned_qty / bagger_rate_units_per_hour if bagger_rate_units_per_hour > 0 else 1.0
+		duration_hours = setup_allowance_hours + runtime_hours
+		operations.append(
+			OperationEstimateDTO(
+				operation_type=OperationType.CONVERSION.value,
+				estimated_duration_hours=max(0.25, duration_hours),
+				estimated_units=planned_qty,
+			)
+		)
+
+	return operations
+
+
+def _estimate_lane_duration_hours(
+	session: Session, lane: ScheduleLane, job: Job, product_version: Optional[ProductVersion]
+) -> float:
+	op = _operation_type_for_lane(lane)
+	if op == OperationType.EXTRUSION and lane.extruder:
+		return _extrusion_duration_hours_for_extruder(session, lane.extruder, job, product_version)
+	estimates = _estimate_job_operations_core(session, job, product_version, extrusion_extruder=None)
+	op_str = op.value if hasattr(op, "value") else str(op)
+	operation_estimate = next((e for e in estimates if e.operation_type == op_str), None)
+	return operation_estimate.estimated_duration_hours if operation_estimate else 1.0
 
 
 def _find_tool_type(session: Session, code: str) -> Optional[ToolType]:
@@ -179,17 +551,177 @@ def _find_tool_type(session: Session, code: str) -> Optional[ToolType]:
 	return session.execute(q).scalars().first()
 
 
+def _lane_reservation_match(lane: ScheduleLane):
+	if lane.kind == "extrusion" and lane.extruder:
+		return ToolReservation.extruder_code == lane.extruder.extruder_code
+	if lane.kind == "uteco" and lane.uteco_printer:
+		return ToolReservation.uteco_printer_id == lane.uteco_printer.id
+	if lane.kind == "bagging" and lane.bagging_machine:
+		return ToolReservation.bagging_machine_id == lane.bagging_machine.id
+	raise DomainError("Invalid schedule lane for tool reservation")
+
+
+def _pick_tool_id_for_window(
+	session: Session,
+	tool_type_id: str,
+	lane: ScheduleLane,
+	planned_from: Optional[datetime],
+	planned_to: Optional[datetime],
+) -> Optional[str]:
+	tools = list(
+		session.execute(
+			select(Tool)
+			.where(Tool.tool_type_id == tool_type_id, Tool.active.is_(True))
+			.order_by(Tool.serial_code.asc())
+		).scalars().all()
+	)
+	if not tools:
+		return None
+	if not planned_from or not planned_to:
+		return str(tools[0].id)
+	best_id: Optional[str] = None
+	best_load = 10**9
+	for t in tools:
+		ov = (
+			select(func.count())
+			.select_from(ToolReservation)
+			.where(
+				ToolReservation.tool_id == t.id,
+				_lane_reservation_match(lane),
+				ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.FULFILLED]),
+				ToolReservation.planned_from.isnot(None),
+				ToolReservation.planned_to.isnot(None),
+				ToolReservation.planned_from <= planned_to,
+				ToolReservation.planned_to >= planned_from,
+			)
+		)
+		load = int(session.execute(ov).scalar_one() or 0)
+		if load < best_load:
+			best_load = load
+			best_id = str(t.id)
+	return best_id
+
+
+def _build_tool_strips_for_extrusion(
+	session: Session, job: Job, lane: ScheduleLane, product_version: Optional[ProductVersion]
+) -> List[ToolStripDTO]:
+	codes = _required_tool_type_codes(job, OperationType.EXTRUSION, product_version)
+	out: List[ToolStripDTO] = []
+	jid = _str_id(job.id)
+	if not (lane.kind == "extrusion" and lane.extruder):
+		return out
+	ec = lane.extruder.extruder_code
+	for code in codes:
+		tt = _find_tool_type(session, code)
+		name = tt.name if tt else code.replace("_", " ").title()
+		color = _TOOL_STRIP_COLORS.get(code, "#607d8b")
+		serial: Optional[str] = None
+		if tt:
+			tr = session.execute(
+				select(ToolReservation)
+				.where(
+					ToolReservation.job_id == jid,
+					ToolReservation.extruder_code == ec,
+					ToolReservation.tool_type_id == tt.id,
+					ToolReservation.operation_type == OperationType.EXTRUSION,
+				)
+				.limit(1)
+			).scalars().first()
+			if tr and tr.tool_id:
+				tool = session.get(Tool, str(tr.tool_id))
+				if tool:
+					serial = tool.serial_code
+		out.append(ToolStripDTO(tool_type_code=code, name=name, color=color, tool_serial=serial))
+	return out
+
+
+def _gantt_tool_conflict_dtos_for_job_lane(
+	session: Session, job: Job, lane: ScheduleLane
+) -> List[ToolConflictDTO]:
+	if not (lane.kind == "extrusion" and lane.extruder):
+		return []
+	rows = session.execute(
+		select(ToolReservation).where(
+			ToolReservation.job_id == _str_id(job.id),
+			ToolReservation.extruder_code == lane.extruder.extruder_code,
+			ToolReservation.operation_type == OperationType.EXTRUSION,
+			ToolReservation.status == ToolReservationStatus.CONFLICTED,
+		)
+	).scalars().all()
+	out: List[ToolConflictDTO] = []
+	for tr in rows:
+		tt = session.get(ToolType, str(tr.tool_type_id))
+		code = tt.code if tt else "unknown"
+		out.append(
+			ToolConflictDTO(
+				tool_type_code=code,
+				from_=tr.planned_from,
+				to=tr.planned_to,
+				reason="Insufficient tools of this type for the planned window",
+			)
+		)
+	return out
+
+
+def _extrusion_toolbox_balances(session: Session) -> List[ToolboxBalanceDTO]:
+	n_extruders = int(
+		session.execute(select(func.count()).select_from(Extruder)).scalar_one() or 0
+	)
+	if n_extruders == 0:
+		return []
+	order = ["inline_printer_1c", "inline_perforator", "inline_hole_punch"]
+	out: List[ToolboxBalanceDTO] = []
+	for code in order:
+		tt = _find_tool_type(session, code)
+		if not tt:
+			continue
+		total = int(
+			session.execute(
+				select(func.count()).select_from(Tool).where(Tool.tool_type_id == tt.id, Tool.active.is_(True))
+			).scalar_one()
+			or 0
+		)
+		reserved = int(
+			session.execute(
+				select(func.count())
+				.select_from(ToolReservation)
+				.where(
+					ToolReservation.tool_type_id == tt.id,
+					ToolReservation.operation_type == OperationType.EXTRUSION,
+					ToolReservation.extruder_code.isnot(None),
+					ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.CONFLICTED]),
+				)
+			).scalar_one()
+			or 0
+		)
+		avail = max(0, total - reserved)
+		out.append(
+			ToolboxBalanceDTO(
+				tool_type_code=code,
+				name=tt.name,
+				color=_TOOL_STRIP_COLORS.get(code, "#607d8b"),
+				total_active=total,
+				reserved=reserved,
+				available=avail,
+			)
+		)
+	return out
+
+
 def _reserve_tools(
 	session: Session,
 	job: Job,
 	operation_type: OperationType,
-	machine: Machine,
+	lane: ScheduleLane,
 	window: Optional[Tuple[Optional[datetime], Optional[datetime]]],
 	tool_type_codes: List[str],
 ) -> List[ToolConflictDTO]:
 	conflicts: List[ToolConflictDTO] = []
 	planned_from: Optional[datetime] = window[0] if window else None
 	planned_to: Optional[datetime] = window[1] if window else None
+	ex_code = lane.extruder.extruder_code if lane.kind == "extrusion" and lane.extruder else None
+	ut_id = lane.uteco_printer.id if lane.kind == "uteco" and lane.uteco_printer else None
+	bg_id = lane.bagging_machine.id if lane.kind == "bagging" and lane.bagging_machine else None
 	for code in tool_type_codes:
 		tool_type = _find_tool_type(session, code)
 		if not tool_type:
@@ -205,10 +737,10 @@ def _reserve_tools(
 		status = ToolReservationStatus.PLANNED
 		reason = ""
 		if planned_from and planned_to:
-			# Count overlapping reservations for same tool_type on this machine
+			# Count overlapping reservations for same tool_type on this lane
 			overlap_q = select(func.count()).select_from(ToolReservation).where(
 				ToolReservation.tool_type_id == tool_type.id,
-				ToolReservation.machine_id == machine.id,
+				_lane_reservation_match(lane),
 				ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.FULFILLED]),
 				ToolReservation.planned_from <= planned_to,
 				ToolReservation.planned_to >= planned_from,
@@ -218,10 +750,18 @@ def _reserve_tools(
 				status = ToolReservationStatus.CONFLICTED
 				reason = "Insufficient tools available in window"
 
+		chosen_tool_id: Optional[str] = None
+		if status != ToolReservationStatus.CONFLICTED and supply > 0:
+			chosen_tool_id = _pick_tool_id_for_window(
+				session, str(tool_type.id), lane, planned_from, planned_to
+			)
+
 		res = ToolReservation(
 			tool_type_id=tool_type.id,
-			tool_id=None,
-			machine_id=machine.id,
+			tool_id=chosen_tool_id,
+			extruder_code=ex_code,
+			uteco_printer_id=ut_id,
+			bagging_machine_id=bg_id,
 			planned_from=planned_from,
 			planned_to=planned_to,
 			status=status,
@@ -234,33 +774,89 @@ def _reserve_tools(
 	return conflicts
 
 
-def add_job(machine_id: uuid.UUID, job_id: uuid.UUID, position: Optional[int] = None) -> LaneDTO:
-	with SessionLocal.begin() as session:
-		machine: Machine = session.get(Machine, machine_id)
-		if not machine or not machine.active:
-			raise DomainError("Machine not found or inactive")
+def _validate_lane_for_job(
+	lane: ScheduleLane, product_version: Optional[ProductVersion], operation_type: OperationType
+) -> None:
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	if lane.kind == "extrusion" and lane.extruder:
+		validate_extruder_for_spec(lane.extruder, spec, operation_type)
+	elif lane.kind == "uteco" and lane.uteco_printer:
+		validate_capability_dict(lane.uteco_printer.capability or {}, spec, operation_type)
+	elif lane.kind == "bagging" and lane.bagging_machine:
+		validate_capability_dict(lane.bagging_machine.capability or {}, spec, operation_type)
 
-		job, order, product_version = _get_job_with_context(session, job_id)
+
+def add_job(
+	machine_id: str,
+	job_id: Optional[uuid.UUID] = None,
+	position: Optional[int] = None,
+	*,
+	job_sheet_id: Optional[uuid.UUID] = None,
+	target_start: Optional[datetime] = None,
+) -> LaneDTO:
+	with SessionLocal.begin() as session:
+		lane = resolve_schedule_lane(session, machine_id)
+
+		if job_sheet_id is not None:
+			job = ensure_scheduling_job_for_job_sheet(session, str(job_sheet_id))
+			job_id = uuid.UUID(str(job.id))
+		elif job_id is not None:
+			job = session.get(Job, str(job_id))
+			if not job:
+				raise DomainError("Job not found")
+		else:
+			raise DomainError("job_id or job_sheet_id is required")
+
+		_, order, product_version = resolve_job_context(session, job_id)
 		if job.status not in (JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED):
 			raise DomainError("Job not in a schedulable state")
 
-		items = _load_lane_items_for_update(session, machine_id)
-		if any(i.job_id == job_id for i in items):
+		items = _load_lane_items_for_update(session, lane)
+		jid_str = _str_id(job_id)
+		if any(_str_id(i.job_id) == jid_str for i in items):
 			raise DomainError("Job already in this machine queue")
 
-		insert_pos = position if position is not None else (len(items) + 1)
-		insert_pos = max(1, min(insert_pos, len(items) + 1))
+		items_sorted = sorted(items, key=lambda x: x.position)
+		lead_for_new = 0.0
+		if target_start is not None and lane.kind == "extrusion":
+			ctx, anchor_local = _gantt_anchor_local(session)
+			insert_pos, lead_for_new = _best_extruder_insert_for_target_start(
+				session, lane, items_sorted, target_start, ctx, anchor_local
+			)
+		else:
+			insert_pos = position if position is not None else (len(items) + 1)
+			insert_pos = max(1, min(insert_pos, len(items) + 1))
 
 		for itm in items:
 			if itm.position >= insert_pos:
 				itm.position += 1
 
-		queue_item = MachineQueueItem(
-			machine_id=machine_id,
-			job_id=job_id,
-			position=insert_pos,
-			status=QueueStatus.QUEUED,
-		)
+		if lane.kind == "extrusion" and lane.extruder:
+			queue_item = ExtrusionQueueItem(
+				extruder_code=lane.extruder.extruder_code,
+				job_id=jid_str,
+				position=insert_pos,
+				status=QueueStatus.QUEUED,
+				operating_hours_lead_before=lead_for_new,
+			)
+		elif lane.kind == "uteco" and lane.uteco_printer:
+			queue_item = UtecoQueueItem(
+				uteco_printer_id=lane.uteco_printer.id,
+				job_id=jid_str,
+				position=insert_pos,
+				status=QueueStatus.QUEUED,
+				operating_hours_lead_before=lead_for_new,
+			)
+		elif lane.kind == "bagging" and lane.bagging_machine:
+			queue_item = BaggingQueueItem(
+				bagging_machine_id=lane.bagging_machine.id,
+				job_id=jid_str,
+				position=insert_pos,
+				status=QueueStatus.QUEUED,
+				operating_hours_lead_before=lead_for_new,
+			)
+		else:
+			raise DomainError("Invalid schedule lane")
 		session.add(queue_item)
 
 		_reindex_lane(items + [queue_item])
@@ -268,32 +864,31 @@ def add_job(machine_id: uuid.UUID, job_id: uuid.UUID, position: Optional[int] = 
 		if job.status == JobStatus.PLANNED:
 			job.status = JobStatus.SCHEDULED
 
-		warnings = _routing_warnings_for_enqueue(session, machine, job, product_version)
+		warnings = _routing_warnings_for_enqueue(session, lane, job, product_version)
 
-		operation_type = _operation_type_for_machine(machine)
+		operation_type = _operation_type_for_lane(lane)
+		_validate_lane_for_job(lane, product_version, operation_type)
 		required_codes = _required_tool_type_codes(job, operation_type, product_version)
-		# Advisory-only window for add: leave None (unknown), or use a small placeholder
 		tool_conflicts = _reserve_tools(
 			session=session,
 			job=job,
 			operation_type=operation_type,
-			machine=machine,
+			lane=lane,
 			window=None,
 			tool_type_codes=required_codes,
 		)
 
-		refreshed = _load_lane_items_for_update(session, machine_id)
-		return _lane_dto(machine_id, refreshed, warnings=warnings, conflicts=tool_conflicts)
+		refreshed = _load_lane_items_for_update(session, lane)
+		return _lane_dto(lane.lane_id, refreshed, warnings=warnings, conflicts=tool_conflicts)
 
 
-def reorder(machine_id: uuid.UUID, job_id: uuid.UUID, new_position: int) -> LaneDTO:
+def reorder(machine_id: str, job_id: uuid.UUID, new_position: int) -> LaneDTO:
 	with SessionLocal.begin() as session:
-		machine: Machine = session.get(Machine, machine_id)
-		if not machine or not machine.active:
-			raise DomainError("Machine not found or inactive")
+		lane = resolve_schedule_lane(session, machine_id)
 
-		items = _load_lane_items_for_update(session, machine_id)
-		item = next((i for i in items if i.job_id == job_id), None)
+		jid_str = _str_id(job_id)
+		items = _load_lane_items_for_update(session, lane)
+		item = next((i for i in items if _str_id(i.job_id) == jid_str), None)
 		if not item:
 			raise DomainError("Queue item not found in this lane")
 		if item.status == QueueStatus.RUNNING:
@@ -308,18 +903,17 @@ def reorder(machine_id: uuid.UUID, job_id: uuid.UUID, new_position: int) -> Lane
 		items.append(item)
 		_reindex_lane(items)
 
-		refreshed = _load_lane_items_for_update(session, machine_id)
-		return _lane_dto(machine_id, refreshed)
+		refreshed = _load_lane_items_for_update(session, lane)
+		return _lane_dto(lane.lane_id, refreshed)
 
 
-def remove(machine_id: uuid.UUID, job_id: uuid.UUID) -> LaneDTO:
+def remove(machine_id: str, job_id: uuid.UUID) -> LaneDTO:
 	with SessionLocal.begin() as session:
-		machine: Machine = session.get(Machine, machine_id)
-		if not machine or not machine.active:
-			raise DomainError("Machine not found or inactive")
+		lane = resolve_schedule_lane(session, machine_id)
 
-		items = _load_lane_items_for_update(session, machine_id)
-		item = next((i for i in items if i.job_id == job_id), None)
+		jid_str = _str_id(job_id)
+		items = _load_lane_items_for_update(session, lane)
+		item = next((i for i in items if _str_id(i.job_id) == jid_str), None)
 		if not item:
 			raise DomainError("Queue item not found in this lane")
 		if item.status == QueueStatus.RUNNING:
@@ -329,336 +923,367 @@ def remove(machine_id: uuid.UUID, job_id: uuid.UUID) -> LaneDTO:
 		session.delete(item)
 		_reindex_lane(items)
 
-		# Advisory: cancel planned/conflicted tool reservations for this lane item
-		session.query(ToolReservation).filter(
-			ToolReservation.job_id == job_id,
-			ToolReservation.machine_id == machine_id,
+		ex_code = lane.extruder.extruder_code if lane.kind == "extrusion" and lane.extruder else None
+		ut_id = lane.uteco_printer.id if lane.kind == "uteco" and lane.uteco_printer else None
+		bg_id = lane.bagging_machine.id if lane.kind == "bagging" and lane.bagging_machine else None
+		q = session.query(ToolReservation).filter(
+			ToolReservation.job_id == jid_str,
 			ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.CONFLICTED]),
-		).update({"status": ToolReservationStatus.CANCELLED})
+		)
+		if ex_code:
+			q = q.filter(ToolReservation.extruder_code == ex_code)
+		elif ut_id:
+			q = q.filter(ToolReservation.uteco_printer_id == ut_id)
+		elif bg_id:
+			q = q.filter(ToolReservation.bagging_machine_id == bg_id)
+		q.update({"status": ToolReservationStatus.CANCELLED})
 
-		refreshed = _load_lane_items_for_update(session, machine_id)
-		return _lane_dto(machine_id, refreshed)
+		refreshed = _load_lane_items_for_update(session, lane)
+		return _lane_dto(lane.lane_id, refreshed)
 
 
-def validate_move(job_id: uuid.UUID, operation_type: OperationType, target_machine_id: uuid.UUID) -> None:
+def validate_move(job_id: uuid.UUID, operation_type: OperationType, target_machine_id: str) -> None:
 	with SessionLocal.begin() as session:
-		target: Machine = session.get(Machine, target_machine_id)
-		if not target or not target.active:
-			raise DomainError("Target machine not found or inactive")
-		expected = _operation_type_for_machine(target)
+		target = resolve_schedule_lane(session, str(target_machine_id))
+		expected = _operation_type_for_lane(target)
 		if expected != operation_type:
 			raise DomainError("Target machine does not match operation type")
 		job, order, product_version = _get_job_with_context(session, job_id)
-		validate_machine_capability(target, product_version, operation_type=operation_type)
+		_validate_lane_for_job(target, product_version, operation_type)
+
+
+def _find_queue_item_and_lane_for_op(
+	session: Session, job_id_str: str, operation_type: OperationType
+) -> tuple[
+	ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem | None,
+	ScheduleLane | None,
+]:
+	if operation_type == OperationType.EXTRUSION:
+		row = session.execute(
+			select(ExtrusionQueueItem).where(ExtrusionQueueItem.job_id == job_id_str).with_for_update()
+		).scalars().first()
+		if row:
+			return row, resolve_schedule_lane(session, row.extruder_code)
+	if operation_type == OperationType.PRINTING_UTECO:
+		row = session.execute(
+			select(UtecoQueueItem).where(UtecoQueueItem.job_id == job_id_str).with_for_update()
+		).scalars().first()
+		if row:
+			return row, resolve_schedule_lane(session, str(row.uteco_printer_id))
+	if operation_type == OperationType.CONVERSION:
+		row = session.execute(
+			select(BaggingQueueItem).where(BaggingQueueItem.job_id == job_id_str).with_for_update()
+		).scalars().first()
+		if row:
+			return row, resolve_schedule_lane(session, str(row.bagging_machine_id))
+	return None, None
 
 
 def move_bar(
 	job_id: uuid.UUID,
 	operation_type: OperationType,
-	target_machine_id: uuid.UUID,
+	target_machine_id: str,
 	target_position: int,
 	proposed_start: Optional[datetime] = None,
+	target_start: Optional[datetime] = None,
 ) -> MoveResult:
 	with SessionLocal.begin() as session:
-		target: Machine = session.get(Machine, target_machine_id)
-		if not target or not target.active:
-			raise DomainError("Target machine not found or inactive")
-		expected = _operation_type_for_machine(target)
+		target = resolve_schedule_lane(session, str(target_machine_id))
+		expected = _operation_type_for_lane(target)
 		if expected != operation_type:
 			raise DomainError("Target machine does not match operation type")
 
-		# Find source item for this job (matching op via machine type)
-		# Job may appear in multiple lanes; choose the one whose machine.type maps to operation_type
-		q_items = select(MachineQueueItem, Machine).join(Machine, Machine.id == MachineQueueItem.machine_id).where(
-			MachineQueueItem.job_id == job_id
-		).with_for_update()
-		found = None
-		for row in session.execute(q_items).all():
-			itm: MachineQueueItem = row[0]
-			m: Machine = row[1]
-			if _operation_type_for_machine(m) == operation_type:
-				found = (itm, m)
-				break
-		if not found:
+		jid_str = _str_id(job_id)
+		item, source_lane = _find_queue_item_and_lane_for_op(session, jid_str, operation_type)
+		if item is None or source_lane is None:
 			raise DomainError("Queue item for this operation not found")
-		item, source_machine = found
 		if item.status == QueueStatus.RUNNING:
 			raise DomainError("Cannot move a running item")
 
-		# Capability check
+		if source_lane.lane_id == target.lane_id:
+			items_one = _load_lane_items_for_update(session, source_lane)
+			it = next((i for i in items_one if _str_id(i.job_id) == jid_str), None)
+			if not it:
+				raise DomainError("Queue item not found in this lane")
+			if it.status == QueueStatus.RUNNING:
+				raise DomainError("Cannot reorder a running item")
+			items_one.remove(it)
+			np = max(1, min(target_position, len(items_one) + 1))
+			for x in items_one:
+				if x.position >= np:
+					x.position += 1
+			it.position = np
+			items_one.append(it)
+			_reindex_lane(items_one)
+			ref = _load_lane_items_for_update(session, source_lane)
+			ld = _lane_dto(source_lane.lane_id, ref)
+			return MoveResult(source_lane=ld, target_lane=ld)
+
 		job, order, product_version = _get_job_with_context(session, job_id)
-		validate_machine_capability(target, product_version, operation_type=operation_type)
+		_validate_lane_for_job(target, product_version, operation_type)
 
-		# Lock both lanes
-		source_items = _load_lane_items_for_update(session, source_machine.id)
-		target_items = _load_lane_items_for_update(session, target_machine_id)
+		source_items = _load_lane_items_for_update(session, source_lane)
+		target_items = _load_lane_items_for_update(session, target)
 
-		# Remove from source
 		source_items = [i for i in source_items if i.id != item.id]
 		_reindex_lane(source_items)
+		session.flush()
+		session.delete(item)
+		session.flush()
 
-		# Insert into target
-		target_position = max(1, min(target_position, len(target_items) + 1))
-		for itm in target_items:
-			if itm.position >= target_position:
+		insert_pos: int
+		lead_new = 0.0
+		target_others = list(target_items)
+		if target_start is not None and target.kind == "extrusion":
+			ctx, anchor_local = _gantt_anchor_local(session)
+			ordered = sorted(target_others, key=lambda x: x.position)
+			insert_pos, lead_new = _best_extruder_insert_for_target_start(
+				session, target, ordered, target_start, ctx, anchor_local
+			)
+		else:
+			insert_pos = max(1, min(target_position, len(target_others) + 1))
+
+		for itm in target_others:
+			if itm.position >= insert_pos:
 				itm.position += 1
-		item.machine_id = target_machine_id
-		item.position = target_position
-		target_items.append(item)
-		_reindex_lane(target_items)
 
-		# Tooling: cancel prior reservations, reserve for target (advisory)
-		session.query(ToolReservation).filter(
-			ToolReservation.job_id == job_id,
+		if target.kind == "extrusion" and target.extruder:
+			new_item = ExtrusionQueueItem(
+				extruder_code=target.extruder.extruder_code,
+				job_id=jid_str,
+				position=insert_pos,
+				status=QueueStatus.QUEUED,
+				operating_hours_lead_before=lead_new,
+			)
+		elif target.kind == "uteco" and target.uteco_printer:
+			new_item = UtecoQueueItem(
+				uteco_printer_id=target.uteco_printer.id,
+				job_id=jid_str,
+				position=insert_pos,
+				status=QueueStatus.QUEUED,
+				operating_hours_lead_before=lead_new,
+			)
+		elif target.kind == "bagging" and target.bagging_machine:
+			new_item = BaggingQueueItem(
+				bagging_machine_id=target.bagging_machine.id,
+				job_id=jid_str,
+				position=insert_pos,
+				status=QueueStatus.QUEUED,
+				operating_hours_lead_before=lead_new,
+			)
+		else:
+			raise DomainError("Invalid target lane")
+		session.add(new_item)
+		target_others.append(new_item)
+		_reindex_lane(target_others)
+
+		# Cancel prior reservations for this job/op on source lane
+		s_ex = source_lane.extruder.extruder_code if source_lane.kind == "extrusion" and source_lane.extruder else None
+		s_ut = source_lane.uteco_printer.id if source_lane.kind == "uteco" and source_lane.uteco_printer else None
+		s_bg = source_lane.bagging_machine.id if source_lane.kind == "bagging" and source_lane.bagging_machine else None
+		rq = session.query(ToolReservation).filter(
+			ToolReservation.job_id == jid_str,
 			ToolReservation.operation_type == operation_type,
-			ToolReservation.machine_id == source_machine.id,
 			ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.CONFLICTED]),
-		).update({"status": ToolReservationStatus.CANCELLED})
+		)
+		if s_ex:
+			rq = rq.filter(ToolReservation.extruder_code == s_ex)
+		elif s_ut:
+			rq = rq.filter(ToolReservation.uteco_printer_id == s_ut)
+		elif s_bg:
+			rq = rq.filter(ToolReservation.bagging_machine_id == s_bg)
+		rq.update({"status": ToolReservationStatus.CANCELLED})
 
 		window = None
-		if proposed_start:
-			window = (proposed_start, proposed_start + timedelta(hours=1))
+		tool_anchor = proposed_start or target_start
+		if tool_anchor:
+			window = (tool_anchor, tool_anchor + timedelta(hours=1))
 		required_codes = _required_tool_type_codes(job, operation_type, product_version)
 		tool_conflicts = _reserve_tools(
 			session=session,
 			job=job,
 			operation_type=operation_type,
-			machine=target,
+			lane=target,
 			window=window,
 			tool_type_codes=required_codes,
 		)
 
-		# Advisory routing warnings for target lane
 		warnings = _routing_warnings_for_enqueue(session, target, job, product_version)
 
-		source_ref = _load_lane_items_for_update(session, source_machine.id)
-		target_ref = _load_lane_items_for_update(session, target_machine_id)
+		source_ref = _load_lane_items_for_update(session, source_lane)
+		target_ref = _load_lane_items_for_update(session, target)
 
 		return MoveResult(
-			source_lane=_lane_dto(source_machine.id, source_ref),
-			target_lane=_lane_dto(target_machine_id, target_ref, warnings=warnings, conflicts=tool_conflicts),
+			source_lane=_lane_dto(source_lane.lane_id, source_ref),
+			target_lane=_lane_dto(target.lane_id, target_ref, warnings=warnings, conflicts=tool_conflicts),
 		)
 
 
 def get_overview() -> dict:
 	with SessionLocal() as session:
-		# Load all active machines, sorted by code
-		machines = session.execute(
-			select(Machine).where(Machine.active.is_(True)).order_by(Machine.code.asc())
-		).scalars().all()
+		lanes = list_active_lanes(session)
+		lanes.sort(key=_lane_sort_key)
 
-		def _lane_for(machine_id: uuid.UUID) -> LaneDTO:
-			items = session.execute(
-				select(MachineQueueItem)
-				.where(
-					MachineQueueItem.machine_id == machine_id,
-					MachineQueueItem.status.in_([QueueStatus.QUEUED, QueueStatus.RUNNING]),
-				)
-				.order_by(MachineQueueItem.position.asc())
-			).scalars().all()
-			return _lane_dto(machine_id, items)
+		def _lane_for(lane: ScheduleLane) -> LaneDTO:
+			items = [
+				i
+				for i in _load_lane_items_read(session, lane)
+				if i.status in (QueueStatus.QUEUED, QueueStatus.RUNNING)
+			]
+			return _lane_dto(lane.lane_id, items)
 
 		extruders = []
 		printers = []
 		converters = []
 
-		for m in machines:
-			entry = {"machine": m, "lane": _lane_for(m.id)}
-			if m.type == MachineType.EXTRUDER:
-				extruders.append(entry)
-			elif m.type == MachineType.PRINTER_UTECO:
-				printers.append(entry)
-			elif m.type == MachineType.CONVERTER_BAGGER:
-				converters.append(entry)
+		for lane in lanes:
+			# Minimal machine-like dict for admin UI compatibility
+			if lane.kind == "extrusion" and lane.extruder:
+				m = type(
+					"M",
+					(),
+					{
+						"id": lane.lane_id,
+						"code": lane.extruder.extruder_code,
+						"type": "extruder",
+						"active": True,
+					},
+				)()
+				extruders.append({"machine": m, "lane": _lane_for(lane)})
+			elif lane.kind == "uteco" and lane.uteco_printer:
+				m = type(
+					"M",
+					(),
+					{
+						"id": lane.uteco_printer.id,
+						"code": lane.uteco_printer.code,
+						"type": "printer_uteco",
+						"active": lane.uteco_printer.active,
+					},
+				)()
+				printers.append({"machine": m, "lane": _lane_for(lane)})
+			elif lane.kind == "bagging" and lane.bagging_machine:
+				m = type(
+					"M",
+					(),
+					{
+						"id": lane.bagging_machine.id,
+						"code": lane.bagging_machine.code,
+						"type": "converter_bagger",
+						"active": lane.bagging_machine.active,
+					},
+				)()
+				converters.append({"machine": m, "lane": _lane_for(lane)})
 
-		# Already sorted by machine code due to query order
 		return {"extruders": extruders, "printers": printers, "converters": converters}
 
 
 def estimate_job_operations(job_id: uuid.UUID | str) -> JobEstimatesDTO:
 	"""
 	Calculate estimated durations for a job's operations.
-	Uses placeholder rates if rate cards are not available.
+	Extrusion: same kg basis as the Gantt; if the job is queued on an extruder, uses that lane's
+	`extruders.average_kg_hr` (via machines.code = extruder_code), otherwise 100 kg/h placeholder.
 	"""
 	with SessionLocal() as session:
 		job_id_str = str(job_id)
 		job, order, product_version = _get_job_with_context(session, uuid.UUID(job_id_str))
-		spec = (product_version.spec_payload if product_version else {}) or {}
-		
-		operations: List[OperationEstimateDTO] = []
-		
-		# Determine required operations
-		printing_method = _get_printing_method_from_spec(product_version)
-		requires_extrusion = True  # Always required
-		requires_uteco = printing_method == PrintingMethod.UTECO
-		requires_conversion = True  # Assume conversion is always needed
-		
-		# Extract quantities from spec or job
-		planned_qty = float(job.planned_qty)
-		
-		# Extrusion estimate
-		if requires_extrusion:
-			# Placeholder: 100 kg/hour default rate
-			# In reality, this would come from rate cards and be adjusted by width/thickness yields
-			estimated_kg = planned_qty * 0.5  # Placeholder: assume 0.5 kg per unit
-			extruder_rate_kg_per_hour = 100.0  # Placeholder default
-			duration_hours = estimated_kg / extruder_rate_kg_per_hour if extruder_rate_kg_per_hour > 0 else 1.0
-			operations.append(OperationEstimateDTO(
-				operation_type="EXTRUSION",
-				estimated_duration_hours=max(0.5, duration_hours),  # Minimum 0.5 hours
-				estimated_kg=estimated_kg,
-			))
-		
-		# Uteco printing estimate
-		if requires_uteco:
-			# Placeholder: 50 m/min default speed, 30 min setup
-			web_length_m = planned_qty * 0.1  # Placeholder: assume 0.1 m per unit
-			printer_speed_m_per_min = 50.0  # Placeholder default
-			num_colours = (spec.get("printing") or {}).get("num_colours", 1) or 1
-			setup_allowance_hours = 0.5 + (num_colours * 0.1)  # 30 min base + 6 min per colour
-			runtime_hours = (web_length_m / printer_speed_m_per_min) / 60.0
-			duration_hours = setup_allowance_hours + runtime_hours
-			operations.append(OperationEstimateDTO(
-				operation_type="PRINTING_UTECO",
-				estimated_duration_hours=max(0.5, duration_hours),
-				estimated_metres=web_length_m,
-			))
-		
-		# Conversion estimate
-		if requires_conversion:
-			# Placeholder: 1000 units/hour default rate, 15 min setup
-			bagger_rate_units_per_hour = 1000.0  # Placeholder default
-			setup_allowance_hours = 0.25  # 15 minutes
-			runtime_hours = planned_qty / bagger_rate_units_per_hour if bagger_rate_units_per_hour > 0 else 1.0
-			duration_hours = setup_allowance_hours + runtime_hours
-			operations.append(OperationEstimateDTO(
-				operation_type="CONVERSION",
-				estimated_duration_hours=max(0.25, duration_hours),
-				estimated_units=planned_qty,
-			))
-		
+		em = _find_extruder_for_queued_job(session, job.id)
+		operations = _estimate_job_operations_core(session, job, product_version, extrusion_extruder=em)
 		return JobEstimatesDTO(job_id=uuid.UUID(job_id_str), operations=operations)
-
-
-def _get_default_operating_calendar() -> dict:
-	"""
-	Returns default operating calendar: Monday 04:30 → Friday 04:30 (96 hours total).
-	24 hours/day operation, 4 days/week.
-	"""
-	# Get next Monday (or current Monday if today is Monday before 04:30)
-	today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-	days_until_monday = (7 - today.weekday()) % 7
-	if days_until_monday == 0:
-		# Today is Monday, check if we're before 04:30
-		now = datetime.now()
-		if now.hour < 4 or (now.hour == 4 and now.minute < 30):
-			days_until_monday = 0
-		else:
-			days_until_monday = 7
-	
-	start = today + timedelta(days=days_until_monday)
-	start = start.replace(hour=4, minute=30, second=0, microsecond=0)
-	end = start + timedelta(days=4)  # Friday 04:30
-	
-	return {
-		"start": start,
-		"end": end,
-		"days": 4,
-		"hours_per_day": 24,
-	}
 
 
 def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOverviewDTO:
 	"""
 	Build Gantt chart overview with lanes, bars, and tentative start/finish times.
+	Tentative times advance only during configured production hours (Admin → Production hours).
 	"""
-	from app.db.models.domain import Product, Customer
-	
-	if operating_calendar is None:
-		operating_calendar = _get_default_operating_calendar()
-	
-	calendar_start = operating_calendar["start"]
-	
 	with SessionLocal() as session:
-		# Load all active machines, sorted by type then code
-		machines = session.execute(
-			select(Machine)
-			.where(Machine.active.is_(True))
-			.order_by(Machine.type.asc(), Machine.code.asc())
-		).scalars().all()
-		
+		ctx = load_operating_context(session)
+		now_utc = datetime.now(tz=timezone.utc)
+		now_local = now_utc.astimezone(ctx.tz)
+		anchor_local = snap_to_operating_instant(now_local, ctx)
+
+		schedule_lanes = list_active_lanes(session)
+		schedule_lanes.sort(key=_lane_sort_key)
+
 		lanes: List[GanttLaneDTO] = []
-		
-		for machine in machines:
-			# Load queue items for this machine
-			queue_items = session.execute(
-				select(MachineQueueItem)
-				.where(
-					MachineQueueItem.machine_id == machine.id,
-					MachineQueueItem.status.in_([QueueStatus.QUEUED, QueueStatus.RUNNING]),
-				)
-				.order_by(MachineQueueItem.position.asc())
-			).scalars().all()
-			
+		all_starts_local: List[datetime] = []
+		all_ends_local: List[datetime] = []
+
+		for lane in schedule_lanes:
+			queue_items = [
+				i
+				for i in _load_lane_items_read(session, lane)
+				if i.status in (QueueStatus.QUEUED, QueueStatus.RUNNING)
+			]
+
 			bars: List[GanttBarDTO] = []
-			cumulative_hours = 0.0
-			
+			cursor_local = anchor_local
+
 			for queue_item in queue_items:
+				lead_h = _queue_item_lead_hours(queue_item)
+				if lead_h > 0:
+					cursor_local = add_operating_hours(cursor_local, lead_h, ctx)
 				# Load job context
 				job, order, product_version = _get_job_with_context(session, uuid.UUID(str(queue_item.job_id)))
-				
-				# Load customer
-				customer = session.get(Customer, order.customer_id)
-				customer_name = customer.name if customer else "Unknown"
-				
+
+				# Load customer (order-backed or standalone job sheet)
+				if order:
+					customer = session.get(Customer, order.customer_id)
+					customer_name = customer.name if customer else "Unknown"
+					job_code = f"{order.code}-{job.job_code}"
+				else:
+					js = session.get(JobSheet, job.job_sheet_id) if job.job_sheet_id else None
+					customer = session.get(Customer, js.customer_id) if js else None
+					customer_name = customer.name if customer else "Unknown"
+					job_code = js.job_no if js else str(job.job_code)
+
 				# Load product
 				product = session.get(Product, product_version.product_id) if product_version else None
 				product_code = product.code if product else "Unknown"
 				
-				# Format job code
-				job_code = f"{order.code}-{job.job_code}"
-				
 				# Determine operation type
-				operation_type = _operation_type_for_machine(machine)
+				operation_type = _operation_type_for_lane(lane)
 				operation_type_str = operation_type.value if hasattr(operation_type, "value") else str(operation_type)
 				
-				# Get duration estimates
-				estimates = estimate_job_operations(uuid.UUID(str(job.id)))
-				operation_estimate = next(
-					(e for e in estimates.operations if e.operation_type == operation_type_str),
-					None
-				)
-				duration_hours = operation_estimate.estimated_duration_hours if operation_estimate else 1.0
+				duration_hours = _estimate_lane_duration_hours(session, lane, job, product_version)
+				spec = (product_version.spec_payload if product_version else {}) or {}
+				roll_count = _num_rolls_for_job(session, job, product_version)
+				hours_per_roll = duration_hours / roll_count if roll_count > 0 else duration_hours
+				job_sheet_job_no = _job_sheet_job_no_for_job(session, job)
 				
-				# Calculate tentative start/finish
-				tentative_start = calendar_start + timedelta(hours=cumulative_hours)
-				tentative_finish = tentative_start + timedelta(hours=duration_hours)
-				cumulative_hours += duration_hours
+				# Tentative start/finish: operating-time only (skip nights, weekends, holidays)
+				tentative_start = cursor_local
+				tentative_finish = add_operating_hours(cursor_local, duration_hours, ctx)
+				cursor_local = tentative_finish
+				all_starts_local.append(tentative_start)
+				all_ends_local.append(tentative_finish)
 				
 				# Determine status
 				status_str = queue_item.status.value if hasattr(queue_item.status, "value") else str(queue_item.status)
 				
 				# Determine readiness
 				readiness = "running" if status_str == "running" else "ready"
-				spec = (product_version.spec_payload if product_version else {}) or {}
 				printing_method = _get_printing_method_from_spec(product_version)
 				
 				# Check routing warnings
-				warnings = _routing_warnings_for_enqueue(session, machine, job, product_version)
+				warnings = _routing_warnings_for_enqueue(session, lane, job, product_version)
 				if warnings:
 					readiness = "blocked"
 				
-				# Check for tool conflicts
-				operation_type_enum = _operation_type_for_machine(machine)
-				required_codes = _required_tool_type_codes(job, operation_type_enum, product_version)
+				# Tool strips / conflicts (extrusion only)
+				tool_strips: List[ToolStripDTO] = []
 				tool_conflicts: List[ToolConflictDTO] = []
-				# Note: Full conflict checking would require time window, simplified for MVP
+				if lane.kind == "extrusion":
+					tool_strips = _build_tool_strips_for_extrusion(session, job, lane, product_version)
+					tool_conflicts = _gantt_tool_conflict_dtos_for_job_lane(session, job, lane)
 				
 				# Determine visual properties
 				requires_uteco = printing_method == PrintingMethod.UTECO
 				requires_inline_print = printing_method == PrintingMethod.INLINE
 				num_colours = (spec.get("printing") or {}).get("num_colours", 0) or 0
-				
+				layflat_mm = layflat_width_mm_from_product_version(product_version)
+
 				bars.append(GanttBarDTO(
 					job_id=uuid.UUID(str(job.id)),
 					job_code=job_code,
@@ -667,8 +1292,12 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 					product_code=product_code,
 					planned_qty=float(job.planned_qty),
 					estimated_duration_hours=duration_hours,
-					tentative_start=tentative_start,
-					tentative_finish=tentative_finish,
+					roll_count=roll_count,
+					hours_per_roll=hours_per_roll,
+					job_sheet_job_no=job_sheet_job_no,
+					job_layflat_width_mm=layflat_mm,
+					tentative_start=tentative_start.astimezone(timezone.utc),
+					tentative_finish=tentative_finish.astimezone(timezone.utc),
 					status=status_str,
 					readiness=readiness,
 					requires_uteco=requires_uteco,
@@ -676,17 +1305,119 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 					num_colours=num_colours,
 					warnings=warnings,
 					tool_conflicts=tool_conflicts,
+					tool_strips=tool_strips,
 				))
 			
-			machine_type_str = machine.type.value if hasattr(machine.type, "value") else str(machine.type)
+			if lane.kind == "extrusion" and lane.extruder:
+				machine_code = lane.extruder.extruder_code
+				machine_type_str = "extruder"
+				machine_id_str = lane.lane_id
+			elif lane.kind == "uteco" and lane.uteco_printer:
+				machine_code = lane.uteco_printer.code
+				machine_type_str = "printer_uteco"
+				machine_id_str = lane.lane_id
+			elif lane.kind == "bagging" and lane.bagging_machine:
+				machine_code = lane.bagging_machine.code
+				machine_type_str = "converter_bagger"
+				machine_id_str = lane.lane_id
+			else:
+				continue
+			film_min = lane.extruder.film_width_min_mm if lane.kind == "extrusion" and lane.extruder else None
+			film_max = lane.extruder.film_width_max_mm if lane.kind == "extrusion" and lane.extruder else None
 			lanes.append(GanttLaneDTO(
-				machine_id=machine.id,
-				machine_code=machine.code,
+				machine_id=machine_id_str,
+				machine_code=machine_code,
 				machine_type=machine_type_str,
+				film_width_min_mm=film_min,
+				film_width_max_mm=film_max,
 				bars=bars,
 			))
-		
+
+		if operating_calendar is None:
+			min_s = min(all_starts_local) if all_starts_local else anchor_local
+			max_e = max(all_ends_local) if all_ends_local else anchor_local
+			window_start_local = min(anchor_local, min_s)
+			window_end_local = max(now_local + timedelta(weeks=ctx.gantt_preview_weeks), max_e + timedelta(days=1))
+			tz_key = getattr(ctx.tz, "key", None) or "UTC"
+			operating_calendar = calendar_dict_for_gantt(
+				window_start_local.astimezone(timezone.utc),
+				window_end_local.astimezone(timezone.utc),
+				str(tz_key),
+			)
+		else:
+			# Caller-supplied calendar (tests); still attach timezone label if missing
+			if "timezone" not in operating_calendar:
+				tz_key = getattr(ctx.tz, "key", None) or "UTC"
+				operating_calendar = {**operating_calendar, "timezone": str(tz_key)}
+
 		return GanttOverviewDTO(
 			lanes=lanes,
 			calendar=operating_calendar,
+			extrusion_toolbox=_extrusion_toolbox_balances(session),
 		)
+
+
+def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
+	"""
+	Jobs schedulable for extrusion, not already on an extruder queue.
+	Includes all order statuses (draft, confirmed, …) and standalone job sheets (no order).
+	"""
+	with SessionLocal.begin() as session:
+		ensure_jobs_for_orphan_standalone_sheets(session)
+
+		extruder_queued = exists(
+			select(1)
+			.select_from(ExtrusionQueueItem)
+			.where(
+				ExtrusionQueueItem.job_id == Job.id,
+				ExtrusionQueueItem.status.in_([QueueStatus.QUEUED, QueueStatus.RUNNING]),
+			)
+		)
+		q = (
+			select(Job)
+			.where(
+				Job.status.in_([JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED]),
+				~extruder_queued,
+			)
+		)
+		jobs = list(session.execute(q).scalars().all())
+		out: List[UnqueuedScheduleJobDTO] = []
+		for job in jobs:
+			_, order, product_version = resolve_job_context(session, uuid.UUID(str(job.id)))
+			rc = _num_rolls_for_job(session, job, product_version)
+			product = session.get(Product, product_version.product_id) if product_version else None
+			job_sheet_no = _job_sheet_job_no_for_job(session, job)
+			layflat_mm = layflat_width_mm_from_product_version(product_version)
+			if order:
+				customer = session.get(Customer, order.customer_id)
+				out.append(
+					UnqueuedScheduleJobDTO(
+						job_id=uuid.UUID(str(job.id)),
+						order_code=order.code,
+						job_code=f"{order.code}-{job.job_code}",
+						customer=customer.name if customer else "Unknown",
+						product_code=product.code if product else "Unknown",
+						planned_qty=float(job.planned_qty),
+						roll_count=rc,
+						job_sheet_job_no=job_sheet_no,
+						job_layflat_width_mm=layflat_mm,
+					)
+				)
+			else:
+				js = session.get(JobSheet, job.job_sheet_id) if job.job_sheet_id else None
+				customer = session.get(Customer, js.customer_id) if js else None
+				out.append(
+					UnqueuedScheduleJobDTO(
+						job_id=uuid.UUID(str(job.id)),
+						order_code="",
+						job_code=js.job_no if js else str(job.job_code),
+						customer=customer.name if customer else "Unknown",
+						product_code=product.code if product else "Unknown",
+						planned_qty=float(job.planned_qty),
+						roll_count=rc,
+						job_sheet_job_no=job_sheet_no,
+						job_layflat_width_mm=layflat_mm,
+					)
+				)
+		out.sort(key=lambda row: (row.customer.lower(), row.job_code.lower()))
+		return out

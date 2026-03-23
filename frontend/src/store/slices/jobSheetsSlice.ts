@@ -13,6 +13,10 @@ export type JobSheetSummary = {
   due_date?: string | null
   quantity_value: number
   quantity_unit: string
+  qty_type?: string
+  num_product_units?: number | null
+  weight_per_roll_kg?: number | null
+  num_rolls?: number
   created_at?: string | null
   invoice_no?: string | null
   order_date?: string | null

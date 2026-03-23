@@ -10,15 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.db.models.domain import (
-    Job,
     OperationRun,
-    Order,
     ProductVersion,
     QCCheck,
     QCReading,
     Sensor,
     TelemetryEvent as TelemetryEventModel,
 )
+from app.job_context import resolve_job_context
 from app.db.models.enums import QCCheckResult, QCSource, RunStatus
 from app.exceptions import DomainError
 
@@ -40,9 +39,8 @@ def _parse_dt(ts: Optional[str]) -> datetime:
 
 
 def _get_product_version_for_run(session: Session, run: OperationRun) -> Optional[ProductVersion]:
-    job: Job = session.get(Job, run.job_id)
-    order: Order = session.get(Order, job.order_id)
-    return session.get(ProductVersion, order.product_version_id) if order else None
+    _, _, pv = resolve_job_context(session, run.job_id)
+    return pv
 
 
 def _evaluate_against_acceptance(
@@ -82,13 +80,9 @@ def _evaluate_against_acceptance(
 
 
 def _find_active_run(session: Session, machine_id: uuid.UUID, at_ts: datetime) -> Optional[OperationRun]:
-    q = select(OperationRun).where(
-        OperationRun.machine_id == machine_id,
-        OperationRun.status.in_([RunStatus.RUNNING, RunStatus.PAUSED]),
-        OperationRun.started_at <= at_ts,
-        (OperationRun.ended_at.is_(None)) | (OperationRun.ended_at >= at_ts),
-    )
-    return session.execute(q).scalars().first()
+    """Runs are keyed by extruder_code / Uteco / bagging ids, not legacy `machines.id`."""
+    del machine_id, at_ts, session
+    return None
 
 
 def ingest(payload: Dict[str, Any]) -> Dict[str, Any]:

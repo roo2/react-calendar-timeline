@@ -10,12 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.db.models.domain import (
+    BaggingQueueItem,
+    ExtrusionQueueItem,
     InventoryTransaction,
     Job,
-    Machine,
-    MachineQueueItem,
     OperationRun,
-    Order,
     ProductVersion,
     QCCheck,
     QCReading,
@@ -24,7 +23,9 @@ from app.db.models.domain import (
     ToolMount,
     ToolReservation,
     ToolType,
+    UtecoQueueItem,
 )
+from app.job_context import resolve_job_context
 from app.db.models.enums import (
     InventoryCategory,
     JobStatus,
@@ -38,7 +39,9 @@ from app.db.models.enums import (
     PrintingMethod,
 )
 from app.exceptions import DomainError
-from app.machines.service import validate_machine_capability
+from app.machines.service import validate_capability_dict, validate_extruder_for_spec
+from app.scheduling.lane_context import resolve_schedule_lane, ScheduleLane
+from app.scheduling.service import _lane_reservation_match
 from app.production.schemas import ChecklistDTO, ChecklistItem, TotalsDTO
 from app.scheduling.service import _required_tool_type_codes as scheduling_required_tool_type_codes
 
@@ -46,17 +49,6 @@ from app.scheduling.service import _required_tool_type_codes as scheduling_requi
 # -------- Helpers
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _get_job_with_context(session: Session, job_id: uuid.UUID) -> Tuple[Job, Order, Optional[ProductVersion]]:
-    job: Job = session.get(Job, job_id)
-    if not job:
-        raise DomainError("Job not found")
-    order: Order = session.get(Order, job.order_id)
-    if not order:
-        raise DomainError("Order not found for job")
-    product_version: Optional[ProductVersion] = session.get(ProductVersion, order.product_version_id)
-    return job, order, product_version
 
 
 def _get_printing_method_from_spec(product_version: Optional[ProductVersion]) -> PrintingMethod:
@@ -93,7 +85,7 @@ def _tooling_ready(
     session: Session,
     job: Job,
     operation_type: OperationType,
-    machine: Machine,
+    lane: ScheduleLane,
     product_version: Optional[ProductVersion],
 ) -> Tuple[bool, list[str]]:
     now = _now()
@@ -102,16 +94,14 @@ def _tooling_ready(
     if not required_codes:
         return True, []
 
-    # 1) Planned reservation(s) exist covering "now" (or any if windows not set)
     for code in required_codes:
-        # Find tool type
         tool_type: Optional[ToolType] = session.execute(select(ToolType).where(ToolType.code == code)).scalars().first()
         if not tool_type:
             conflicts.append(f"Required tool type not registered: {code}")
             continue
         res_q = select(ToolReservation).where(
             ToolReservation.tool_type_id == tool_type.id,
-            ToolReservation.machine_id == machine.id,
+            _lane_reservation_match(lane),
             ToolReservation.job_id == job.id,
             ToolReservation.operation_type == operation_type,
             ToolReservation.status == ToolReservationStatus.PLANNED,
@@ -120,7 +110,6 @@ def _tooling_ready(
         if not reservations:
             conflicts.append(f"No planned reservation for required tool type: {code}")
             continue
-        # If windows are present, ensure one covers now
         has_covering = any(
             (r.planned_from is None or r.planned_from <= now) and (r.planned_to is None or r.planned_to >= now)
             for r in reservations
@@ -128,44 +117,62 @@ def _tooling_ready(
         if not has_covering:
             conflicts.append(f"No reservation covering current time for tool type: {code}")
 
-        # 2) Active mount on machine for any tool of this type
-        mount_q = (
-            select(ToolMount)
-            .join(Tool, Tool.id == ToolMount.tool_id)
-            .where(
-                Tool.tool_type_id == tool_type.id,
-                ToolMount.machine_id == machine.id,
-                ToolMount.mounted_from <= now,
-                (ToolMount.mounted_to.is_(None)) | (ToolMount.mounted_to >= now),
+        if operation_type == OperationType.EXTRUSION and lane.kind == "extrusion" and lane.extruder:
+            mount_q = (
+                select(ToolMount)
+                .join(Tool, Tool.id == ToolMount.tool_id)
+                .where(
+                    Tool.tool_type_id == tool_type.id,
+                    ToolMount.extruder_code == lane.extruder.extruder_code,
+                    ToolMount.mounted_from <= now,
+                    (ToolMount.mounted_to.is_(None)) | (ToolMount.mounted_to >= now),
+                )
             )
-        )
-        mounted = session.execute(mount_q).scalars().first()
-        if not mounted:
-            conflicts.append(f"No active mount for required tool type on this machine: {code}")
+            mounted = session.execute(mount_q).scalars().first()
+            if not mounted:
+                conflicts.append(f"No active mount for required tool type on this extruder: {code}")
 
     return (len(conflicts) == 0), conflicts
 
 
 # -------- Service methods
-def start_run(job_id: uuid.UUID, machine_id: uuid.UUID, operation_type: OperationType) -> OperationRun:
+def start_run(job_id: uuid.UUID, machine_id: str, operation_type: OperationType) -> OperationRun:
     with SessionLocal.begin() as session:
-        # Entities
-        machine: Machine = session.get(Machine, machine_id)
-        if not machine or not machine.active:
-            raise DomainError("Machine not found or inactive")
-        job, order, product_version = _get_job_with_context(session, job_id)
+        lane = resolve_schedule_lane(session, str(machine_id))
+        job, order, product_version = resolve_job_context(session, job_id)
         if job.status not in (JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED, JobStatus.RUNNING):
             raise DomainError("Job not in a runnable state")
 
-        # Machine exclusivity pre-check
-        q_busy = select(OperationRun).where(OperationRun.machine_id == machine_id, OperationRun.status == RunStatus.RUNNING)
+        if lane.kind == "extrusion" and lane.extruder:
+            q_busy = select(OperationRun).where(
+                OperationRun.extruder_code == lane.extruder.extruder_code,
+                OperationRun.status == RunStatus.RUNNING,
+            )
+        elif lane.kind == "uteco" and lane.uteco_printer:
+            q_busy = select(OperationRun).where(
+                OperationRun.uteco_printer_id == lane.uteco_printer.id,
+                OperationRun.status == RunStatus.RUNNING,
+            )
+        elif lane.kind == "bagging" and lane.bagging_machine:
+            q_busy = select(OperationRun).where(
+                OperationRun.bagging_machine_id == lane.bagging_machine.id,
+                OperationRun.status == RunStatus.RUNNING,
+            )
+        else:
+            raise DomainError("Invalid schedule lane")
         if session.execute(q_busy).scalars().first() is not None:
-            raise DomainError("Machine already has a running operation")
+            raise DomainError("Lane already has a running operation")
 
-        # Scheduling head-of-queue (advisory enforce if present)
-        q_items = select(MachineQueueItem).where(MachineQueueItem.machine_id == machine_id)
+        if lane.kind == "extrusion" and lane.extruder:
+            q_items = select(ExtrusionQueueItem).where(ExtrusionQueueItem.extruder_code == lane.extruder.extruder_code)
+        elif lane.kind == "uteco" and lane.uteco_printer:
+            q_items = select(UtecoQueueItem).where(UtecoQueueItem.uteco_printer_id == lane.uteco_printer.id)
+        elif lane.kind == "bagging" and lane.bagging_machine:
+            q_items = select(BaggingQueueItem).where(BaggingQueueItem.bagging_machine_id == lane.bagging_machine.id)
+        else:
+            raise DomainError("Invalid schedule lane")
         items = list(session.execute(q_items).scalars().all())
-        my_item = next((i for i in items if i.job_id == job_id), None)
+        my_item = next((i for i in items if i.job_id == str(job_id)), None)
         earliest_queued = min((i.position for i in items if i.status == QueueStatus.QUEUED), default=None)
         if my_item is not None and earliest_queued is not None and my_item.position != earliest_queued:
             raise DomainError("Job is not at the head of the queue for this machine")
@@ -186,18 +193,27 @@ def start_run(job_id: uuid.UUID, machine_id: uuid.UUID, operation_type: Operatio
                 raise DomainError("Conversion requires at least one completed Uteco Printing run")
 
         # Tooling hard-stop
-        ok, conflicts = _tooling_ready(session, job, operation_type, machine, product_version)
+        ok, conflicts = _tooling_ready(session, job, operation_type, lane, product_version)
         if not ok:
             raise DomainError("; ".join(conflicts))
 
-        # Capability check
-        validate_machine_capability(machine, product_version)
+        spec = (product_version.spec_payload if product_version else {}) or {}
+        if lane.kind == "extrusion" and lane.extruder:
+            validate_extruder_for_spec(lane.extruder, spec, operation_type)
+        elif lane.kind == "uteco" and lane.uteco_printer:
+            validate_capability_dict(lane.uteco_printer.capability or {}, spec, operation_type)
+        elif lane.kind == "bagging" and lane.bagging_machine:
+            validate_capability_dict(lane.bagging_machine.capability or {}, spec, operation_type)
 
-        # Create operation run
+        ex = lane.extruder.extruder_code if lane.kind == "extrusion" and lane.extruder else None
+        ut = lane.uteco_printer.id if lane.kind == "uteco" and lane.uteco_printer else None
+        bg = lane.bagging_machine.id if lane.kind == "bagging" and lane.bagging_machine else None
         run = OperationRun(
             job_id=job_id,
             operation_type=operation_type,
-            machine_id=machine_id,
+            extruder_code=ex,
+            uteco_printer_id=ut,
+            bagging_machine_id=bg,
             status=RunStatus.RUNNING,
             started_at=_now(),
         )
@@ -369,7 +385,7 @@ def record_output(
         session.add(output)
 
         # Inventory postings
-        _, _, product_version = _get_job_with_context(session, run.job_id)
+        _, _, product_version = resolve_job_context(session, run.job_id)
         _post_inventory_for_output(session, run, output, product_version, created_by=created_by)
 
         # Totals
@@ -500,11 +516,28 @@ def complete_run(run_id: uuid.UUID) -> OperationRun:
         run.status = RunStatus.COMPLETED
         run.ended_at = _now()
 
-        # Update queue item if present
-        q_item = select(MachineQueueItem).where(
-            MachineQueueItem.machine_id == run.machine_id, MachineQueueItem.job_id == run.job_id
-        )
-        item = session.execute(q_item).scalars().first()
+        item = None
+        if run.extruder_code:
+            item = session.execute(
+                select(ExtrusionQueueItem).where(
+                    ExtrusionQueueItem.extruder_code == run.extruder_code,
+                    ExtrusionQueueItem.job_id == run.job_id,
+                )
+            ).scalars().first()
+        elif run.uteco_printer_id:
+            item = session.execute(
+                select(UtecoQueueItem).where(
+                    UtecoQueueItem.uteco_printer_id == run.uteco_printer_id,
+                    UtecoQueueItem.job_id == run.job_id,
+                )
+            ).scalars().first()
+        elif run.bagging_machine_id:
+            item = session.execute(
+                select(BaggingQueueItem).where(
+                    BaggingQueueItem.bagging_machine_id == run.bagging_machine_id,
+                    BaggingQueueItem.job_id == run.job_id,
+                )
+            ).scalars().first()
         if item:
             item.status = QueueStatus.COMPLETED
 

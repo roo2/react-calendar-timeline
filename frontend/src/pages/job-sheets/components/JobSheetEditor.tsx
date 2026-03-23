@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProductListItem } from '../../../store/slices/productsSlice'
 import { Link, useNavigate } from 'react-router-dom'
+import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
+import { computeDerivedGeometryAndTotals } from '../../../utils/quoteCalculator'
+import { buildQuickQuoteInputsFromSpec } from '../../../utils/specToQuoteInputs'
+import {
+  coerceQtyTypeForFinishMode,
+  computeRollsDisplay,
+  computeTotalKgDisplay,
+  computeWeightPerRollDisplay,
+  getFieldEditability,
+  getOrderQuantityFromJobSheetFields,
+  resolveNumRollsForPersistence,
+  resolveWeightPerRollForPersistence,
+  validateJobSheetQuantityInputs,
+  cartonsWeightPerRollKg,
+  type FinishMode,
+  type QtyType,
+} from '../../../utils/quantityRollFields'
 import {
   Alert,
   Box,
@@ -14,8 +31,12 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material'
+import { ApiError } from '../../../api/client'
+import { parseFastApiValidationDetail } from '../../../api/validation'
 import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
+import { isRejectedWithValue } from '@reduxjs/toolkit'
+import type { UpsertError } from '../../../store/slices/productsSlice'
 import { fetchCustomers } from '../../../store/slices/customersSlice'
 import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '../../../store/slices/productsSlice'
 import { createJobSheet, fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
@@ -34,7 +55,18 @@ type ProductVersionSummary = {
   spec_payload?: any
 }
 
-type QuantityUnit = 'kg' | 'rolls' | 'bags' | 'meters'
+function formatKgDisplay(v: number | null | undefined): string {
+  if (v == null) return ''
+  const n = Number(v)
+  return Number.isFinite(n) ? n.toFixed(2) : ''
+}
+
+function inferQtyTypeFromUnit(u: string | undefined): QtyType {
+  const x = (u || '').toLowerCase()
+  if (x === 'rolls') return 'total_rolls'
+  if (x === 'kg') return 'kg'
+  return 'units'
+}
 
 /** Placeholder select value while composing a new product (not a real product id until save). */
 const NEW_PRODUCT_DRAFT_VALUE = '__new_product_draft__'
@@ -79,8 +111,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const [customerId, setCustomerId] = useState('')
   const [dueDate, setDueDate] = useState('')
-  const [qtyUnit, setQtyUnit] = useState<QuantityUnit>('kg')
-  const [qtyValue, setQtyValue] = useState<number | ''>('')
+  const [qtyType, setQtyType] = useState<QtyType>('kg')
+  const [totalKg, setTotalKg] = useState('')
+  const [numRolls, setNumRolls] = useState('1')
+  const [weightPerRoll, setWeightPerRoll] = useState('')
+  const [numUnits, setNumUnits] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [orderDate, setOrderDate] = useState('')
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
@@ -95,6 +130,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
+  const [specFieldErrors, setSpecFieldErrors] = useState<Record<string, string>>({})
 
   /** New job sheet: show Product Spec after user clicks "New Product" or selects an existing product. */
   const [wantsNewProductFlow, setWantsNewProductFlow] = useState(false)
@@ -103,6 +139,13 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (customersStatus !== 'idle') return
     void dispatch(fetchCustomers(undefined))
   }, [customersStatus, dispatch])
+
+  const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
+  const ratebook = quoteRatebookState.data
+
+  useEffect(() => {
+    void dispatch(fetchQuoteRatebook())
+  }, [dispatch])
 
   const products = useMemo((): ProductSummary[] => {
     if (!customerId || productList.lastCustomerId !== customerId) return []
@@ -145,6 +188,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (jobHydratedRef.current === jobSheetId) return
     jobHydratedRef.current = jobSheetId
     setSaveErr(null)
+    setSpecFieldErrors({})
     const res = st.data
     const js = res?.job_sheet
     setCustomerId(js?.customer_id || '')
@@ -163,9 +207,33 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setDueDate(js?.due_date || '')
     setInvoiceNo(js?.invoice_no ?? '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
-    setQtyUnit((js?.quantity_unit as QuantityUnit) || 'kg')
-    setQtyValue(typeof js?.quantity_value === 'number' ? js.quantity_value : Number(js?.quantity_value || '') || '')
-    setSpec(ensureSpec(res?.spec_payload))
+    const loadedSpec = ensureSpec(res?.spec_payload)
+    setSpec(loadedSpec)
+    const fm: FinishMode = loadedSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+    const rawQt = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
+    const qt = coerceQtyTypeForFinishMode(fm, rawQt)
+    setQtyType(qt)
+    const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
+    const wpr =
+      js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
+        ? String(js.weight_per_roll_kg)
+        : ''
+    if (qt === 'kg') {
+      setTotalKg(String(js?.quantity_value ?? ''))
+      setNumUnits('')
+      setNumRolls(String(nrStored))
+      setWeightPerRoll(wpr)
+    } else if (qt === 'units') {
+      setNumUnits(String(js?.num_product_units ?? js?.quantity_value ?? ''))
+      setTotalKg('')
+      setNumRolls(String(nrStored))
+      setWeightPerRoll(wpr)
+    } else {
+      setNumRolls(String(js?.num_rolls ?? js?.quantity_value ?? nrStored))
+      setWeightPerRoll(wpr)
+      setTotalKg('')
+      setNumUnits('')
+    }
   }, [mode, jobSheetId, jobSheetDetail])
 
   // New mode: when customer changes, reload product list and reset selection
@@ -177,6 +245,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setSpecDirty(false)
     setSaveMsg(null)
     setWantsNewProductFlow(false)
+    setQtyType('kg')
+    setTotalKg('')
+    setNumRolls('1')
+    setWeightPerRoll('')
+    setNumUnits('')
     if (!customerId) return
     void dispatch(fetchProducts({ customer_id: customerId }))
   }, [customerId, mode, dispatch])
@@ -214,35 +287,163 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setSpec(ensureSpec(srcSpec))
   }, [mode, productId, productDetail])
 
-  const qtyLabel = useMemo(() => {
-    if (qtyUnit === 'kg') return 'Total KGs'
-    if (qtyUnit === 'rolls') return 'No. of Rolls'
-    if (qtyUnit === 'bags') return 'No. of Bags'
-    return 'Total Meters'
-  }, [qtyUnit])
-
   const theme = useTheme()
   const isNarrow = useMediaQuery(theme.breakpoints.down('md'))
   const previewDescription = useMemo(() => computeProductDescriptionFromSpec(spec), [spec])
   const previewProductCode = useMemo(() => computeProductCodeFromSpec(spec), [spec])
 
+  const finishMode: FinishMode = spec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+  const effectiveQtyType = useMemo(() => coerceQtyTypeForFinishMode(finishMode, qtyType), [finishMode, qtyType])
+
+  const totalKgNum = Number(totalKg || 0)
+  const numRollsNum = Math.max(0, Math.round(Number(numRolls || 0)))
+  const weightPerRollNum = Number(weightPerRoll || 0)
+  const numUnitsNum = Math.max(0, Math.round(Number(numUnits || 0)))
+
+  const derivedForDisplay = useMemo(() => {
+    if (!ratebook) return null
+    try {
+      const inputs = buildQuickQuoteInputsFromSpec(
+        spec,
+        {
+          qtyType: effectiveQtyType,
+          totalKg: totalKgNum,
+          numUnits: numUnitsNum,
+          numRolls: numRollsNum,
+          weightPerRoll: weightPerRollNum,
+        },
+        {},
+      )
+      return computeDerivedGeometryAndTotals(inputs, ratebook)
+    } catch {
+      return null
+    }
+  }, [ratebook, spec, effectiveQtyType, totalKgNum, numUnitsNum, numRollsNum, weightPerRollNum])
+
+  const derivedDisplay = derivedForDisplay
+    ? {
+        derivedTotalKg: derivedForDisplay.derivedTotalKg ?? null,
+        units: derivedForDisplay.units ?? null,
+        kgPerRoll: derivedForDisplay.kgPerRoll ?? null,
+      }
+    : null
+
+  const totalKgDisplay = computeTotalKgDisplay(
+    effectiveQtyType,
+    totalKgNum,
+    numRollsNum,
+    weightPerRollNum,
+    numUnitsNum,
+    derivedDisplay,
+  )
+  const rollsDisplay = computeRollsDisplay(
+    finishMode,
+    effectiveQtyType,
+    totalKgNum,
+    numRollsNum,
+    weightPerRollNum,
+    derivedDisplay,
+  )
+  const weightPerRollDisplay = computeWeightPerRollDisplay(
+    effectiveQtyType,
+    finishMode,
+    numRollsNum,
+    weightPerRollNum,
+    derivedDisplay,
+  )
+
+  const edit = getFieldEditability(finishMode, effectiveQtyType)
+  const totalKgEditable = edit.totalKgEditable
+  const unitsEditable = edit.unitsEditable
+  const rollsEditable = edit.rollsEditable || edit.cartonsRollCountEditable
+  const weightPerRollEditable = edit.weightPerRollEditable && finishMode !== 'Cartons'
+
+  const haveDriverForTotalKg =
+    (effectiveQtyType === 'units' && numUnitsNum > 0) ||
+    (effectiveQtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
+  const haveDriverForUnits =
+    (effectiveQtyType === 'kg' && totalKgNum > 0) ||
+    (effectiveQtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
+  const haveDriverForWeightPerRoll =
+    finishMode === 'Rolls' &&
+    numRollsNum > 0 &&
+    ((effectiveQtyType === 'kg' && totalKgNum > 0) || (effectiveQtyType === 'units' && numUnitsNum > 0))
+
+  useEffect(() => {
+    setQtyType((t) => coerceQtyTypeForFinishMode(finishMode, t))
+  }, [finishMode])
+
+  useEffect(() => {
+    if (
+      effectiveQtyType !== 'units' &&
+      derivedForDisplay?.units != null &&
+      ((effectiveQtyType === 'kg' && totalKgNum > 0) ||
+        (effectiveQtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0))
+    ) {
+      const computed = Math.round(Number(derivedForDisplay.units))
+      setNumUnits(Number.isFinite(computed) && computed >= 0 ? String(computed) : '')
+    }
+  }, [effectiveQtyType, totalKgNum, numRollsNum, weightPerRollNum, derivedForDisplay?.units])
+
+  const productType = (spec.identity?.product_type as string) || 'Bag'
+  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
+
+  const loadedJobSheet = mode === 'edit' && jobSheetId ? jobSheetDetail?.data?.job_sheet : undefined
+
   async function onSave() {
     setSaveMsg(null)
     setSaveErr(null)
+    setSpecFieldErrors({})
 
     const missing: string[] = []
     if (!customerId) missing.push('Customer')
     if (!productId) missing.push('Product')
     if (!dueDate) missing.push('Due Date')
-    if (qtyValue === '' || !Number.isFinite(Number(qtyValue)) || Number(qtyValue) <= 0) missing.push('Quantity')
     if (missing.length > 0) {
       setSaveErr(`Missing required fields: ${missing.join(', ')}`)
+      return
+    }
+    const qtyErr = validateJobSheetQuantityInputs(
+      finishMode,
+      effectiveQtyType,
+      totalKgNum,
+      numUnitsNum,
+      numRollsNum,
+      finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgNum, numRollsNum) ?? 0) : weightPerRollNum,
+    )
+    if (qtyErr) {
+      setSaveErr(qtyErr)
       return
     }
     if (savingJobSheet) return
 
     try {
       setSavingJobSheet(true)
+
+      const persistedRolls = resolveNumRollsForPersistence(
+        finishMode,
+        effectiveQtyType,
+        totalKgNum,
+        numRollsNum,
+        weightPerRollNum,
+        derivedDisplay,
+      )
+      const persistedWpr = resolveWeightPerRollForPersistence(
+        finishMode,
+        effectiveQtyType,
+        totalKgNum,
+        numRollsNum,
+        weightPerRollNum,
+        derivedDisplay,
+      )
+      const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
+      const oq = getOrderQuantityFromJobSheetFields(
+        effectiveQtyType,
+        fallbackLegacy,
+        totalKgNum,
+        numUnitsNum,
+        persistedRolls,
+      )
 
       let effectiveProductId = productId
       if (mode === 'new' && productId === NEW_PRODUCT_DRAFT_VALUE) {
@@ -276,7 +477,19 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             active_version_id: (created?.version?.id as string | undefined) ?? null,
           })
           await dispatch(fetchProducts({ customer_id: customerId })).unwrap()
-        } catch {
+        } catch (e: unknown) {
+          if (isRejectedWithValue(e)) {
+            const p = e.payload as UpsertError
+            setSpecFieldErrors(p.fieldErrors || {})
+            setSaveErr(p.message || 'Please fix the highlighted fields and try again.')
+          } else if (e instanceof ApiError && e.body?.detail != null) {
+            const { fieldErrors, messages } = parseFastApiValidationDetail(e.body.detail)
+            setSpecFieldErrors(fieldErrors)
+            setSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+          } else {
+            setSpecFieldErrors({})
+            setSaveErr(e instanceof Error ? e.message : 'Failed to create product')
+          }
           setSavingJobSheet(false)
           return
         }
@@ -288,8 +501,17 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             customer_id: customerId,
             product_id: effectiveProductId,
             due_date: dueDate,
-            quantity_value: Number(qtyValue),
-            quantity_unit: qtyUnit,
+            quantity_value: oq.quantity_value,
+            quantity_unit: oq.quantity_unit,
+            qty_type: effectiveQtyType,
+            num_product_units:
+              effectiveQtyType === 'units'
+                ? numUnitsNum
+                : derivedForDisplay?.units != null
+                  ? Math.round(Number(derivedForDisplay.units))
+                  : null,
+            weight_per_roll_kg: persistedWpr,
+            num_rolls: persistedRolls,
             spec,
           }),
         ).unwrap()
@@ -301,8 +523,17 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         if (!jobSheetId) throw new Error('Missing job sheet id')
         const body: Record<string, unknown> = {
           due_date: dueDate,
-          quantity_value: Number(qtyValue),
-          quantity_unit: qtyUnit,
+          quantity_value: oq.quantity_value,
+          quantity_unit: oq.quantity_unit,
+          qty_type: effectiveQtyType,
+          num_product_units:
+            effectiveQtyType === 'units'
+              ? numUnitsNum
+              : derivedForDisplay?.units != null
+                ? Math.round(Number(derivedForDisplay.units))
+                : null,
+          weight_per_roll_kg: persistedWpr,
+          num_rolls: persistedRolls,
         }
         if (specDirty) body.spec = spec
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
@@ -311,8 +542,19 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${id}`)
       }
-    } catch (e) {
-      setSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setSpecFieldErrors(p.fieldErrors || {})
+        setSaveErr(p.message || 'Please fix the highlighted fields and try again.')
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { fieldErrors, messages } = parseFastApiValidationDetail(e.body.detail)
+        setSpecFieldErrors(fieldErrors)
+        setSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+      } else {
+        setSpecFieldErrors({})
+        setSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
+      }
     } finally {
       setSavingJobSheet(false)
     }
@@ -387,22 +629,97 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             />
           </Box>
 
-          <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-            <TextField select label="Quantity Type" value={qtyUnit} onChange={(e) => setQtyUnit(e.target.value as any)}>
-              <MenuItem value="kg">Total KGs</MenuItem>
-              <MenuItem value="rolls">No. of Rolls</MenuItem>
-              <MenuItem value="bags">No. of Bags</MenuItem>
-              <MenuItem value="meters">Total Meters</MenuItem>
-            </TextField>
-
-            <TextField
-              label={qtyLabel}
-              type="number"
-              value={qtyValue}
-              onChange={(e) => setQtyValue(e.target.value === '' ? '' : Number(e.target.value))}
-              inputProps={{ min: 0, step: 'any' }}
-              required
-            />
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              Quantity
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+              <TextField
+                select
+                label="Qty Type"
+                value={effectiveQtyType}
+                onChange={(e) => setQtyType(e.target.value as QtyType)}
+              >
+                <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
+                <MenuItem value="kg">Total KG</MenuItem>
+                {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
+              </TextField>
+            </Box>
+            <Box
+              sx={{
+                mt: 2,
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+                gap: 2,
+              }}
+            >
+              <TextField
+                label="Total KG"
+                type="number"
+                inputProps={{ min: 0, step: 0.1 }}
+                value={
+                  totalKgEditable
+                    ? totalKg
+                    : haveDriverForTotalKg && totalKgDisplay != null
+                      ? formatKgDisplay(totalKgDisplay)
+                      : totalKg !== '' && Number.isFinite(Number(totalKg))
+                        ? formatKgDisplay(Number(totalKg))
+                        : totalKg
+                }
+                onChange={totalKgEditable ? (e) => setTotalKg(e.target.value) : undefined}
+                disabled={!totalKgEditable}
+                required={effectiveQtyType === 'kg'}
+              />
+              <TextField
+                label={`No. of ${productUnitLabel}`}
+                type="number"
+                inputProps={{ min: 0, step: 1 }}
+                value={
+                  unitsEditable
+                    ? numUnits
+                    : haveDriverForUnits && derivedForDisplay?.units != null
+                      ? String(Math.round(Number(derivedForDisplay.units)))
+                      : numUnits
+                }
+                onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
+                disabled={!unitsEditable}
+                required={effectiveQtyType === 'units'}
+              />
+              <TextField
+                label="Weight per Roll (kg)"
+                type="number"
+                inputProps={{ min: 0, step: 0.1 }}
+                value={
+                  weightPerRollEditable
+                    ? weightPerRoll
+                    : haveDriverForWeightPerRoll && weightPerRollDisplay != null
+                      ? formatKgDisplay(weightPerRollDisplay)
+                      : finishMode === 'Cartons' && totalKgNum > 0 && numRollsNum > 0
+                        ? formatKgDisplay(cartonsWeightPerRollKg(totalKgNum, numRollsNum))
+                        : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
+                          ? formatKgDisplay(Number(weightPerRoll))
+                          : weightPerRoll
+                }
+                onChange={weightPerRollEditable ? (e) => setWeightPerRoll(e.target.value) : undefined}
+                disabled={!weightPerRollEditable}
+                helperText={finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined}
+              />
+              <TextField
+                label="No. of Rolls"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={
+                  rollsEditable
+                    ? numRolls
+                    : rollsDisplay != null && finishMode === 'Rolls'
+                      ? String(rollsDisplay)
+                      : numRolls
+                }
+                onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
+                disabled={!rollsEditable}
+                required
+              />
+            </Box>
           </Box>
 
           {mode === 'edit' ? (
@@ -520,9 +837,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               <SpecPayloadForm
                 customerId={customerId || undefined}
                 value={spec}
+                fieldErrors={specFieldErrors}
                 onChange={(next) => {
                   setSpec(next)
                   setSpecDirty(true)
+                  setSpecFieldErrors({})
                 }}
               />
             ) : null}

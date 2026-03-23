@@ -11,6 +11,7 @@ import {
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
+import { ScheduleMachinesSection, SCHEDULE_CAPABILITY_DEFAULTS } from './components/ScheduleMachinesSection'
 import type { Extruder, ExtrusionWasteFactor } from './types'
 
 export function ExtrusionAdminPage() {
@@ -86,18 +87,52 @@ export function ExtrusionAdminPage() {
     }
   }
 
+  /** Match ratebook + schedule: decision width ascending, null/missing width last, then code. */
   const extrudersSorted = useMemo(() => {
-    return (extruders || []).slice().sort((a, b) => Number(b.decision_width_mm || 0) - Number(a.decision_width_mm || 0))
+    return (extruders || [])
+      .slice()
+      .sort((a, b) => {
+        const aw = a.decision_width_mm
+        const bw = b.decision_width_mm
+        if (aw == null && bw == null) return a.extruder_code.localeCompare(b.extruder_code)
+        if (aw == null) return 1
+        if (bw == null) return -1
+        if (aw !== bw) return aw - bw
+        return a.extruder_code.localeCompare(b.extruder_code)
+      })
   }, [extruders])
 
   return (
     <Stack spacing={2}>
-      <AdminPageHeader title="Extrusion" subtitle="Extruders and extrusion waste factors (minutes)." />
+      <AdminPageHeader
+        title="Extrusion"
+        subtitle="Extruder rate cards (quotes & kg/hr), production schedule lanes, and extrusion waste factors."
+      />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
+
+      <ScheduleMachinesSection
+        machineType="extruder"
+        title="Production schedule — extruders"
+        description={
+          <>
+            These are the extruder <strong>lanes</strong> on the Schedule board. Use the <strong>same code</strong> as a row in
+            the extruder rate table below so run-time estimates use that machine&apos;s <strong>kg/hr</strong> and capability
+            checks match.
+          </>
+        }
+        defaultCapability={SCHEDULE_CAPABILITY_DEFAULTS.extruder}
+        footerHint={
+          <>
+            Inactive extruders are hidden from the schedule. Codes must be unique. For kg/hr, the schedule matches{' '}
+            <code>machines.code</code> to <code>extruders.extruder_code</code>. You cannot rename a code if that lane already
+            has queue items.
+          </>
+        }
+      />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Extruders
+          Extruder rate cards (quotes & throughput)
         </Typography>
         {loading && extruders.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>

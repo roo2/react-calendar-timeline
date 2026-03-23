@@ -1150,10 +1150,11 @@ async def delete_plate(customer_id: str, plate_code: str):
 )
 async def list_extruders():
     with SessionLocal() as db:
+        # Same ordering as public ratebook and schedule Gantt extruder rows (shop-floor / quote consistency).
         rows = (
             db.execute(
                 select(Extruder).order_by(
-                    Extruder.decision_width_mm.desc(),
+                    Extruder.decision_width_mm.asc().nulls_last(),
                     Extruder.extruder_code.asc(),
                 )
             )

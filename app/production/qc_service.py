@@ -14,12 +14,12 @@ from app.db.models.domain import (
     Job,
     JobQCSummary,
     OperationRun,
-    Order,
     ProductVersion,
     QCCheck,
     QCReading,
     RunOutputEntry,
 )
+from app.job_context import resolve_job_context
 from app.db.models.enums import JobQCSummaryStatus, QCCheckResult, QCSource
 from app.exceptions import DomainError
 
@@ -28,17 +28,6 @@ logger = logging.getLogger(__name__)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _get_job_context(session: Session, job_id: uuid.UUID) -> Tuple[Job, Order, Optional[ProductVersion]]:
-    job: Optional[Job] = session.get(Job, job_id)
-    if not job:
-        raise DomainError("Job not found")
-    order: Optional[Order] = session.get(Order, job.order_id)
-    if not order:
-        raise DomainError("Order not found for job")
-    product_version: Optional[ProductVersion] = session.get(ProductVersion, order.product_version_id)
-    return job, order, product_version
 
 
 def _extract_numeric(v: Any) -> Optional[float]:
@@ -192,7 +181,7 @@ def _default_final_checklist(product_version: Optional[ProductVersion]) -> Dict[
 
 def aggregate_job_qc(job_id: uuid.UUID, created_by: str) -> JobQCSummary:
     with SessionLocal.begin() as session:
-        job, order, product_version = _get_job_context(session, job_id)
+        job, _order, product_version = resolve_job_context(session, job_id)
 
         obs = _collect_job_qc_observations(session, job_id)
         expectations = _get_acceptance_expectations(product_version)
