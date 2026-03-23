@@ -1,4 +1,5 @@
 SDS 6 — Scheduling Model
+
 1. Purpose & Design Intent
 
 The Scheduling Model answers one question only:
@@ -8,13 +9,9 @@ The Scheduling Model answers one question only:
 Design intent:
 
 Human-led — scheduling is a decision, not an algorithm
-
 Constraint-respecting — one job per machine at a time
-
 Reversible — reordering must be safe and cheap
-
 Reality-tolerant — delays, pauses, and changes are expected
-
 Simple first — sophistication comes later, not now
 
 The scheduler exists to support production managers, not to replace them.
@@ -23,21 +20,15 @@ The scheduler exists to support production managers, not to replace them.
 Scheduling is
 
 An ordered queue per machine
-
 A way to express priority and intent
-
 A visual planning aid
-
 A coordination mechanism between planning and execution
 
 Scheduling is not
 
 A promise of start or finish times
-
 An optimisation engine
-
 A capacity planner
-
 A constraint solver
 
 
@@ -49,19 +40,15 @@ A Machine is a physical resource that can process one job at a time.
 Machine types (MVP):
 
 Extruder (multiple)
-
 Printer (Uteco)
-
 Converter (Bagging machines)
 
-There are also Inline Printers and Hole punches but for the purpose of scheduling, these do not need to be modelled.
+There are also inline Tools such as Printers and Hole Punches, these are modelled as Tools and can be moved between machines as required.
 
 Each machine has:
 
 identity
-
-capability metadata (used by quoting, not scheduling)
-
+capability metadata
 one active queue
 
 3.2 Scheduling Queue
@@ -69,17 +56,13 @@ one active queue
 Each machine has a queue, which is:
 
 a strictly ordered list of Jobs
-
 manually reorderable
-
 independent of other machines’ queues
 
 A job may appear in:
 
 extrusion queue
-
 printing queue
-
 conversion queue
 
 at different times in its lifecycle.
@@ -118,14 +101,13 @@ For a given machine, position must be unique and contiguous.
 A job becomes schedulable when:
 
 Order status ≥ confirmed
-
 Job status = planned
 
 Production actions:
 
 Assign job to machine queue
-
 Choose machine (extruder/printer/converter)
+
 
 5.2 Scheduling to Execution
 
@@ -134,9 +116,7 @@ Scheduling does not start production.
 Production begins only when:
 
 Production starts an OperationRun
-
 the job becomes running
-
 the machine is free
 
 At that moment:
@@ -178,6 +158,7 @@ Database:
 unique constraint on (machine_id, status = running)
 
 8. Interaction with Job States
+
 State transitions
 Action	Job State Change
 Added to queue	planned → scheduled
@@ -189,24 +170,19 @@ Run finishes	running → completed
 Scheduling never:
 
 completes a job
-
 pauses a job
-
 resumes a job
 
 9. Multi-Machine Reality
+
 Parallelism rules
-
 Multiple extruders may run simultaneously
-
 Multiple bagging machines may run simultaneously
 
 One job may:
 
 complete extrusion today
-
 wait unscheduled for printing
-
 be scheduled for conversion later
 
 In practice, a job may be in-progress on multiple machines at once because rolls can flow forward before the entire job is finished upstream (pipelined execution).
@@ -217,9 +193,7 @@ The scheduler does not enforce cross-machine dependencies in v1.
 Must prevent
 
 Running two jobs on one machine
-
 Scheduling cancelled jobs
-
 Deleting jobs silently
 
 Auto-rescheduling without human action
@@ -227,9 +201,7 @@ Auto-rescheduling without human action
 Must allow
 
 Jobs to sit idle
-
 Out-of-order execution
-
 Human judgement overrides
 
 11. UI Expectations (MVP)
@@ -241,21 +213,14 @@ List of machines
 Each machine shows its queue:
 
 job_code
-
 customer
-
 product
-
 planned quantity
 
 Controls:
-
 add job
-
 move up/down
-
 remove
-
 Production (On-Machine) View
 
 “My Machine”
@@ -283,13 +248,9 @@ Multi-site scheduling
 13. Why This Model Works
 
 Matches how factories actually schedule
-
 Avoids false precision
-
 Supports interruptions naturally
-
 Is trivial to reason about and debug
-
 Keeps humans in control
 
 14. Routing Constraints & Enforcement (MVP)
@@ -326,9 +287,10 @@ Allow reordering and out-of-order queuing, but keep warnings visible until prere
 
 Notes
 
-These constraints reflect site reality: 8 extruders (with possible inline 1‑colour printing and perforation), one out‑of‑line Uteco printer (up to 6 colours front/back), and 3 bagging machines.
+These constraints reflect site reality: 8 extruders (with possible inline 2‑colour printing and perforation), one out‑of‑line Uteco printer (up to 6 colours front/back), and 3 bagging machines.
 
 15. Gantt Scheduling UI
+
 Purpose
 
 Provide a visual, drag‑and‑drop timeline for planning jobs across all machines, with duration estimates per operation and clear visual emphasis for colour/printing work.
@@ -351,7 +313,7 @@ Default operating window: 24 hours/day, 4 days/week, starting Monday 04:30 throu
 
 Configurable to up to 24/7 operation.
 
-Calendar exceptions (future): public holidays, maintenance windows (advisory for MVP).
+Calendar exceptions are also configurable. e.g. public holidays, maintenance windows
 
 Bars (Job Operations)
 
@@ -373,7 +335,7 @@ Jobs requiring printing (Inline or Uteco) and/or colour are visually highlighted
 
 Uteco printing required: distinctive colour fill + printer icon.
 
-Inline print/perforation on extrusion: badge/icon on the extrusion bar.
+Inline print/perforation on extrusion: Thin coloured selectable Tool bar displayed below the extrusion bar.
 
 Colour jobs: hue accent based on Number of Colours; non‑colour jobs remain neutral.
 
@@ -425,9 +387,9 @@ Visuals
 
 Each operation bar shows badges for required tools and a thin coloured bar below the machine's lane indicating that the tool is required for the duration of that job.
 
-When tools are unused, they will be represented in "tool box" lanes (one lane for extrusion tools, one land for conversion tools)
+When tools are unused, they will be represented in a "tool box" lane (one lane for extrusion tools, one lane for conversion tools). The unused tools will be represented as a thin bar within this lane, colour coded for the tool type.
 
-Hover shows tool name and availability.
+Hover shows tool name and highlights availability.
 
 Planning & Reservation
 
@@ -435,17 +397,9 @@ When a job operation is placed on a lane, the system attempts to create planned 
 
 If not enough tools of a type are available, the bar shows a conflict badge and the drop is allowed but marked “conflict” until resolved.
 
-Run Start Hard-Stop
-
-OperationRun start is blocked unless all required tools:
-
-are reserved (status planned) for the bar’s time window,
-
-are mounted on the target machine (ToolMount present),
-
 Drag-and-Drop Validation
 
-Within-lane reorder: update planned ToolReservations; keep icons updated.
+Within-lane reorder: update planned ToolReservations; keep icons and bars updated.
 
 Cross-lane move: only allowed if:
 
@@ -457,16 +411,15 @@ Invalid drops snap back with explanation (e.g., “No inline_printer_1c availabl
 
 Changeovers (Advisory MVP)
 
-Moving a Tool between machines incurs setup time; initially tracked as advisory metadata (display “tool move” indicator).
-
-Future: explicit ToolMove operations with durations that constrain schedule.
+Moving a Tool between machines incurs setup time; initially tracked as advisory metadata (display “tool move” indicator with a different coloured bar).
 
 Failure Modes to Prevent
 
 Two bars overlapping that require the same unique tool (e.g., electra_punch) without sufficient units.
 
 Starting a run when ToolReservation is missing or mounted on the wrong machine.
-15.2 Tooling Entities (Schema, MVP+)
+
+15.2 Tooling Entities
 
 Purpose
 
@@ -475,55 +428,33 @@ Provide minimal entities to represent limited-count tools, their availability by
 Entities
 
 ToolType
-
 tool_type_id
-
 code (e.g., inline_printer_1c, electra_punch)
-
 name
-
 icon_ref (optional)
-
 unique_per_machine (boolean)  // if true, at most one can be mounted on a machine at a time
 
 Tool
-
 tool_id
-
 tool_type_id (FK)
-
 serial_code
-
 active (boolean)
-
 notes
 
 ToolMount (append-only history)
-
 tool_mount_id
-
 tool_id (FK)
-
 machine_id (FK)
-
 mounted_from
-
 mounted_to (nullable when currently mounted)
 
 ToolReservation (planning, not history of mount)
-
 tool_reservation_id
-
 tool_type_id (FK)  // reserve by type
-
 optional tool_id (FK)  // may be assigned later
-
 machine_id (FK)
-
 planned_from
-
 planned_to
-
 status (planned | conflicted | cancelled | fulfilled)
 
 Links to Schedule
@@ -540,9 +471,8 @@ For each (tool_type_id, machine_id, time window), the number of planned reservat
 
 A ToolMount cannot overlap for the same tool_id on different machines.
 
-OperationRun.start hard-stop: required tool_types must have (reservation.status in {planned} AND active ToolMount on machine).
+UI may allow conflicted reservations (advisory).
 
-UI may allow conflicted reservations (advisory), but server blocks run start until resolved.
 16. Dashboard Signals (Advisory)
 
 Purpose
@@ -552,11 +482,8 @@ Expose near‑real‑time, read‑only signals to the Operational Dashboard with
 Per machine lane (UI)
 
 running_job
-
 next_job
-
 last_24h outputs (kg/units)
-
 current WIP bucket for its stage (derived; see SDS 1, SDS 8)
 
 Notes
