@@ -1,12 +1,10 @@
 import { useDroppable } from '@dnd-kit/core'
-import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { Box, Typography } from '@mui/material'
 import { memo } from 'react'
 import type { GanttLane } from '../../../store/slices/scheduleSlice'
 import { ganttBarId, laneEmptyId } from '../ganttIds'
 import { useExtrusionHourDropActive } from '../useExtrusionHourDropActive'
 import { ExtrusionHourDropLayer } from './ExtrusionHourDropLayer'
-import { GanttSortableBar } from './GanttSortableBar'
 
 /** Must match GanttBoard machine label column width for sticky alignment. */
 const MACHINE_LABEL_COL_PX = 140

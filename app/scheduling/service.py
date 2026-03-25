@@ -48,7 +48,6 @@ from app.scheduling.lane_context import ScheduleLane, list_active_lanes, resolve
 from app.production_calendar.logic import (
 	add_operating_hours,
 	calendar_dict_for_gantt,
-	operating_hours_between,
 	snap_to_operating_instant,
 )
 from app.production_calendar.repository import load_operating_context
@@ -100,52 +99,94 @@ def _queue_item_lead_hours(item: ExtrusionQueueItem | UtecoQueueItem | BaggingQu
 	return float(v)
 
 
-def _cursor_after_queue_prefix(
+def _target_start_as_utc(target_start: datetime) -> datetime:
+	if target_start.tzinfo is None:
+		raise DomainError("target_start must be timezone-aware")
+	return target_start.astimezone(timezone.utc)
+
+
+def _scheduled_start_from_db(dt: datetime) -> datetime:
+	"""
+	Normalize ``scheduled_start_utc`` from the ORM.
+
+	SQLite + ``DateTime(timezone=True)`` often returns **naive** values. Python 3.12+ interprets
+	naive datetimes as *system local* in ``.astimezone(tz)``, which shifts UTC wall times when the
+	app host TZ is not UTC (e.g. +10h for Australia). This column is always persisted as UTC.
+	"""
+	if dt.tzinfo is None:
+		return dt.replace(tzinfo=timezone.utc)
+	return dt.astimezone(timezone.utc)
+
+
+def _default_append_scheduled_start_utc(
 	session: Session,
 	lane: ScheduleLane,
-	prefix_items: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem],
-	ctx,
+	items_on_lane_sorted: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem],
+	ctx: Any,
 	anchor_local: datetime,
 ) -> datetime:
-	cursor = anchor_local
-	for qi in prefix_items:
-		cursor = add_operating_hours(cursor, _queue_item_lead_hours(qi), ctx)
-		job, _, pv = _get_job_with_context(session, uuid.UUID(str(qi.job_id)))
-		dur = _estimate_lane_duration_hours(session, lane, job, pv)
-		cursor = add_operating_hours(cursor, dur, ctx)
-	return cursor
+	"""Wall start for a new tail item: after the last queued item on the lane, else anchor."""
+	if not items_on_lane_sorted:
+		return anchor_local.astimezone(timezone.utc)
+	last = max(items_on_lane_sorted, key=lambda x: x.position)
+	ss = getattr(last, "scheduled_start_utc", None)
+	if ss is None:
+		return anchor_local.astimezone(timezone.utc)
+	last_local = _scheduled_start_from_db(ss).astimezone(ctx.tz)
+	job, _, pv = _get_job_with_context(session, uuid.UUID(str(last.job_id)))
+	dur = _estimate_lane_duration_hours(session, lane, job, pv)
+	finish_local = add_operating_hours(last_local, dur, ctx)
+	return finish_local.astimezone(timezone.utc)
 
 
-def _best_extruder_insert_for_target_start(
+def _gantt_tentative_start_local_for_item(
 	session: Session,
 	lane: ScheduleLane,
-	ordered_items_without_new: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem],
-	desired_start_utc: datetime,
-	ctx,
-	anchor_local: datetime,
-) -> Tuple[int, float]:
+	queue_item: ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem,
+	ctx: Any,
+	cursor_local: datetime,
+) -> Tuple[datetime, datetime]:
 	"""
-	Choose insert position (1-based) and operating_hours_lead_before for a new item so its
-	tentative start is as close as possible to desired_start (factory-local interpretation).
+	Return (tentative_start_local, next_cursor_local).
+
+	If ``scheduled_start_utc`` is set, the item is independent of siblings; ``cursor_local`` is
+	unchanged. Otherwise the item follows the sequential cursor + ``operating_hours_lead_before``.
 	"""
-	desired_local = desired_start_utc.astimezone(ctx.tz)
-	n = len(ordered_items_without_new)
-	best: Optional[Tuple[float, int, float]] = None
-	for p in range(n + 1):
-		prefix = ordered_items_without_new[:p]
-		cursor_before = _cursor_after_queue_prefix(session, lane, prefix, ctx, anchor_local)
-		ts = snap_to_operating_instant(cursor_before, ctx)
-		if desired_local < ts:
-			lead_new = 0.0
-		else:
-			lead_new = operating_hours_between(ts, desired_local, ctx)
-		start_new = add_operating_hours(cursor_before, lead_new, ctx)
-		diff = abs((start_new - desired_local).total_seconds())
-		if best is None or diff < best[0]:
-			best = (diff, p, lead_new)
-	assert best is not None
-	_, p0, lead_new = best
-	return p0 + 1, lead_new
+	ss_utc = getattr(queue_item, "scheduled_start_utc", None)
+	if ss_utc is not None:
+		start_local = _scheduled_start_from_db(ss_utc).astimezone(ctx.tz)
+		return start_local, cursor_local
+	lead_h = _queue_item_lead_hours(queue_item)
+	cur = cursor_local
+	if lead_h > 0:
+		cur = add_operating_hours(cur, lead_h, ctx)
+	start_local = cur
+	job, _, pv = _get_job_with_context(session, uuid.UUID(str(queue_item.job_id)))
+	dur = _estimate_lane_duration_hours(session, lane, job, pv)
+	next_cursor = add_operating_hours(cur, dur, ctx)
+	return start_local, next_cursor
+
+
+def backfill_queue_scheduled_starts_from_lead_model(session: Session) -> None:
+	"""One-shot migration helper: derive ``scheduled_start_utc`` from anchor + legacy lead chain."""
+	ctx = load_operating_context(session)
+	now_utc = datetime.now(tz=timezone.utc)
+	now_local = now_utc.astimezone(ctx.tz)
+	anchor_local = snap_to_operating_instant(now_local, ctx)
+	for lane in list_active_lanes(session):
+		queue_items = [
+			i
+			for i in _load_lane_items_read(session, lane)
+			if i.status in (QueueStatus.QUEUED, QueueStatus.RUNNING)
+		]
+		queue_items.sort(key=lambda x: x.position)
+		cursor_local = anchor_local
+		for queue_item in queue_items:
+			start_local, cursor_local = _gantt_tentative_start_local_for_item(
+				session, lane, queue_item, ctx, cursor_local
+			)
+			queue_item.scheduled_start_utc = start_local.astimezone(timezone.utc)
+			queue_item.operating_hours_lead_before = 0
 
 
 def _gantt_anchor_local(session: Session) -> Tuple[Any, datetime]:
@@ -216,9 +257,39 @@ def _load_lane_items_read(session: Session, lane: ScheduleLane) -> List[Extrusio
 	return list(session.execute(q).scalars().all())
 
 
-def _reindex_lane(items: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem]) -> None:
-	for idx, itm in enumerate(sorted(items, key=lambda x: x.position), start=1):
+# Off unique (lane, position) range so SQLite never sees two rows share a slot mid-flush.
+_REINDEX_TEMP_POSITION_BASE = 10_000_000
+def _reindex_lane(session: Session, items: List[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem]) -> None:
+	"""Compact positions to 1..n in sort order.
+
+	SQLite enforces UNIQUE immediately on batched UPDATEs. Assigning 1..n in one flush can
+	temporarily duplicate a slot (e.g. row A 2→3 while row B still holds 3). We first move
+	every row to a high temporary position, flush, then assign finals.
+	"""
+	if not items:
+		return
+	ordered = sorted(items, key=lambda x: x.position)
+	for idx, itm in enumerate(ordered):
+		itm.position = _REINDEX_TEMP_POSITION_BASE + idx
+	session.flush()
+	for idx, itm in enumerate(ordered, start=1):
 		itm.position = idx
+	session.flush()
+
+
+def _bump_queue_positions_from(
+	items: Iterable[ExtrusionQueueItem | UtecoQueueItem | BaggingQueueItem],
+	from_pos: int,
+) -> None:
+	"""Increment position for every item at or after ``from_pos``.
+
+	Highest positions are updated first so two rows never briefly share the same
+	``(extruder_code|printer|bagger, position)`` during flush — SQLite enforces that
+	UNIQUE immediately and rejects batched UPDATEs that collide.
+	"""
+	need = [i for i in items if i.position >= from_pos]
+	for itm in sorted(need, key=lambda x: -x.position):
+		itm.position += 1
 
 
 def _get_job_with_context(session: Session, job_id: uuid.UUID) -> Tuple[Job, Optional[Order], Optional[ProductVersion]]:
@@ -817,19 +888,31 @@ def add_job(
 			raise DomainError("Job already in this machine queue")
 
 		items_sorted = sorted(items, key=lambda x: x.position)
-		lead_for_new = 0.0
-		if target_start is not None and lane.kind == "extrusion":
-			ctx, anchor_local = _gantt_anchor_local(session)
-			insert_pos, lead_for_new = _best_extruder_insert_for_target_start(
-				session, lane, items_sorted, target_start, ctx, anchor_local
-			)
-		else:
-			insert_pos = position if position is not None else (len(items) + 1)
-			insert_pos = max(1, min(insert_pos, len(items) + 1))
+		insert_pos = position if position is not None else (len(items_sorted) + 1)
+		insert_pos = max(1, min(insert_pos, len(items_sorted) + 1))
 
-		for itm in items:
-			if itm.position >= insert_pos:
-				itm.position += 1
+		ctx, anchor_local = _gantt_anchor_local(session)
+		if target_start is not None:
+			sched_utc = _target_start_as_utc(target_start)
+		elif insert_pos > len(items_sorted):
+			sched_utc = _default_append_scheduled_start_utc(session, lane, items_sorted, ctx, anchor_local)
+		else:
+			pred_idx = insert_pos - 2
+			if pred_idx < 0:
+				sched_utc = anchor_local.astimezone(timezone.utc)
+			else:
+				pred = items_sorted[pred_idx]
+				ps = getattr(pred, "scheduled_start_utc", None)
+				if ps is None:
+					sched_utc = anchor_local.astimezone(timezone.utc)
+				else:
+					pl = _scheduled_start_from_db(ps).astimezone(ctx.tz)
+					pj, _, ppv = _get_job_with_context(session, uuid.UUID(str(pred.job_id)))
+					pdur = _estimate_lane_duration_hours(session, lane, pj, ppv)
+					sched_utc = add_operating_hours(pl, pdur, ctx).astimezone(timezone.utc)
+
+		_bump_queue_positions_from(items, insert_pos)
+		session.flush()
 
 		if lane.kind == "extrusion" and lane.extruder:
 			queue_item = ExtrusionQueueItem(
@@ -837,7 +920,8 @@ def add_job(
 				job_id=jid_str,
 				position=insert_pos,
 				status=QueueStatus.QUEUED,
-				operating_hours_lead_before=lead_for_new,
+				operating_hours_lead_before=0,
+				scheduled_start_utc=sched_utc,
 			)
 		elif lane.kind == "uteco" and lane.uteco_printer:
 			queue_item = UtecoQueueItem(
@@ -845,7 +929,8 @@ def add_job(
 				job_id=jid_str,
 				position=insert_pos,
 				status=QueueStatus.QUEUED,
-				operating_hours_lead_before=lead_for_new,
+				operating_hours_lead_before=0,
+				scheduled_start_utc=sched_utc,
 			)
 		elif lane.kind == "bagging" and lane.bagging_machine:
 			queue_item = BaggingQueueItem(
@@ -853,13 +938,14 @@ def add_job(
 				job_id=jid_str,
 				position=insert_pos,
 				status=QueueStatus.QUEUED,
-				operating_hours_lead_before=lead_for_new,
+				operating_hours_lead_before=0,
+				scheduled_start_utc=sched_utc,
 			)
 		else:
 			raise DomainError("Invalid schedule lane")
 		session.add(queue_item)
-
-		_reindex_lane(items + [queue_item])
+		# Positions are already dense 1..n+1 after _bump_queue_positions_from + insert; reindex would
+		# only rewrite the same sequence and can break SQLite UNIQUE on batched UPDATEs.
 
 		if job.status == JobStatus.PLANNED:
 			job.status = JobStatus.SCHEDULED
@@ -896,12 +982,10 @@ def reorder(machine_id: str, job_id: uuid.UUID, new_position: int) -> LaneDTO:
 
 		items.remove(item)
 		new_position = max(1, min(new_position, len(items) + 1))
-		for itm in items:
-			if itm.position >= new_position:
-				itm.position += 1
+		_bump_queue_positions_from(items, new_position)
 		item.position = new_position
 		items.append(item)
-		_reindex_lane(items)
+		_reindex_lane(session, items)
 
 		refreshed = _load_lane_items_for_update(session, lane)
 		return _lane_dto(lane.lane_id, refreshed)
@@ -921,7 +1005,7 @@ def remove(machine_id: str, job_id: uuid.UUID) -> LaneDTO:
 
 		items.remove(item)
 		session.delete(item)
-		_reindex_lane(items)
+		_reindex_lane(session, items)
 
 		ex_code = lane.extruder.extruder_code if lane.kind == "extrusion" and lane.extruder else None
 		ut_id = lane.uteco_printer.id if lane.kind == "uteco" and lane.uteco_printer else None
@@ -983,7 +1067,6 @@ def move_bar(
 	job_id: uuid.UUID,
 	operation_type: OperationType,
 	target_machine_id: str,
-	target_position: int,
 	proposed_start: Optional[datetime] = None,
 	target_start: Optional[datetime] = None,
 ) -> MoveResult:
@@ -1007,16 +1090,54 @@ def move_bar(
 				raise DomainError("Queue item not found in this lane")
 			if it.status == QueueStatus.RUNNING:
 				raise DomainError("Cannot reorder a running item")
-			items_one.remove(it)
-			np = max(1, min(target_position, len(items_one) + 1))
-			for x in items_one:
-				if x.position >= np:
-					x.position += 1
-			it.position = np
-			items_one.append(it)
-			_reindex_lane(items_one)
+			if target_start is None:
+				ref = _load_lane_items_for_update(session, source_lane)
+				ld = _lane_dto(source_lane.lane_id, ref)
+				return MoveResult(source_lane=ld, target_lane=ld)
+
+			it.scheduled_start_utc = _target_start_as_utc(target_start)
+			it.operating_hours_lead_before = 0
+			session.flush()
+
+			job, order, product_version = _get_job_with_context(session, job_id)
+			s_ex = (
+				source_lane.extruder.extruder_code
+				if source_lane.kind == "extrusion" and source_lane.extruder
+				else None
+			)
+			s_ut = source_lane.uteco_printer.id if source_lane.kind == "uteco" and source_lane.uteco_printer else None
+			s_bg = (
+				source_lane.bagging_machine.id
+				if source_lane.kind == "bagging" and source_lane.bagging_machine
+				else None
+			)
+			rq = session.query(ToolReservation).filter(
+				ToolReservation.job_id == jid_str,
+				ToolReservation.operation_type == operation_type,
+				ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.CONFLICTED]),
+			)
+			if s_ex:
+				rq = rq.filter(ToolReservation.extruder_code == s_ex)
+			elif s_ut:
+				rq = rq.filter(ToolReservation.uteco_printer_id == s_ut)
+			elif s_bg:
+				rq = rq.filter(ToolReservation.bagging_machine_id == s_bg)
+			rq.update({"status": ToolReservationStatus.CANCELLED})
+
+			tool_anchor = proposed_start or target_start
+			window = (tool_anchor, tool_anchor + timedelta(hours=1)) if tool_anchor else None
+			required_codes = _required_tool_type_codes(job, operation_type, product_version)
+			tool_conflicts = _reserve_tools(
+				session=session,
+				job=job,
+				operation_type=operation_type,
+				lane=target,
+				window=window,
+				tool_type_codes=required_codes,
+			)
+			warnings = _routing_warnings_for_enqueue(session, target, job, product_version)
 			ref = _load_lane_items_for_update(session, source_lane)
-			ld = _lane_dto(source_lane.lane_id, ref)
+			ld = _lane_dto(source_lane.lane_id, ref, warnings=warnings, conflicts=tool_conflicts)
 			return MoveResult(source_lane=ld, target_lane=ld)
 
 		job, order, product_version = _get_job_with_context(session, job_id)
@@ -1026,26 +1147,21 @@ def move_bar(
 		target_items = _load_lane_items_for_update(session, target)
 
 		source_items = [i for i in source_items if i.id != item.id]
-		_reindex_lane(source_items)
-		session.flush()
+		# Delete the moved row before reindexing siblings. Otherwise SQLite UNIQUE (lane, position)
+		# fires: reindex assigns 1..n while this row still holds its old position.
 		session.delete(item)
 		session.flush()
+		_reindex_lane(session, source_items)
+		session.flush()
 
-		insert_pos: int
-		lead_new = 0.0
 		target_others = list(target_items)
-		if target_start is not None and target.kind == "extrusion":
-			ctx, anchor_local = _gantt_anchor_local(session)
-			ordered = sorted(target_others, key=lambda x: x.position)
-			insert_pos, lead_new = _best_extruder_insert_for_target_start(
-				session, target, ordered, target_start, ctx, anchor_local
-			)
+		ordered_tgt = sorted(target_others, key=lambda x: x.position)
+		insert_pos = max((i.position for i in ordered_tgt), default=0) + 1
+		ctx, anchor_local = _gantt_anchor_local(session)
+		if target_start is not None:
+			sched_utc = _target_start_as_utc(target_start)
 		else:
-			insert_pos = max(1, min(target_position, len(target_others) + 1))
-
-		for itm in target_others:
-			if itm.position >= insert_pos:
-				itm.position += 1
+			sched_utc = _default_append_scheduled_start_utc(session, target, ordered_tgt, ctx, anchor_local)
 
 		if target.kind == "extrusion" and target.extruder:
 			new_item = ExtrusionQueueItem(
@@ -1053,7 +1169,8 @@ def move_bar(
 				job_id=jid_str,
 				position=insert_pos,
 				status=QueueStatus.QUEUED,
-				operating_hours_lead_before=lead_new,
+				operating_hours_lead_before=0,
+				scheduled_start_utc=sched_utc,
 			)
 		elif target.kind == "uteco" and target.uteco_printer:
 			new_item = UtecoQueueItem(
@@ -1061,7 +1178,8 @@ def move_bar(
 				job_id=jid_str,
 				position=insert_pos,
 				status=QueueStatus.QUEUED,
-				operating_hours_lead_before=lead_new,
+				operating_hours_lead_before=0,
+				scheduled_start_utc=sched_utc,
 			)
 		elif target.kind == "bagging" and target.bagging_machine:
 			new_item = BaggingQueueItem(
@@ -1069,13 +1187,13 @@ def move_bar(
 				job_id=jid_str,
 				position=insert_pos,
 				status=QueueStatus.QUEUED,
-				operating_hours_lead_before=lead_new,
+				operating_hours_lead_before=0,
+				scheduled_start_utc=sched_utc,
 			)
 		else:
 			raise DomainError("Invalid target lane")
 		session.add(new_item)
 		target_others.append(new_item)
-		_reindex_lane(target_others)
 
 		# Cancel prior reservations for this job/op on source lane
 		s_ex = source_lane.extruder.extruder_code if source_lane.kind == "extrusion" and source_lane.extruder else None
@@ -1095,7 +1213,7 @@ def move_bar(
 		rq.update({"status": ToolReservationStatus.CANCELLED})
 
 		window = None
-		tool_anchor = proposed_start or target_start
+		tool_anchor = proposed_start or target_start or sched_utc
 		if tool_anchor:
 			window = (tool_anchor, tool_anchor + timedelta(hours=1))
 		required_codes = _required_tool_type_codes(job, operation_type, product_version)
@@ -1216,18 +1334,17 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 				for i in _load_lane_items_read(session, lane)
 				if i.status in (QueueStatus.QUEUED, QueueStatus.RUNNING)
 			]
+			queue_items.sort(key=lambda x: x.position)
 
 			bars: List[GanttBarDTO] = []
 			cursor_local = anchor_local
 
 			for queue_item in queue_items:
-				lead_h = _queue_item_lead_hours(queue_item)
-				if lead_h > 0:
-					cursor_local = add_operating_hours(cursor_local, lead_h, ctx)
-				# Load job context
+				tentative_start_local, cursor_local = _gantt_tentative_start_local_for_item(
+					session, lane, queue_item, ctx, cursor_local
+				)
 				job, order, product_version = _get_job_with_context(session, uuid.UUID(str(queue_item.job_id)))
 
-				# Load customer (order-backed or standalone job sheet)
 				if order:
 					customer = session.get(Customer, order.customer_id)
 					customer_name = customer.name if customer else "Unknown"
@@ -1238,76 +1355,98 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 					customer_name = customer.name if customer else "Unknown"
 					job_code = js.job_no if js else str(job.job_code)
 
-				# Load product
 				product = session.get(Product, product_version.product_id) if product_version else None
 				product_code = product.code if product else "Unknown"
-				
-				# Determine operation type
+
 				operation_type = _operation_type_for_lane(lane)
 				operation_type_str = operation_type.value if hasattr(operation_type, "value") else str(operation_type)
-				
+
 				duration_hours = _estimate_lane_duration_hours(session, lane, job, product_version)
 				spec = (product_version.spec_payload if product_version else {}) or {}
 				roll_count = _num_rolls_for_job(session, job, product_version)
 				hours_per_roll = duration_hours / roll_count if roll_count > 0 else duration_hours
 				job_sheet_job_no = _job_sheet_job_no_for_job(session, job)
-				
-				# Tentative start/finish: operating-time only (skip nights, weekends, holidays)
-				tentative_start = cursor_local
-				tentative_finish = add_operating_hours(cursor_local, duration_hours, ctx)
-				cursor_local = tentative_finish
-				all_starts_local.append(tentative_start)
-				all_ends_local.append(tentative_finish)
-				
-				# Determine status
+
+				tentative_finish_local = add_operating_hours(tentative_start_local, duration_hours, ctx)
+				all_starts_local.append(tentative_start_local)
+				all_ends_local.append(tentative_finish_local)
+
 				status_str = queue_item.status.value if hasattr(queue_item.status, "value") else str(queue_item.status)
-				
-				# Determine readiness
+
 				readiness = "running" if status_str == "running" else "ready"
 				printing_method = _get_printing_method_from_spec(product_version)
-				
-				# Check routing warnings
-				warnings = _routing_warnings_for_enqueue(session, lane, job, product_version)
+
+				warnings = list(_routing_warnings_for_enqueue(session, lane, job, product_version))
 				if warnings:
 					readiness = "blocked"
-				
-				# Tool strips / conflicts (extrusion only)
+
 				tool_strips: List[ToolStripDTO] = []
 				tool_conflicts: List[ToolConflictDTO] = []
 				if lane.kind == "extrusion":
 					tool_strips = _build_tool_strips_for_extrusion(session, job, lane, product_version)
 					tool_conflicts = _gantt_tool_conflict_dtos_for_job_lane(session, job, lane)
-				
-				# Determine visual properties
+
 				requires_uteco = printing_method == PrintingMethod.UTECO
 				requires_inline_print = printing_method == PrintingMethod.INLINE
 				num_colours = (spec.get("printing") or {}).get("num_colours", 0) or 0
 				layflat_mm = layflat_width_mm_from_product_version(product_version)
 
-				bars.append(GanttBarDTO(
-					job_id=uuid.UUID(str(job.id)),
-					job_code=job_code,
-					operation_type=operation_type_str,
-					customer=customer_name,
-					product_code=product_code,
-					planned_qty=float(job.planned_qty),
-					estimated_duration_hours=duration_hours,
-					roll_count=roll_count,
-					hours_per_roll=hours_per_roll,
-					job_sheet_job_no=job_sheet_job_no,
-					job_layflat_width_mm=layflat_mm,
-					tentative_start=tentative_start.astimezone(timezone.utc),
-					tentative_finish=tentative_finish.astimezone(timezone.utc),
-					status=status_str,
-					readiness=readiness,
-					requires_uteco=requires_uteco,
-					requires_inline_print=requires_inline_print,
-					num_colours=num_colours,
-					warnings=warnings,
-					tool_conflicts=tool_conflicts,
-					tool_strips=tool_strips,
-				))
-			
+				bars.append(
+					GanttBarDTO(
+						job_id=uuid.UUID(str(job.id)),
+						job_code=job_code,
+						operation_type=operation_type_str,
+						customer=customer_name,
+						product_code=product_code,
+						planned_qty=float(job.planned_qty),
+						estimated_duration_hours=duration_hours,
+						roll_count=roll_count,
+						hours_per_roll=hours_per_roll,
+						job_sheet_job_no=job_sheet_job_no,
+						job_layflat_width_mm=layflat_mm,
+						tentative_start=tentative_start_local.astimezone(timezone.utc),
+						tentative_finish=tentative_finish_local.astimezone(timezone.utc),
+						status=status_str,
+						readiness=readiness,
+						requires_uteco=requires_uteco,
+						requires_inline_print=requires_inline_print,
+						num_colours=num_colours,
+						warnings=warnings,
+						tool_conflicts=tool_conflicts,
+						tool_strips=tool_strips,
+					)
+				)
+
+			for i in range(len(bars)):
+				si = bars[i].tentative_start
+				fi = bars[i].tentative_finish
+				if si is None or fi is None:
+					continue
+				for j in range(i + 1, len(bars)):
+					sj = bars[j].tentative_start
+					fj = bars[j].tentative_finish
+					if sj is None or fj is None:
+						continue
+					if si < fj and sj < fi:
+						other_i = bars[j].job_code
+						other_j = bars[i].job_code
+						bars[i] = bars[i].model_copy(
+							update={
+								"warnings": [
+									*bars[i].warnings,
+									f"Overlaps with {other_i} on this machine",
+								]
+							}
+						)
+						bars[j] = bars[j].model_copy(
+							update={
+								"warnings": [
+									*bars[j].warnings,
+									f"Overlaps with {other_j} on this machine",
+								]
+							}
+						)
+
 			if lane.kind == "extrusion" and lane.extruder:
 				machine_code = lane.extruder.extruder_code
 				machine_type_str = "extruder"
@@ -1343,6 +1482,7 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 				window_start_local.astimezone(timezone.utc),
 				window_end_local.astimezone(timezone.utc),
 				str(tz_key),
+				ctx,
 			)
 		else:
 			# Caller-supplied calendar (tests); still attach timezone label if missing

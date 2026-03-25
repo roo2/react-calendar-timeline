@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models.domain import ProductionCalendarException, ProductionOperatingSettings
 from app.production_calendar.logic import (
 	CalendarExceptionData,
+	DEFAULT_GANTT_PREVIEW_WEEKS,
 	DEFAULT_WEEK_JSON,
 	FACTORY_TIMEZONE,
 	OperatingContext,
@@ -31,10 +32,12 @@ def load_operating_context(session: Session) -> OperatingContext:
 		for e in exc_rows
 	]
 	if row is None:
-		return operating_context_from_settings(FACTORY_TIMEZONE, DEFAULT_WEEK_JSON, 4, exc_data)
+		return operating_context_from_settings(
+			FACTORY_TIMEZONE, DEFAULT_WEEK_JSON, DEFAULT_GANTT_PREVIEW_WEEKS, exc_data
+		)
 	return operating_context_from_settings(
 		FACTORY_TIMEZONE,
 		row.week_json if isinstance(row.week_json, dict) else DEFAULT_WEEK_JSON,
-		int(row.gantt_preview_weeks or 4),
+		int(row.gantt_preview_weeks or DEFAULT_GANTT_PREVIEW_WEEKS),
 		exc_data,
 	)

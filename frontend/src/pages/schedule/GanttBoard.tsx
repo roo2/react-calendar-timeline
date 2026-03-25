@@ -1,86 +1,139 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import dayjs from 'dayjs'
+import Timeline, { CustomMarker, TimelineMarkers, TodayMarker, calendarUtils } from 'react-calendar-timeline'
+import 'react-calendar-timeline/style.css'
+import './ganttTimeline.css'
 import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
-import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
-import { Alert, Box, Button, CircularProgress, Paper, Stack, Typography } from '@mui/material'
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Paper,
+  Snackbar,
+  Stack,
+  Typography,
+} from '@mui/material'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import {
   addJobToScheduleQueue,
   clearScheduleMutationError,
+  clearScheduleUnqueuedError,
   fetchScheduleGantt,
   fetchUnqueuedScheduleJobs,
   moveScheduleBar,
   removeJobFromScheduleQueue,
-  reorderScheduleLane,
-  type GanttBar,
   type GanttLane,
+  type UnqueuedScheduleJob,
 } from '../../store/slices/scheduleSlice'
-import {
-  ganttBarId,
-  parseGanttBarId,
-  parseLaneEmptyId,
-  parseLaneSlotId,
-  parsePoolJobId,
-  SCHEDULE_UNQUEUED_ZONE_ID,
-} from './ganttIds'
-import { ExtrusionToolboxRow } from './components/ExtrusionToolboxRow'
-import { GanttLaneRow } from './components/GanttLaneRow'
-import { GanttBarContent } from './components/GanttSortableBar'
-import { GanttTimeRuler } from './components/GanttTimeRuler'
 import { SelectedJobPanel } from './components/SelectedJobPanel'
-import { UnqueuedJobsPanel } from './components/UnqueuedJobsPanel'
-import { createScheduleCollisionDetection } from './scheduleCollisionDetection'
 
-const MACHINE_LABEL_COL_PX = 140
-const PX_PER_HOUR = 40
-/** Limit hour columns / droppables; full advisory dates still shown above. Increase to debug wider windows. */
-const MAX_VISIBLE_TIMELINE_DAYS = 1
-const ZOOM_MIN = 0.12
-const ZOOM_MAX = 3.5
-const ZOOM_STEP = 1.12
+const SIDEBAR_WIDTH = 160
+const HOUR_MS = 3600000
+/** Must match `buffer` on `<Timeline />` (library canvas width = viewport × buffer). */
+const TIMELINE_BUFFER = 2
+/** Synthetic row id so the unqueued drop ghost is not treated as a real job. */
+const UNQUEUED_DROP_PREVIEW_ITEM_ID = '__unqueued_drop_preview__'
 
-function clampZoom(z: number) {
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+function previewDurationMsForUnqueuedJob(job: UnqueuedScheduleJob): number {
+  const rolls = Math.max(1, job.roll_count || 1)
+  return Math.max(HOUR_MS, rolls * HOUR_MS)
 }
 
-function containerOfItem(itemsByLane: Record<string, string[]>, itemId: string): string | null {
-  for (const [mid, ids] of Object.entries(itemsByLane)) {
-    if (ids.includes(itemId)) return mid
+/**
+ * Match react-calendar-timeline’s internal drag math (offsetParent chain + cumulative parent scroll)
+ * so HTML5 drops call `calculateDropCoordinatesToTimeAndGroup` with the same Y the library uses for items.
+ */
+function offsetParentOffset(el: HTMLElement): { left: number; top: number } {
+  if (el === document.body || !el.offsetParent) return { left: 0, top: 0 }
+  const p = offsetParentOffset(el.offsetParent as HTMLElement)
+  return { left: el.offsetLeft + p.left, top: el.offsetTop + p.top }
+}
+
+function cumulativeScrollOffset(el: Node | null): { left: number; top: number } {
+  if (!el || el === document.body) return { left: 0, top: 0 }
+  const p = cumulativeScrollOffset(el.parentNode)
+  if (el instanceof HTMLElement) {
+    return { left: el.scrollLeft + p.left, top: el.scrollTop + p.top }
   }
-  return null
+  return p
 }
 
-function machineType(lanes: GanttLane[], machineId: string): string | undefined {
-  return lanes.find((l) => l.machine_id === machineId)?.machine_type
+type MsInterval = { start: number; end: number }
+
+/** Fallback canvas before first `getTimelineContext()` (same buffer math as Timeline). */
+function canvasBoundsFromDefaultRange(visibleStartMs: number, visibleEndMs: number, buffer: number) {
+  const span = visibleEndMs - visibleStartMs
+  const canvasStart = visibleStartMs - (span * (buffer - 1)) / 2
+  const canvasEnd = canvasStart + span * buffer
+  return { canvasTimeStart: canvasStart, canvasTimeEnd: canvasEnd }
 }
 
-function canMoveBetweenLanes(lanes: GanttLane[], fromId: string, toId: string): boolean {
-  const a = machineType(lanes, fromId)
-  const b = machineType(lanes, toId)
-  return a === 'extruder' && b === 'extruder'
+/**
+ * Closed-hours band: CustomMarker only mounts when `date` lies on the canvas; we pass the first ms of the
+ * overlap. Width/left come from live `getTimelineContext` + calculateXPositionForTime so scroll/zoom stay aligned.
+ */
+function InactiveClosedBandMarker({
+  interval: inv,
+  anchorMs,
+  timelineRef,
+}: {
+  interval: MsInterval
+  anchorMs: number
+  timelineRef: RefObject<any>
+}) {
+  return (
+    <CustomMarker date={anchorMs}>
+      {({ styles }) => {
+        const inst = timelineRef.current
+        const ctx = inst?.getTimelineContext?.()
+        if (!ctx || ctx.canvasWidth <= 0) {
+          return <div style={{ ...styles, visibility: 'hidden', width: 0, pointerEvents: 'none' }} aria-hidden />
+        }
+        const { canvasTimeStart: cs, canvasTimeEnd: ce, canvasWidth: cw } = ctx
+        const lo = Math.max(inv.start, cs)
+        const hi = Math.min(inv.end, ce)
+        if (hi <= lo) {
+          return <div style={{ ...styles, visibility: 'hidden', width: 0, pointerEvents: 'none' }} aria-hidden />
+        }
+        const x0 = calendarUtils.calculateXPositionForTime(cs, ce, cw, lo)
+        const x1 = calendarUtils.calculateXPositionForTime(cs, ce, cw, hi)
+        const w = Math.max(1, x1 - x0)
+        return (
+          <div
+            style={{
+              ...styles,
+              left: x0,
+              width: w,
+              backgroundColor: 'rgba(100, 100, 120, 0.22)',
+              pointerEvents: 'none',
+              zIndex: 15,
+            }}
+            aria-hidden
+          />
+        )
+      }}
+    </CustomMarker>
+  )
 }
 
-function orderedLaneState(lane: GanttLane, itemsByLane: Record<string, string[]>) {
-  const ids =
-    itemsByLane[lane.machine_id] ?? lane.bars.map((b) => ganttBarId(lane.machine_id, b.job_id))
-  const jobOrder = new Map(lane.bars.map((b, i) => [b.job_id, i]))
-  const orderedBars = [...lane.bars].sort((a, b) => {
-    const ia = ids.indexOf(ganttBarId(lane.machine_id, a.job_id))
-    const ib = ids.indexOf(ganttBarId(lane.machine_id, b.job_id))
-    if (ia >= 0 && ib >= 0) return ia - ib
-    if (ia >= 0) return -1
-    if (ib >= 0) return 1
-    return (jobOrder.get(a.job_id) ?? 0) - (jobOrder.get(b.job_id) ?? 0)
-  })
-  return { laneOrdered: { ...lane, bars: orderedBars } as GanttLane, itemIds: ids }
+type TimelineGroup = {
+  id: string
+  title: string
+  machineType: string
+}
+
+type TimelineItem = {
+  id: string
+  group: string
+  title: string
+  start_time: number
+  end_time: number
+  canMove: boolean
+  canResize: false
+  itemProps?: {
+    style?: React.CSSProperties
+  }
 }
 
 export function GanttBoard() {
@@ -91,393 +144,367 @@ export function GanttBoard() {
   const lanes = gantt.data?.lanes ?? []
   const calendar = gantt.data?.calendar
 
-  const [itemsByLane, setItemsByLane] = useState<Record<string, string[]>>({})
-  const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
-  const [zoom, setZoom] = useState(1)
-  const [isPanning, setIsPanning] = useState(false)
-  const ganttScrollRef = useRef<HTMLDivElement | null>(null)
-  const panRef = useRef<{ px: number; py: number; sl: number; st: number } | null>(null)
+  /** HTML5 drag from unqueued list — `getData` is unavailable during `dragOver`, so we track id in state. */
+  const [externalDragUnqueuedJobId, setExternalDragUnqueuedJobId] = useState<string | null>(null)
+  const [unqueuedDropPreview, setUnqueuedDropPreview] = useState<{
+    startMs: number
+    endMs: number
+    groupIndex: number
+    invalidLane: boolean
+  } | null>(null)
+  const timelineRef = useRef<any>(null)
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null)
+  const [scrollViewportWidth, setScrollViewportWidth] = useState(0)
+  /** Live canvas metrics: drives inactive CustomMarker anchor dates + scroll/zoom sync. */
+  const [overlayMetrics, setOverlayMetrics] = useState<{
+    canvasTimeStart: number
+    canvasTimeEnd: number
+    canvasWidth: number
+  } | null>(null)
 
-  const pxPerHour = PX_PER_HOUR * zoom
-
-  const barByKey = useMemo(() => {
-    const m = new Map<string, GanttBar>()
+  const barByJobId = useMemo(() => {
+    const m = new Map<string, { bar: GanttLane['bars'][number]; lane: GanttLane }>()
     for (const lane of lanes) {
-      for (const b of lane.bars) {
-        m.set(ganttBarId(lane.machine_id, b.job_id), b)
-      }
+      for (const bar of lane.bars) m.set(String(bar.job_id), { bar, lane })
     }
     return m
   }, [lanes])
 
-  const { extruderLanes, otherLanes } = useMemo(() => {
-    const ex: GanttLane[] = []
-    const o: GanttLane[] = []
-    for (const l of lanes) {
-      if (l.machine_type === 'extruder') ex.push(l)
-      else o.push(l)
-    }
-    return { extruderLanes: ex, otherLanes: o }
+  const groups = useMemo<TimelineGroup[]>(() => {
+    return lanes.map((lane) => ({
+      id: lane.machine_id,
+      title: lane.machine_code,
+      machineType: lane.machine_type,
+    }))
   }, [lanes])
 
-  const activeDragMachineType = useMemo(() => {
-    if (!activeId) return undefined
-    const p = parseGanttBarId(activeId)
-    if (!p) return undefined
-    return lanes.find((l) => l.machine_id === p.machineId)?.machine_type
-  }, [activeId, lanes])
-
-  const extruderMachineIdSet = useMemo(
-    () => new Set(extruderLanes.map((l) => l.machine_id)),
-    [extruderLanes],
-  )
-
-  const scheduleCollisionDetection = useMemo(
-    () => createScheduleCollisionDetection(extruderMachineIdSet),
-    [extruderMachineIdSet],
-  )
-
-  const extruderLaneSnapshots = useMemo(
-    () => extruderLanes.map((lane) => ({ key: lane.machine_id, ...orderedLaneState(lane, itemsByLane) })),
-    [extruderLanes, itemsByLane],
-  )
-
-  const otherLaneSnapshots = useMemo(
-    () => otherLanes.map((lane) => ({ key: lane.machine_id, ...orderedLaneState(lane, itemsByLane) })),
-    [otherLanes, itemsByLane],
-  )
-
-  const calendarStartMs = useMemo(() => {
-    if (calendar?.start) return new Date(calendar.start).getTime()
-    return Date.now()
-  }, [calendar?.start])
-
-  const calendarEndMs = useMemo(() => {
-    if (calendar?.end) return new Date(calendar.end).getTime()
-    return calendarStartMs + 96 * 3600000
-  }, [calendar?.end, calendarStartMs])
-
-  const fullRangeHours = Math.max(1, (calendarEndMs - calendarStartMs) / 3600000)
-  const maxVisibleHours = MAX_VISIBLE_TIMELINE_DAYS * 24
-  const totalHours = Math.min(fullRangeHours, maxVisibleHours)
-  const timelineWidthPx = Math.max(Math.ceil(totalHours * pxPerHour), 320)
-
-  useEffect(() => {
-    if (!lanes.length) {
-      setItemsByLane({})
-      return
+  const items = useMemo<TimelineItem[]>(() => {
+    const out: TimelineItem[] = []
+    const now = Date.now()
+    for (const lane of lanes) {
+      for (const bar of lane.bars) {
+        const startMs = bar.tentative_start ? new Date(bar.tentative_start).getTime() : now
+        const durationMs = Math.max(HOUR_MS, Math.round((bar.estimated_duration_hours || 1) * HOUR_MS))
+        const endMs = bar.tentative_finish ? new Date(bar.tentative_finish).getTime() : startMs + durationMs
+        out.push({
+          id: String(bar.job_id),
+          group: lane.machine_id,
+          title: `${bar.job_code} · ${bar.customer}`,
+          start_time: startMs,
+          end_time: Math.max(startMs + HOUR_MS, endMs),
+          canMove: bar.status !== 'running',
+          canResize: false,
+          itemProps: {
+            style: {
+              background: bar.status === 'running' ? '#e8f5e9' : '#e3f2fd',
+              border: `1px solid ${bar.readiness === 'blocked' ? '#f57c00' : '#90caf9'}`,
+              color: '#0d1b2a',
+              borderRadius: '6px',
+              fontSize: '0.8rem',
+            },
+          },
+        })
+      }
     }
-    const next: Record<string, string[]> = {}
-    for (const l of lanes) {
-      next[l.machine_id] = l.bars.map((b) => ganttBarId(l.machine_id, b.job_id))
-    }
-    setItemsByLane(next)
+    return out
   }, [lanes])
+
+  const externalDragUnqueuedJob = useMemo(
+    () => unqueued.jobs.find((j) => String(j.job_id) === externalDragUnqueuedJobId) ?? null,
+    [unqueued.jobs, externalDragUnqueuedJobId],
+  )
+
+  const itemsWithUnqueuedPreview = useMemo(() => {
+    if (
+      !externalDragUnqueuedJob ||
+      !unqueuedDropPreview ||
+      unqueuedDropPreview.groupIndex < 0 ||
+      unqueuedDropPreview.groupIndex >= groups.length
+    ) {
+      return items
+    }
+    const g = groups[unqueuedDropPreview.groupIndex]
+    if (!g) return items
+    const invalid = unqueuedDropPreview.invalidLane
+    const ghost: TimelineItem = {
+      id: UNQUEUED_DROP_PREVIEW_ITEM_ID,
+      group: g.id,
+      title: `${externalDragUnqueuedJob.job_code} · drop here`,
+      start_time: unqueuedDropPreview.startMs,
+      end_time: unqueuedDropPreview.endMs,
+      canMove: false,
+      canResize: false,
+      itemProps: {
+        style: {
+          opacity: 0.5,
+          background: invalid ? 'rgba(211, 47, 47, 0.2)' : 'rgba(25, 118, 210, 0.22)',
+          border: invalid ? '2px dashed #c62828' : '2px dashed #1976d2',
+          color: '#0d1b2a',
+          borderRadius: '6px',
+          fontSize: '0.75rem',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.4) inset',
+          pointerEvents: 'none',
+        },
+      },
+    }
+    return [...items, ghost]
+  }, [items, externalDragUnqueuedJob, unqueuedDropPreview, groups])
+
+  const endExternalUnqueuedDrag = useCallback(() => {
+    setExternalDragUnqueuedJobId(null)
+    setUnqueuedDropPreview(null)
+  }, [])
+
+  /**
+   * Uncontrolled Timeline defaults: local midnight today → Unix epoch ms, end from API window / fallback span.
+   * Locked after the first successful gantt payload so refetches do not change defaults: the API moves
+   * `calendar.end` with `now` every time, which would otherwise change this every save and remount the
+   * Timeline (resetting zoom/scroll).
+   */
+  const [lockedTimelineDefaults, setLockedTimelineDefaults] = useState<{
+    defaultTimeStartMs: number
+    defaultTimeEndMs: number
+  } | null>(null)
+
+  const computedTimelineDefaults = useMemo(() => {
+    const start = dayjs().startOf('day').valueOf()
+    let end = start + 96 * HOUR_MS
+    if (calendar?.end) {
+      const apiEnd = new Date(calendar.end).getTime()
+      if (apiEnd > start) end = Math.max(end, apiEnd)
+    }
+    return { defaultTimeStartMs: start, defaultTimeEndMs: end }
+  }, [calendar?.end])
+
+  useLayoutEffect(() => {
+    if (!gantt.data) return
+    setLockedTimelineDefaults((prev) => prev ?? computedTimelineDefaults)
+  }, [gantt.data, computedTimelineDefaults])
+
+  const defaultTimeStartMs = lockedTimelineDefaults?.defaultTimeStartMs ?? computedTimelineDefaults.defaultTimeStartMs
+  const defaultTimeEndMs = lockedTimelineDefaults?.defaultTimeEndMs ?? computedTimelineDefaults.defaultTimeEndMs
+
+  /** Factory inactive wall spans (UTC) → ms for overlay shading */
+  const inactiveIntervalsMs = useMemo(() => {
+    const raw = calendar?.inactive_intervals ?? []
+    return raw
+      .map(({ start, end }) => ({
+        start: new Date(start).getTime(),
+        end: new Date(end).getTime(),
+      }))
+      .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end) && x.end > x.start)
+      .sort((a, b) => a.start - b.start)
+  }, [calendar?.inactive_intervals])
+
+  const fallbackCanvasMetrics = useMemo(() => {
+    const { canvasTimeStart, canvasTimeEnd } = canvasBoundsFromDefaultRange(
+      defaultTimeStartMs,
+      defaultTimeEndMs,
+      TIMELINE_BUFFER,
+    )
+    return {
+      canvasTimeStart,
+      canvasTimeEnd,
+      canvasWidth: Math.max(0, scrollViewportWidth * TIMELINE_BUFFER),
+    }
+  }, [defaultTimeStartMs, defaultTimeEndMs, scrollViewportWidth])
+
+  const canvasForInactiveMarkers = overlayMetrics ?? fallbackCanvasMetrics
+
+  /** CustomMarker only renders when `date` is on-canvas; anchor = first ms of [inv] ∩ canvas. */
+  const inactiveBandMarkerEntries = useMemo(() => {
+    const { canvasTimeStart: cs, canvasTimeEnd: ce } = canvasForInactiveMarkers
+    if (ce <= cs) return []
+    const out: { key: string; inv: MsInterval; anchorMs: number }[] = []
+    for (const inv of inactiveIntervalsMs) {
+      const anchor = Math.max(inv.start, cs)
+      if (anchor >= inv.end || anchor > ce) continue
+      out.push({ key: `${inv.start}-${inv.end}`, inv, anchorMs: anchor })
+    }
+    return out
+  }, [inactiveIntervalsMs, canvasForInactiveMarkers])
+
+  const syncOverlayFromTimeline = useCallback(() => {
+    const inst = timelineRef.current as
+      | { getTimelineContext?: () => { canvasTimeStart: number; canvasTimeEnd: number; canvasWidth: number } }
+      | null
+      | undefined
+    if (!inst?.getTimelineContext) return
+    const c = inst.getTimelineContext()
+    setOverlayMetrics((prev) => {
+      const next = {
+        canvasTimeStart: c.canvasTimeStart,
+        canvasTimeEnd: c.canvasTimeEnd,
+        canvasWidth: c.canvasWidth,
+      }
+      if (
+        prev &&
+        prev.canvasTimeStart === next.canvasTimeStart &&
+        prev.canvasTimeEnd === next.canvasTimeEnd &&
+        prev.canvasWidth === next.canvasWidth
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+
+  const handleTimelineScrollRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      timelineScrollRef.current = el
+      setScrollViewportWidth(el?.clientWidth ?? 0)
+      requestAnimationFrame(() => syncOverlayFromTimeline())
+    },
+    [syncOverlayFromTimeline],
+  )
+
+  /** Keep inactive bands aligned: timeline rebuffers canvas on scroll without always updating React visible props. */
+  useLayoutEffect(() => {
+    const el = timelineScrollRef.current
+    if (!el) return
+    const sync = () => {
+      setScrollViewportWidth(el.clientWidth)
+      syncOverlayFromTimeline()
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', sync)
+      ro.disconnect()
+    }
+  }, [syncOverlayFromTimeline])
+
+  useLayoutEffect(() => {
+    requestAnimationFrame(() => syncOverlayFromTimeline())
+  }, [defaultTimeStartMs, defaultTimeEndMs, syncOverlayFromTimeline])
 
   useEffect(() => {
     void dispatch(fetchScheduleGantt())
     void dispatch(fetchUnqueuedScheduleJobs())
   }, [dispatch])
 
-  /** Prevent page-level vertical scroll / scrollbar while dragging schedule items. */
-  useEffect(() => {
-    if (!activeId) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [activeId])
-
-  /** Ctrl/Cmd + wheel: zoom. Shift + wheel: horizontal scroll. Must be non-passive to allow preventDefault. */
-  useEffect(() => {
-    const el = ganttScrollRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault()
-        const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP
-        setZoom((z) => clampZoom(z * factor))
-        return
+  /** Updates ghost bar position; returns whether the lane is invalid for drop (non-extruder / OOB). */
+  const syncUnqueuedDropPreviewFromEvent = useCallback(
+    (e: React.DragEvent<HTMLDivElement>): boolean => {
+      if (!externalDragUnqueuedJobId || !externalDragUnqueuedJob) {
+        setUnqueuedDropPreview(null)
+        return true
       }
-      if (e.shiftKey) {
-        e.preventDefault()
-        el.scrollLeft += e.deltaY
+      const scrollEl = timelineScrollRef.current
+      const inst = timelineRef.current
+      if (!scrollEl || !inst?.calculateDropCoordinatesToTimeAndGroup) {
+        setUnqueuedDropPreview(null)
+        return true
       }
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [gantt.data, lanes.length])
-
-  /** Keep horizontal scroll position proportional when zoom changes (buttons / programmatic). */
-  useEffect(() => {
-    const el = ganttScrollRef.current
-    if (!el) return
-    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
-    if (maxScroll <= 0) return
-    const ratio = el.scrollLeft / maxScroll
-    requestAnimationFrame(() => {
-      const nextMax = Math.max(0, el.scrollWidth - el.clientWidth)
-      el.scrollLeft = ratio * nextMax
-    })
-  }, [zoom, timelineWidthPx])
-
-  const onGanttPointerDownCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!(e.altKey || e.button === 1)) return
-    const el = ganttScrollRef.current
-    if (!el) return
-    e.preventDefault()
-    e.stopPropagation()
-    panRef.current = { px: e.clientX, py: e.clientY, sl: el.scrollLeft, st: el.scrollTop }
-    el.setPointerCapture(e.pointerId)
-    setIsPanning(true)
-  }, [])
-
-  const onGanttPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!panRef.current) return
-    const el = ganttScrollRef.current
-    if (!el) return
-    const { px, py, sl, st } = panRef.current
-    el.scrollLeft = sl - (e.clientX - px)
-    el.scrollTop = st - (e.clientY - py)
-  }, [])
-
-  const endPan = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!panRef.current) return
-    const el = ganttScrollRef.current
-    try {
-      el?.releasePointerCapture(e.pointerId)
-    } catch {
-      /* ignore */
-    }
-    panRef.current = null
-    setIsPanning(false)
-  }, [])
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-
-  const activeBar = activeId ? barByKey.get(activeId) ?? null : null
-  const activePoolJob = useMemo(() => {
-    if (!activeId) return null
-    const jid = parsePoolJobId(activeId)
-    if (!jid) return null
-    return unqueued.jobs.find((j) => j.job_id === jid) ?? null
-  }, [activeId, unqueued.jobs])
-
-  const onDragStart = useCallback(
-    (e: DragStartEvent) => {
-      setActiveId(String(e.active.id))
-      dispatch(clearScheduleMutationError())
-    },
-    [dispatch],
-  )
-
-  const onDragEnd = useCallback(
-    async (e: DragEndEvent) => {
-      const { active, over } = e
-      const activeKey = String(active.id)
-      setActiveId(null)
-      if (!over) return
-
-      const overKey = String(over.id)
-      const slot = parseLaneSlotId(overKey)
-      const poolJobId = parsePoolJobId(activeKey)
-      const activeBarParsed = parseGanttBarId(activeKey)
-      const activeBarLocal = activeBarParsed ? (barByKey.get(activeKey) ?? null) : null
-
-      const targetIsoForSlotHour = (hourIndex: number) =>
-        new Date(calendarStartMs + hourIndex * 3600000).toISOString()
-
-      if (overKey === SCHEDULE_UNQUEUED_ZONE_ID && activeBarParsed && activeBarLocal) {
-        if (activeBarLocal.status === 'running') return
-        if (machineType(lanes, activeBarParsed.machineId) !== 'extruder') {
-          window.alert('Only extrusion jobs can be moved back to unqueued.')
-          return
-        }
-        try {
-          await dispatch(
-            removeJobFromScheduleQueue({
-              machine_id: activeBarParsed.machineId,
-              job_id: activeBarParsed.jobId,
-            }),
-          ).unwrap()
-        } catch {
-          /* mutation.error */
-        }
-        return
+      const op = offsetParentOffset(scrollEl)
+      const cs = cumulativeScrollOffset(scrollEl)
+      const { time, groupIndex } = inst.calculateDropCoordinatesToTimeAndGroup(
+        e.pageX,
+        e.pageY - op.top + cs.top,
+      )
+      const targetGroup = groups[groupIndex]
+      if (!targetGroup) {
+        setUnqueuedDropPreview(null)
+        return true
       }
-
-      if (slot && poolJobId) {
-        if (machineType(lanes, slot.machineId) !== 'extruder') {
-          window.alert('Drag unqueued jobs onto an extruder only.')
-          return
-        }
-        try {
-          await dispatch(
-            addJobToScheduleQueue({
-              machine_id: slot.machineId,
-              job_id: poolJobId,
-              target_start: targetIsoForSlotHour(slot.hourIndex),
-            }),
-          ).unwrap()
-        } catch {
-          /* mutation.error */
-        }
-        return
-      }
-
-      if (slot && activeBarParsed && activeBarLocal) {
-        if (activeBarLocal.status === 'running') return
-        if (machineType(lanes, activeBarParsed.machineId) !== 'extruder') return
-        if (machineType(lanes, slot.machineId) !== 'extruder') return
-        if (
-          activeBarParsed.machineId !== slot.machineId &&
-          !canMoveBetweenLanes(lanes, activeBarParsed.machineId, slot.machineId)
-        ) {
-          window.alert('Only extrusion jobs can be moved between extruder lanes (per scheduling rules).')
-          return
-        }
-        try {
-          await dispatch(
-            moveScheduleBar({
-              job_id: activeBarParsed.jobId,
-              operation_type: activeBarLocal.operation_type,
-              target_machine_id: slot.machineId,
-              target_position: 1,
-              target_start: targetIsoForSlotHour(slot.hourIndex),
-            }),
-          ).unwrap()
-        } catch {
-          /* mutation.error */
-        }
-        return
-      }
-
-      if (poolJobId) {
-        const emptyMid = parseLaneEmptyId(overKey)
-        const overBar = parseGanttBarId(overKey)
-        let targetMachineId: string | null = null
-        let position = 1
-
-        if (emptyMid) {
-          targetMachineId = emptyMid
-          const n = itemsByLane[emptyMid]?.length ?? 0
-          position = n + 1
-        } else if (overBar) {
-          targetMachineId = overBar.machineId
-          const laneIds = itemsByLane[targetMachineId] ?? []
-          const overIdx = laneIds.indexOf(overKey)
-          position = overIdx >= 0 ? overIdx + 1 : laneIds.length + 1
-        }
-
-        if (!targetMachineId || machineType(lanes, targetMachineId) !== 'extruder') {
-          window.alert('Drag unqueued jobs onto an extruder lane only.')
-          return
-        }
-
-        try {
-          await dispatch(
-            addJobToScheduleQueue({
-              machine_id: targetMachineId,
-              job_id: poolJobId,
-              position,
-            }),
-          ).unwrap()
-        } catch {
-          /* mutation.error */
-        }
-        return
-      }
-
-      const activeContainer = containerOfItem(itemsByLane, activeKey)
-      if (!activeContainer) return
-
-      if (!activeBarLocal || !activeBarParsed) return
-
-      if (activeBarLocal.status === 'running') return
-
-      let overContainer: string | null = null
-      let overIndex = 0
-
-      const emptyMid = parseLaneEmptyId(overKey)
-      if (emptyMid) {
-        overContainer = emptyMid
-        overIndex = 0
-      } else {
-        overContainer = containerOfItem(itemsByLane, overKey)
-        if (!overContainer) return
-        overIndex = itemsByLane[overContainer].indexOf(overKey)
-        if (overIndex < 0) return
-      }
-
-      if (activeContainer === overContainer) {
-        const laneIds = [...itemsByLane[activeContainer]]
-        const oldIndex = laneIds.indexOf(activeKey)
-        if (oldIndex < 0) return
-
-        let reordered: string[]
-        if (emptyMid === activeContainer) {
-          if (oldIndex === 0) return
-          reordered = arrayMove(laneIds, oldIndex, 0)
-        } else {
-          const newIndex = laneIds.indexOf(overKey)
-          if (oldIndex === newIndex) return
-          reordered = arrayMove(laneIds, oldIndex, newIndex)
-        }
-
-        const newPosition = reordered.indexOf(activeKey) + 1
-        const prev = { ...itemsByLane }
-        setItemsByLane((s) => ({ ...s, [activeContainer]: reordered }))
-        try {
-          await dispatch(
-            reorderScheduleLane({
-              machine_id: activeContainer,
-              job_id: activeBarParsed.jobId,
-              new_position: newPosition,
-            }),
-          ).unwrap()
-        } catch {
-          setItemsByLane(prev)
-        }
-        return
-      }
-
-      if (!canMoveBetweenLanes(lanes, activeContainer, overContainer)) {
-        window.alert('Only extrusion jobs can be moved between extruder lanes (per scheduling rules).')
-        return
-      }
-
-      const sourceIds = itemsByLane[activeContainer].filter((id) => id !== activeKey)
-      const targetIds = [...itemsByLane[overContainer]]
-      targetIds.splice(overIndex, 0, activeKey)
-      const newPosition = targetIds.indexOf(activeKey) + 1
-
-      const prev = { ...itemsByLane }
-      setItemsByLane({
-        ...itemsByLane,
-        [activeContainer]: sourceIds,
-        [overContainer]: targetIds,
+      const invalidLane = targetGroup.machineType !== 'extruder'
+      const startMs = new Date(time).getTime()
+      const dur = previewDurationMsForUnqueuedJob(externalDragUnqueuedJob)
+      setUnqueuedDropPreview({
+        startMs,
+        endMs: Math.max(startMs + HOUR_MS, startMs + dur),
+        groupIndex,
+        invalidLane,
       })
+      return invalidLane
+    },
+    [externalDragUnqueuedJob, externalDragUnqueuedJobId, groups],
+  )
 
+  const onExternalDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const jobId = e.dataTransfer.getData('text/plain')
+      endExternalUnqueuedDrag()
+      const scrollEl = timelineScrollRef.current
+      if (!jobId || !timelineRef.current || !scrollEl) return
+      const op = offsetParentOffset(scrollEl)
+      const cs = cumulativeScrollOffset(scrollEl)
+      const { time, groupIndex } = timelineRef.current.calculateDropCoordinatesToTimeAndGroup(
+        e.pageX,
+        e.pageY - op.top + cs.top,
+      )
+      const targetGroup = groups[groupIndex]
+      if (!targetGroup) return
+      if (targetGroup.machineType !== 'extruder') {
+        window.alert('Drag unqueued jobs onto an extruder lane only.')
+        return
+      }
       try {
+        dispatch(clearScheduleMutationError())
         await dispatch(
-          moveScheduleBar({
-            job_id: activeBarParsed.jobId,
-            operation_type: activeBarLocal.operation_type,
-            target_machine_id: overContainer,
-            target_position: newPosition,
+          addJobToScheduleQueue({
+            machine_id: targetGroup.id,
+            job_id: String(jobId),
+            target_start: new Date(time).toISOString(),
           }),
         ).unwrap()
       } catch {
-        setItemsByLane(prev)
+        /* mutation.error */
       }
     },
-    [barByKey, calendarStartMs, dispatch, itemsByLane, lanes],
+    [dispatch, endExternalUnqueuedDrag, groups],
   )
+
+  const onItemMove = useCallback(
+    async (itemId: string | number, dragTime: number, newGroupOrder: number) => {
+      const jobId = String(itemId)
+      const found = barByJobId.get(jobId)
+      const targetGroup = groups[newGroupOrder]
+      if (!found || !targetGroup) return
+      if (found.bar.status === 'running') return
+
+      try {
+        dispatch(clearScheduleMutationError())
+        await dispatch(
+          moveScheduleBar({
+            job_id: jobId,
+            operation_type: found.bar.operation_type,
+            target_machine_id: String(targetGroup.id),
+            target_start: new Date(dragTime).toISOString(),
+          }),
+        ).unwrap()
+      } catch {
+        /* mutation.error */
+      }
+    },
+    [barByJobId, dispatch, groups],
+  )
+
+  const selectedQueued = selectedJobId ? barByJobId.get(String(selectedJobId)) ?? null : null
+  const canUnqueueSelected =
+    !!selectedQueued &&
+    selectedQueued.lane.machine_type === 'extruder' &&
+    selectedQueued.bar.status !== 'running'
+
+  const onUnqueueSelected = useCallback(async () => {
+    if (!selectedQueued) return
+    try {
+      dispatch(clearScheduleMutationError())
+      await dispatch(
+        removeJobFromScheduleQueue({
+          machine_id: selectedQueued.lane.machine_id,
+          job_id: String(selectedQueued.bar.job_id),
+        }),
+      ).unwrap()
+      setSelectedJobId(null)
+    } catch {
+      /* mutation.error */
+    }
+  }, [dispatch, selectedQueued])
 
   if (gantt.status === 'loading' && !gantt.data) {
     return (
@@ -495,254 +522,213 @@ export function GanttBoard() {
     )
   }
 
+  const scheduleToast = mutation.error
+    ? { message: mutation.error, severity: 'error' as const, clear: () => dispatch(clearScheduleMutationError()) }
+    : unqueued.error
+      ? { message: unqueued.error, severity: 'warning' as const, clear: () => dispatch(clearScheduleUnqueuedError()) }
+      : null
+
   return (
-    <Stack
-      spacing={1.5}
-      sx={{
-        flex: 1,
-        minHeight: 0,
-        height: '100%',
-        width: '100%',
-        maxWidth: '100%',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      {unqueued.status === 'failed' && unqueued.error ? (
-        <Alert severity="warning" sx={{ flexShrink: 0 }}>
-          {unqueued.error}
-        </Alert>
-      ) : null}
-
-      {mutation.error ? (
-        <Alert severity="error" sx={{ flexShrink: 0 }}>
-          {mutation.error}
-        </Alert>
-      ) : null}
-      {mutation.status === 'loading' ? (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
-          <CircularProgress size={20} />
-          <Typography variant="body2">Saving…</Typography>
-        </Box>
-      ) : null}
-
-      <DndContext
-        sensors={sensors}
-        collisionDetection={scheduleCollisionDetection}
-        autoScroll={false}
-        onDragStart={onDragStart}
-        onDragEnd={(ev) => {
-          void onDragEnd(ev)
+    <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0, height: '100%', width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+      <Snackbar
+        open={Boolean(scheduleToast)}
+        autoHideDuration={scheduleToast?.severity === 'error' ? 12_000 : 8000}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') return
+          scheduleToast?.clear()
+        }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          zIndex: (theme) => theme.zIndex.modal + 1,
+          '& .MuiSnackbarContent-root, & .MuiPaper-root': { minWidth: { xs: '90vw', sm: 360 }, maxWidth: 560 },
         }}
       >
+        {scheduleToast ? (
+          <Alert
+            severity={scheduleToast.severity}
+            variant="filled"
+            onClose={scheduleToast.clear}
+            elevation={6}
+            sx={{ width: '100%', alignItems: 'center' }}
+          >
+            {scheduleToast.message}
+          </Alert>
+        ) : undefined}
+      </Snackbar>
+
+      {/* Fixed height so Saving… does not shift layout when toggling */}
+      <Box
+        aria-busy={mutation.status === 'loading'}
+        sx={{ flexShrink: 0, height: 32, display: 'flex', alignItems: 'center', gap: 1 }}
+      >
+        {mutation.status === 'loading' ? (
+          <>
+            <CircularProgress size={20} />
+            <Typography variant="body2" color="text.secondary">
+              Saving…
+            </Typography>
+          </>
+        ) : null}
+      </Box>
+
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: 2, overflow: 'hidden' }}>
         <Box
           sx={{
-            flex: 1,
+            width: { xs: '100%', lg: 320 },
+            minWidth: 0,
+            height: { xs: '40dvh', lg: '100%' },
             minHeight: 0,
             display: 'flex',
-            flexDirection: { xs: 'column', lg: 'row' },
-            alignItems: 'stretch',
-            gap: 2,
+            flexDirection: 'column',
+            gap: 1,
+            borderRight: { lg: 1 },
+            borderColor: 'divider',
+            pr: { lg: 1.5 },
             overflow: 'hidden',
-            width: '100%',
           }}
         >
-          <Box
-            sx={{
-              width: { xs: '100%', lg: 300 },
-              minWidth: 0,
-              flex: { xs: '0 0 auto', lg: '0 0 auto' },
-              height: { xs: 'min(42dvh, 380px)', lg: '100%' },
-              maxHeight: { xs: 'min(42dvh, 380px)', lg: 'none' },
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 2,
-              alignSelf: 'stretch',
-              borderRight: { lg: 1 },
-              borderColor: 'divider',
-              pr: { lg: 1.5 },
-              boxSizing: 'border-box',
-              overflow: 'hidden',
-            }}
-          >
-            <UnqueuedJobsPanel fillColumn jobs={unqueued.jobs} onSelectJob={setSelectedJobId} />
-            <Box
-              sx={{
-                flexShrink: 0,
-                mt: { lg: 'auto' },
-                maxHeight: { xs: '42%', lg: '48%' },
-                minHeight: 0,
-                overflow: 'auto',
-              }}
-            >
-              <SelectedJobPanel
-                jobId={selectedJobId}
-                lanes={lanes}
-                unqueuedJobs={unqueued.jobs}
-                onClear={() => setSelectedJobId(null)}
-              />
-            </Box>
-          </Box>
-
-          <Box
-            sx={{
-              flex: 1,
-              minWidth: 0,
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1,
-              overflow: 'hidden',
-            }}
-          >
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 1,
-                columnGap: 2,
-              }}
-            >
-              <Typography variant="subtitle2" sx={{ mr: 1 }}>
-                Timeline
-              </Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => setZoom((z) => clampZoom(z / ZOOM_STEP))}
-                aria-label="Zoom out"
-              >
-                −
-              </Button>
-              <Typography variant="body2" sx={{ minWidth: 44, textAlign: 'center' }}>
-                {Math.round(zoom * 100)}%
-              </Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => setZoom((z) => clampZoom(z * ZOOM_STEP))}
-                aria-label="Zoom in"
-              >
-                +
-              </Button>
-              <Button size="small" variant="text" onClick={() => setZoom(1)}>
-                Reset zoom
-              </Button>
-            </Box>
-
-            <Box
-              ref={ganttScrollRef}
-              // onPointerDownCapture={onGanttPointerDownCapture}
-              // onPointerMove={onGanttPointerMove}
-              // onPointerUp={endPan}
-              // onPointerCancel={endPan}
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                overflow: 'auto',
-                border: 1,
-                borderColor: 'divider',
-                borderRadius: 1,
-                bgcolor: 'background.default',
-                cursor: isPanning ? 'grabbing' : 'default',
-              }}
-            >
-              <Box
-                sx={{
-                  minWidth: { xs: timelineWidthPx, sm: MACHINE_LABEL_COL_PX + timelineWidthPx + 16 },
-                  pb: 1,
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    flexDirection: { xs: 'column', sm: 'row' },
-                    alignItems: 'flex-start',
-                    columnGap: 1,
-                    position: 'sticky',
-                    top: 0,
-                    zIndex: 5,
-                    bgcolor: 'background.paper',
-                    boxShadow: (theme) => `0 2px 6px -1px ${theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.18)'}`,
-                  }}
-                >
-                  <Box
-                    sx={{
-                      width: { xs: 0, sm: MACHINE_LABEL_COL_PX },
-                      flexShrink: 0,
-                      display: { xs: 'none', sm: 'block' },
-                      alignSelf: 'stretch',
-                      minHeight: 44,
-                      bgcolor: 'background.paper',
-                      borderBottom: 1,
-                      borderColor: 'divider',
+          <Paper variant="outlined" sx={{ p: 1, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Unqueued (extrusion)
+            </Typography>
+            <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+              <Stack spacing={1}>
+                {unqueued.jobs.map((job) => (
+                  <Paper
+                    key={job.job_id}
+                    draggable
+                    variant="outlined"
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/plain', String(job.job_id))
+                      e.dataTransfer.effectAllowed = 'move'
+                      setExternalDragUnqueuedJobId(String(job.job_id))
                     }}
-                  />
-                  <GanttTimeRuler
-                    calendarStartMs={calendarStartMs}
-                    totalHours={totalHours}
-                    pxPerHour={pxPerHour}
-                    widthPx={timelineWidthPx}
-                  />
-                </Box>
-
-                <Box>
-                  {extruderLaneSnapshots.map(({ key, laneOrdered, itemIds }) => (
-                    <GanttLaneRow
-                      key={key}
-                      lane={laneOrdered}
-                      itemIds={itemIds}
-                      calendarStartMs={calendarStartMs}
-                      pxPerHour={pxPerHour}
-                      timelineWidthPx={timelineWidthPx}
-                      extruderMachineIds={extruderMachineIdSet}
-                      // onSelectJob={setSelectedJobId}
-                    />
-                  ))}
-                  <ExtrusionToolboxRow toolbox={gantt.data?.extrusion_toolbox} timelineWidthPx={timelineWidthPx} />
-                  {/* {otherLaneSnapshots.map(({ key, laneOrdered, itemIds }) => (
-                    <GanttLaneRow
-                      key={key}
-                      lane={laneOrdered}
-                      itemIds={itemIds}
-                      calendarStartMs={calendarStartMs}
-                      pxPerHour={pxPerHour}
-                      timelineWidthPx={timelineWidthPx}
-                      extruderMachineIds={extruderMachineIdSet}
-                      onSelectJob={setSelectedJobId}
-                    />
-                  ))} */}
-                </Box>
-              </Box>
+                    onDragEnd={() => {
+                      endExternalUnqueuedDrag()
+                    }}
+                    onClick={() => setSelectedJobId(String(job.job_id))}
+                    sx={{ p: 1, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none' }}
+                  >
+                    <Typography variant="subtitle2" noWrap title={job.job_code}>
+                      {job.job_code}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" noWrap>
+                      {job.customer}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" noWrap>
+                      {job.product_code} · qty {job.planned_qty} · {job.roll_count} roll{job.roll_count === 1 ? '' : 's'}
+                    </Typography>
+                  </Paper>
+                ))}
+              </Stack>
             </Box>
+          </Paper>
+
+          <Box sx={{ mt: { lg: 'auto' }, maxHeight: { xs: '45%', lg: '48%' }, minHeight: 0, overflow: 'auto' }}>
+            <SelectedJobPanel jobId={selectedJobId} lanes={lanes} unqueuedJobs={unqueued.jobs} onClear={() => setSelectedJobId(null)} />
+            {canUnqueueSelected ? (
+              <Button size="small" color="warning" onClick={() => void onUnqueueSelected()} sx={{ mt: 1 }}>
+                Unqueue selected job
+              </Button>
+            ) : null}
           </Box>
         </Box>
 
-        <DragOverlay dropAnimation={null}>
-          {activeBar ? (
-            <Box sx={{ opacity: 0.95, pointerEvents: 'none', boxShadow: 3 }}>
-              <GanttBarContent bar={activeBar} machineType={activeDragMachineType} />
-            </Box>
-          ) : activePoolJob ? (
-            <Box sx={{ opacity: 0.95, pointerEvents: 'none', boxShadow: 3, width: 220 }}>
-              <Paper variant="outlined" sx={{ p: 1 }}>
-                <Typography variant="subtitle2" noWrap>
-                  {activePoolJob.job_code}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block" noWrap>
-                  {activePoolJob.customer}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {activePoolJob.roll_count} roll{activePoolJob.roll_count === 1 ? '' : 's'}
-                </Typography>
-              </Paper>
-            </Box>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 1,
+              mb: 1,
+              flexShrink: 0,
+              rowGap: 1,
+            }}
+          >
+            <Typography variant="subtitle2">Timeline</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ ml: { sm: 'auto' } }}>
+              Default view: {dayjs(defaultTimeStartMs).format('ddd D MMM')} (local) — scroll / zoom to navigate
+            </Typography>
+          </Box>
+
+          <Box
+            onDragOver={(e) => {
+              if (!externalDragUnqueuedJobId) return
+              e.preventDefault()
+              const invalid = syncUnqueuedDropPreviewFromEvent(e)
+              e.dataTransfer.dropEffect = invalid ? 'none' : 'move'
+            }}
+            onDragLeave={(e) => {
+              if (!externalDragUnqueuedJobId) return
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                setUnqueuedDropPreview(null)
+              }
+            }}
+            onDrop={(e) => {
+              void onExternalDrop(e)
+            }}
+            sx={{ flex: 1, minHeight: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}
+          >
+            {/* Stable key: refetch must not remount or zoom/scroll reset (calendar.end shifts with each API `now`). */}
+            <Timeline<TimelineItem, TimelineGroup>
+              key="schedule-gantt-timeline"
+              ref={timelineRef}
+              groups={groups}
+              items={itemsWithUnqueuedPreview}
+              defaultTimeStart={defaultTimeStartMs}
+              defaultTimeEnd={defaultTimeEndMs}
+              onZoom={() => requestAnimationFrame(() => syncOverlayFromTimeline())}
+              scrollRef={handleTimelineScrollRef}
+              sidebarWidth={SIDEBAR_WIDTH}
+              canMove
+              canChangeGroup
+              canResize={false}
+              canSelect
+              dragSnap={HOUR_MS}
+              minZoom={24 * HOUR_MS}
+              maxZoom={45 * 24 * HOUR_MS}
+              stackItems
+              lineHeight={54}
+              itemHeightRatio={0.75}
+              buffer={TIMELINE_BUFFER}
+              selected={selectedJobId ? [selectedJobId] : []}
+              onItemSelect={(itemId) => setSelectedJobId(String(itemId))}
+              onCanvasClick={() => setSelectedJobId(null)}
+              onItemMove={(itemId, dragTime, newGroupOrder) =>
+                void onItemMove(itemId as string | number, dragTime, newGroupOrder)
+              }
+            >
+              <TimelineMarkers>
+                {inactiveBandMarkerEntries.map((e) => (
+                  <InactiveClosedBandMarker
+                    key={e.key}
+                    interval={e.inv}
+                    anchorMs={e.anchorMs}
+                    timelineRef={timelineRef}
+                  />
+                ))}
+                <TodayMarker interval={10_000}>
+                  {({ styles }) => (
+                    <div
+                      style={{
+                        ...styles,
+                        width: 2,
+                        backgroundColor: '#c62828',
+                        zIndex: 55,
+                        boxShadow: '0 0 0 1px rgba(198, 40, 40, 0.25)',
+                        pointerEvents: 'none',
+                      }}
+                      aria-hidden
+                      title="Now"
+                    />
+                  )}
+                </TodayMarker>
+              </TimelineMarkers>
+            </Timeline>
+          </Box>
+        </Box>
+      </Box>
     </Stack>
   )
 }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
@@ -343,6 +343,7 @@ class ExtrusionQueueItem(Base):
         SAEnum(QueueStatus, name="queue_status", native_enum=False, values_callable=enum_db_values)
     )
     operating_hours_lead_before: Mapped[float] = mapped_column(Numeric(14, 4), default=0, server_default="0")
+    scheduled_start_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -365,6 +366,7 @@ class UtecoQueueItem(Base):
         SAEnum(QueueStatus, name="queue_status", native_enum=False, values_callable=enum_db_values)
     )
     operating_hours_lead_before: Mapped[float] = mapped_column(Numeric(14, 4), default=0, server_default="0")
+    scheduled_start_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -387,6 +389,7 @@ class BaggingQueueItem(Base):
         SAEnum(QueueStatus, name="queue_status", native_enum=False, values_callable=enum_db_values)
     )
     operating_hours_lead_before: Mapped[float] = mapped_column(Numeric(14, 4), default=0, server_default="0")
+    scheduled_start_utc: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -645,7 +648,7 @@ class ProductionOperatingSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Australia/Brisbane")
-    gantt_preview_weeks: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    gantt_preview_weeks: Mapped[int] = mapped_column(Integer, nullable=False, default=26)
     week_json: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 

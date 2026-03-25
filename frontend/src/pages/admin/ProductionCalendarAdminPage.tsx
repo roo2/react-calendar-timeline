@@ -56,7 +56,7 @@ export function ProductionCalendarAdminPage() {
   const { list: exceptions, error: exErr } = useAppSelector((s) => s.productionCalendar.exceptions)
   const save = useAppSelector((s) => s.productionCalendar.save)
 
-  const [previewWeeks, setPreviewWeeks] = useState<number | ''>(4)
+  const [previewWeeks, setPreviewWeeks] = useState<number | ''>(26)
   const [weekdays, setWeekdays] = useState<Record<string, WeekdayHours>>(emptyWeekdays)
 
   const [exDate, setExDate] = useState('')

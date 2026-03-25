@@ -107,7 +107,7 @@ class ToolboxBalanceDTO(BaseModel):
 
 class GanttOverviewDTO(BaseModel):
 	lanes: List[GanttLaneDTO]
-	calendar: dict  # start, end, days, hours_per_day
+	calendar: dict  # start, end, timezone, inactive_intervals[{start,end}], …
 	extrusion_toolbox: List[ToolboxBalanceDTO] = Field(
 		default_factory=list,
 		description="Available vs reserved counts for extrusion tool types",

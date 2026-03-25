@@ -85,7 +85,6 @@ async def gantt_move(payload: dict):
 	job_id = uuid.UUID(payload["job_id"])
 	operation_type = OperationType(payload["operation_type"])
 	target_machine_id = str(payload["target_machine_id"])
-	target_position = int(payload["target_position"])
 	proposed_start = payload.get("proposed_start")
 	if proposed_start:
 		proposed_start = datetime.fromisoformat(str(proposed_start).replace("Z", "+00:00"))
@@ -100,7 +99,6 @@ async def gantt_move(payload: dict):
 		job_id=job_id,
 		operation_type=operation_type,
 		target_machine_id=target_machine_id,
-		target_position=target_position,
 		proposed_start=proposed_start,
 		target_start=target_start,
 	)

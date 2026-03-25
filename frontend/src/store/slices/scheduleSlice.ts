@@ -52,6 +52,12 @@ export type GanttLane = {
   bars: GanttBar[]
 }
 
+/** UTC wall-clock span when the factory is not operating (from production calendar + exceptions). */
+export type GanttCalendarInactiveInterval = {
+  start: string
+  end: string
+}
+
 export type GanttCalendar = {
   start?: string
   end?: string
@@ -59,6 +65,8 @@ export type GanttCalendar = {
   hours_per_day?: number
   /** IANA timezone for interpreting local operating hours */
   timezone?: string
+  /** Non-overlapping [start,end) ISO UTC spans covering closed / off-shift time in the Gantt window */
+  inactive_intervals?: GanttCalendarInactiveInterval[]
 }
 
 export type ToolboxBalance = {
@@ -109,6 +117,69 @@ const initialState: ScheduleState = {
   gantt: { status: 'idle', error: null, data: null },
   unqueued: { status: 'idle', error: null, jobs: [] },
   mutation: { status: 'idle', error: null },
+}
+
+const HOUR_MS = 3_600_000
+
+/**
+ * After a bar drop, react-calendar-timeline re-syncs from `items` props; Redux still has pre-move
+ * data until GET /gantt returns, so the bar snaps back. Patch store immediately from the drop.
+ */
+function applyOptimisticGanttBarMove(
+  data: GanttOverview,
+  payload: { job_id: string; target_machine_id: string; target_start?: string },
+): GanttOverview {
+  const ts = payload.target_start
+  if (!ts) return data
+  const jobId = payload.job_id
+  const targetMid = payload.target_machine_id
+
+  let sourceLaneId: string | null = null
+  let moved: GanttBar | null = null
+  for (const lane of data.lanes) {
+    const bar = lane.bars.find((b) => String(b.job_id) === jobId)
+    if (bar) {
+      sourceLaneId = lane.machine_id
+      moved = bar
+      break
+    }
+  }
+  if (!moved || !sourceLaneId) return data
+
+  const startMs = new Date(ts).getTime()
+  const durationMs = Math.max(HOUR_MS, Math.round((moved.estimated_duration_hours || 1) * HOUR_MS))
+  const updatedBar: GanttBar = {
+    ...moved,
+    tentative_start: ts,
+    tentative_finish: new Date(startMs + durationMs).toISOString(),
+  }
+
+  if (sourceLaneId === targetMid) {
+    return {
+      ...data,
+      lanes: data.lanes.map((lane) =>
+        lane.machine_id === targetMid
+          ? {
+              ...lane,
+              bars: lane.bars.map((b) => (String(b.job_id) === jobId ? updatedBar : b)),
+            }
+          : lane,
+      ),
+    }
+  }
+
+  return {
+    ...data,
+    lanes: data.lanes.map((lane) => {
+      if (lane.machine_id === sourceLaneId) {
+        return { ...lane, bars: lane.bars.filter((b) => String(b.job_id) !== jobId) }
+      }
+      if (lane.machine_id === targetMid) {
+        return { ...lane, bars: [...lane.bars, updatedBar] }
+      }
+      return lane
+    }),
+  }
 }
 
 function toErrorMessage(e: unknown, fallback: string) {
@@ -177,7 +248,7 @@ export const moveScheduleBar = createAsyncThunk(
       job_id: string
       operation_type: string
       target_machine_id: string
-      target_position: number
+      /** ISO UTC; server derives queue order from this. */
       target_start?: string
     },
     { dispatch },
@@ -186,15 +257,19 @@ export const moveScheduleBar = createAsyncThunk(
       job_id: payload.job_id,
       operation_type: payload.operation_type,
       target_machine_id: payload.target_machine_id,
-      target_position: payload.target_position,
     }
     if (payload.target_start != null) body.target_start = payload.target_start
-    await apiFetch('/api/schedule/gantt/move', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-    await dispatch(fetchScheduleGantt()).unwrap()
-    return payload
+    try {
+      await apiFetch('/api/schedule/gantt/move', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      await dispatch(fetchScheduleGantt()).unwrap()
+      return payload
+    } catch (e) {
+      void dispatch(fetchScheduleGantt())
+      throw e
+    }
   },
 )
 
@@ -220,6 +295,9 @@ const slice = createSlice({
   reducers: {
     clearScheduleMutationError(s) {
       s.mutation.error = null
+    },
+    clearScheduleUnqueuedError(s) {
+      s.unqueued.error = null
     },
   },
   extraReducers: (b) => {
@@ -270,7 +348,12 @@ const slice = createSlice({
     b.addCase(reorderScheduleLane.fulfilled, mutationFulfilled)
     b.addCase(reorderScheduleLane.rejected, mutationRejected)
 
-    b.addCase(moveScheduleBar.pending, mutationPending)
+    b.addCase(moveScheduleBar.pending, (s, a) => {
+      mutationPending(s)
+      if (s.gantt.data) {
+        s.gantt.data = applyOptimisticGanttBarMove(s.gantt.data, a.meta.arg)
+      }
+    })
     b.addCase(moveScheduleBar.fulfilled, mutationFulfilled)
     b.addCase(moveScheduleBar.rejected, mutationRejected)
 
@@ -285,4 +368,4 @@ const slice = createSlice({
 })
 
 export const scheduleReducer = slice.reducer
-export const { clearScheduleMutationError } = slice.actions
+export const { clearScheduleMutationError, clearScheduleUnqueuedError } = slice.actions

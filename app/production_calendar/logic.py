@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 try:
 	from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -20,6 +20,10 @@ UTC = timezone.utc
 
 # Factory location — all production hours and Gantt advisory times use this IANA zone.
 FACTORY_TIMEZONE = "Australia/Brisbane"
+
+# Gantt calendar axis + inactive-interval shading: default wall-clock span from "now" (~6 months).
+# Admin may set 1–52 weeks in production calendar settings.
+DEFAULT_GANTT_PREVIEW_WEEKS = 26
 
 WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
@@ -221,6 +225,67 @@ def compute_gantt_window_bounds(
 	return (start_local.astimezone(UTC), end_local.astimezone(UTC))
 
 
+def _merge_utc_intervals(intervals: Sequence[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+	"""Merge overlapping / adjacent [start, end) intervals in UTC."""
+	if not intervals:
+		return []
+	sorted_i = sorted(intervals, key=lambda x: x[0])
+	out: List[Tuple[datetime, datetime]] = []
+	cur_s, cur_e = sorted_i[0]
+	for s, e in sorted_i[1:]:
+		if s <= cur_e:
+			cur_e = max(cur_e, e)
+		else:
+			out.append((cur_s, cur_e))
+			cur_s, cur_e = s, e
+	out.append((cur_s, cur_e))
+	return out
+
+
+def inactive_intervals_utc(
+	ctx: OperatingContext, window_start_utc: datetime, window_end_utc: datetime
+) -> List[Tuple[datetime, datetime]]:
+	"""
+	Wall-clock intervals in UTC when the factory is *not* operating (nights, weekends,
+	closed exception days, and outside exception open/close windows), clipped to the Gantt window.
+	Mirrors ``segments_for_day`` / scheduling logic.
+	"""
+	if window_end_utc <= window_start_utc:
+		return []
+	ws = window_start_utc.astimezone(UTC)
+	we = window_end_utc.astimezone(UTC)
+	ws_l = ws.astimezone(ctx.tz)
+	we_l = we.astimezone(ctx.tz)
+	raw: List[Tuple[datetime, datetime]] = []
+	d = ws_l.date()
+	end_d = we_l.date()
+	while d <= end_d:
+		day_start = datetime.combine(d, time(0, 0), tzinfo=ctx.tz)
+		day_end = day_start + timedelta(days=1)
+		seg_lo = max(ws_l, day_start)
+		seg_hi = min(we_l, day_end)
+		if seg_lo >= seg_hi:
+			d = d + timedelta(days=1)
+			continue
+		operating = segments_for_day(d, ctx)
+		clips: List[Tuple[datetime, datetime]] = []
+		for a, b in operating:
+			a2 = max(a, seg_lo)
+			b2 = min(b, seg_hi)
+			if a2 < b2:
+				clips.append((a2, b2))
+		clips.sort(key=lambda x: x[0])
+		t = seg_lo
+		for a2, b2 in clips:
+			if t < a2:
+				raw.append((t.astimezone(UTC), a2.astimezone(UTC)))
+			t = max(t, b2)
+		if t < seg_hi:
+			raw.append((t.astimezone(UTC), seg_hi.astimezone(UTC)))
+		d = d + timedelta(days=1)
+	return _merge_utc_intervals(raw)
+
+
 def operating_context_from_settings(
 	timezone_name: str,
 	week_json: Optional[Dict[str, Any]],
@@ -230,15 +295,22 @@ def operating_context_from_settings(
 	tz = _zone(timezone_name or "UTC")
 	week = week_json if isinstance(week_json, dict) and week_json else DEFAULT_WEEK_JSON
 	ex_map: Dict[date, CalendarExceptionData] = {d: e for d, e in exceptions}
-	wks = max(1, min(52, int(gantt_preview_weeks or 4)))
+	wks = max(1, min(52, int(gantt_preview_weeks or DEFAULT_GANTT_PREVIEW_WEEKS)))
 	return OperatingContext(tz=tz, week=week, exceptions_by_date=ex_map, gantt_preview_weeks=wks)
 
 
-def calendar_dict_for_gantt(window_start_utc: datetime, window_end_utc: datetime, timezone_name: str) -> dict:
+def calendar_dict_for_gantt(
+	window_start_utc: datetime,
+	window_end_utc: datetime,
+	timezone_name: str,
+	ctx: OperatingContext,
+) -> dict:
+	inactive = inactive_intervals_utc(ctx, window_start_utc, window_end_utc)
 	return {
 		"start": window_start_utc,
 		"end": window_end_utc,
 		"timezone": timezone_name,
 		"days": None,
 		"hours_per_day": None,
+		"inactive_intervals": [{"start": a.isoformat(), "end": b.isoformat()} for a, b in inactive],
 	}

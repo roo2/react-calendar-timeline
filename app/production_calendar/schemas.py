@@ -6,6 +6,8 @@ from typing import Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.production_calendar.logic import DEFAULT_GANTT_PREVIEW_WEEKS
+
 
 class WeekdayHoursDTO(BaseModel):
 	enabled: bool = True
@@ -22,7 +24,7 @@ class OperatingSettingsResponse(BaseModel):
 class OperatingSettingsUpdate(BaseModel):
 	"""Timezone is ignored by the API; factory zone is fixed to Australia/Brisbane."""
 	timezone: str = Field(default="Australia/Brisbane", max_length=64)
-	gantt_preview_weeks: int = Field(default=4, ge=1, le=52)
+	gantt_preview_weeks: int = Field(default=DEFAULT_GANTT_PREVIEW_WEEKS, ge=1, le=52)
 	weekdays: Dict[str, WeekdayHoursDTO]
 
 	@field_validator("weekdays")

@@ -9,7 +9,12 @@ from sqlalchemy import select
 from app.auth.deps import csrf_protect, require_roles
 from app.db.models.domain import ProductionCalendarException, ProductionOperatingSettings
 from app.db.session import SessionLocal
-from app.production_calendar.logic import DEFAULT_WEEK_JSON, FACTORY_TIMEZONE, WEEKDAY_KEYS
+from app.production_calendar.logic import (
+	DEFAULT_GANTT_PREVIEW_WEEKS,
+	DEFAULT_WEEK_JSON,
+	FACTORY_TIMEZONE,
+	WEEKDAY_KEYS,
+)
 from app.production_calendar.schemas import (
 	CalendarExceptionCreate,
 	CalendarExceptionResponse,
@@ -48,7 +53,7 @@ async def get_production_calendar_settings():
 				ProductionOperatingSettings(
 					id=1,
 					timezone=FACTORY_TIMEZONE,
-					gantt_preview_weeks=4,
+					gantt_preview_weeks=DEFAULT_GANTT_PREVIEW_WEEKS,
 					week_json=dict(DEFAULT_WEEK_JSON),
 				)
 			)

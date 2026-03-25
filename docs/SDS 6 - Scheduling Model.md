@@ -314,7 +314,7 @@ Production hours are configured in **Admin → Production hours** (singleton set
 - **Weekly pattern**: For each weekday, enable/disable and set open/close times (HH:MM; use `24:00` for end of day). Default: Mon–Thu 24h, Fri until 16:30, Sat–Sun closed (factory timezone fixed to `Australia/Brisbane`).
 - **Exceptions**: Public holidays (`closed`), or **early close** / **late open** via optional open/close overrides for that date.
 - **Gantt**: Tentative bar start/finish times advance only during **operating** hours (nights, weekends, and closed days are skipped). Example: a 24h job starting Friday afternoon completes across the weekend on the following Monday evening in wall-clock terms.
-- **Preview window**: Axis spans at least `gantt_preview_weeks` (default 4) and extends if queued work finishes later.
+- **Preview window**: Axis spans at least `gantt_preview_weeks` (default 26, ~6 months) and extends if queued work finishes later.
 
 Bars (Job Operations)
 
