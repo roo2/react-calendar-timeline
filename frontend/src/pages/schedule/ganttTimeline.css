@@ -12,3 +12,13 @@
 .react-calendar-timeline .rct-item {
   z-index: 50;
 }
+
+/* Clicks target the bar’s time box, not sticky/overflowing label text (library default z-index:88 on hover
+   also pulled narrow bars above the next job, stealing clicks). Handlers stay on the outer .rct-item. */
+.react-calendar-timeline .rct-item .rct-item-content {
+  pointer-events: none;
+}
+
+.react-calendar-timeline .rct-item:hover {
+  z-index: 52;
+}

@@ -1,4 +1,4 @@
-import type { RefObject } from 'react'
+import type { CSSProperties, ReactNode, Ref, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import Timeline, { CustomMarker, TimelineMarkers, TodayMarker, calendarUtils } from 'react-calendar-timeline'
@@ -38,6 +38,119 @@ const UNQUEUED_DROP_PREVIEW_ITEM_ID = '__unqueued_drop_preview__'
 function previewDurationMsForUnqueuedJob(job: UnqueuedScheduleJob): number {
   const rolls = Math.max(1, job.roll_count || 1)
   return Math.max(HOUR_MS, rolls * HOUR_MS)
+}
+
+/** Minimum horizontal gap between roll dividers (px); below this we subsample boundaries. */
+const ROLL_DIVIDER_MIN_GAP_PX = 2.5
+/** Cap DOM nodes for very wide bars / huge roll counts. */
+const ROLL_DIVIDER_MAX_LINES = 500
+
+/**
+ * X positions (px from left edge of the bar) for vertical roll-segment dividers.
+ * For R rolls, ideal boundaries sit at i/R * width for i = 1..R-1. When the bar is too narrow,
+ * we keep at most floor(width / minGap) dividers, spread across real roll boundaries.
+ */
+function rollDividerPositionsPx(widthPx: number, rollCount: number): number[] {
+  if (rollCount <= 1 || widthPx < 4) return []
+  const idealInternal = rollCount - 1
+  const maxByWidth = Math.max(0, Math.floor(widthPx / ROLL_DIVIDER_MIN_GAP_PX) - 1)
+  const maxLines = Math.min(idealInternal, maxByWidth, ROLL_DIVIDER_MAX_LINES)
+  if (maxLines <= 0) return []
+
+  let xs: number[]
+  if (idealInternal <= maxLines) {
+    xs = Array.from({ length: idealInternal }, (_, i) => ((i + 1) / rollCount) * widthPx)
+  } else {
+    const tmp: number[] = []
+    for (let k = 1; k <= maxLines; k++) {
+      const rollBoundary = Math.round((k * idealInternal) / (maxLines + 1))
+      const b = Math.max(1, Math.min(idealInternal, rollBoundary))
+      tmp.push((b / rollCount) * widthPx)
+    }
+    xs = tmp
+    xs.sort((a, b) => a - b)
+    const deduped: number[] = []
+    let prev = -Infinity
+    for (const x of xs) {
+      if (deduped.length === 0 || x - prev >= ROLL_DIVIDER_MIN_GAP_PX * 0.85) {
+        deduped.push(x)
+        prev = x
+      }
+    }
+    xs = deduped
+  }
+
+  const inset = 0.5
+  return xs.map((x) => Math.round(x * 10) / 10).filter((x) => x > inset && x < widthPx - inset)
+}
+
+/**
+ * Mirrors react-calendar-timeline’s default item shell, plus a subtle roll grid overlay.
+ * See `dist/react-calendar-timeline.es.js` default `Li` renderer.
+ */
+function ganttTimelineItemRenderer(props: {
+  item: TimelineItem
+  itemContext: {
+    dimensions: { width: number; height: number }
+    useResizeHandle: boolean
+    title: ReactNode
+  }
+  getItemProps: (params?: TimelineItem['itemProps']) => Record<string, unknown> & {
+    key: string | number
+    ref: unknown
+  }
+  getResizeProps: () => { left: Record<string, unknown>; right: Record<string, unknown> }
+}) {
+  const { item, itemContext, getItemProps, getResizeProps } = props
+  const { left, right } = getResizeProps()
+  const { key, ref, ...itemDivProps } = getItemProps(item.itemProps ?? {})
+  const { useResizeHandle } = itemContext
+  const w = itemContext.dimensions.width
+  const rolls = item.roll_count != null && item.roll_count >= 1 ? Math.floor(item.roll_count) : 1
+  const dividerXs = rollDividerPositionsPx(w, rolls)
+
+  const contentMaxH: CSSProperties = { maxHeight: `${itemContext.dimensions.height}px` }
+
+  return (
+    <div {...itemDivProps} ref={ref as Ref<HTMLDivElement>} key={`${String(key)}-outer`}>
+      {useResizeHandle ? <div {...left} key={`${String(key)}-lr`} /> : null}
+      <div className="rct-item-content" style={contentMaxH} key={`${String(key)}-content`}>
+        {itemContext.title}
+      </div>
+      {useResizeHandle ? <div {...right} key={`${String(key)}-rr`} /> : null}
+      {dividerXs.length > 0 ? (
+        <div
+          className="gantt-roll-dividers"
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            borderRadius: 'inherit',
+            overflow: 'hidden',
+            zIndex: 1,
+          }}
+        >
+          {dividerXs.map((leftPx, i) => (
+            <div
+              key={i}
+              className="gantt-roll-dividers__line"
+              style={{
+                position: 'absolute',
+                left: leftPx,
+                top: 1,
+                bottom: 1,
+                width: 1,
+                transform: 'translateX(-0.5px)',
+                backgroundColor: 'rgba(13, 27, 42, 0.14)',
+                boxShadow: '0.5px 0 0 rgba(255, 255, 255, 0.22)',
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 /**
@@ -131,8 +244,10 @@ type TimelineItem = {
   end_time: number
   canMove: boolean
   canResize: false
+  /** Segments shown as vertical dividers inside the bar (from API `roll_count`). */
+  roll_count?: number
   itemProps?: {
-    style?: React.CSSProperties
+    style?: CSSProperties
   }
 }
 
@@ -195,6 +310,7 @@ export function GanttBoard() {
           end_time: Math.max(startMs + HOUR_MS, endMs),
           canMove: bar.status !== 'running',
           canResize: false,
+          roll_count: Math.max(1, bar.roll_count ?? 1),
           itemProps: {
             style: {
               background: bar.status === 'running' ? '#e8f5e9' : '#e3f2fd',
@@ -235,6 +351,7 @@ export function GanttBoard() {
       end_time: unqueuedDropPreview.endMs,
       canMove: false,
       canResize: false,
+      roll_count: Math.max(1, externalDragUnqueuedJob.roll_count || 1),
       itemProps: {
         style: {
           opacity: 0.5,
@@ -698,6 +815,8 @@ export function GanttBoard() {
               onItemMove={(itemId, dragTime, newGroupOrder) =>
                 void onItemMove(itemId as string | number, dragTime, newGroupOrder)
               }
+              /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- library itemRenderer props not exported from package root */
+              itemRenderer={ganttTimelineItemRenderer as any}
             >
               <TimelineMarkers>
                 {inactiveBandMarkerEntries.map((e) => (
