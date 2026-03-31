@@ -1,3 +1,10 @@
+/* Avoid selecting bar labels / grid text while panning or dragging items (browser default selection). */
+.react-calendar-timeline .rct-scroll,
+.react-calendar-timeline .rct-scroll * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* Do not tint Sat/Sun by wall-clock alone — inactive time uses the Gantt overlay from the API. */
 .react-calendar-timeline .rct-vertical-lines .rct-vl.rct-day-6,
 .react-calendar-timeline .rct-vertical-lines .rct-vl.rct-day-0 {

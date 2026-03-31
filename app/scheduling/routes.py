@@ -75,8 +75,10 @@ async def gantt_view(identity=Depends(current_identity)):
 
 
 @router.get("/gantt/estimate", dependencies=[Depends(require_roles("PROD_MANAGER"))])
-async def estimate_durations(job_id: str):
-	estimates = SchedulingService.estimate_job_operations(job_id)
+async def estimate_durations(job_id: str, target_extruder_machine_id: str | None = None):
+	estimates = SchedulingService.estimate_job_operations(
+		job_id, target_extruder_machine_id=target_extruder_machine_id
+	)
 	return {"estimates": estimates}
 
 

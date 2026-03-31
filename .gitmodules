@@ -1,0 +1,3 @@
+[submodule "vendor/react-calendar-timeline"]
+	path = vendor/react-calendar-timeline
+	url = https://github.com/roo2/react-calendar-timeline.git

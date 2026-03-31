@@ -244,6 +244,13 @@ class Job(Base):
     planned_qty: Mapped[float] = mapped_column(Numeric(18, 6))
     produced_qty: Mapped[float] = mapped_column(Numeric(18, 6), default=0)
     allocated_order_units: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    # Gantt chain: operating-hours delta from extrusion scheduled start → downstream queue starts (persisted).
+    schedule_chain_uteco_offset_operating_hours: Mapped[Optional[float]] = mapped_column(
+        Numeric(18, 6), nullable=True
+    )
+    schedule_chain_bagging_offset_operating_hours: Mapped[Optional[float]] = mapped_column(
+        Numeric(18, 6), nullable=True
+    )
     status: Mapped[JobStatus] = mapped_column(
         SAEnum(JobStatus, name="job_status", native_enum=False, values_callable=enum_db_values)
     )

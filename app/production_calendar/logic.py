@@ -169,6 +169,37 @@ def operating_hours_between(start: datetime, end: datetime, ctx: OperatingContex
 	return lo
 
 
+def inverse_add_operating_hours(completion: datetime, duration_hours: float, ctx: OperatingContext) -> datetime:
+	"""
+	Latest factory-local instant ``S`` such that ``add_operating_hours(S, duration_hours, ctx) <= completion``.
+
+	Used when a downstream step must not start until ``duration_hours`` of operating time have elapsed
+	(e.g. one extrusion roll): shifting the extruder earlier so roll completion meets the downstream start.
+	"""
+	if duration_hours <= 0:
+		return completion.astimezone(ctx.tz)
+	end = completion.astimezone(ctx.tz)
+	lo_ts = (end - timedelta(days=800)).timestamp()
+	hi_ts = end.timestamp()
+	for _ in range(80):
+		lo_dt = datetime.fromtimestamp(lo_ts, tz=ctx.tz)
+		if add_operating_hours(lo_dt, duration_hours, ctx) <= end:
+			break
+		lo_ts -= 86400.0 * 30.0
+	else:
+		raise ValueError("Could not bracket inverse_add_operating_hours — check production calendar")
+	for _ in range(100):
+		if hi_ts - lo_ts < 1e-3:
+			break
+		mid_ts = (lo_ts + hi_ts) / 2.0
+		mid = datetime.fromtimestamp(mid_ts, tz=ctx.tz)
+		if add_operating_hours(mid, duration_hours, ctx) <= end:
+			lo_ts = mid_ts
+		else:
+			hi_ts = mid_ts
+	return datetime.fromtimestamp(lo_ts, tz=ctx.tz)
+
+
 def add_operating_hours(start: datetime, duration_hours: float, ctx: OperatingContext) -> datetime:
 	"""
 	Advance `start` by `duration_hours` of *operating* time (inside weekly hours, respecting exceptions).

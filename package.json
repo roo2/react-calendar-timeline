@@ -6,7 +6,7 @@
     "npm": "11.x"
   },
   "scripts": {
-    "heroku-postbuild": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
+    "heroku-postbuild": "npm --prefix vendor/react-calendar-timeline ci && npm --prefix vendor/react-calendar-timeline run build && npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
   }
 }
 

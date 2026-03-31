@@ -40,6 +40,9 @@ export type GanttBar = {
   warnings: string[]
   tool_conflicts: GanttToolConflict[]
   tool_strips?: GanttToolStrip[]
+  /** Operating hours from extrusion start → downstream starts (persisted chain); same on all ops for a job */
+  chain_uteco_offset_operating_hours?: number | null
+  chain_bagging_offset_operating_hours?: number | null
 }
 
 export type GanttLane = {
@@ -127,17 +130,23 @@ const HOUR_MS = 3_600_000
  */
 function applyOptimisticGanttBarMove(
   data: GanttOverview,
-  payload: { job_id: string; target_machine_id: string; target_start?: string },
+  payload: {
+    job_id: string
+    operation_type: string
+    target_machine_id: string
+    target_start?: string
+  },
 ): GanttOverview {
   const ts = payload.target_start
   if (!ts) return data
   const jobId = payload.job_id
+  const op = payload.operation_type
   const targetMid = payload.target_machine_id
 
   let sourceLaneId: string | null = null
   let moved: GanttBar | null = null
   for (const lane of data.lanes) {
-    const bar = lane.bars.find((b) => String(b.job_id) === jobId)
+    const bar = lane.bars.find((b) => String(b.job_id) === jobId && b.operation_type === op)
     if (bar) {
       sourceLaneId = lane.machine_id
       moved = bar
@@ -161,7 +170,9 @@ function applyOptimisticGanttBarMove(
         lane.machine_id === targetMid
           ? {
               ...lane,
-              bars: lane.bars.map((b) => (String(b.job_id) === jobId ? updatedBar : b)),
+              bars: lane.bars.map((b) =>
+                String(b.job_id) === jobId && b.operation_type === op ? updatedBar : b,
+              ),
             }
           : lane,
       ),
@@ -172,7 +183,10 @@ function applyOptimisticGanttBarMove(
     ...data,
     lanes: data.lanes.map((lane) => {
       if (lane.machine_id === sourceLaneId) {
-        return { ...lane, bars: lane.bars.filter((b) => String(b.job_id) !== jobId) }
+        return {
+          ...lane,
+          bars: lane.bars.filter((b) => !(String(b.job_id) === jobId && b.operation_type === op)),
+        }
       }
       if (lane.machine_id === targetMid) {
         return { ...lane, bars: [...lane.bars, updatedBar] }

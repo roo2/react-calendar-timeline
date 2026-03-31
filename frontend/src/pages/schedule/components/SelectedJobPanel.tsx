@@ -1,4 +1,6 @@
 import { Box, Divider, Paper, Stack, Typography } from '@mui/material'
+import { useEffect, useMemo, useState } from 'react'
+import { apiFetch } from '../../../api/client'
 import type { GanttBar, GanttLane, UnqueuedScheduleJob } from '../../../store/slices/scheduleSlice'
 
 type Props = {
@@ -9,9 +11,23 @@ type Props = {
 }
 
 function findBar(lanes: GanttLane[], jobId: string): { bar: GanttBar; lane: GanttLane } | null {
+  const matches: { bar: GanttBar; lane: GanttLane }[] = []
   for (const lane of lanes) {
-    const bar = lane.bars.find((b) => String(b.job_id) === String(jobId))
-    if (bar) return { bar, lane }
+    for (const bar of lane.bars) {
+      if (String(bar.job_id) === String(jobId)) matches.push({ bar, lane })
+    }
+  }
+  const ex = matches.find((m) => m.bar.operation_type === 'extrusion')
+  return ex ?? matches[0] ?? null
+}
+
+function conversionHoursFromGantt(lanes: GanttLane[], jobId: string): number | null {
+  for (const lane of lanes) {
+    for (const bar of lane.bars) {
+      if (String(bar.job_id) === String(jobId) && bar.operation_type === 'conversion') {
+        return bar.estimated_duration_hours
+      }
+    }
   }
   return null
 }
@@ -19,6 +35,47 @@ function findBar(lanes: GanttLane[], jobId: string): { bar: GanttBar; lane: Gant
 export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props) {
   const fromLane = jobId ? findBar(lanes, jobId) : null
   const fromPool = jobId ? unqueuedJobs.find((j) => String(j.job_id) === String(jobId)) : null
+
+  const conversionHoursOnGantt = useMemo(
+    () => (jobId ? conversionHoursFromGantt(lanes, jobId) : null),
+    [jobId, lanes],
+  )
+
+  const [conversionHoursFromApi, setConversionHoursFromApi] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!jobId) {
+      setConversionHoursFromApi(null)
+      return
+    }
+    if (conversionHoursOnGantt != null) {
+      setConversionHoursFromApi(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await apiFetch<{
+          estimates: {
+            operations: { operation_type: string; estimated_duration_hours: number }[]
+          }
+        }>(`/api/schedule/gantt/estimate?job_id=${encodeURIComponent(jobId)}`)
+        const conv = res.estimates?.operations?.find((o) => o.operation_type === 'conversion')
+        if (!cancelled && conv != null && Number.isFinite(conv.estimated_duration_hours)) {
+          setConversionHoursFromApi(conv.estimated_duration_hours)
+        } else if (!cancelled) {
+          setConversionHoursFromApi(null)
+        }
+      } catch {
+        if (!cancelled) setConversionHoursFromApi(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [jobId, conversionHoursOnGantt])
+
+  const conversionHours = conversionHoursOnGantt ?? conversionHoursFromApi
 
   return (
     <Paper
@@ -96,6 +153,11 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
             ~{fromLane.bar.estimated_duration_hours.toFixed(1)} h · {fromLane.bar.roll_count ?? 1} roll
             {(fromLane.bar.roll_count ?? 1) === 1 ? '' : 's'}
           </Typography>
+          {conversionHours != null ? (
+            <Typography variant="body2" color="text.secondary">
+              Conversion: ~{conversionHours.toFixed(1)} h
+            </Typography>
+          ) : null}
           {fromLane.bar.tentative_start ? (
             <Typography variant="caption" color="text.secondary" display="block">
               Tentative: {new Date(fromLane.bar.tentative_start).toLocaleString()} →{' '}
@@ -130,6 +192,11 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
             {fromPool.product_code} · qty {fromPool.planned_qty} · {fromPool.roll_count} roll
             {fromPool.roll_count === 1 ? '' : 's'}
           </Typography>
+          {conversionHours != null ? (
+            <Typography variant="body2" color="text.secondary">
+              Conversion: ~{conversionHours.toFixed(1)} h
+            </Typography>
+          ) : null}
           {fromPool.job_layflat_width_mm != null && Number.isFinite(fromPool.job_layflat_width_mm) ? (
             <Typography variant="caption" color="text.secondary" display="block">
               Job layflat (from spec): {fromPool.job_layflat_width_mm.toFixed(1)} mm

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, List, Optional, Tuple
@@ -37,9 +38,10 @@ from app.job_context import (
 	ensure_scheduling_job_for_job_sheet,
 	resolve_job_context,
 )
-from app.db.models.rate_cards import Extruder
+from app.db.models.rate_cards import ConversionFactor, ConversionSpeed, Extruder
 from app.exceptions import DomainError
 from app.machines.service import (
+	_compute_gauge_um_from_spec,
 	layflat_width_mm_from_product_version,
 	validate_capability_dict,
 	validate_extruder_for_spec,
@@ -48,6 +50,8 @@ from app.scheduling.lane_context import ScheduleLane, list_active_lanes, resolve
 from app.production_calendar.logic import (
 	add_operating_hours,
 	calendar_dict_for_gantt,
+	inverse_add_operating_hours,
+	operating_hours_between,
 	snap_to_operating_instant,
 )
 from app.production_calendar.repository import load_operating_context
@@ -353,6 +357,579 @@ def _routing_warnings_for_enqueue(session: Session, lane: ScheduleLane, job: Job
 	return warnings
 
 
+def _spec_finish_requires_conversion(spec: Optional[dict]) -> bool:
+	"""Aligned with dispatch: carton-style finishes need a conversion (bagging) run."""
+	spec = spec or {}
+	finish = (
+		(spec.get("identity") or {}).get("finish_mode")
+		or spec.get("finish_mode")
+		or (spec.get("packaging") or {}).get("pack_mode")
+		or spec.get("pack_mode")
+	)
+	if not finish:
+		return False
+	val = str(finish).lower()
+	return val in ("carton", "cartons", "bags_cartons", "loose_bags", "box", "boxes")
+
+
+def _uteco_queue_row_exists(session: Session, job_id_str: str) -> bool:
+	return (
+		session.execute(select(UtecoQueueItem.id).where(UtecoQueueItem.job_id == job_id_str).limit(1)).scalar_one_or_none()
+		is not None
+	)
+
+
+def _bagging_queue_row_exists(session: Session, job_id_str: str) -> bool:
+	return (
+		session.execute(select(BaggingQueueItem.id).where(BaggingQueueItem.job_id == job_id_str).limit(1)).scalar_one_or_none()
+		is not None
+	)
+
+
+def _cancel_tool_reservations_for_job_lane(
+	session: Session, job_id_str: str, operation_type: OperationType, lane: ScheduleLane
+) -> None:
+	ex_code = lane.extruder.extruder_code if lane.kind == "extrusion" and lane.extruder else None
+	ut_id = lane.uteco_printer.id if lane.kind == "uteco" and lane.uteco_printer else None
+	bg_id = lane.bagging_machine.id if lane.kind == "bagging" and lane.bagging_machine else None
+	rq = session.query(ToolReservation).filter(
+		ToolReservation.job_id == job_id_str,
+		ToolReservation.operation_type == operation_type,
+		ToolReservation.status.in_([ToolReservationStatus.PLANNED, ToolReservationStatus.CONFLICTED]),
+	)
+	if ex_code:
+		rq = rq.filter(ToolReservation.extruder_code == ex_code)
+	elif ut_id:
+		rq = rq.filter(ToolReservation.uteco_printer_id == ut_id)
+	elif bg_id:
+		rq = rq.filter(ToolReservation.bagging_machine_id == bg_id)
+	rq.update({"status": ToolReservationStatus.CANCELLED})
+
+
+def _preferred_uteco_printer_id_from_runs(session: Session, job_id_str: str) -> Optional[str]:
+	row = session.execute(
+		select(OperationRun.uteco_printer_id)
+		.where(
+			OperationRun.job_id == job_id_str,
+			OperationRun.operation_type == OperationType.PRINTING_UTECO,
+			OperationRun.uteco_printer_id.isnot(None),
+		)
+		.limit(1)
+	).scalar_one_or_none()
+	return str(row) if row else None
+
+
+def _preferred_bagging_machine_id_from_runs(session: Session, job_id_str: str) -> Optional[str]:
+	row = session.execute(
+		select(OperationRun.bagging_machine_id)
+		.where(
+			OperationRun.job_id == job_id_str,
+			OperationRun.operation_type == OperationType.CONVERSION,
+			OperationRun.bagging_machine_id.isnot(None),
+		)
+		.limit(1)
+	).scalar_one_or_none()
+	return str(row) if row else None
+
+
+def _resolve_uteco_target_lane(session: Session, job_id_str: str, job: Job, product_version: Optional[ProductVersion]) -> Optional[ScheduleLane]:
+	pid = _preferred_uteco_printer_id_from_runs(session, job_id_str)
+	if pid:
+		try:
+			lane = resolve_schedule_lane(session, pid)
+			_validate_lane_for_job(lane, product_version, OperationType.PRINTING_UTECO)
+			return lane
+		except DomainError:
+			pass
+	for lane in list_active_lanes(session):
+		if lane.kind != "uteco" or not lane.uteco_printer:
+			continue
+		try:
+			_validate_lane_for_job(lane, product_version, OperationType.PRINTING_UTECO)
+			return lane
+		except DomainError:
+			continue
+	return None
+
+
+def _resolve_bagging_target_lane(session: Session, job_id_str: str, job: Job, product_version: Optional[ProductVersion]) -> Optional[ScheduleLane]:
+	mid = _preferred_bagging_machine_id_from_runs(session, job_id_str)
+	if mid:
+		try:
+			lane = resolve_schedule_lane(session, mid)
+			_validate_lane_for_job(lane, product_version, OperationType.CONVERSION)
+			return lane
+		except DomainError:
+			pass
+	for lane in list_active_lanes(session):
+		if lane.kind != "bagging" or not lane.bagging_machine:
+			continue
+		try:
+			_validate_lane_for_job(lane, product_version, OperationType.CONVERSION)
+			return lane
+		except DomainError:
+			continue
+	return None
+
+
+def _first_roll_operating_hours_for_extrusion_lane(
+	session: Session,
+	extrusion_lane: ScheduleLane,
+	job: Job,
+	product_version: Optional[ProductVersion],
+) -> float:
+	if extrusion_lane.kind != "extrusion" or not extrusion_lane.extruder:
+		return 1.0
+	ex_dur = _estimate_lane_duration_hours(session, extrusion_lane, job, product_version)
+	rolls = max(1, _num_rolls_for_job(session, job, product_version))
+	return float(ex_dur) / float(rolls)
+
+
+def _rebook_extrusion_tools_after_schedule_change(
+	session: Session,
+	job: Job,
+	ex_row: ExtrusionQueueItem,
+	ex_lane: ScheduleLane,
+	product_version: Optional[ProductVersion],
+) -> None:
+	jid_str = _str_id(job.id)
+	_cancel_tool_reservations_for_job_lane(session, jid_str, OperationType.EXTRUSION, ex_lane)
+	ts = _scheduled_start_from_db(ex_row.scheduled_start_utc)
+	_reserve_tools(
+		session=session,
+		job=job,
+		operation_type=OperationType.EXTRUSION,
+		lane=ex_lane,
+		window=(ts, ts + timedelta(hours=1)),
+		tool_type_codes=_required_tool_type_codes(job, OperationType.EXTRUSION, product_version),
+	)
+
+
+def _rebook_lane_tools_after_schedule_change(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	lane: ScheduleLane,
+	operation_type: OperationType,
+	scheduled_start_utc: datetime,
+) -> None:
+	jid_str = _str_id(job.id)
+	_cancel_tool_reservations_for_job_lane(session, jid_str, operation_type, lane)
+	_reserve_tools(
+		session=session,
+		job=job,
+		operation_type=operation_type,
+		lane=lane,
+		window=(scheduled_start_utc, scheduled_start_utc + timedelta(hours=1)),
+		tool_type_codes=_required_tool_type_codes(job, operation_type, product_version),
+	)
+
+
+def _recompute_chain_offsets_from_queue(session: Session, job: Job, ctx: Any) -> None:
+	"""Persist offsets as operating-hours from extrusion start to each satellite's actual scheduled start."""
+	jid_str = _str_id(job.id)
+	ex_row = session.execute(
+		select(ExtrusionQueueItem).where(ExtrusionQueueItem.job_id == jid_str).limit(1)
+	).scalars().first()
+	if not ex_row or ex_row.scheduled_start_utc is None:
+		job.schedule_chain_uteco_offset_operating_hours = None
+		job.schedule_chain_bagging_offset_operating_hours = None
+		return
+	ex_local = _scheduled_start_from_db(ex_row.scheduled_start_utc).astimezone(ctx.tz)
+	ut = session.execute(select(UtecoQueueItem).where(UtecoQueueItem.job_id == jid_str).limit(1)).scalars().first()
+	bg = session.execute(select(BaggingQueueItem).where(BaggingQueueItem.job_id == jid_str).limit(1)).scalars().first()
+	if ut and ut.scheduled_start_utc is not None:
+		ut_local = _scheduled_start_from_db(ut.scheduled_start_utc).astimezone(ctx.tz)
+		job.schedule_chain_uteco_offset_operating_hours = operating_hours_between(ex_local, ut_local, ctx)
+	else:
+		job.schedule_chain_uteco_offset_operating_hours = None
+	if bg and bg.scheduled_start_utc is not None:
+		bg_local = _scheduled_start_from_db(bg.scheduled_start_utc).astimezone(ctx.tz)
+		job.schedule_chain_bagging_offset_operating_hours = operating_hours_between(ex_local, bg_local, ctx)
+	else:
+		job.schedule_chain_bagging_offset_operating_hours = None
+
+
+def _maybe_pull_upstream_for_first_roll_constraint(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	ctx: Any,
+	*,
+	moved_operation: OperationType,
+	satellite_start_utc: datetime,
+) -> None:
+	"""If a satellite is placed too early, pull upstream operations earlier (independent drag)."""
+	if moved_operation not in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
+		return
+	jid_str = _str_id(job.id)
+	ex_row = session.execute(
+		select(ExtrusionQueueItem).where(ExtrusionQueueItem.job_id == jid_str).limit(1)
+	).scalars().first()
+	if not ex_row or ex_row.scheduled_start_utc is None:
+		return
+	if ex_row.status == QueueStatus.RUNNING:
+		return
+	ex_lane = resolve_schedule_lane(session, ex_row.extruder_code)
+	if ex_lane.kind != "extrusion" or not ex_lane.extruder:
+		return
+	sat_local = _scheduled_start_from_db(satellite_start_utc).astimezone(ctx.tz)
+
+	def _pull_parent_if_needed(
+		parent_start_utc: datetime,
+		parent_roll_h: float,
+		child_start_local: datetime,
+	) -> Optional[datetime]:
+		parent_local = _scheduled_start_from_db(parent_start_utc).astimezone(ctx.tz)
+		min_roll_end = add_operating_hours(parent_local, parent_roll_h, ctx)
+		if child_start_local >= min_roll_end:
+			return None
+		return inverse_add_operating_hours(child_start_local, parent_roll_h, ctx).astimezone(timezone.utc)
+
+	# Conversion depends on Uteco first roll when a Uteco row exists, otherwise directly on extrusion.
+	if moved_operation == OperationType.CONVERSION:
+		ut_row = session.execute(
+			select(UtecoQueueItem).where(UtecoQueueItem.job_id == jid_str).limit(1)
+		).scalars().first()
+		if (
+			ut_row
+			and ut_row.scheduled_start_utc is not None
+			and ut_row.status != QueueStatus.RUNNING
+		):
+			ut_lane = resolve_schedule_lane(session, str(ut_row.uteco_printer_id))
+			if ut_lane.kind == "uteco" and ut_lane.uteco_printer:
+				rolls = max(1, _num_rolls_for_job(session, job, product_version))
+				ut_roll_h = max(
+					0.25,
+					_estimate_lane_duration_hours(session, ut_lane, job, product_version) / float(rolls),
+				)
+				ut_new_start_utc = _pull_parent_if_needed(ut_row.scheduled_start_utc, ut_roll_h, sat_local)
+				if ut_new_start_utc is not None:
+					ut_row.scheduled_start_utc = ut_new_start_utc
+					session.flush()
+					_rebook_lane_tools_after_schedule_change(
+						session,
+						job,
+						product_version,
+						ut_lane,
+						OperationType.PRINTING_UTECO,
+						ut_new_start_utc,
+					)
+					# Cascade: if Uteco moved earlier than extrusion first roll, pull extrusion too.
+					sat_local = _scheduled_start_from_db(ut_new_start_utc).astimezone(ctx.tz)
+
+	ex_roll_h = _first_roll_operating_hours_for_extrusion_lane(session, ex_lane, job, product_version)
+	ex_new_start_utc = _pull_parent_if_needed(ex_row.scheduled_start_utc, ex_roll_h, sat_local)
+	if ex_new_start_utc is not None:
+		ex_row.scheduled_start_utc = ex_new_start_utc
+		session.flush()
+		_rebook_extrusion_tools_after_schedule_change(session, job, ex_row, ex_lane, product_version)
+
+
+def _maybe_push_satellite_forward_for_first_roll_constraint(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	ctx: Any,
+	*,
+	moved_operation: OperationType,
+) -> None:
+	"""If a moved satellite is still early after adjustments, push it forward (never backward)."""
+	if moved_operation not in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
+		return
+	jid_str = _str_id(job.id)
+	ex_row = session.execute(
+		select(ExtrusionQueueItem).where(ExtrusionQueueItem.job_id == jid_str).limit(1)
+	).scalars().first()
+	if not ex_row or ex_row.scheduled_start_utc is None:
+		return
+	ex_lane = resolve_schedule_lane(session, ex_row.extruder_code)
+	if ex_lane.kind != "extrusion" or not ex_lane.extruder:
+		return
+	parent_start_utc = ex_row.scheduled_start_utc
+	parent_roll_h = _first_roll_operating_hours_for_extrusion_lane(session, ex_lane, job, product_version)
+
+	sat_row = None
+	sat_lane = None
+	if moved_operation == OperationType.PRINTING_UTECO:
+		sat_row = session.execute(
+			select(UtecoQueueItem).where(UtecoQueueItem.job_id == jid_str).limit(1)
+		).scalars().first()
+		if sat_row and sat_row.scheduled_start_utc is not None:
+			sat_lane = resolve_schedule_lane(session, str(sat_row.uteco_printer_id))
+			if sat_lane.kind == "uteco" and sat_lane.uteco_printer:
+				pass
+	elif moved_operation == OperationType.CONVERSION:
+		sat_row = session.execute(
+			select(BaggingQueueItem).where(BaggingQueueItem.job_id == jid_str).limit(1)
+		).scalars().first()
+		if sat_row and sat_row.scheduled_start_utc is not None:
+			sat_lane = resolve_schedule_lane(session, str(sat_row.bagging_machine_id))
+			ut_row = session.execute(
+				select(UtecoQueueItem).where(UtecoQueueItem.job_id == jid_str).limit(1)
+			).scalars().first()
+			if ut_row and ut_row.scheduled_start_utc is not None:
+				ut_lane = resolve_schedule_lane(session, str(ut_row.uteco_printer_id))
+				if ut_lane.kind == "uteco" and ut_lane.uteco_printer:
+					rolls = max(1, _num_rolls_for_job(session, job, product_version))
+					parent_start_utc = ut_row.scheduled_start_utc
+					parent_roll_h = max(
+						0.25,
+						_estimate_lane_duration_hours(session, ut_lane, job, product_version) / float(rolls),
+					)
+
+	if sat_row is None or sat_lane is None or sat_row.scheduled_start_utc is None:
+		return
+	if sat_row.status == QueueStatus.RUNNING:
+		return
+
+	parent_local = _scheduled_start_from_db(parent_start_utc).astimezone(ctx.tz)
+	min_roll_end_local = add_operating_hours(parent_local, parent_roll_h, ctx)
+	sat_local = _scheduled_start_from_db(sat_row.scheduled_start_utc).astimezone(ctx.tz)
+	if sat_local >= min_roll_end_local:
+		return
+
+	# Forward-only: if snapping is needed, never move earlier than the minimum.
+	new_sat_local = snap_to_operating_instant(min_roll_end_local, ctx)
+	sat_row.scheduled_start_utc = new_sat_local.astimezone(timezone.utc)
+	session.flush()
+	_rebook_lane_tools_after_schedule_change(
+		session,
+		job,
+		product_version,
+		sat_lane,
+		moved_operation,
+		sat_row.scheduled_start_utc,
+	)
+
+
+def _maybe_shift_bagging_with_uteco_move(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	ctx: Any,
+	*,
+	old_uteco_start_utc: Optional[datetime],
+	new_uteco_start_utc: Optional[datetime],
+) -> None:
+	"""When Uteco moves, shift bagging by the same operating-time delta (if bagging is queued and movable)."""
+	if old_uteco_start_utc is None or new_uteco_start_utc is None:
+		return
+	old_local = _scheduled_start_from_db(old_uteco_start_utc).astimezone(ctx.tz)
+	new_local = _scheduled_start_from_db(new_uteco_start_utc).astimezone(ctx.tz)
+	delta_h = operating_hours_between(old_local, new_local, ctx)
+	if abs(delta_h) < 1e-9:
+		return
+
+	jid_str = _str_id(job.id)
+	bg_row = session.execute(
+		select(BaggingQueueItem).where(BaggingQueueItem.job_id == jid_str).limit(1)
+	).scalars().first()
+	if not bg_row or bg_row.scheduled_start_utc is None:
+		return
+	if bg_row.status == QueueStatus.RUNNING:
+		return
+	bg_lane = resolve_schedule_lane(session, str(bg_row.bagging_machine_id))
+	bg_local = _scheduled_start_from_db(bg_row.scheduled_start_utc).astimezone(ctx.tz)
+	bg_new_local = add_operating_hours(bg_local, float(delta_h), ctx)
+	bg_row.scheduled_start_utc = bg_new_local.astimezone(timezone.utc)
+	session.flush()
+	_rebook_lane_tools_after_schedule_change(
+		session,
+		job,
+		product_version,
+		bg_lane,
+		OperationType.CONVERSION,
+		bg_row.scheduled_start_utc,
+	)
+
+
+def _append_tail_queue_item_with_start(
+	session: Session,
+	lane: ScheduleLane,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	sched_utc: datetime,
+) -> None:
+	"""Append one queued row at the tail with explicit ``scheduled_start_utc`` (Uteco / bagging only)."""
+	jid_str = _str_id(job.id)
+	items = _load_lane_items_for_update(session, lane)
+	if any(_str_id(i.job_id) == jid_str for i in items):
+		return
+	op_lane = _operation_type_for_lane(lane)
+	_validate_lane_for_job(lane, product_version, op_lane)
+
+	insert_pos = max((i.position for i in items), default=0) + 1
+	_bump_queue_positions_from(items, insert_pos)
+	session.flush()
+
+	if lane.kind == "uteco" and lane.uteco_printer:
+		queue_item = UtecoQueueItem(
+			uteco_printer_id=lane.uteco_printer.id,
+			job_id=jid_str,
+			position=insert_pos,
+			status=QueueStatus.QUEUED,
+			operating_hours_lead_before=0,
+			scheduled_start_utc=sched_utc,
+		)
+	elif lane.kind == "bagging" and lane.bagging_machine:
+		queue_item = BaggingQueueItem(
+			bagging_machine_id=lane.bagging_machine.id,
+			job_id=jid_str,
+			position=insert_pos,
+			status=QueueStatus.QUEUED,
+			operating_hours_lead_before=0,
+			scheduled_start_utc=sched_utc,
+		)
+	else:
+		raise DomainError("Satellite enqueue supports Uteco and bagging lanes only")
+
+	session.add(queue_item)
+	session.flush()
+
+	required_codes = _required_tool_type_codes(job, op_lane, product_version)
+	window = (sched_utc, sched_utc + timedelta(hours=1))
+	_reserve_tools(
+		session=session,
+		job=job,
+		operation_type=op_lane,
+		lane=lane,
+		window=window,
+		tool_type_codes=required_codes,
+	)
+
+
+def _maybe_enqueue_uteco_bagging_after_extrusion(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+	extrusion_lane: ScheduleLane,
+	extrusion_sched_utc: datetime,
+	ctx: Any,
+) -> None:
+	jid_str = _str_id(job.id)
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	pm = _get_printing_method_from_spec(product_version)
+	needs_uteco = pm == PrintingMethod.UTECO
+	needs_bag = _spec_finish_requires_conversion(spec)
+	if not needs_uteco and not needs_bag:
+		job.schedule_chain_uteco_offset_operating_hours = None
+		job.schedule_chain_bagging_offset_operating_hours = None
+		return
+
+	if extrusion_lane.kind != "extrusion" or not extrusion_lane.extruder:
+		return
+
+	roll_h = _first_roll_operating_hours_for_extrusion_lane(session, extrusion_lane, job, product_version)
+	ex_local = _scheduled_start_from_db(extrusion_sched_utc).astimezone(ctx.tz)
+	first_roll_end_local = add_operating_hours(ex_local, roll_h, ctx)
+
+	job.schedule_chain_uteco_offset_operating_hours = None
+	job.schedule_chain_bagging_offset_operating_hours = None
+	if needs_uteco:
+		job.schedule_chain_uteco_offset_operating_hours = operating_hours_between(ex_local, first_roll_end_local, ctx)
+
+	bag_local = first_roll_end_local
+	if needs_bag:
+		if needs_uteco:
+			estimates = _estimate_job_operations_core(
+				session, job, product_version, extrusion_extruder=extrusion_lane.extruder
+			)
+			ut_est = next((e for e in estimates if e.operation_type == OperationType.PRINTING_UTECO.value), None)
+			ut_dur = float(ut_est.estimated_duration_hours) if ut_est else 1.0
+			bag_local = add_operating_hours(first_roll_end_local, ut_dur, ctx)
+		job.schedule_chain_bagging_offset_operating_hours = operating_hours_between(ex_local, bag_local, ctx)
+
+	if needs_uteco and not _uteco_queue_row_exists(session, jid_str):
+		ut_lane = _resolve_uteco_target_lane(session, jid_str, job, product_version)
+		if ut_lane:
+			_append_tail_queue_item_with_start(
+				session, ut_lane, job, product_version, first_roll_end_local.astimezone(timezone.utc)
+			)
+
+	if needs_bag and not _bagging_queue_row_exists(session, jid_str):
+		bg_lane = _resolve_bagging_target_lane(session, jid_str, job, product_version)
+		if bg_lane:
+			_append_tail_queue_item_with_start(
+				session, bg_lane, job, product_version, bag_local.astimezone(timezone.utc)
+			)
+
+
+def _sync_chain_queue_starts_from_extrusion(session: Session, job: Job, ctx: Any) -> None:
+	"""Recompute Uteco/bagging ``scheduled_start_utc`` from extrusion start + persisted offsets."""
+	jid_str = _str_id(job.id)
+	ex_row = session.execute(
+		select(ExtrusionQueueItem).where(ExtrusionQueueItem.job_id == jid_str).limit(1)
+	).scalars().first()
+	if not ex_row or ex_row.scheduled_start_utc is None:
+		return
+	ut_off = job.schedule_chain_uteco_offset_operating_hours
+	bg_off = job.schedule_chain_bagging_offset_operating_hours
+	if ut_off is None and bg_off is None:
+		return
+
+	ex_local = _scheduled_start_from_db(ex_row.scheduled_start_utc).astimezone(ctx.tz)
+	_, _, product_version = _get_job_with_context(session, uuid.UUID(jid_str))
+
+	if ut_off is not None:
+		ut = session.execute(select(UtecoQueueItem).where(UtecoQueueItem.job_id == jid_str).limit(1)).scalars().first()
+		if ut:
+			ns = add_operating_hours(ex_local, float(ut_off), ctx).astimezone(timezone.utc)
+			ut.scheduled_start_utc = ns
+			ut.operating_hours_lead_before = 0
+			session.flush()
+			ut_lane = resolve_schedule_lane(session, str(ut.uteco_printer_id))
+			_cancel_tool_reservations_for_job_lane(session, jid_str, OperationType.PRINTING_UTECO, ut_lane)
+			_reserve_tools(
+				session=session,
+				job=job,
+				operation_type=OperationType.PRINTING_UTECO,
+				lane=ut_lane,
+				window=(ns, ns + timedelta(hours=1)),
+				tool_type_codes=_required_tool_type_codes(job, OperationType.PRINTING_UTECO, product_version),
+			)
+
+	if bg_off is not None:
+		bg = session.execute(select(BaggingQueueItem).where(BaggingQueueItem.job_id == jid_str).limit(1)).scalars().first()
+		if bg:
+			ns = add_operating_hours(ex_local, float(bg_off), ctx).astimezone(timezone.utc)
+			bg.scheduled_start_utc = ns
+			bg.operating_hours_lead_before = 0
+			session.flush()
+			bg_lane = resolve_schedule_lane(session, str(bg.bagging_machine_id))
+			_cancel_tool_reservations_for_job_lane(session, jid_str, OperationType.CONVERSION, bg_lane)
+			_reserve_tools(
+				session=session,
+				job=job,
+				operation_type=OperationType.CONVERSION,
+				lane=bg_lane,
+				window=(ns, ns + timedelta(hours=1)),
+				tool_type_codes=_required_tool_type_codes(job, OperationType.CONVERSION, product_version),
+			)
+
+
+def _remove_satellite_queue_rows_for_job(session: Session, job_id_str: str) -> None:
+	ut = session.execute(select(UtecoQueueItem).where(UtecoQueueItem.job_id == job_id_str).limit(1)).scalars().first()
+	if ut:
+		lane_ut = resolve_schedule_lane(session, str(ut.uteco_printer_id))
+		items_ut = _load_lane_items_for_update(session, lane_ut)
+		items_ut = [i for i in items_ut if i.id != ut.id]
+		session.delete(ut)
+		session.flush()
+		_reindex_lane(session, items_ut)
+		_cancel_tool_reservations_for_job_lane(session, job_id_str, OperationType.PRINTING_UTECO, lane_ut)
+
+	bg = session.execute(select(BaggingQueueItem).where(BaggingQueueItem.job_id == job_id_str).limit(1)).scalars().first()
+	if bg:
+		lane_bg = resolve_schedule_lane(session, str(bg.bagging_machine_id))
+		items_bg = _load_lane_items_for_update(session, lane_bg)
+		items_bg = [i for i in items_bg if i.id != bg.id]
+		session.delete(bg)
+		session.flush()
+		_reindex_lane(session, items_bg)
+		_cancel_tool_reservations_for_job_lane(session, job_id_str, OperationType.CONVERSION, lane_bg)
+
+
 def _required_tool_type_codes(job: Job, operation_type: OperationType, product_version: Optional[ProductVersion]) -> List[str]:
 	if operation_type == OperationType.EXTRUSION:
 		spec = (product_version.spec_payload if product_version else {}) or {}
@@ -510,6 +1087,98 @@ def _estimated_extrusion_kg(job: Job, product_version: Optional[ProductVersion])
 	return max(planned_qty * 0.5, 1.0)
 
 
+def _base_length_mm_from_spec(spec: dict) -> float:
+	"""Bag cut length (mm) from product spec — same basis as ``specToQuoteInputs`` / quote calculator."""
+	dim = spec.get("dimensions") or {}
+	if not isinstance(dim, dict):
+		return 0.0
+	try:
+		raw = float(dim.get("base_length_mm") or 0)
+	except (TypeError, ValueError):
+		return 0.0
+	units = str(dim.get("length_units") or "mm").lower()
+	if units == "m":
+		return max(0.0, raw * 1000.0)
+	return max(0.0, raw)
+
+
+def _pick_conversion_speed_row(
+	session: Session,
+	gauge_um: float,
+	length_mm: float,
+) -> Optional[ConversionSpeed]:
+	"""Match ``conversion_speeds`` admin rows the same way as ``pickConversionSpeed`` in the quotes UI."""
+	rows = list(
+		session.execute(
+			select(ConversionSpeed).order_by(
+				ConversionSpeed.min_gauge_um.asc(),
+				ConversionSpeed.max_gauge_um.asc(),
+				ConversionSpeed.min_length_mm.asc(),
+				ConversionSpeed.max_length_mm.asc(),
+			)
+		).scalars().all()
+	)
+	if not rows:
+		return None
+	g = int(round(float(gauge_um)))
+	lm = int(round(float(length_mm)))
+	for r in rows:
+		if r.min_gauge_um <= g <= r.max_gauge_um and r.min_length_mm <= lm <= r.max_length_mm:
+			return r
+	return rows[0]
+
+
+def _conversion_factor_value(session: Session, slug: str, default: float = 0.0) -> float:
+	row = session.get(ConversionFactor, slug)
+	if row is None:
+		return default
+	try:
+		return float(row.value)
+	except (TypeError, ValueError):
+		return default
+
+
+def _conversion_duration_hours_from_ratebook(
+	session: Session,
+	job: Job,
+	product_version: Optional[ProductVersion],
+) -> float:
+	"""
+	Bagging / conversion runtime from admin conversion speeds + roll-change factors.
+	Mirrors ``computeQuickQuotePreview`` (Cartons): units / bags_per_minute + roll_changes × roll_change_minutes.
+	"""
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	if not isinstance(spec, dict):
+		spec = {}
+
+	gv = _compute_gauge_um_from_spec(spec)
+	gauge_pick = float(gv) if gv is not None else 0.0
+	length_mm = _base_length_mm_from_spec(spec)
+	speed_row = _pick_conversion_speed_row(session, gauge_pick, length_mm)
+	bpm = float(speed_row.bags_per_minute) if speed_row is not None else 0.0
+	planned_qty = float(job.planned_qty)
+
+	run_minutes: Optional[float] = (planned_qty / bpm) if bpm > 0 else None
+
+	roll_avg_kg = _conversion_factor_value(session, "roll_weight_avg", 0.0)
+	roll_change_mins = _conversion_factor_value(session, "roll_change_minutes", 0.0)
+	derived_kg = _estimated_extrusion_kg(job, product_version)
+	roll_changes = (
+		math.ceil(derived_kg / roll_avg_kg) if roll_avg_kg > 0 and derived_kg > 0 else 0
+	)
+	roll_change_total_min = (
+		float(roll_changes) * roll_change_mins if roll_changes > 0 and roll_change_mins > 0 else 0.0
+	)
+
+	if run_minutes is None:
+		fallback_bph = 1000.0
+		return max(0.25, 0.25 + planned_qty / fallback_bph if fallback_bph > 0 else 1.0)
+
+	total_minutes = run_minutes + roll_change_total_min
+	duration_hours = total_minutes / 60.0
+	return max(0.25, duration_hours)
+
+
 def _extrusion_duration_hours_for_extruder(
 	session: Session, extruder: Extruder, job: Job, product_version: Optional[ProductVersion]
 ) -> float:
@@ -590,10 +1259,7 @@ def _estimate_job_operations_core(
 		)
 
 	if requires_conversion:
-		bagger_rate_units_per_hour = 1000.0
-		setup_allowance_hours = 0.25
-		runtime_hours = planned_qty / bagger_rate_units_per_hour if bagger_rate_units_per_hour > 0 else 1.0
-		duration_hours = setup_allowance_hours + runtime_hours
+		duration_hours = _conversion_duration_hours_from_ratebook(session, job, product_version)
 		operations.append(
 			OperationEstimateDTO(
 				operation_type=OperationType.CONVERSION.value,
@@ -964,6 +1630,9 @@ def add_job(
 			tool_type_codes=required_codes,
 		)
 
+		if lane.kind == "extrusion" and lane.extruder:
+			_maybe_enqueue_uteco_bagging_after_extrusion(session, job, product_version, lane, sched_utc, ctx)
+
 		refreshed = _load_lane_items_for_update(session, lane)
 		return _lane_dto(lane.lane_id, refreshed, warnings=warnings, conflicts=tool_conflicts)
 
@@ -1006,6 +1675,13 @@ def remove(machine_id: str, job_id: uuid.UUID) -> LaneDTO:
 		items.remove(item)
 		session.delete(item)
 		_reindex_lane(session, items)
+
+		if lane.kind == "extrusion" and lane.extruder:
+			_remove_satellite_queue_rows_for_job(session, jid_str)
+			job_row = session.get(Job, jid_str)
+			if job_row is not None:
+				job_row.schedule_chain_uteco_offset_operating_hours = None
+				job_row.schedule_chain_bagging_offset_operating_hours = None
 
 		ex_code = lane.extruder.extruder_code if lane.kind == "extrusion" and lane.extruder else None
 		ut_id = lane.uteco_printer.id if lane.kind == "uteco" and lane.uteco_printer else None
@@ -1095,11 +1771,50 @@ def move_bar(
 				ld = _lane_dto(source_lane.lane_id, ref)
 				return MoveResult(source_lane=ld, target_lane=ld)
 
+			old_uteco_start_utc = (
+				it.scheduled_start_utc
+				if operation_type == OperationType.PRINTING_UTECO
+				else None
+			)
 			it.scheduled_start_utc = _target_start_as_utc(target_start)
 			it.operating_hours_lead_before = 0
 			session.flush()
 
 			job, order, product_version = _get_job_with_context(session, job_id)
+			ctx_adj = load_operating_context(session)
+			if operation_type in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
+				_maybe_pull_upstream_for_first_roll_constraint(
+					session,
+					job,
+					product_version,
+					ctx_adj,
+					moved_operation=operation_type,
+					satellite_start_utc=it.scheduled_start_utc,
+				)
+				_maybe_push_satellite_forward_for_first_roll_constraint(
+					session,
+					job,
+					product_version,
+					ctx_adj,
+					moved_operation=operation_type,
+				)
+				if operation_type == OperationType.PRINTING_UTECO:
+					_maybe_shift_bagging_with_uteco_move(
+						session,
+						job,
+						product_version,
+						ctx_adj,
+						old_uteco_start_utc=old_uteco_start_utc,
+						new_uteco_start_utc=it.scheduled_start_utc,
+					)
+					_maybe_push_satellite_forward_for_first_roll_constraint(
+						session,
+						job,
+						product_version,
+						ctx_adj,
+						moved_operation=OperationType.CONVERSION,
+					)
+				_recompute_chain_offsets_from_queue(session, job, ctx_adj)
 			s_ex = (
 				source_lane.extruder.extruder_code
 				if source_lane.kind == "extrusion" and source_lane.extruder
@@ -1135,6 +1850,9 @@ def move_bar(
 				window=window,
 				tool_type_codes=required_codes,
 			)
+			if operation_type == OperationType.EXTRUSION:
+				ctx_sync = load_operating_context(session)
+				_sync_chain_queue_starts_from_extrusion(session, job, ctx_sync)
 			warnings = _routing_warnings_for_enqueue(session, target, job, product_version)
 			ref = _load_lane_items_for_update(session, source_lane)
 			ld = _lane_dto(source_lane.lane_id, ref, warnings=warnings, conflicts=tool_conflicts)
@@ -1163,6 +1881,11 @@ def move_bar(
 		else:
 			sched_utc = _default_append_scheduled_start_utc(session, target, ordered_tgt, ctx, anchor_local)
 
+		old_uteco_start_utc = (
+			item.scheduled_start_utc
+			if operation_type == OperationType.PRINTING_UTECO
+			else None
+		)
 		if target.kind == "extrusion" and target.extruder:
 			new_item = ExtrusionQueueItem(
 				extruder_code=target.extruder.extruder_code,
@@ -1194,6 +1917,42 @@ def move_bar(
 			raise DomainError("Invalid target lane")
 		session.add(new_item)
 		target_others.append(new_item)
+		session.flush()
+
+		ctx_move = load_operating_context(session)
+		if operation_type in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
+			_maybe_pull_upstream_for_first_roll_constraint(
+				session,
+				job,
+				product_version,
+				ctx_move,
+				moved_operation=operation_type,
+				satellite_start_utc=new_item.scheduled_start_utc,
+			)
+			_maybe_push_satellite_forward_for_first_roll_constraint(
+				session,
+				job,
+				product_version,
+				ctx_move,
+				moved_operation=operation_type,
+			)
+			if operation_type == OperationType.PRINTING_UTECO:
+				_maybe_shift_bagging_with_uteco_move(
+					session,
+					job,
+					product_version,
+					ctx_move,
+					old_uteco_start_utc=old_uteco_start_utc,
+					new_uteco_start_utc=new_item.scheduled_start_utc,
+				)
+				_maybe_push_satellite_forward_for_first_roll_constraint(
+					session,
+					job,
+					product_version,
+					ctx_move,
+					moved_operation=OperationType.CONVERSION,
+				)
+			_recompute_chain_offsets_from_queue(session, job, ctx_move)
 
 		# Cancel prior reservations for this job/op on source lane
 		s_ex = source_lane.extruder.extruder_code if source_lane.kind == "extrusion" and source_lane.extruder else None
@@ -1225,6 +1984,10 @@ def move_bar(
 			window=window,
 			tool_type_codes=required_codes,
 		)
+
+		if operation_type == OperationType.EXTRUSION:
+			ctx_sync = load_operating_context(session)
+			_sync_chain_queue_starts_from_extrusion(session, job, ctx_sync)
 
 		warnings = _routing_warnings_for_enqueue(session, target, job, product_version)
 
@@ -1296,16 +2059,28 @@ def get_overview() -> dict:
 		return {"extruders": extruders, "printers": printers, "converters": converters}
 
 
-def estimate_job_operations(job_id: uuid.UUID | str) -> JobEstimatesDTO:
+def estimate_job_operations(
+	job_id: uuid.UUID | str,
+	target_extruder_machine_id: Optional[str] = None,
+) -> JobEstimatesDTO:
 	"""
 	Calculate estimated durations for a job's operations.
-	Extrusion: same kg basis as the Gantt; if the job is queued on an extruder, uses that lane's
-	`extruders.average_kg_hr` (via machines.code = extruder_code), otherwise 100 kg/h placeholder.
+	Extrusion: same kg basis as the Gantt; uses ``target_extruder_machine_id`` when provided (Gantt drag preview),
+	otherwise the extruder the job is queued on, otherwise 100 kg/h placeholder.
 	"""
 	with SessionLocal() as session:
 		job_id_str = str(job_id)
 		job, order, product_version = _get_job_with_context(session, uuid.UUID(job_id_str))
-		em = _find_extruder_for_queued_job(session, job.id)
+		em: Optional[Extruder] = None
+		if target_extruder_machine_id:
+			try:
+				lane = resolve_schedule_lane(session, str(target_extruder_machine_id).strip())
+				if lane.kind == "extrusion" and lane.extruder is not None:
+					em = lane.extruder
+			except DomainError:
+				em = None
+		if em is None:
+			em = _find_extruder_for_queued_job(session, job.id)
 		operations = _estimate_job_operations_core(session, job, product_version, extrusion_extruder=em)
 		return JobEstimatesDTO(job_id=uuid.UUID(job_id_str), operations=operations)
 
@@ -1391,6 +2166,11 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 				num_colours = (spec.get("printing") or {}).get("num_colours", 0) or 0
 				layflat_mm = layflat_width_mm_from_product_version(product_version)
 
+				cu = job.schedule_chain_uteco_offset_operating_hours
+				cb = job.schedule_chain_bagging_offset_operating_hours
+				chain_ut = float(cu) if cu is not None else None
+				chain_bg = float(cb) if cb is not None else None
+
 				bars.append(
 					GanttBarDTO(
 						job_id=uuid.UUID(str(job.id)),
@@ -1414,6 +2194,8 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 						warnings=warnings,
 						tool_conflicts=tool_conflicts,
 						tool_strips=tool_strips,
+						chain_uteco_offset_operating_hours=chain_ut,
+						chain_bagging_offset_operating_hours=chain_bg,
 					)
 				)
 

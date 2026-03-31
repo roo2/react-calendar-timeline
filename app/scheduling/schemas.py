@@ -83,6 +83,14 @@ class GanttBarDTO(BaseModel):
 		default=None,
 		description="Layflat/web width mm from product spec (extrusion width check basis)",
 	)
+	chain_uteco_offset_operating_hours: Optional[float] = Field(
+		default=None,
+		description="When set, Uteco queue start tracks extrusion start + this many operating hours",
+	)
+	chain_bagging_offset_operating_hours: Optional[float] = Field(
+		default=None,
+		description="When set, bagging queue start tracks extrusion start + this many operating hours",
+	)
 
 
 class GanttLaneDTO(BaseModel):

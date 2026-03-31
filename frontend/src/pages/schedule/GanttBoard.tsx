@@ -1,7 +1,12 @@
 import type { CSSProperties, ReactNode, Ref, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
-import Timeline, { CustomMarker, TimelineMarkers, TodayMarker, calendarUtils } from 'react-calendar-timeline'
+import Timeline, {
+  CustomMarker,
+  TimelineMarkers,
+  TodayMarker,
+  calendarUtils,
+} from 'react-calendar-timeline'
 import 'react-calendar-timeline/style.css'
 import './ganttTimeline.css'
 import {
@@ -14,6 +19,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material'
+import { apiFetch } from '../../api/client'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import {
   addJobToScheduleQueue,
@@ -23,6 +29,7 @@ import {
   fetchUnqueuedScheduleJobs,
   moveScheduleBar,
   removeJobFromScheduleQueue,
+  type GanttBar,
   type GanttLane,
   type UnqueuedScheduleJob,
 } from '../../store/slices/scheduleSlice'
@@ -34,6 +41,19 @@ const HOUR_MS = 3600000
 const TIMELINE_BUFFER = 2
 /** Synthetic row id so the unqueued drop ghost is not treated as a real job. */
 const UNQUEUED_DROP_PREVIEW_ITEM_ID = '__unqueued_drop_preview__'
+
+const GANTT_ITEM_ID_SEP = '|'
+
+/** Timeline item id: one bar per (job, operation); avoids collisions when a job spans extrusion + Uteco + bagging. */
+function ganttTimelineItemId(jobId: string, operationType: string) {
+  return `${jobId}${GANTT_ITEM_ID_SEP}${operationType}`
+}
+
+function parseGanttTimelineItemId(id: string): { jobId: string; operationType: string } | null {
+  const i = id.indexOf(GANTT_ITEM_ID_SEP)
+  if (i <= 0) return null
+  return { jobId: id.slice(0, i), operationType: id.slice(i + 1) }
+}
 
 function previewDurationMsForUnqueuedJob(job: UnqueuedScheduleJob): number {
   const rolls = Math.max(1, job.roll_count || 1)
@@ -112,7 +132,12 @@ function ganttTimelineItemRenderer(props: {
   const contentMaxH: CSSProperties = { maxHeight: `${itemContext.dimensions.height}px` }
 
   return (
-    <div {...itemDivProps} ref={ref as Ref<HTMLDivElement>} key={`${String(key)}-outer`}>
+    <div
+      {...itemDivProps}
+      ref={ref as Ref<HTMLDivElement>}
+      key={`${String(key)}-outer`}
+      data-gantt-item-id={String(item.id)}
+    >
       {useResizeHandle ? <div {...left} key={`${String(key)}-lr`} /> : null}
       <div className="rct-item-content" style={contentMaxH} key={`${String(key)}-content`}>
         {itemContext.title}
@@ -173,6 +198,130 @@ function cumulativeScrollOffset(el: Node | null): { left: number; top: number } 
 }
 
 type MsInterval = { start: number; end: number }
+type MarkerRenderProps = { styles: CSSProperties; date: number }
+
+/** Merge overlapping / adjacent inactive spans (UTC ms) for operating-time walks. */
+function mergeInactiveIntervals(intervals: MsInterval[]): MsInterval[] {
+  if (intervals.length === 0) return []
+  const sorted = [...intervals].sort((a, b) => a.start - b.start)
+  const out: MsInterval[] = [{ ...sorted[0] }]
+  for (let i = 1; i < sorted.length; i++) {
+    const cur = out[out.length - 1]
+    const n = sorted[i]
+    if (n.start <= cur.end) {
+      cur.end = Math.max(cur.end, n.end)
+    } else {
+      out.push({ ...n })
+    }
+  }
+  return out
+}
+
+function snapForwardPastInactiveUtc(tMs: number, inactive: MsInterval[]): number {
+  let t = tMs
+  for (let g = 0; g < 5000; g++) {
+    let hit = false
+    for (const inv of inactive) {
+      if (t >= inv.start && t < inv.end) {
+        t = inv.end
+        hit = true
+        break
+      }
+    }
+    if (!hit) return t
+  }
+  return t
+}
+
+function nextInactiveStartAfterUtc(tMs: number, inactive: MsInterval[]): number | null {
+  let best: number | null = null
+  for (const inv of inactive) {
+    if (inv.start > tMs && (best === null || inv.start < best)) {
+      best = inv.start
+    }
+  }
+  return best
+}
+
+/**
+ * Advance `startMs` by `durationHours` of *operating* time: wall clock only counts outside `inactive`
+ * (matches server `inactive_intervals` / closed-factory shading on the Gantt).
+ */
+function addOperatingHoursWallMs(startMs: number, durationHours: number, inactive: MsInterval[]): number {
+  if (durationHours <= 0) return snapForwardPastInactiveUtc(startMs, inactive)
+  let t = snapForwardPastInactiveUtc(startMs, inactive)
+  let remainingSec = durationHours * 3600
+  const epsilon = 1e-3
+  let iter = 0
+  while (remainingSec > epsilon && iter++ < 500_000) {
+    if (inactive.length === 0) {
+      t += remainingSec * 1000
+      break
+    }
+    let stuckInClosed = false
+    for (const inv of inactive) {
+      if (t >= inv.start && t < inv.end) {
+        t = inv.end
+        stuckInClosed = true
+        break
+      }
+    }
+    if (stuckInClosed) continue
+
+    const nextClosed = nextInactiveStartAfterUtc(t, inactive)
+    if (nextClosed == null) {
+      t += remainingSec * 1000
+      break
+    }
+    const openRunSec = (nextClosed - t) / 1000
+    if (openRunSec <= 0) {
+      t = snapForwardPastInactiveUtc(nextClosed, inactive)
+      continue
+    }
+    if (openRunSec >= remainingSec) {
+      t += remainingSec * 1000
+      remainingSec = 0
+      break
+    }
+    remainingSec -= openRunSec
+    t = nextClosed
+    t = snapForwardPastInactiveUtc(t, inactive)
+  }
+  return t
+}
+
+const DRAG_CHAIN_EPS_MS = 2
+
+/**
+ * Latest extrusion start (not after `currentExStartMs`) such that downstream start
+ * `addOperatingHoursWallMs(ex, offsetHours, inactive) <= childTargetStartMs`.
+ * Used when a chained child is dragged earlier than its minimum relative to the current extrusion start.
+ */
+function extrusionStartForMaxChildStart(
+  childTargetStartMs: number,
+  offsetOperatingHours: number,
+  inactive: MsInterval[],
+  currentExStartMs: number,
+): number {
+  const f = (exMs: number) => addOperatingHoursWallMs(exMs, offsetOperatingHours, inactive)
+  if (f(currentExStartMs) <= childTargetStartMs + DRAG_CHAIN_EPS_MS) {
+    return currentExStartMs
+  }
+  let lo = childTargetStartMs - 500 * 24 * HOUR_MS
+  let hi = currentExStartMs
+  if (f(lo) > childTargetStartMs) {
+    return lo
+  }
+  for (let i = 0; i < 100 && hi - lo > DRAG_CHAIN_EPS_MS; i++) {
+    const mid = (lo + hi) / 2
+    if (f(mid) <= childTargetStartMs) {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  return lo
+}
 
 /** Fallback canvas before first `getTimelineContext()` (same buffer math as Timeline). */
 function canvasBoundsFromDefaultRange(visibleStartMs: number, visibleEndMs: number, buffer: number) {
@@ -197,7 +346,7 @@ function InactiveClosedBandMarker({
 }) {
   return (
     <CustomMarker date={anchorMs}>
-      {({ styles }) => {
+      {({ styles }: MarkerRenderProps) => {
         const inst = timelineRef.current
         const ctx = inst?.getTimelineContext?.()
         if (!ctx || ctx.canvasWidth <= 0) {
@@ -238,6 +387,10 @@ type TimelineGroup = {
 
 type TimelineItem = {
   id: string
+  parentItem?: {
+    id: string
+    completionFractionRequired?: number
+  }
   group: string
   title: string
   start_time: number
@@ -249,6 +402,420 @@ type TimelineItem = {
   itemProps?: {
     style?: CSSProperties
   }
+}
+
+function firstRollCompletionFraction(rollCount?: number | null): number {
+  const resolvedRollCount = Math.max(1, Math.floor(rollCount ?? 1))
+  return 1 / resolvedRollCount
+}
+
+function ganttBarDurationMs(bar: GanttBar): number {
+  return Math.max(HOUR_MS, Math.round((bar.estimated_duration_hours || 1) * HOUR_MS))
+}
+
+/** Finish time for a bar placed at `startMs` using scheduled duration only (ignores absolute `tentative_finish`). */
+function ganttBarEndMsFromEstimatedDuration(bar: GanttBar, startMs: number): number {
+  return startMs + ganttBarDurationMs(bar)
+}
+
+/** Matches static item `rawEndMs` in `buildGanttTimelineItems` (absolute `tentative_finish` when set). */
+function ganttBarRawEndMs(bar: GanttBar, startMs: number): number {
+  if (bar.tentative_finish) {
+    return new Date(bar.tentative_finish).getTime()
+  }
+  return ganttBarEndMsFromEstimatedDuration(bar, startMs)
+}
+
+type GanttBarLane = { bar: GanttBar; lane: GanttLane }
+
+function ganttBarTentativeStartMs(bar: GanttBar, fallbackMs: number): number {
+  return bar.tentative_start ? new Date(bar.tentative_start).getTime() : fallbackMs
+}
+
+/**
+ * Recompute start/end for every bar in a job while one bar is dragged so chain min-finish constraints
+ * update every frame. react-calendar-timeline keeps drag width as `(end-start)` from props, so props must
+ * include the constrained span during drag.
+ */
+function computeJobTimelineSpansDuringDrag(
+  jobBarsWithLanes: GanttBarLane[],
+  activeDrag: { itemId: string; time: number; newGroupOrder: number },
+  groups: TimelineGroup[],
+  now: number,
+  inactiveMerged: MsInterval[],
+  extrusionDurationHoursOverride: number | null,
+): Map<string, { startMs: number; endMs: number; groupId: string }> {
+  const result = new Map<string, { startMs: number; endMs: number; groupId: string }>()
+
+  const extrusionEntry = jobBarsWithLanes.find((x) => x.bar.operation_type === 'extrusion')
+  const utecoEntry = jobBarsWithLanes.find((x) => x.bar.operation_type === 'printing_uteco')
+  const conversionEntry = jobBarsWithLanes.find((x) => x.bar.operation_type === 'conversion')
+  const extrusionBar = extrusionEntry?.bar
+  const utecoBar = utecoEntry?.bar
+  const conversionBar = conversionEntry?.bar
+
+  const draggedParsed = parseGanttTimelineItemId(activeDrag.itemId)
+  const extrusionDrag =
+    draggedParsed?.operationType === 'extrusion' &&
+    !!extrusionBar &&
+    ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type) === activeDrag.itemId
+
+  const utecoDrag =
+    !!utecoBar &&
+    draggedParsed?.operationType === 'printing_uteco' &&
+    ganttTimelineItemId(String(utecoBar.job_id), utecoBar.operation_type) === activeDrag.itemId &&
+    extrusionBar?.chain_uteco_offset_operating_hours != null
+
+  const conversionDrag =
+    !!conversionBar &&
+    draggedParsed?.operationType === 'conversion' &&
+    ganttTimelineItemId(String(conversionBar.job_id), conversionBar.operation_type) === activeDrag.itemId &&
+    extrusionBar?.chain_bagging_offset_operating_hours != null
+
+  const exNew = extrusionDrag ? activeDrag.time : null
+  const exDurHForChain =
+    extrusionBar != null
+      ? Math.max(
+          0.25,
+          extrusionDurationHoursOverride ?? extrusionBar.estimated_duration_hours ?? 1,
+        )
+      : 1
+  const exRolls = Math.max(1, Math.floor(extrusionBar?.roll_count ?? 1))
+  const firstRollOpH = extrusionBar != null ? exDurHForChain / exRolls : 1
+
+  const exStartFromRedux = extrusionBar ? ganttBarTentativeStartMs(extrusionBar, now) : now
+
+  let exAnchorMs: number | null = null
+  if (extrusionDrag && exNew != null) {
+    exAnchorMs = exNew
+  } else if (extrusionBar && utecoDrag) {
+    // Pull extrusion only once the child crosses *before* first-roll completion (matches drop behaviour).
+    // Stored chain_uteco can exceed first roll if the run was nudged later; do not use it for this threshold.
+    const minChildAfterFirstRoll = addOperatingHoursWallMs(exStartFromRedux, firstRollOpH, inactiveMerged)
+    if (activeDrag.time + DRAG_CHAIN_EPS_MS < minChildAfterFirstRoll) {
+      exAnchorMs = extrusionStartForMaxChildStart(
+        activeDrag.time,
+        firstRollOpH,
+        inactiveMerged,
+        exStartFromRedux,
+      )
+    }
+  } else if (extrusionBar && conversionDrag) {
+    const minChildAfterFirstRoll = addOperatingHoursWallMs(exStartFromRedux, firstRollOpH, inactiveMerged)
+    if (activeDrag.time + DRAG_CHAIN_EPS_MS < minChildAfterFirstRoll) {
+      exAnchorMs = extrusionStartForMaxChildStart(
+        activeDrag.time,
+        firstRollOpH,
+        inactiveMerged,
+        exStartFromRedux,
+      )
+    }
+  }
+
+  for (const { bar, lane } of jobBarsWithLanes) {
+    const id = ganttTimelineItemId(String(bar.job_id), bar.operation_type)
+    const dragged = id === activeDrag.itemId
+
+    let startMs: number
+    if (dragged) {
+      startMs = activeDrag.time
+    } else if (
+      extrusionBar &&
+      bar.operation_type === 'extrusion' &&
+      exAnchorMs != null &&
+      !extrusionDrag
+    ) {
+      startMs = exAnchorMs
+    } else if (
+      extrusionDrag &&
+      exAnchorMs != null &&
+      extrusionBar &&
+      bar.operation_type === 'printing_uteco' &&
+      extrusionBar.chain_uteco_offset_operating_hours != null
+    ) {
+      const off = Number(utecoBar!.chain_uteco_offset_operating_hours)
+      startMs = Number.isFinite(off)
+        ? addOperatingHoursWallMs(exAnchorMs, off, inactiveMerged)
+        : addOperatingHoursWallMs(exAnchorMs, firstRollOpH, inactiveMerged)
+    } else if (
+      extrusionDrag &&
+      exAnchorMs != null &&
+      extrusionBar &&
+      bar.operation_type === 'conversion' &&
+      extrusionBar.chain_bagging_offset_operating_hours != null
+    ) {
+      const off = Number(extrusionBar.chain_bagging_offset_operating_hours)
+      startMs = Number.isFinite(off)
+        ? addOperatingHoursWallMs(exAnchorMs, off, inactiveMerged)
+        : addOperatingHoursWallMs(exAnchorMs, firstRollOpH, inactiveMerged)
+    } else if (
+      !extrusionDrag &&
+      exAnchorMs != null &&
+      extrusionBar &&
+      bar.operation_type === 'printing_uteco' &&
+      extrusionBar.chain_uteco_offset_operating_hours != null
+    ) {
+      const off = Number(utecoBar!.chain_uteco_offset_operating_hours)
+      startMs = Number.isFinite(off)
+        ? addOperatingHoursWallMs(exAnchorMs, off, inactiveMerged)
+        : addOperatingHoursWallMs(exAnchorMs, firstRollOpH, inactiveMerged)
+    } else if (
+      !extrusionDrag &&
+      exAnchorMs != null &&
+      extrusionBar &&
+      bar.operation_type === 'conversion' &&
+      extrusionBar.chain_bagging_offset_operating_hours != null
+    ) {
+      const off = Number(extrusionBar.chain_bagging_offset_operating_hours)
+      startMs = Number.isFinite(off)
+        ? addOperatingHoursWallMs(exAnchorMs, off, inactiveMerged)
+        : addOperatingHoursWallMs(exAnchorMs, firstRollOpH, inactiveMerged)
+    } else {
+      startMs = ganttBarTentativeStartMs(bar, now)
+    }
+
+    const groupId =
+      dragged && groups[activeDrag.newGroupOrder] ? groups[activeDrag.newGroupOrder].id : lane.machine_id
+    result.set(id, { startMs, endMs: 0, groupId })
+  }
+
+  const applyEnd = (bar: GanttBar, minFinishMs: number | null) => {
+    const id = ganttTimelineItemId(String(bar.job_id), bar.operation_type)
+    const row = result.get(id)
+    if (!row) return
+    const dragged = id === activeDrag.itemId
+    const extrusionPulledEarlier =
+      !!extrusionBar &&
+      bar.operation_type === 'extrusion' &&
+      exAnchorMs != null &&
+      !extrusionDrag &&
+      Math.abs(ganttBarTentativeStartMs(extrusionBar, now) - exAnchorMs) > DRAG_CHAIN_EPS_MS
+    const dependentStartShifted =
+      exAnchorMs != null &&
+      !dragged &&
+      ((bar.operation_type === 'printing_uteco' && extrusionBar?.chain_uteco_offset_operating_hours != null) ||
+        (bar.operation_type === 'conversion' && extrusionBar?.chain_bagging_offset_operating_hours != null))
+    const durationH =
+      dragged && bar.operation_type === 'extrusion'
+        ? Math.max(0.25, extrusionDurationHoursOverride ?? bar.estimated_duration_hours ?? 1)
+        : Math.max(0.25, bar.estimated_duration_hours ?? 1)
+    const raw =
+      dragged || dependentStartShifted || extrusionPulledEarlier
+        ? addOperatingHoursWallMs(row.startMs, durationH, inactiveMerged)
+        : ganttBarRawEndMs(bar, row.startMs)
+    const withMin = minFinishMs != null ? Math.max(raw, minFinishMs) : raw
+    result.set(id, { ...row, endMs: Math.max(row.startMs + HOUR_MS, withMin) })
+  }
+
+  if (extrusionBar) {
+    applyEnd(extrusionBar, null)
+  }
+  if (utecoBar) {
+    let minFinish: number | null = null
+    if (extrusionBar && utecoBar.chain_uteco_offset_operating_hours != null) {
+      const exId = ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type)
+      const exEnd = result.get(exId)?.endMs
+      if (exEnd != null) {
+        const childHoursPerRoll = Math.max(0, utecoBar.hours_per_roll ?? 0)
+        minFinish =
+          childHoursPerRoll > 0
+            ? addOperatingHoursWallMs(exEnd, childHoursPerRoll, inactiveMerged)
+            : exEnd + HOUR_MS
+      }
+    }
+    applyEnd(utecoBar, minFinish)
+  }
+  if (conversionBar && extrusionBar?.chain_bagging_offset_operating_hours != null) {
+    let minFinish: number | null = null
+    if (utecoBar) {
+      const utId = ganttTimelineItemId(String(utecoBar.job_id), utecoBar.operation_type)
+      const utEnd = result.get(utId)?.endMs
+      if (utEnd != null) {
+        const childHoursPerRoll = Math.max(0, conversionBar.hours_per_roll ?? 0)
+        minFinish =
+          childHoursPerRoll > 0
+            ? addOperatingHoursWallMs(utEnd, childHoursPerRoll, inactiveMerged)
+            : utEnd + HOUR_MS
+      }
+    } else {
+      const exId = ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type)
+      const exEnd = result.get(exId)?.endMs
+      if (exEnd != null) {
+        const childHoursPerRoll = Math.max(0, conversionBar.hours_per_roll ?? 0)
+        minFinish =
+          childHoursPerRoll > 0
+            ? addOperatingHoursWallMs(exEnd, childHoursPerRoll, inactiveMerged)
+            : exEnd + HOUR_MS
+      }
+    }
+    applyEnd(conversionBar, minFinish)
+  }
+
+  for (const { bar } of jobBarsWithLanes) {
+    const id = ganttTimelineItemId(String(bar.job_id), bar.operation_type)
+    const row = result.get(id)
+    if (row && row.endMs === 0) {
+      applyEnd(bar, null)
+    }
+  }
+
+  return result
+}
+
+function buildGanttTimelineItems(
+  lanes: GanttLane[],
+  groups: TimelineGroup[],
+  activeDrag: { itemId: string; time: number; newGroupOrder: number } | null,
+  inactiveMerged: MsInterval[],
+  extrusionDurationHoursOverride: number | null,
+): TimelineItem[] {
+  const out: TimelineItem[] = []
+  const now = Date.now()
+  const barsByJobId = new Map<string, GanttBar[]>()
+
+  for (const lane of lanes) {
+    for (const bar of lane.bars) {
+      const jobId = String(bar.job_id)
+      if (!barsByJobId.has(jobId)) barsByJobId.set(jobId, [])
+      barsByJobId.get(jobId)!.push(bar)
+    }
+  }
+
+  const activeJobId =
+    activeDrag != null ? parseGanttTimelineItemId(activeDrag.itemId)?.jobId ?? null : null
+
+  const jobLanesMap = new Map<string, GanttBarLane[]>()
+  for (const lane of lanes) {
+    for (const bar of lane.bars) {
+      const jid = String(bar.job_id)
+      if (!jobLanesMap.has(jid)) jobLanesMap.set(jid, [])
+      jobLanesMap.get(jid)!.push({ bar, lane })
+    }
+  }
+
+  let dragSpanByItemId: Map<string, { startMs: number; endMs: number; groupId: string }> | null = null
+  if (activeDrag && activeJobId) {
+    const entries = jobLanesMap.get(activeJobId)
+    if (entries?.length) {
+      dragSpanByItemId = computeJobTimelineSpansDuringDrag(
+        entries,
+        activeDrag,
+        groups,
+        now,
+        inactiveMerged,
+        extrusionDurationHoursOverride,
+      )
+    }
+  }
+
+  const getBarEndMs = (targetBar: GanttBar | undefined): number | null => {
+    if (!targetBar) return null
+    if (targetBar.tentative_finish) return new Date(targetBar.tentative_finish).getTime()
+    if (targetBar.tentative_start) {
+      const parentStartMs = new Date(targetBar.tentative_start).getTime()
+      const parentDurationMs = Math.max(HOUR_MS, Math.round((targetBar.estimated_duration_hours || 1) * HOUR_MS))
+      return parentStartMs + parentDurationMs
+    }
+    return null
+  }
+
+  for (const lane of lanes) {
+    for (const bar of lane.bars) {
+      const itemId = ganttTimelineItemId(String(bar.job_id), bar.operation_type)
+      const siblingJobBars = barsByJobId.get(String(bar.job_id)) ?? []
+      const extrusionBar = siblingJobBars.find((siblingBar) => siblingBar.operation_type === 'extrusion')
+      const utecoBar = siblingJobBars.find((siblingBar) => siblingBar.operation_type === 'printing_uteco')
+
+      const dragSpan = dragSpanByItemId?.get(itemId)
+      const startMs = dragSpan?.startMs ?? (bar.tentative_start ? new Date(bar.tentative_start).getTime() : now)
+      const groupId = dragSpan?.groupId ?? lane.machine_id
+
+      let parentItem: TimelineItem['parentItem']
+      let constrainedEndMs: number
+      if (dragSpan) {
+        constrainedEndMs = dragSpan.endMs
+        if (bar.operation_type === 'printing_uteco' && extrusionBar?.chain_uteco_offset_operating_hours != null) {
+          parentItem = {
+            id: ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type),
+            completionFractionRequired: firstRollCompletionFraction(extrusionBar.roll_count),
+          }
+        } else if (bar.operation_type === 'conversion' && extrusionBar?.chain_bagging_offset_operating_hours != null) {
+          if (utecoBar) {
+            parentItem = {
+              id: ganttTimelineItemId(String(utecoBar.job_id), utecoBar.operation_type),
+              completionFractionRequired: firstRollCompletionFraction(utecoBar.roll_count),
+            }
+          } else {
+            parentItem = {
+              id: ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type),
+              completionFractionRequired: firstRollCompletionFraction(extrusionBar.roll_count),
+            }
+          }
+        }
+      } else {
+        const rawEndMs = ganttBarRawEndMs(bar, startMs)
+        constrainedEndMs = rawEndMs
+        if (bar.operation_type === 'printing_uteco' && extrusionBar?.chain_uteco_offset_operating_hours != null) {
+          parentItem = {
+            id: ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type),
+            completionFractionRequired: firstRollCompletionFraction(extrusionBar.roll_count),
+          }
+          const extrusionEndMs = getBarEndMs(extrusionBar)
+          if (extrusionEndMs != null) {
+            const childHoursPerRoll = Math.max(0, bar.hours_per_roll ?? 0)
+            const minimumChildFinishMs = extrusionEndMs + childHoursPerRoll * HOUR_MS
+            constrainedEndMs = Math.max(constrainedEndMs, minimumChildFinishMs)
+          }
+        } else if (bar.operation_type === 'conversion' && extrusionBar?.chain_bagging_offset_operating_hours != null) {
+          if (utecoBar) {
+            parentItem = {
+              id: ganttTimelineItemId(String(utecoBar.job_id), utecoBar.operation_type),
+              completionFractionRequired: firstRollCompletionFraction(utecoBar.roll_count),
+            }
+            const utecoEndMs = getBarEndMs(utecoBar)
+            if (utecoEndMs != null) {
+              const childHoursPerRoll = Math.max(0, bar.hours_per_roll ?? 0)
+              const minimumChildFinishMs = utecoEndMs + childHoursPerRoll * HOUR_MS
+              constrainedEndMs = Math.max(constrainedEndMs, minimumChildFinishMs)
+            }
+          } else {
+            parentItem = {
+              id: ganttTimelineItemId(String(extrusionBar.job_id), extrusionBar.operation_type),
+              completionFractionRequired: firstRollCompletionFraction(extrusionBar.roll_count),
+            }
+            const extrusionEndMs = getBarEndMs(extrusionBar)
+            if (extrusionEndMs != null) {
+              const childHoursPerRoll = Math.max(0, bar.hours_per_roll ?? 0)
+              const minimumChildFinishMs = extrusionEndMs + childHoursPerRoll * HOUR_MS
+              constrainedEndMs = Math.max(constrainedEndMs, minimumChildFinishMs)
+            }
+          }
+        }
+      }
+
+      out.push({
+        id: itemId,
+        parentItem,
+        group: groupId,
+        title: `${bar.job_code} · ${bar.customer}`,
+        start_time: startMs,
+        end_time: Math.max(startMs + HOUR_MS, constrainedEndMs),
+        canMove: bar.status !== 'running',
+        canResize: false,
+        roll_count: Math.max(1, bar.roll_count ?? 1),
+        itemProps: {
+          style: {
+            background: bar.status === 'running' ? '#e8f5e9' : '#e3f2fd',
+            border: `1px solid ${bar.readiness === 'blocked' ? '#f57c00' : '#90caf9'}`,
+            color: '#0d1b2a',
+            borderRadius: '6px',
+            fontSize: '0.8rem',
+          },
+        },
+      })
+    }
+  }
+  return out
 }
 
 export function GanttBoard() {
@@ -270,7 +837,17 @@ export function GanttBoard() {
   } | null>(null)
   const timelineRef = useRef<any>(null)
   const timelineScrollRef = useRef<HTMLDivElement | null>(null)
+  /** When the library attaches `.rct-scroll`, re-run effects that register listeners (ref alone does not trigger re-render). */
+  const [timelineScrollEl, setTimelineScrollEl] = useState<HTMLDivElement | null>(null)
   const [scrollViewportWidth, setScrollViewportWidth] = useState(0)
+  /** Live drag position from the timeline so item spans (chain min-finish) update every frame, not only on drop. */
+  const [activeItemDrag, setActiveItemDrag] = useState<{
+    itemId: string
+    time: number
+    newGroupOrder: number
+  } | null>(null)
+  /** Extrusion duration (hours) for the lane under the cursor — from `/gantt/estimate` while dragging extrusion. */
+  const [dragExtrusionDurationHours, setDragExtrusionDurationHours] = useState<number | null>(null)
   /** Live canvas metrics: drives inactive CustomMarker anchor dates + scroll/zoom sync. */
   const [overlayMetrics, setOverlayMetrics] = useState<{
     canvasTimeStart: number
@@ -278,13 +855,28 @@ export function GanttBoard() {
     canvasWidth: number
   } | null>(null)
 
-  const barByJobId = useMemo(() => {
+  const barByGanttItemId = useMemo(() => {
     const m = new Map<string, { bar: GanttLane['bars'][number]; lane: GanttLane }>()
     for (const lane of lanes) {
-      for (const bar of lane.bars) m.set(String(bar.job_id), { bar, lane })
+      for (const bar of lane.bars) {
+        m.set(ganttTimelineItemId(String(bar.job_id), bar.operation_type), { bar, lane })
+      }
     }
     return m
   }, [lanes])
+
+  const selectedTimelineItemIds = useMemo(() => {
+    if (!selectedJobId) return []
+    const out: string[] = []
+    for (const lane of lanes) {
+      for (const bar of lane.bars) {
+        if (String(bar.job_id) === selectedJobId) {
+          out.push(ganttTimelineItemId(String(bar.job_id), bar.operation_type))
+        }
+      }
+    }
+    return out
+  }, [lanes, selectedJobId])
 
   const groups = useMemo<TimelineGroup[]>(() => {
     return lanes.map((lane) => ({
@@ -294,37 +886,76 @@ export function GanttBoard() {
     }))
   }, [lanes])
 
-  const items = useMemo<TimelineItem[]>(() => {
-    const out: TimelineItem[] = []
-    const now = Date.now()
-    for (const lane of lanes) {
-      for (const bar of lane.bars) {
-        const startMs = bar.tentative_start ? new Date(bar.tentative_start).getTime() : now
-        const durationMs = Math.max(HOUR_MS, Math.round((bar.estimated_duration_hours || 1) * HOUR_MS))
-        const endMs = bar.tentative_finish ? new Date(bar.tentative_finish).getTime() : startMs + durationMs
-        out.push({
-          id: String(bar.job_id),
-          group: lane.machine_id,
-          title: `${bar.job_code} · ${bar.customer}`,
-          start_time: startMs,
-          end_time: Math.max(startMs + HOUR_MS, endMs),
-          canMove: bar.status !== 'running',
-          canResize: false,
-          roll_count: Math.max(1, bar.roll_count ?? 1),
-          itemProps: {
-            style: {
-              background: bar.status === 'running' ? '#e8f5e9' : '#e3f2fd',
-              border: `1px solid ${bar.readiness === 'blocked' ? '#f57c00' : '#90caf9'}`,
-              color: '#0d1b2a',
-              borderRadius: '6px',
-              fontSize: '0.8rem',
-            },
-          },
-        })
-      }
+  /** Factory inactive wall spans (UTC) → ms for overlay shading + operating-time drag preview */
+  const inactiveIntervalsMs = useMemo(() => {
+    const raw = calendar?.inactive_intervals ?? []
+    return raw
+      .map(({ start, end }) => ({
+        start: new Date(start).getTime(),
+        end: new Date(end).getTime(),
+      }))
+      .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end) && x.end > x.start)
+      .sort((a, b) => a.start - b.start)
+  }, [calendar?.inactive_intervals])
+
+  const inactiveIntervalsMerged = useMemo(
+    () => mergeInactiveIntervals(inactiveIntervalsMs),
+    [inactiveIntervalsMs],
+  )
+
+  /** Only job + target extruder row — not drag time — so we do not refetch every pointer move. */
+  const extrusionEstimateTarget = useMemo(() => {
+    if (!activeItemDrag) return null
+    const parsed = parseGanttTimelineItemId(activeItemDrag.itemId)
+    if (parsed?.operationType !== 'extrusion') return null
+    const tg = groups[activeItemDrag.newGroupOrder]
+    if (!tg || tg.machineType !== 'extruder') return null
+    return { jobId: parsed.jobId, machineId: tg.id }
+  }, [activeItemDrag?.itemId, activeItemDrag?.newGroupOrder, groups])
+
+  useEffect(() => {
+    if (!extrusionEstimateTarget) {
+      setDragExtrusionDurationHours(null)
+      return
     }
-    return out
-  }, [lanes])
+    const { jobId, machineId } = extrusionEstimateTarget
+    setDragExtrusionDurationHours(null)
+    const ac = new AbortController()
+    const tid = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await apiFetch<{
+            estimates: { operations: { operation_type: string; estimated_duration_hours: number }[] }
+          }>(
+            `/api/schedule/gantt/estimate?job_id=${encodeURIComponent(jobId)}&target_extruder_machine_id=${encodeURIComponent(machineId)}`,
+            { signal: ac.signal },
+          )
+          const ex = res.estimates?.operations?.find((o) => o.operation_type === 'extrusion')
+          if (ex != null && Number.isFinite(ex.estimated_duration_hours)) {
+            setDragExtrusionDurationHours(ex.estimated_duration_hours)
+          }
+        } catch {
+          if (!ac.signal.aborted) setDragExtrusionDurationHours(null)
+        }
+      })()
+    }, 180)
+    return () => {
+      ac.abort()
+      window.clearTimeout(tid)
+    }
+  }, [extrusionEstimateTarget])
+
+  const items = useMemo<TimelineItem[]>(
+    () =>
+      buildGanttTimelineItems(
+        lanes,
+        groups,
+        activeItemDrag,
+        inactiveIntervalsMerged,
+        dragExtrusionDurationHours,
+      ),
+    [lanes, groups, activeItemDrag, inactiveIntervalsMerged, dragExtrusionDurationHours],
+  )
 
   const externalDragUnqueuedJob = useMemo(
     () => unqueued.jobs.find((j) => String(j.job_id) === externalDragUnqueuedJobId) ?? null,
@@ -402,18 +1033,6 @@ export function GanttBoard() {
   const defaultTimeStartMs = lockedTimelineDefaults?.defaultTimeStartMs ?? computedTimelineDefaults.defaultTimeStartMs
   const defaultTimeEndMs = lockedTimelineDefaults?.defaultTimeEndMs ?? computedTimelineDefaults.defaultTimeEndMs
 
-  /** Factory inactive wall spans (UTC) → ms for overlay shading */
-  const inactiveIntervalsMs = useMemo(() => {
-    const raw = calendar?.inactive_intervals ?? []
-    return raw
-      .map(({ start, end }) => ({
-        start: new Date(start).getTime(),
-        end: new Date(end).getTime(),
-      }))
-      .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end) && x.end > x.start)
-      .sort((a, b) => a.start - b.start)
-  }, [calendar?.inactive_intervals])
-
   const fallbackCanvasMetrics = useMemo(() => {
     const { canvasTimeStart, canvasTimeEnd } = canvasBoundsFromDefaultRange(
       defaultTimeStartMs,
@@ -467,9 +1086,21 @@ export function GanttBoard() {
     })
   }, [])
 
+  /** Horizontal pan / wheel updates the visible window. */
+  const handleTimelineTimeChange = useCallback(
+    (visibleTimeStart: number, visibleTimeEnd: number, updateScrollCanvas: (a: number, b: number) => void) => {
+      updateScrollCanvas(visibleTimeStart, visibleTimeEnd)
+      requestAnimationFrame(() => {
+        syncOverlayFromTimeline()
+      })
+    },
+    [syncOverlayFromTimeline],
+  )
+
   const handleTimelineScrollRef = useCallback(
     (el: HTMLDivElement | null) => {
       timelineScrollRef.current = el
+      setTimelineScrollEl(el)
       setScrollViewportWidth(el?.clientWidth ?? 0)
       requestAnimationFrame(() => syncOverlayFromTimeline())
     },
@@ -478,8 +1109,8 @@ export function GanttBoard() {
 
   /** Keep inactive bands aligned: timeline rebuffers canvas on scroll without always updating React visible props. */
   useLayoutEffect(() => {
-    const el = timelineScrollRef.current
-    if (!el) return
+    if (!timelineScrollEl) return
+    const el = timelineScrollEl
     const sync = () => {
       setScrollViewportWidth(el.clientWidth)
       syncOverlayFromTimeline()
@@ -492,10 +1123,12 @@ export function GanttBoard() {
       el.removeEventListener('scroll', sync)
       ro.disconnect()
     }
-  }, [syncOverlayFromTimeline])
+  }, [timelineScrollEl, syncOverlayFromTimeline])
 
   useLayoutEffect(() => {
-    requestAnimationFrame(() => syncOverlayFromTimeline())
+    requestAnimationFrame(() => {
+      syncOverlayFromTimeline()
+    })
   }, [defaultTimeStartMs, defaultTimeEndMs, syncOverlayFromTimeline])
 
   useEffect(() => {
@@ -578,8 +1211,9 @@ export function GanttBoard() {
 
   const onItemMove = useCallback(
     async (itemId: string | number, dragTime: number, newGroupOrder: number) => {
-      const jobId = String(itemId)
-      const found = barByJobId.get(jobId)
+      setActiveItemDrag(null)
+      const id = String(itemId)
+      const found = barByGanttItemId.get(id)
       const targetGroup = groups[newGroupOrder]
       if (!found || !targetGroup) return
       if (found.bar.status === 'running') return
@@ -588,7 +1222,7 @@ export function GanttBoard() {
         dispatch(clearScheduleMutationError())
         await dispatch(
           moveScheduleBar({
-            job_id: jobId,
+            job_id: String(found.bar.job_id),
             operation_type: found.bar.operation_type,
             target_machine_id: String(targetGroup.id),
             target_start: new Date(dragTime).toISOString(),
@@ -598,10 +1232,30 @@ export function GanttBoard() {
         /* mutation.error */
       }
     },
-    [barByJobId, dispatch, groups],
+    [barByGanttItemId, dispatch, groups],
   )
 
-  const selectedQueued = selectedJobId ? barByJobId.get(String(selectedJobId)) ?? null : null
+  const handleItemDrag = useCallback(
+    (obj: { eventType: string; itemId: string | number; time: number; newGroupOrder?: number }) => {
+      if (obj.eventType !== 'move' || obj.newGroupOrder == null) return
+      setActiveItemDrag({
+        itemId: String(obj.itemId),
+        time: obj.time,
+        newGroupOrder: obj.newGroupOrder,
+      })
+    },
+    [],
+  )
+
+  const selectedQueued = useMemo(() => {
+    if (!selectedJobId) return null
+    const ex = barByGanttItemId.get(ganttTimelineItemId(selectedJobId, 'extrusion'))
+    if (ex) return ex
+    for (const v of barByGanttItemId.values()) {
+      if (String(v.bar.job_id) === selectedJobId) return v
+    }
+    return null
+  }, [barByGanttItemId, selectedJobId])
   const canUnqueueSelected =
     !!selectedQueued &&
     selectedQueued.lane.machine_type === 'extruder' &&
@@ -787,7 +1441,8 @@ export function GanttBoard() {
             }}
             sx={{ flex: 1, minHeight: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}
           >
-            {/* Stable key: refetch must not remount or zoom/scroll reset (calendar.end shifts with each API `now`). */}
+            {/* Stable key: refetch must not remount or zoom/scroll reset (calendar.end shifts with each API `now`).
+                stackItems=false: overlapping jobs keep fixed lane height; bars overlap in Z-order (hover raises). */}
             <Timeline<TimelineItem, TimelineGroup>
               key="schedule-gantt-timeline"
               ref={timelineRef}
@@ -795,6 +1450,7 @@ export function GanttBoard() {
               items={itemsWithUnqueuedPreview}
               defaultTimeStart={defaultTimeStartMs}
               defaultTimeEnd={defaultTimeEndMs}
+              onTimeChange={handleTimelineTimeChange}
               onZoom={() => requestAnimationFrame(() => syncOverlayFromTimeline())}
               scrollRef={handleTimelineScrollRef}
               sidebarWidth={SIDEBAR_WIDTH}
@@ -805,14 +1461,20 @@ export function GanttBoard() {
               dragSnap={HOUR_MS}
               minZoom={24 * HOUR_MS}
               maxZoom={45 * 24 * HOUR_MS}
-              stackItems
+              stackItems={false}
               lineHeight={54}
               itemHeightRatio={0.75}
               buffer={TIMELINE_BUFFER}
-              selected={selectedJobId ? [selectedJobId] : []}
-              onItemSelect={(itemId) => setSelectedJobId(String(itemId))}
+              selected={selectedTimelineItemIds}
+              onItemSelect={(itemId: string | number) => {
+                const s = String(itemId)
+                if (s === UNQUEUED_DROP_PREVIEW_ITEM_ID) return
+                const p = parseGanttTimelineItemId(s)
+                setSelectedJobId(p?.jobId ?? null)
+              }}
               onCanvasClick={() => setSelectedJobId(null)}
-              onItemMove={(itemId, dragTime, newGroupOrder) =>
+              onItemDrag={handleItemDrag}
+              onItemMove={(itemId: string | number, dragTime: number, newGroupOrder: number) =>
                 void onItemMove(itemId as string | number, dragTime, newGroupOrder)
               }
               /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- library itemRenderer props not exported from package root */
@@ -828,7 +1490,7 @@ export function GanttBoard() {
                   />
                 ))}
                 <TodayMarker interval={10_000}>
-                  {({ styles }) => (
+                  {({ styles }: MarkerRenderProps) => (
                     <div
                       style={{
                         ...styles,
