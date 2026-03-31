@@ -1,5 +1,5 @@
 # Production_software
-Repo for Crown Pack Production Software.
+Repo for Crown Pack Production Software
 
 - Database additions for Quote Engine and Analytics:
   - Rate card tables: `resins`, `additives`, `colours`, `cores`, `printing_rates`, `conversion_rates`, `waste_adders`
