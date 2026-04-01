@@ -81,17 +81,44 @@ export function CustomersPage() {
               <TableRow>
                 <TableCell>Code</TableCell>
                 <TableCell>Name</TableCell>
+                <TableCell>Quotes</TableCell>
+                <TableCell>Orders</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((c) => (
+              {items.map((c) => {
+                const quoteCount = Number(c.quotes_count ?? 0)
+                const orderCount = Number(c.orders_count ?? 0)
+                const quotesLinkLabel = quoteCount > 0 ? `quotes(${quoteCount})` : 'quotes'
+                const ordersLinkLabel = orderCount > 0 ? `orders(${orderCount})` : 'orders'
+                return (
                 <TableRow key={c.id} hover>
                   <TableCell sx={{ width: 90, fontFamily: 'monospace' }}>{c.code}</TableCell>
                   <TableCell>
                     <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
                       {c.name}
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
+                    <MuiLink
+                      component={Link}
+                      to={`/customers/${c.id}#quotes`}
+                      underline="hover"
+                      variant="body2"
+                    >
+                      {quotesLinkLabel}
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
+                    <MuiLink
+                      component={Link}
+                      to={`/customers/${c.id}#orders`}
+                      underline="hover"
+                      variant="body2"
+                    >
+                      {ordersLinkLabel}
                     </MuiLink>
                   </TableCell>
                   <TableCell>{c.status}</TableCell>
@@ -113,7 +140,8 @@ export function CustomersPage() {
                     </Box>
                   </TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         </Paper>

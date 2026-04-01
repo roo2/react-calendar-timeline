@@ -11,7 +11,7 @@ import {
   type QtyType,
 } from '../../utils/quantityRollFields'
 import { makeDefaultSpec, type SpecPayload } from '../../components/SpecPayloadForm'
-import { Alert, Box, Button, Chip, Link as MuiLink, Paper, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Link as MuiLink, Paper, Stack, Typography } from '@mui/material'
 import { ProductVersionSummary } from '../../components/ProductVersionSummary'
 
 type JobSheetDetail = {
@@ -172,18 +172,27 @@ export function JobSheetShowPage() {
   return (
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start', mb: 2 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-            <Typography variant="h6">Job Sheet</Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', minWidth: 0 }}>
+            <Typography variant="h6" component="span">
+              Job Sheet
+            </Typography>
             {hasJobNo ? (
-              <Chip label={js.job_no} color="primary" variant="outlined" sx={{ alignSelf: 'flex-start', fontWeight: 700, fontFamily: 'monospace' }} />
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, flexWrap: 'wrap' }}>
+                <Typography variant="caption" color="text.secondary" component="span">
+                  Job code
+                </Typography>
+                <Typography component="span" variant="subtitle1" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                  {js.job_no}
+                </Typography>
+              </Box>
             ) : null}
           </Box>
           <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
             {js.order_id ? (
-              <MuiLink component={Link} to={`/orders/${encodeURIComponent(js.order_id)}`} underline="hover" fontWeight={600}>
+              <Button variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(js.order_id)}`}>
                 View Order
-              </MuiLink>
+              </Button>
             ) : null}
             <Button component={Link} to="/job-sheets" variant="text" color="primary">
               Back to Job Sheets
@@ -226,9 +235,21 @@ export function JobSheetShowPage() {
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>
-          Summary (spec)
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
+          <Typography variant="h6">Product Spec</Typography>
+          {js.product_id ? (
+            <MuiLink
+              component={Link}
+              to={`/products/${encodeURIComponent(js.product_id)}`}
+              target="_blank"
+              rel="noreferrer"
+              underline="hover"
+              sx={{ fontSize: '0.875rem' }}
+            >
+              View previous versions
+            </MuiLink>
+          ) : null}
+        </Box>
         <ProductVersionSummary spec={data.spec_payload} />
       </Paper>
     </Stack>

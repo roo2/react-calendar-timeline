@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { can } from '../../auth/permissions'
 import { fetchCustomer } from '../../store/slices/customersSlice'
@@ -8,8 +8,11 @@ import { fetchProducts } from '../../store/slices/productsSlice'
 import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { Alert, Box, Button, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 
+const CUSTOMER_SECTION_HASHES = new Set(['quotes', 'orders'])
+
 export function CustomerShowPage() {
   const { customerId } = useParams()
+  const location = useLocation()
   const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
@@ -64,6 +67,16 @@ export function CustomerShowPage() {
     void dispatch(fetchOrders({ customer_id: customerId }))
     void dispatch(fetchSavedQuotesList({ customer_id: customerId }))
   }, [customerId, dispatch])
+
+  useEffect(() => {
+    if (!customer) return
+    const raw = (location.hash || '').replace(/^#/, '')
+    if (!CUSTOMER_SECTION_HASHES.has(raw)) return
+    const t = window.setTimeout(() => {
+      document.getElementById(raw)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
+    return () => window.clearTimeout(t)
+  }, [customer, location.hash])
 
   if (err) {
     return (
@@ -124,7 +137,7 @@ export function CustomerShowPage() {
               <strong>{customer.orders_count ?? '-'}</strong> Orders
             </div>
             <div>
-              <strong>{quotes.length}</strong> Quotes
+              <strong>{customer.quotes_count ?? quotes.length}</strong> Quotes
             </div>
           </div>
         </Paper>
@@ -263,7 +276,10 @@ export function CustomerShowPage() {
         </Paper>
       </section>
 
-      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+      <section
+        id="orders"
+        style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8, scrollMarginTop: 88 }}
+      >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 2 }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Orders</h2>
           {canEditOrders && (
@@ -324,7 +340,10 @@ export function CustomerShowPage() {
         </Paper>
       </section>
 
-      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+      <section
+        id="quotes"
+        style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8, scrollMarginTop: 88 }}
+      >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1, mb: 2 }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Quotes</h2>
           {canEdit && (

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.db.models.domain import Customer
+from app.db.models.domain import Customer, Order, SavedQuote
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
 
 
@@ -119,6 +119,35 @@ def get_customer_products_count(customer_id: str) -> int:
 def get_customer_orders_count(customer_id: str) -> int:
     """Get count of orders for a customer."""
     with SessionLocal() as db:  # type: Session
-        from app.db.models.domain import Order
         stmt = select(func.count(Order.id)).where(Order.customer_id == customer_id)
         return db.scalar(stmt) or 0
+
+
+def get_customer_quotes_count(customer_id: str) -> int:
+    """Get count of saved quotes for a customer."""
+    with SessionLocal() as db:  # type: Session
+        stmt = select(func.count(SavedQuote.id)).where(SavedQuote.customer_id == customer_id)
+        return db.scalar(stmt) or 0
+
+
+def get_orders_and_quotes_counts_by_customer_ids(customer_ids: List[str]) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """
+    Batch counts for list views. Missing customer ids are omitted (treat as 0).
+    Returns (orders_count_by_customer_id, quotes_count_by_customer_id).
+    """
+    if not customer_ids:
+        return {}, {}
+    with SessionLocal() as db:  # type: Session
+        o_rows = db.execute(
+            select(Order.customer_id, func.count(Order.id))
+            .where(Order.customer_id.in_(customer_ids))
+            .group_by(Order.customer_id)
+        ).all()
+        q_rows = db.execute(
+            select(SavedQuote.customer_id, func.count(SavedQuote.id))
+            .where(SavedQuote.customer_id.in_(customer_ids))
+            .group_by(SavedQuote.customer_id)
+        ).all()
+        orders_map = {str(r[0]): int(r[1]) for r in o_rows}
+        quotes_map = {str(r[0]): int(r[1]) for r in q_rows}
+        return orders_map, quotes_map

@@ -7,6 +7,8 @@ export type CustomerSummary = {
   code: string
   name: string
   status: string
+  orders_count?: number
+  quotes_count?: number
 }
 
 export type CustomerDetail = {
@@ -25,6 +27,7 @@ export type CustomerDetail = {
   delivery_preferences: any
   products_count?: number
   orders_count?: number
+  quotes_count?: number
 }
 
 export type CustomerUpsertPayload = {

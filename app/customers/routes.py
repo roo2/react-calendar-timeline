@@ -12,19 +12,35 @@ from app.customers.service import DuplicateCustomerCodeError
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
 
-def _customer_summary(c) -> dict:
-    return {
+def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int | None = None) -> dict:
+    d = {
         "id": c.id,
         "code": getattr(c, "code", None),
         "name": c.name,
         "status": c.status,
     }
+    if orders_count is not None:
+        d["orders_count"] = orders_count
+    if quotes_count is not None:
+        d["quotes_count"] = quotes_count
+    return d
 
 
 @router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
 async def list_customers(q: Optional[str] = Query(default=None)):
     customers = service.list_customers(query=q)
-    return {"items": [_customer_summary(c) for c in customers]}
+    ids = [str(c.id) for c in customers]
+    orders_by_c, quotes_by_c = service.get_orders_and_quotes_counts_by_customer_ids(ids)
+    return {
+        "items": [
+            _customer_summary(
+                c,
+                orders_count=orders_by_c.get(str(c.id), 0),
+                quotes_count=quotes_by_c.get(str(c.id), 0),
+            )
+            for c in customers
+        ]
+    }
 
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
@@ -47,6 +63,7 @@ async def get_customer(customer_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
     products_count = service.get_customer_products_count(customer_id)
     orders_count = service.get_customer_orders_count(customer_id)
+    quotes_count = service.get_customer_quotes_count(customer_id)
     return {
         "customer": _customer_summary(c)
         | {
@@ -61,6 +78,7 @@ async def get_customer(customer_id: str):
             "notes": c.notes,
             "products_count": products_count,
             "orders_count": orders_count,
+            "quotes_count": quotes_count,
         }
     }
 
