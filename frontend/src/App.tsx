@@ -99,6 +99,11 @@ function App() {
     void dispatch(fetchMe())
   }, [dispatch])
 
+  useEffect(() => {
+    // SPA routes keep scroll by default; reset on page navigation.
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [location.pathname, location.search])
+
   const mainLinks = [
     { to: '/', label: 'Home', visible: true },
     { to: '/customers', label: 'Customers', visible: isSalesOrPm },

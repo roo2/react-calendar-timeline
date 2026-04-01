@@ -359,16 +359,27 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         if not js:
             raise DomainError("Job sheet not found")
 
-        # Update scalar fields
+        upd = payload.model_dump(exclude_unset=True)
+
+        # Always apply order-line quantity fields when present (required by schema).
         js.quantity_value = float(payload.quantity_value)
         js.quantity_unit = str(payload.quantity_unit)
-        js.qty_type = str(payload.qty_type)
-        js.num_product_units = payload.num_product_units
-        js.weight_per_roll_kg = payload.weight_per_roll_kg
-        js.num_rolls = int(payload.num_rolls)
-        js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
 
-        upd = payload.model_dump(exclude_unset=True)
+        # Extended qty / scheduling fields: only when the client sent them (partial update).
+        if "qty_type" in upd and payload.qty_type is not None:
+            js.qty_type = str(payload.qty_type)
+        if "num_product_units" in upd:
+            js.num_product_units = payload.num_product_units
+        if "weight_per_roll_kg" in upd:
+            js.weight_per_roll_kg = payload.weight_per_roll_kg
+        if "num_rolls" in upd:
+            if payload.num_rolls is None:
+                raise DomainError("num_rolls cannot be null")
+            js.num_rolls = int(payload.num_rolls)
+
+        if "due_date" in upd:
+            js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
+
         if "unit_rate" in upd:
             js.unit_rate = upd["unit_rate"]
         if "line_total" in upd:
@@ -402,7 +413,6 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         db.add(js)
         db.flush()
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
-        upd = payload.model_dump(exclude_unset=True)
         if "order_date" in upd:
             o = db.get(Order, oid)
             if o:

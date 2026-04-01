@@ -206,7 +206,7 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           <TextField
             label="Weight per Roll (kg)"
             type="number"
-            inputProps={{ min: 0, step: 0.1 }}
+            inputProps={{ min: 0, step: 'any' }}
             value={weightPerRollField.value}
             onChange={weightPerRollField.onChange ? (e) => weightPerRollField.onChange!(e.target.value) : undefined}
             disabled={weightPerRollField.disabled}

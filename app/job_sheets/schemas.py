@@ -61,14 +61,20 @@ class JobSheetDetail(BaseModel):
 
 
 class JobSheetUpdateRequest(BaseModel):
+    """
+    Partial update: omit qty_type / num_rolls / num_product_units / weight_per_roll_kg to leave
+    existing job sheet values unchanged (e.g. order line save only sends quantity + pricing).
+    quantity_value and quantity_unit are always required so the order line and job sheet stay aligned.
+    """
+
     due_date: Optional[date] = None
     order_date: Optional[date] = None  # Updates linked order header
     quantity_value: float = Field(..., gt=0)
     quantity_unit: QuantityUnit
-    qty_type: QtyType = "kg"
+    qty_type: Optional[QtyType] = None
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
-    num_rolls: int = Field(..., ge=1)
+    num_rolls: Optional[int] = Field(default=None, ge=1)
     # If provided, a new ProductVersion is created and the job sheet is updated
     # to reference it (and the product's active version is advanced).
     spec: Optional[SpecPayload] = None

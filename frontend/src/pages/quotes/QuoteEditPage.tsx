@@ -40,6 +40,8 @@ export function QuoteEditPage() {
     payload: quote.payload || {},
     cost_per_kg: quote.cost_per_kg,
     price_per_kg: quote.price_per_kg,
+    created_at: quote.created_at ?? null,
+    updated_at: quote.updated_at ?? null,
   }
 
   return <QuotesPage quoteId={quote.id} initialData={initialData} />

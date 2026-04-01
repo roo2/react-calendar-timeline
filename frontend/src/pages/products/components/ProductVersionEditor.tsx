@@ -109,7 +109,8 @@ export function ProductVersionEditor(props: {
   const saving = upsert.status === 'loading'
   const { setDirty } = useUnsavedChanges()
   const specHydratedRef = useRef(false)
-  const embeddedHydratedRef = useRef<string | null>(null)
+  /** Re-hydrate when GET /job-sheets/:id returns a new `data` object (avoids stale qty after a slow/out-of-order fetch). */
+  const lastHydratedJobDetailDataRef = useRef<unknown>(null)
 
   useEffect(() => {
     void dispatch(clearNewVersionErrors())
@@ -117,7 +118,7 @@ export function ProductVersionEditor(props: {
 
   useEffect(() => {
     specHydratedRef.current = false
-    embeddedHydratedRef.current = null
+    lastHydratedJobDetailDataRef.current = null
     setSpec(makeDefaultSpec())
     setCustomerId('')
     setDueDate('')
@@ -184,8 +185,8 @@ export function ProductVersionEditor(props: {
       return
     }
     setLoadErr(null)
-    if (embeddedHydratedRef.current === jobSheetId) return
-    embeddedHydratedRef.current = jobSheetId
+    if (lastHydratedJobDetailDataRef.current === st.data) return
+    lastHydratedJobDetailDataRef.current = st.data
     const res = st.data
     const js = res.job_sheet
     const loadedSpec = ensureSpec(res.spec_payload)
@@ -596,6 +597,7 @@ export function ProductVersionEditor(props: {
                 onChange={setSpec}
                 fieldErrors={fieldErrors}
                 customerId={product?.customer_id || customerId || undefined}
+                printingSurface={jobSheetId ? 'job_sheet_summary' : 'full'}
               />
 
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>

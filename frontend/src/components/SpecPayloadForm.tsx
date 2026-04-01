@@ -4,8 +4,13 @@ import {
   Box,
   Button,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControlLabel,
   FormGroup,
+  Link as MuiLink,
   MenuItem,
   Paper,
   Stack,
@@ -157,11 +162,15 @@ export function makeDefaultSpec(): SpecPayload {
   }
 }
 
+export type SpecPayloadFormPrintingSurface = 'full' | 'job_sheet_summary'
+
 export function SpecPayloadForm(props: {
   value: SpecPayload
   onChange: (next: SpecPayload) => void
   fieldErrors?: Record<string, string>
   customerId?: string
+  /** Job sheet flows: show only printing method + colours on the page; ink/plates open in a dialog (works nested under another modal). */
+  printingSurface?: SpecPayloadFormPrintingSurface
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -169,7 +178,8 @@ export function SpecPayloadForm(props: {
   const platesState = useAppSelector((s) => s.productSpec.plates)
   const cartonState = useAppSelector((s) => s.productSpec.cartonOptions)
 
-  const { value, onChange, fieldErrors, customerId } = props
+  const { value, onChange, fieldErrors, customerId, printingSurface = 'full' } = props
+  const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
@@ -513,6 +523,406 @@ export function SpecPayloadForm(props: {
     }
     return undefined
   }
+
+  useEffect(() => {
+    if (printingSurface !== 'job_sheet_summary') return
+    if (!printingEnabled) setPrintingDetailsOpen(false)
+  }, [printingSurface, printingEnabled])
+
+  const printingNumColoursField = (
+    <TextField
+      label="Number of Colours"
+      type="number"
+      inputProps={{ min: 0, step: 1 }}
+      value={printing.num_colours ?? ''}
+      onChange={(e) =>
+        update((d) => {
+          const v = e.target.value
+          if (v === '') {
+            d.printing.num_colours = null
+            return
+          }
+          const n = parseInt(v, 10)
+          d.printing.num_colours = Number.isFinite(n) ? n : null
+        })
+      }
+      error={!!errorFor('spec.printing.num_colours')}
+      helperText={errorFor('spec.printing.num_colours') || ''}
+    />
+  )
+
+  const printingPrintSideField = (
+    <DefaultSelectField
+      defaultValue="front"
+      label="Print Side"
+      value={printing.side || 'front'}
+      onChange={(e) => update((d) => (d.printing.side = (e.target.value || 'front') as any))}
+    >
+      <MenuItem value="front">Front</MenuItem>
+      <MenuItem value="back">Back</MenuItem>
+      <MenuItem value="both">Both</MenuItem>
+    </DefaultSelectField>
+  )
+
+  const printingTablesInner = printingEnabled ? (
+    <>
+      {printing.method === 'Uteco' && aniloxErr ? (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {aniloxErr}
+        </Alert>
+      ) : null}
+      {((printing.side || 'front') === 'front' || printing.side === 'both') && (
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
+            <Typography variant="subtitle1">Front print</Typography>
+            <Button
+              type="button"
+              size="small"
+              variant="outlined"
+              onClick={() =>
+                update((d) => {
+                  ensureFixedInkPlateRows(d)
+                  const empty = emptyInkPlateRow(d.printing.method)
+                  d.printing.front_ink_plate = Array.from({ length: 5 }, () => ({ ...empty }))
+                  syncLegacyInkPlateFromPairs(d)
+                })
+              }
+            >
+              Clear
+            </Button>
+          </Box>
+          {(inksErr || platesErr) && (
+            <Alert severity="warning" sx={{ mb: 1 }}>
+              {inksErr || platesErr}
+            </Alert>
+          )}
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ink</TableCell>
+                <TableCell>Plate</TableCell>
+                {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
+                <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {ensureMinRows(
+                Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate : [],
+                printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
+                5,
+              ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
+                const r =
+                  printing.method === 'Uteco'
+                    ? {
+                        ink_code: row?.ink_code || '',
+                        plate_code: row?.plate_code || '',
+                        anilox_code: row?.anilox_code ?? '',
+                      }
+                    : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
+                const defaults =
+                  printing.method === 'Uteco'
+                    ? { ink_code: '', plate_code: '', anilox_code: '' }
+                    : { ink_code: '', plate_code: '' }
+                const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
+                return (
+                  <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                    <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
+                      <InkSelect
+                        options={inks}
+                        valueCode={r.ink_code}
+                        label={`Ink ${idx + 1}`}
+                        onChangeCode={(nextCode) =>
+                          update((d) => {
+                            ensureFixedInkPlateRows(d)
+                            d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), ink_code: nextCode }
+                            syncLegacyInkPlateFromPairs(d)
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
+                      <PlateSelect
+                        options={plates}
+                        valueCode={r.plate_code}
+                        label={`Plate ${idx + 1}`}
+                        onChangeCode={(nextCode) =>
+                          update((d) => {
+                            ensureFixedInkPlateRows(d)
+                            d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
+                            syncLegacyInkPlateFromPairs(d)
+                          })
+                        }
+                      />
+                    </TableCell>
+                    {printing.method === 'Uteco' ? (
+                      <TableCell sx={{ width: '24%' }}>
+                        <TextField
+                          select
+                          size="small"
+                          fullWidth
+                          hiddenLabel
+                          value={(r as { anilox_code: string }).anilox_code || ''}
+                          SelectProps={{
+                            displayEmpty: true,
+                            renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
+                          }}
+                          onChange={(e) =>
+                            update((d) => {
+                              ensureFixedInkPlateRows(d)
+                              d.printing.front_ink_plate[idx] = {
+                                ...(d.printing.front_ink_plate[idx] || {}),
+                                anilox_code: e.target.value || null,
+                              }
+                              syncLegacyInkPlateFromPairs(d)
+                            })
+                          }
+                        >
+                          <MenuItem value="">
+                            <em>None</em>
+                          </MenuItem>
+                          {aniloxOptions.map((a) => (
+                            <MenuItem key={a.anilox_code} value={a.anilox_code}>
+                              {a.anilox_code} — {a.description}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      </TableCell>
+                    ) : null}
+                    <TableCell sx={{ width: '10%' }}>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={() =>
+                          update((d) => {
+                            ensureFixedInkPlateRows(d)
+                            const cur = d.printing.front_ink_plate
+                            if (cur.length > 5) {
+                              cur.splice(idx, 1)
+                            } else {
+                              cur[idx] = emptyInkPlateRow(d.printing.method)
+                            }
+                            syncLegacyInkPlateFromPairs(d)
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+          <Box sx={{ mt: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() =>
+                update((d) => {
+                  ensureFixedInkPlateRows(d)
+                  d.printing.front_ink_plate.push(emptyInkPlateRow(d.printing.method))
+                  syncLegacyInkPlateFromPairs(d)
+                })
+              }
+            >
+              Add row
+            </Button>
+          </Box>
+        </Box>
+      )}
+
+      {(printing.side === 'back' || printing.side === 'both') && (
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
+            <Typography variant="subtitle1">Back print</Typography>
+            <Button
+              type="button"
+              size="small"
+              variant="outlined"
+              onClick={() =>
+                update((d) => {
+                  ensureFixedInkPlateRows(d)
+                  const empty = emptyInkPlateRow(d.printing.method)
+                  d.printing.back_ink_plate = Array.from({ length: 5 }, () => ({ ...empty }))
+                  syncLegacyInkPlateFromPairs(d)
+                })
+              }
+            >
+              Clear
+            </Button>
+          </Box>
+          {(inksErr || platesErr) && (
+            <Alert severity="warning" sx={{ mb: 1 }}>
+              {inksErr || platesErr}
+            </Alert>
+          )}
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ink</TableCell>
+                <TableCell>Plate</TableCell>
+                {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
+                <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {ensureMinRows(
+                Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate : [],
+                printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
+                5,
+              ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
+                const r =
+                  printing.method === 'Uteco'
+                    ? {
+                        ink_code: row?.ink_code || '',
+                        plate_code: row?.plate_code || '',
+                        anilox_code: row?.anilox_code ?? '',
+                      }
+                    : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
+                const defaults =
+                  printing.method === 'Uteco'
+                    ? { ink_code: '', plate_code: '', anilox_code: '' }
+                    : { ink_code: '', plate_code: '' }
+                const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
+                return (
+                  <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                    <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
+                      <InkSelect
+                        options={inks}
+                        valueCode={r.ink_code}
+                        label={`Ink ${idx + 1}`}
+                        onChangeCode={(nextCode) =>
+                          update((d) => {
+                            ensureFixedInkPlateRows(d)
+                            d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), ink_code: nextCode }
+                            syncLegacyInkPlateFromPairs(d)
+                          })
+                        }
+                      />
+                    </TableCell>
+                    <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
+                      <PlateSelect
+                        options={plates}
+                        valueCode={r.plate_code}
+                        label={`Plate ${idx + 1}`}
+                        onChangeCode={(nextCode) =>
+                          update((d) => {
+                            ensureFixedInkPlateRows(d)
+                            d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
+                            syncLegacyInkPlateFromPairs(d)
+                          })
+                        }
+                      />
+                    </TableCell>
+                    {printing.method === 'Uteco' ? (
+                      <TableCell sx={{ width: '24%' }}>
+                        <TextField
+                          select
+                          size="small"
+                          fullWidth
+                          hiddenLabel
+                          value={(r as { anilox_code: string }).anilox_code || ''}
+                          SelectProps={{
+                            displayEmpty: true,
+                            renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
+                          }}
+                          onChange={(e) =>
+                            update((d) => {
+                              ensureFixedInkPlateRows(d)
+                              d.printing.back_ink_plate[idx] = {
+                                ...(d.printing.back_ink_plate[idx] || {}),
+                                anilox_code: e.target.value || null,
+                              }
+                              syncLegacyInkPlateFromPairs(d)
+                            })
+                          }
+                        >
+                          <MenuItem value="">
+                            <em>None</em>
+                          </MenuItem>
+                          {aniloxOptions.map((a) => (
+                            <MenuItem key={a.anilox_code} value={a.anilox_code}>
+                              {a.anilox_code} — {a.description}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      </TableCell>
+                    ) : null}
+                    <TableCell sx={{ width: '10%' }}>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={() =>
+                          update((d) => {
+                            ensureFixedInkPlateRows(d)
+                            const cur = d.printing.back_ink_plate
+                            if (cur.length > 5) {
+                              cur.splice(idx, 1)
+                            } else {
+                              cur[idx] = emptyInkPlateRow(d.printing.method)
+                            }
+                            syncLegacyInkPlateFromPairs(d)
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+          <Box sx={{ mt: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() =>
+                update((d) => {
+                  ensureFixedInkPlateRows(d)
+                  d.printing.back_ink_plate.push(emptyInkPlateRow(d.printing.method))
+                  syncLegacyInkPlateFromPairs(d)
+                })
+              }
+            >
+              Add row
+            </Button>
+          </Box>
+        </Box>
+      )}
+
+      {printing.method === 'Uteco' && (
+        <Box sx={{ mt: 2, maxWidth: { xs: '100%', md: 400 } }}>
+          <TextField
+            label="Cylinder size (mm)"
+            type="number"
+            value={printing.cylinder_size_mm ?? ''}
+            onChange={(e) => {
+              const v = e.target.value
+              update((d) => {
+                d.printing.cylinder_size_mm = v === '' ? null : Number(v)
+              })
+            }}
+            fullWidth
+            inputProps={{ min: 0, step: 'any' }}
+            helperText="Cylinder width in millimetres"
+          />
+        </Box>
+      )}
+    </>
+  ) : null
+
+  const printingDescriptionField = printingEnabled ? (
+    <TextField
+      label="Print Description"
+      value={printing.print_description || ''}
+      onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
+      multiline
+      minRows={2}
+      fullWidth
+      sx={printingSurface === 'job_sheet_summary' ? undefined : { mt: 2 }}
+    />
+  ) : null
 
   return (
     <Stack spacing={2}>
@@ -1083,379 +1493,60 @@ export function SpecPayloadForm(props: {
             <MenuItem value="Uteco">Uteco</MenuItem>
           </TextField>
 
-          {printingEnabled && (
-            <DefaultSelectField
-              defaultValue="front"
-              label="Print Side"
-              value={printing.side || 'front'}
-              onChange={(e) => update((d) => (d.printing.side = (e.target.value || 'front') as any))}
-            >
-              <MenuItem value="front">Front</MenuItem>
-              <MenuItem value="back">Back</MenuItem>
-              <MenuItem value="both">Both</MenuItem>
-            </DefaultSelectField>
-          )}
+          {printingEnabled ? printingNumColoursField : null}
+
+          {printingSurface === 'full' && printingEnabled ? printingPrintSideField : null}
         </Box>
 
-        {printingEnabled ? (
-          <Box sx={{ mt: 2 }}>
-            {printing.method === 'Uteco' && aniloxErr ? (
-              <Alert severity="warning" sx={{ mb: 2 }}>
-                {aniloxErr}
-              </Alert>
-            ) : null}
-            {((printing.side || 'front') === 'front' || printing.side === 'both') && (
-              <Box sx={{ mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
-                  <Typography variant="subtitle1">Front print</Typography>
-                  <Button
-                    type="button"
-                    size="small"
-                    variant="outlined"
-                    onClick={() =>
-                      update((d) => {
-                        ensureFixedInkPlateRows(d)
-                        const empty = emptyInkPlateRow(d.printing.method)
-                        d.printing.front_ink_plate = Array.from({ length: 5 }, () => ({ ...empty }))
-                        syncLegacyInkPlateFromPairs(d)
-                      })
-                    }
-                  >
-                    Clear
-                  </Button>
-                </Box>
-                {(inksErr || platesErr) && (
-                  <Alert severity="warning" sx={{ mb: 1 }}>
-                    {inksErr || platesErr}
-                  </Alert>
-                )}
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Ink</TableCell>
-                      <TableCell>Plate</TableCell>
-                      {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
-                      <TableCell />
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {ensureMinRows(
-                      Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate : [],
-                      printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
-                      5,
-                    ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
-                      const r =
-                        printing.method === 'Uteco'
-                          ? {
-                              ink_code: row?.ink_code || '',
-                              plate_code: row?.plate_code || '',
-                              anilox_code: row?.anilox_code ?? '',
-                            }
-                          : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
-                      const defaults =
-                        printing.method === 'Uteco'
-                          ? { ink_code: '', plate_code: '', anilox_code: '' }
-                          : { ink_code: '', plate_code: '' }
-                      const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
-                      return (
-                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                          <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
-                            <InkSelect
-                              options={inks}
-                              valueCode={r.ink_code}
-                              label={`Ink ${idx + 1}`}
-                              onChangeCode={(nextCode) =>
-                                update((d) => {
-                                  ensureFixedInkPlateRows(d)
-                                  d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), ink_code: nextCode }
-                                  syncLegacyInkPlateFromPairs(d)
-                                })
-                              }
-                            />
-                          </TableCell>
-                          <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
-                            <PlateSelect
-                              options={plates}
-                              valueCode={r.plate_code}
-                              label={`Plate ${idx + 1}`}
-                              onChangeCode={(nextCode) =>
-                                update((d) => {
-                                  ensureFixedInkPlateRows(d)
-                                  d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
-                                  syncLegacyInkPlateFromPairs(d)
-                                })
-                              }
-                            />
-                          </TableCell>
-                          {printing.method === 'Uteco' ? (
-                            <TableCell sx={{ width: '24%' }}>
-                              <TextField
-                                select
-                                size="small"
-                                fullWidth
-                                hiddenLabel
-                                value={(r as { anilox_code: string }).anilox_code || ''}
-                                SelectProps={{
-                                  displayEmpty: true,
-                                  renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
-                                }}
-                                onChange={(e) =>
-                                  update((d) => {
-                                    ensureFixedInkPlateRows(d)
-                                    d.printing.front_ink_plate[idx] = {
-                                      ...(d.printing.front_ink_plate[idx] || {}),
-                                      anilox_code: e.target.value || null,
-                                    }
-                                    syncLegacyInkPlateFromPairs(d)
-                                  })
-                                }
-                              >
-                                <MenuItem value="">
-                                  <em>None</em>
-                                </MenuItem>
-                                {aniloxOptions.map((a) => (
-                                  <MenuItem key={a.anilox_code} value={a.anilox_code}>
-                                    {a.anilox_code} — {a.description}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
-                            </TableCell>
-                          ) : null}
-                          <TableCell sx={{ width: '10%' }}>
-                            <Button
-                              size="small"
-                              color="inherit"
-                              onClick={() =>
-                                update((d) => {
-                                  ensureFixedInkPlateRows(d)
-                                  const cur = d.printing.front_ink_plate
-                                  if (cur.length > 5) {
-                                    cur.splice(idx, 1)
-                                  } else {
-                                    cur[idx] = emptyInkPlateRow(d.printing.method)
-                                  }
-                                  syncLegacyInkPlateFromPairs(d)
-                                })
-                              }
-                            >
-                              Remove
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-                <Box sx={{ mt: 1 }}>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() =>
-                      update((d) => {
-                        ensureFixedInkPlateRows(d)
-                        d.printing.front_ink_plate.push(emptyInkPlateRow(d.printing.method))
-                        syncLegacyInkPlateFromPairs(d)
-                      })
-                    }
-                  >
-                    Add row
-                  </Button>
-                </Box>
-              </Box>
-            )}
-
-            {(printing.side === 'back' || printing.side === 'both') && (
-              <Box sx={{ mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
-                  <Typography variant="subtitle1">Back print</Typography>
-                  <Button
-                    type="button"
-                    size="small"
-                    variant="outlined"
-                    onClick={() =>
-                      update((d) => {
-                        ensureFixedInkPlateRows(d)
-                        const empty = emptyInkPlateRow(d.printing.method)
-                        d.printing.back_ink_plate = Array.from({ length: 5 }, () => ({ ...empty }))
-                        syncLegacyInkPlateFromPairs(d)
-                      })
-                    }
-                  >
-                    Clear
-                  </Button>
-                </Box>
-                {(inksErr || platesErr) && (
-                  <Alert severity="warning" sx={{ mb: 1 }}>
-                    {inksErr || platesErr}
-                  </Alert>
-                )}
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Ink</TableCell>
-                      <TableCell>Plate</TableCell>
-                      {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
-                      <TableCell />
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {ensureMinRows(
-                      Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate : [],
-                      printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
-                      5,
-                    ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
-                      const r =
-                        printing.method === 'Uteco'
-                          ? {
-                              ink_code: row?.ink_code || '',
-                              plate_code: row?.plate_code || '',
-                              anilox_code: row?.anilox_code ?? '',
-                            }
-                          : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
-                      const defaults =
-                        printing.method === 'Uteco'
-                          ? { ink_code: '', plate_code: '', anilox_code: '' }
-                          : { ink_code: '', plate_code: '' }
-                      const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
-                      return (
-                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                          <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
-                            <InkSelect
-                              options={inks}
-                              valueCode={r.ink_code}
-                              label={`Ink ${idx + 1}`}
-                              onChangeCode={(nextCode) =>
-                                update((d) => {
-                                  ensureFixedInkPlateRows(d)
-                                  d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), ink_code: nextCode }
-                                  syncLegacyInkPlateFromPairs(d)
-                                })
-                              }
-                            />
-                          </TableCell>
-                          <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
-                            <PlateSelect
-                              options={plates}
-                              valueCode={r.plate_code}
-                              label={`Plate ${idx + 1}`}
-                              onChangeCode={(nextCode) =>
-                                update((d) => {
-                                  ensureFixedInkPlateRows(d)
-                                  d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
-                                  syncLegacyInkPlateFromPairs(d)
-                                })
-                              }
-                            />
-                          </TableCell>
-                          {printing.method === 'Uteco' ? (
-                            <TableCell sx={{ width: '24%' }}>
-                              <TextField
-                                select
-                                size="small"
-                                fullWidth
-                                hiddenLabel
-                                value={(r as { anilox_code: string }).anilox_code || ''}
-                                SelectProps={{
-                                  displayEmpty: true,
-                                  renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
-                                }}
-                                onChange={(e) =>
-                                  update((d) => {
-                                    ensureFixedInkPlateRows(d)
-                                    d.printing.back_ink_plate[idx] = {
-                                      ...(d.printing.back_ink_plate[idx] || {}),
-                                      anilox_code: e.target.value || null,
-                                    }
-                                    syncLegacyInkPlateFromPairs(d)
-                                  })
-                                }
-                              >
-                                <MenuItem value="">
-                                  <em>None</em>
-                                </MenuItem>
-                                {aniloxOptions.map((a) => (
-                                  <MenuItem key={a.anilox_code} value={a.anilox_code}>
-                                    {a.anilox_code} — {a.description}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
-                            </TableCell>
-                          ) : null}
-                          <TableCell sx={{ width: '10%' }}>
-                            <Button
-                              size="small"
-                              color="inherit"
-                              onClick={() =>
-                                update((d) => {
-                                  ensureFixedInkPlateRows(d)
-                                  const cur = d.printing.back_ink_plate
-                                  if (cur.length > 5) {
-                                    cur.splice(idx, 1)
-                                  } else {
-                                    cur[idx] = emptyInkPlateRow(d.printing.method)
-                                  }
-                                  syncLegacyInkPlateFromPairs(d)
-                                })
-                              }
-                            >
-                              Remove
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-                <Box sx={{ mt: 1 }}>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() =>
-                      update((d) => {
-                        ensureFixedInkPlateRows(d)
-                        d.printing.back_ink_plate.push(emptyInkPlateRow(d.printing.method))
-                        syncLegacyInkPlateFromPairs(d)
-                      })
-                    }
-                  >
-                    Add row
-                  </Button>
-                </Box>
-              </Box>
-            )}
-
-            {printing.method === 'Uteco' && (
-              <Box sx={{ mt: 2, maxWidth: { xs: '100%', md: 400 } }}>
-                <TextField
-                  label="Cylinder size (mm)"
-                  type="number"
-                  value={printing.cylinder_size_mm ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    update((d) => {
-                      d.printing.cylinder_size_mm = v === '' ? null : Number(v)
-                    })
-                  }}
-                  fullWidth
-                  inputProps={{ min: 0, step: 'any' }}
-                  helperText="Cylinder width in millimetres"
-                />
-              </Box>
-            )}
+        {printingSurface === 'job_sheet_summary' && printingEnabled ? (
+          <Box sx={{ mt: 1.5 }}>
+            <MuiLink
+              component="button"
+              type="button"
+              onClick={() => setPrintingDetailsOpen(true)}
+              sx={{ cursor: 'pointer', verticalAlign: 'baseline', fontSize: '0.875rem' }}
+            >
+              Edit printing specification…
+            </MuiLink>
           </Box>
         ) : null}
 
-        {printingEnabled && (
-          <TextField
-            label="Print Description"
-            value={printing.print_description || ''}
-            onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
-            multiline
-            minRows={2}
+        {printingSurface === 'full' && printingEnabled ? (
+          <>
+            <Box sx={{ mt: 2 }}>{printingTablesInner}</Box>
+            {printingDescriptionField}
+          </>
+        ) : null}
+
+        {printingSurface === 'job_sheet_summary' ? (
+          <Dialog
+            open={printingDetailsOpen}
+            onClose={() => setPrintingDetailsOpen(false)}
+            maxWidth="md"
             fullWidth
-            sx={{ mt: 2 }}
-          />
-        )}
+            scroll="paper"
+            disableScrollLock
+          >
+            <DialogTitle>Printing specification</DialogTitle>
+            <DialogContent dividers>
+              {firstErrorForPrefix('spec.printing') && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {firstErrorForPrefix('spec.printing')}
+                </Alert>
+              )}
+              <Stack spacing={2} sx={{ pt: 0.5 }}>
+                {printingEnabled ? printingPrintSideField : null}
+                {printingTablesInner}
+                {printingDescriptionField}
+              </Stack>
+            </DialogContent>
+            <DialogActions>
+              <Button type="button" onClick={() => setPrintingDetailsOpen(false)}>
+                Done
+              </Button>
+            </DialogActions>
+          </Dialog>
+        ) : null}
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>

@@ -139,9 +139,8 @@ export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRateboo
             : pm === 'inline' && printWidthMm > 1400
               ? 'Printing unavailable: Inline max print width is 1400mm'
               : 'Printing unavailable: no pricing tier configured for this width/colour'
-      } else if (webLengthM < Number(tier.min_meters || 0)) {
-        printingUnavailableReason = `Printing unavailable: below minimum length (${Number(tier.min_meters || 0)}m)`
       } else {
+        // Always include printing in the quote cost when a tier applies; still warn if below contractual minimum length.
         const rateCost = (webLengthM / 1000) * Number(tier.cost_per_1000m || 0)
         if (pm === 'inline') {
           const minCharge = Number(tier.min_charge ?? 0)
@@ -149,6 +148,10 @@ export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRateboo
         } else {
           const setupFee = Number(tier.setup_fee ?? 0)
           printingCost = setupFee + rateCost
+        }
+        const minM = Number(tier.min_meters || 0)
+        if (minM > 0 && webLengthM < minM) {
+          printingUnavailableReason = `Printing unavailable: below minimum length (${minM}m)`
         }
       }
     }

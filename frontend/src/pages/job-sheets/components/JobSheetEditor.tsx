@@ -160,11 +160,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const productsLoading = Boolean(customerId && productList.status === 'loading')
 
-  const jobHydratedRef = useRef<string | null>(null)
+  /** Re-hydrate when fetch returns a new detail payload (same id, fresher object). */
+  const lastJobDetailDataRef = useRef<unknown>(null)
   const productSpecHydratedRef = useRef<string | null>(null)
 
   useEffect(() => {
-    jobHydratedRef.current = null
+    lastJobDetailDataRef.current = null
   }, [jobSheetId])
 
   useEffect(() => {
@@ -188,8 +189,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       return
     }
     if (st.status !== 'succeeded' || !st.data) return
-    if (jobHydratedRef.current === jobSheetId) return
-    jobHydratedRef.current = jobSheetId
+    if (lastJobDetailDataRef.current === st.data) return
+    lastJobDetailDataRef.current = st.data
     setSaveErr(null)
     setSpecFieldErrors({})
     const res = st.data
@@ -805,6 +806,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             {showSpecForm ? (
               <SpecPayloadForm
                 customerId={customerId || undefined}
+                printingSurface="job_sheet_summary"
                 value={spec}
                 fieldErrors={specFieldErrors}
                 onChange={(next) => {

@@ -141,6 +141,15 @@ export function QuotePreviewPanel(props: {
             <TableCell>Printing</TableCell>
             <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.printing_cost) : dash}</TableCell>
           </TableRow>
+          {p?.printing_unavailable_reason ? (
+            <TableRow>
+              <TableCell colSpan={2} sx={{ py: 0.5, pt: 0, borderBottom: 'none' }}>
+                <Typography variant="caption" sx={{ color: 'error.main', display: 'block' }}>
+                  {String(p.printing_unavailable_reason)}
+                </Typography>
+              </TableCell>
+            </TableRow>
+          ) : null}
           <TableRow>
             <TableCell>Conversion</TableCell>
             <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.conversion_cost) : dash}</TableCell>

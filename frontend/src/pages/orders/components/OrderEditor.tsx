@@ -409,6 +409,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       setErr(`Product ${p.code} has no active version yet`)
       return
     }
+    const prevLineKeys = new Set(items.map((it) => it.order_item_id || it.id))
     try {
       setErr(null)
       setSaving(true)
@@ -428,6 +429,16 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
       setItems(nextItems)
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
+
+      const added = nextItems.filter((it) => !prevLineKeys.has(it.order_item_id || it.id))
+      const newLine = added[0]
+      if (newLine?.product_id && newLine.job_sheet_id && canEditProduct) {
+        openProductVersionModal({
+          product_id: newLine.product_id,
+          product_code: newLine.product_code,
+          job_sheet_id: newLine.job_sheet_id,
+        })
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to add order item')
     } finally {
@@ -642,7 +653,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         </Alert>
       )}
 
-      <Paper variant="outlined" sx={{ p: 2, maxWidth: 1100, width: '100%' }}>
+      <Paper variant="outlined" sx={{ p: 2, width: '100%' }}>
         <Stack spacing={2}>
           <TextField
             select

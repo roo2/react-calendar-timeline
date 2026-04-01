@@ -69,6 +69,12 @@ function roundTo2Decimals(s: string): string {
   return Number.isFinite(n) ? n.toFixed(2) : s
 }
 
+function fmtSavedQuoteDate(raw: string | null | undefined): string {
+  if (!raw || String(raw).trim() === '') return '—'
+  const d = new Date(String(raw))
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
 /** Reusable alert for printing validation errors; show in both Printing section and at top of form. */
 function PrintingUnavailableAlert({ message, prominent = false }: { message: string | null; prominent?: boolean }) {
   if (!message) return null
@@ -92,6 +98,8 @@ export type SavedQuoteInitialData = {
   /** String from API preserves exact decimals on reload */
   cost_per_kg?: string | number | null
   price_per_kg?: string | number | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 type QuotesPageProps = {
@@ -122,6 +130,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const displayErr = err || bootstrapState.error || upsertState.error || null
   const [hydratedFromQuote, setHydratedFromQuote] = useState(false)
   const initialPayloadSnapshotRef = useRef<string | null>(null)
+  /** True after we've captured `initialPayloadSnapshotRef` post–rate book + resin blends (avoids false "user edited" on refresh). */
+  const editPayloadBaselineCapturedRef = useRef(false)
   const preserveLoadedPricePerKgRef = useRef(false)
   const skipNextMarginToPriceRef = useRef(false)
   const payloadForEditDetectionRef = useRef<Record<string, unknown>>({})
@@ -208,6 +218,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   // Hydrate form from saved quote when editing
   useEffect(() => {
     if (!initialData?.payload || hydratedFromQuote) return
+    initialPayloadSnapshotRef.current = null
+    editPayloadBaselineCapturedRef.current = false
     const p = initialData.payload as any
     setCustomerId(initialData.customer_id || '')
     if (p.product_type != null) setProductType(String(p.product_type))
@@ -734,6 +746,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       flagPunched,
       desiredNumColours: desiredNumColours || numColours,
       showNumColours: flagPrinted,
+      quoted_totals_kg:
+        quickPreview?.totals_kg != null && Number.isFinite(Number(quickPreview.totals_kg))
+          ? Number(quickPreview.totals_kg)
+          : null,
+      quoted_total_price:
+        quickPreview?.final_price != null && Number.isFinite(Number(quickPreview.final_price))
+          ? Number(quickPreview.final_price)
+          : null,
     }),
     [
       calcPayload,
@@ -759,28 +779,55 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       desiredNumColours,
       numColours,
       flagPrinted,
+      quickPreview?.totals_kg,
+      quickPreview?.final_price,
     ],
   )
 
-  // For edit-mode "did user edit the spec?" we exclude pricing (requested_margin, requested_margin_pct_str) so that updating Price per KG → margin sync doesn't trigger a switch to margin driver
+  // For edit-mode "did user edit the spec?" we exclude pricing (requested_margin, requested_margin_pct_str) so that updating Price per KG → margin sync doesn't trigger a switch to margin driver.
+  // Also exclude quoted_totals_kg / quoted_total_price (calculator snapshots) so rate recalculations don't look like a spec edit.
   const payloadForEditDetection = useMemo(() => {
-    const { requested_margin: _rm, requested_margin_pct_str: _rmStr, ...rest } = payloadForSave as {
+    const {
+      requested_margin: _rm,
+      requested_margin_pct_str: _rmStr,
+      quoted_totals_kg: _qtk,
+      quoted_total_price: _qtp,
+      ...rest
+    } = payloadForSave as {
       requested_margin?: number
       requested_margin_pct_str?: string
+      quoted_totals_kg?: unknown
+      quoted_total_price?: unknown
       [k: string]: unknown
     }
     return rest
   }, [payloadForSave])
   payloadForEditDetectionRef.current = payloadForEditDetection
 
-  // Edit mode: capture initial payload snapshot once after hydration has settled so we don't falsely detect an edit (and overwrite loaded price per kg).
+  // Edit mode: capture payload snapshot for edit-detection only after pricing inputs are available and defaults
+  // (resin blend list, carton slug, etc.) have settled. Otherwise a full tab refresh can normalize the form after the
+  // first snapshot and falsely clear `preserveLoadedPricePerKgRef`, losing the saved price/kg adjustment.
   useEffect(() => {
-    if (!isEditMode || !hydratedFromQuote || initialPayloadSnapshotRef.current != null) return
+    if (!isEditMode || !hydratedFromQuote) return
+    if (!ratebook || quoteRatebookState.status !== 'succeeded') return
+    if (quoteResinBlendsState.status === 'loading') return
+    if (editPayloadBaselineCapturedRef.current) return
+
     const t = window.setTimeout(() => {
+      if (editPayloadBaselineCapturedRef.current) return
       initialPayloadSnapshotRef.current = JSON.stringify(payloadForEditDetectionRef.current)
+      editPayloadBaselineCapturedRef.current = true
     }, 0)
     return () => window.clearTimeout(t)
-  }, [isEditMode, hydratedFromQuote])
+  }, [
+    isEditMode,
+    hydratedFromQuote,
+    ratebook,
+    quoteRatebookState.status,
+    quoteResinBlendsState.status,
+    resinBlendCode,
+    cartonOptionSlug,
+  ])
 
   // Edit mode: when user edits the form spec (not just margin/price), switch to margin-as-driver so margin is maintained and price per kg updates
   useEffect(() => {
@@ -1215,6 +1262,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               </MenuItem>
             ))}
           </TextField>
+          {isEditMode ? (
+            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+              Created: {fmtSavedQuoteDate(initialData?.created_at)}
+              {initialData?.updated_at ? ` · Edited: ${fmtSavedQuoteDate(initialData.updated_at)}` : ''}
+            </Typography>
+          ) : null}
         </Box>
       </Paper>
 
@@ -1296,7 +1349,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <TextField
                     label="Weight per Roll (kg)"
                     type="number"
-                    inputProps={{ min: 0, step: 0.1 }}
+                    inputProps={{ min: 0, step: 'any' }}
                     value={
                       weightPerRollEditable
                         ? weightPerRoll

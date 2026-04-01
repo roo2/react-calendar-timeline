@@ -38,6 +38,10 @@ export type QuotePayload = {
   numUnits?: string | number
   numRolls?: string | number
   weightPerRoll?: string | number
+  /** Snapshot from last save: calculator total kg (excluded from spec edit-detection). */
+  quoted_totals_kg?: number | null
+  /** Snapshot from last save: suggested total price (excluded from spec edit-detection). */
+  quoted_total_price?: number | null
   [k: string]: unknown
 }
 
