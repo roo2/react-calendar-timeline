@@ -16,6 +16,7 @@ export type QuotePayload = {
   ufilm_right_width_mm?: number | null
   length_units?: 'mm' | 'M'
   trim_pct?: number | null
+  width_tolerance_mm?: number | null
   blend?: Array<{ resin_code: string; pct: number }>
   resin_code?: string | null
   colour_components?: Array<{ colour_code?: string; strength_pct?: number | null }>
@@ -135,7 +136,10 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
     },
     dimensions: {
       base_width_mm: baseWidthMm,
-      width_tolerance_mm: null,
+      width_tolerance_mm:
+        p.width_tolerance_mm != null && Number.isFinite(Number(p.width_tolerance_mm))
+          ? Number(p.width_tolerance_mm)
+          : null,
       base_length_mm: baseLengthMm ?? undefined,
       thickness_um: thicknessUm,
       geometry,

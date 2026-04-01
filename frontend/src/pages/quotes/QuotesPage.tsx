@@ -151,6 +151,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [length, setLength] = useState('')
   const [thicknessUm, setThicknessUm] = useState('')
   const [trimPctText, setTrimPctText] = useState<string>('')
+  const [widthToleranceMmText, setWidthToleranceMmText] = useState<string>('')
   const [runUp, setRunUp] = useState<number>(1)
   const [layflatInput, setLayflatInput] = useState<string | null>(null)
 
@@ -220,6 +221,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     else if (p.base_length_mm != null) setLength(String(p.base_length_mm))
     if (p.thickness_um != null) setThicknessUm(p.thickness_um === 0 ? '' : String(p.thickness_um))
     if (p.trim_pct != null) setTrimPctText(String(p.trim_pct))
+    if (p.width_tolerance_mm != null) setWidthToleranceMmText(String(p.width_tolerance_mm))
     if (p.run_up != null) setRunUp(Number(p.run_up) || 1)
     if (p.resin_blend_code != null) setResinBlendCode(String(p.resin_blend_code))
     if (Array.isArray(p.colourRows)) {
@@ -388,6 +390,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     return trimPctText.trim() === '' ? null : Number.isFinite(n) ? n : null
   }, [trimPctText])
 
+  const widthToleranceMm: number | null = useMemo(() => {
+    const n = Number(widthToleranceMmText)
+    return widthToleranceMmText.trim() === '' ? null : Number.isFinite(n) ? n : null
+  }, [widthToleranceMmText])
+
   function toMm(v: string, units: 'mm' | 'm') {
     const n = Number(v || 0)
     if (!Number.isFinite(n)) return 0
@@ -484,6 +491,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
       length_units: lengthUnits,
       trim_pct: trimPct,
+      width_tolerance_mm: widthToleranceMm,
       resin_blend_code: resinBlendCode,
 
       blend,
@@ -544,6 +552,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     showRunUp,
     thicknessUmNum,
     trimPct,
+    widthToleranceMm,
     productType,
     runUp,
     ufilmLeftWidthMmNum,
@@ -1240,34 +1249,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <MenuItem value="Rolls">Rolls</MenuItem>
                   <MenuItem value="Cartons">Cartons</MenuItem>
                 </DefaultSelectField>
-                {finishMode === 'Cartons' ? (
-                  <TextField
-                    label="Bags per Carton"
-                    type="number"
-                    inputProps={{ min: 1, step: 1 }}
-                    value={bagsPerCarton}
-                    onChange={(e) => setBagsPerCarton(e.target.value)}
-                  />
-                ) : null}
-                <DefaultSelectField defaultValue="7mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
-                  {['7mm', '13mm', 'PVC', 'None'].map((v) => (
-                    <MenuItem key={v} value={v}>
-                      {v}
-                    </MenuItem>
-                  ))}
-                </DefaultSelectField>
-                {finishMode === 'Rolls' ? (
-                  <DefaultSelectField
-                    label="Roll weight billing"
-                    defaultValue="core_included"
-                    value={rollWeightBilling}
-                    onChange={(e) => setRollWeightBilling(e.target.value as any)}
-                  >
-                    <MenuItem value="core_included">Include core</MenuItem>
-                    <MenuItem value="core_off">Exclude core</MenuItem>
-                    <MenuItem value="core_half_off">Half core</MenuItem>
-                  </DefaultSelectField>
-                ) : null}
               </Box>
             </Paper>
 
@@ -1476,8 +1457,47 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <TextField label="Length" type="number" value={length} onChange={(e) => setLength(e.target.value)} />
                 </Box>
 
-                <Box sx={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(240px, 1fr)', gap: 2 }}>
                   <TextField label="Thickness / Gauge (µm)" type="number" value={thicknessUm} onChange={(e) => setThicknessUm(e.target.value)} />
+                </Box>
+              </Stack>
+            </Paper>
+
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Run Requirements
+              </Typography>
+              <Stack spacing={2}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+                  <DefaultSelectField defaultValue="7mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
+                    {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+                      <MenuItem key={v} value={v}>
+                        {v}
+                      </MenuItem>
+                    ))}
+                  </DefaultSelectField>
+                  {finishMode === 'Cartons' ? (
+                    <TextField
+                      label="Bags per Carton"
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={bagsPerCarton}
+                      onChange={(e) => setBagsPerCarton(e.target.value)}
+                    />
+                  ) : (
+                    <DefaultSelectField
+                      label="Roll weight billing"
+                      defaultValue="core_included"
+                      value={rollWeightBilling}
+                      onChange={(e) => setRollWeightBilling(e.target.value as any)}
+                    >
+                      <MenuItem value="core_included">Include core</MenuItem>
+                      <MenuItem value="core_off">Exclude core</MenuItem>
+                      <MenuItem value="core_half_off">Half core</MenuItem>
+                    </DefaultSelectField>
+                  )}
+                </Box>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                   <TextField
                     label="Trim (%)"
                     type="number"
@@ -1485,6 +1505,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     value={trimPctText}
                     onChange={(e) => setTrimPctText(e.target.value)}
                     helperText="Optional. Percentage trim allowance."
+                  />
+                  <TextField
+                    label="Tolerance (mm)"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.1 }}
+                    value={widthToleranceMmText}
+                    onChange={(e) => setWidthToleranceMmText(e.target.value)}
+                    helperText="Optional. Width tolerance."
                   />
                 </Box>
               </Stack>

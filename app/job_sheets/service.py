@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Optional, List
 
 from sqlalchemy import select, func
@@ -9,7 +9,8 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
-from app.db.models.domain import Customer, Product, ProductVersion, JobSheet
+from app.db.models.domain import Customer, Product, ProductVersion, JobSheet, Order, OrderItem
+from app.db.models.enums import OrderStatus
 from app.exceptions import DomainError
 from app.products.service import _next_version_number, compute_product_code_full  # reuse version numbering helper
 from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest
@@ -45,6 +46,36 @@ def _require_customer_code(customer: Customer) -> str:
 def _next_job_seq(db, customer_id: str) -> int:
     current = db.scalar(select(func.max(JobSheet.job_seq)).where(JobSheet.customer_id == customer_id)) or 0
     return int(current) + 1
+
+
+def _new_draft_order_code() -> str:
+    return f"ORD-{uuid.uuid4().hex[:8].upper()}"
+
+
+def _ensure_draft_order_for_job_sheet_in_db(db, job_sheet_id: str, *, new_order_date: Optional[date] = None) -> str:
+    """
+    If no order line exists for this job sheet, create a DRAFT order with one line.
+    Returns the order id (existing or newly created).
+    """
+    existing = db.scalar(select(OrderItem).where(OrderItem.job_sheet_id == str(job_sheet_id)))
+    if existing is not None:
+        return str(existing.order_id)
+    js = db.get(JobSheet, str(job_sheet_id))
+    if not js:
+        raise DomainError("Job sheet not found")
+    od = new_order_date if new_order_date is not None else date.today()
+    order = Order(
+        code=_new_draft_order_code(),
+        customer_id=str(js.customer_id),
+        product_version_id=str(js.product_version_id),
+        status=OrderStatus.DRAFT,
+        order_date=od,
+    )
+    db.add(order)
+    db.flush()
+    db.add(OrderItem(order_id=str(order.id), job_sheet_id=str(js.id)))
+    db.flush()
+    return str(order.id)
 
 
 def suggest_next_job_no(customer_id: str) -> str:
@@ -133,6 +164,8 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
                 continue
         if js is None:
             raise DomainError("Failed to allocate job number") from last_err
+
+        _ensure_draft_order_for_job_sheet_in_db(db, str(js.id), new_order_date=payload.order_date)
 
         # IMPORTANT: capture ID before session closes/attributes expire
         return str(js.id)
@@ -368,5 +401,13 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
 
         db.add(js)
         db.flush()
+        oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
+        upd = payload.model_dump(exclude_unset=True)
+        if "order_date" in upd:
+            o = db.get(Order, oid)
+            if o:
+                o.order_date = payload.order_date
+                db.add(o)
+                db.flush()
         return str(js.id)
 

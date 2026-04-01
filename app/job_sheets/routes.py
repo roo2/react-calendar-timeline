@@ -13,31 +13,36 @@ from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest,
 router = APIRouter(prefix="/api/job-sheets", tags=["job_sheets"])
 
 
-def _order_info_for_job_sheets(job_sheet_ids: list[str]) -> dict[str, tuple[str | None, str | None]]:
-    """Return map job_sheet_id -> (invoice_no, order_date)."""
+def _order_info_for_job_sheets(job_sheet_ids: list[str]) -> dict[str, tuple[str | None, str | None, str | None]]:
+    """Return map job_sheet_id -> (order_id, order_code, order_date). Prefer most recently created order if multiple."""
     if not job_sheet_ids:
         return {}
-    out = {}
+    out: dict[str, tuple[str | None, str | None, str | None]] = {}
     with SessionLocal() as db:
         rows = (
-            db.query(OrderItem.job_sheet_id, Order.code, Order.order_date)
+            db.query(OrderItem.job_sheet_id, Order.id, Order.code, Order.order_date)
             .join(Order, Order.id == OrderItem.order_id)
             .filter(OrderItem.job_sheet_id.in_(job_sheet_ids))
+            .order_by(Order.created_at.desc())
             .all()
         )
-        for jid, code, order_date in rows:
-            out[jid] = (code, str(order_date) if order_date is not None else None)
+        for jid, oid, code, order_date in rows:
+            jid_s = str(jid)
+            if jid_s in out:
+                continue
+            out[jid_s] = (str(oid), code, str(order_date) if order_date is not None else None)
     return out
 
 
-def _to_summary(js, order_info: tuple[str | None, str | None] | None = None) -> JobSheetSummary:
+def _to_summary(js, order_info: tuple[str | None, str | None, str | None] | None = None) -> JobSheetSummary:
     product = getattr(js, "product", None)
     customer = getattr(js, "customer", None)
     version = getattr(js, "version", None)
+    order_id = None
     invoice_no = None
     order_date = None
     if order_info:
-        invoice_no, order_date = order_info
+        order_id, invoice_no, order_date = order_info
     return JobSheetSummary(
         id=js.id,
         job_no=js.job_no,
@@ -59,6 +64,7 @@ def _to_summary(js, order_info: tuple[str | None, str | None] | None = None) -> 
         product_description=getattr(product, "description", None),
         customer_name=getattr(customer, "name", None),
         customer_code=getattr(customer, "code", None),
+        order_id=order_id,
         invoice_no=invoice_no,
         order_date=order_date,
     )
@@ -87,10 +93,10 @@ async def create_job_sheet(payload: JobSheetCreateRequest, identity=Depends(curr
         u = identity.get("user")
         created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
         job_sheet_id = service.create_job_sheet_with_new_version(payload, created_by=created_by)
-        # Re-read with joins for summary/spec (new sheet not on an order yet)
         full = service.get_job_sheet(job_sheet_id)
         assert full is not None
-        return {"ok": True, "job_sheet": _to_summary(full, None).model_dump()}
+        order_map = _order_info_for_job_sheets([full.id])
+        return {"ok": True, "job_sheet": _to_summary(full, order_map.get(full.id)).model_dump()}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 

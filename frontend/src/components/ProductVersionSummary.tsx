@@ -182,14 +182,6 @@ export function ProductVersionSummary(props: { spec: any }) {
           rows={[
             { k: 'Product Type', v: spec?.identity?.product_type || '-' },
             { k: 'Finish Mode', v: finishMode },
-            { k: 'Core Type', v: spec?.packaging?.core_type || '-' },
-            {
-              k: finishMode === 'Cartons' ? 'Bags per carton' : 'Roll weight billing',
-              v:
-                finishMode === 'Cartons'
-                  ? (spec?.packaging?.bags_per_carton ?? '-')
-                  : (spec?.identity?.roll_weight_billing || '-'),
-            },
             ...(spec?.identity?.notes
               ? [{ k: 'Product notes', v: spec.identity.notes }]
               : []),
@@ -218,8 +210,6 @@ export function ProductVersionSummary(props: { spec: any }) {
             { k: 'Length units', v: lengthUnits },
             { k: 'Length', v: lengthDisplay },
             { k: 'Thickness/Gauge (µm)', v: spec?.dimensions?.thickness_um ?? '-' },
-            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
-            { k: 'Tolerance (mm)', v: spec?.dimensions?.width_tolerance_mm ?? '-' },
           ]}
         />
       </SectionCard>
@@ -365,6 +355,16 @@ export function ProductVersionSummary(props: { spec: any }) {
       <SectionCard title="6. Run Requirements">
         <KVTable
           rows={[
+            { k: 'Core Type', v: spec?.packaging?.core_type || '-' },
+            {
+              k: finishMode === 'Cartons' ? 'Bags per carton' : 'Roll weight billing',
+              v:
+                finishMode === 'Cartons'
+                  ? (spec?.packaging?.bags_per_carton ?? '-')
+                  : (spec?.identity?.roll_weight_billing || '-'),
+            },
+            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
+            { k: 'Tolerance (mm)', v: spec?.dimensions?.width_tolerance_mm ?? '-' },
             { k: 'Run up', v: formatRunUp(spec?.run_requirements?.run_up) },
             { k: 'Slit', v: spec?.run_requirements?.slit || '-' },
             { k: 'Treat inside/outside', v: spec?.run_requirements?.treat_inside_outside || '-' },

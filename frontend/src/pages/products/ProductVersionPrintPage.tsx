@@ -312,6 +312,26 @@ export function ProductVersionPrintPage() {
               <table className="spec-table">
                 <tbody>
                   <tr>
+                    <th>Core Type</th>
+                    <td>{spec.packaging?.core_type || '-'}</td>
+                  </tr>
+                  <tr>
+                    <th>{spec.identity?.finish_mode === 'Cartons' ? 'Bags per Carton' : 'Roll Weight Billing'}</th>
+                    <td>
+                      {spec.identity?.finish_mode === 'Cartons'
+                        ? (spec.packaging?.bags_per_carton ?? '-')
+                        : (spec.identity?.roll_weight_billing || '-')}
+                    </td>
+                  </tr>
+                  <tr>
+                    <th>Trim (%)</th>
+                    <td>{spec.identity?.trim_pct ?? '-'}</td>
+                  </tr>
+                  <tr>
+                    <th>Tolerance (mm)</th>
+                    <td>{spec.dimensions?.width_tolerance_mm ?? '-'}</td>
+                  </tr>
+                  <tr>
                     <th>Preferred Extruders</th>
                     <td>{fmtList(spec.run_requirements?.preferred_extruders)}</td>
                   </tr>

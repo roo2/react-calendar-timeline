@@ -6,6 +6,9 @@ type Status = 'idle' | 'loading' | 'succeeded' | 'failed'
 export type JobSheetSummary = {
   id: string
   job_no: string
+  customer_id?: string
+  product_id?: string
+  product_version_id?: string
   customer_name?: string | null
   customer_code?: string | null
   product_code: string
@@ -18,6 +21,7 @@ export type JobSheetSummary = {
   weight_per_roll_kg?: number | null
   num_rolls?: number
   created_at?: string | null
+  order_id?: string | null
   invoice_no?: string | null
   order_date?: string | null
 }
@@ -56,7 +60,7 @@ export const fetchJobSheet = createAsyncThunk('jobSheets/detail', async (jobShee
 })
 
 export const createJobSheet = createAsyncThunk('jobSheets/create', async (body: Record<string, unknown>) => {
-  return await apiFetch<{ ok: boolean; job_sheet: { id: string; job_no?: string } }>('/api/job-sheets', {
+  return await apiFetch<{ ok: boolean; job_sheet: JobSheetSummary }>('/api/job-sheets', {
     method: 'POST',
     body: JSON.stringify(body),
   })
@@ -66,7 +70,7 @@ export const updateJobSheet = createAsyncThunk(
   'jobSheets/update',
   async (payload: { jobSheetId: string; body: Record<string, unknown> }) => {
     const { jobSheetId, body } = payload
-    return await apiFetch<{ ok: boolean; job_sheet: { id: string } }>(`/api/job-sheets/${encodeURIComponent(jobSheetId)}`, {
+    return await apiFetch<{ ok: boolean; job_sheet: JobSheetSummary }>(`/api/job-sheets/${encodeURIComponent(jobSheetId)}`, {
       method: 'PUT',
       body: JSON.stringify(body),
     })

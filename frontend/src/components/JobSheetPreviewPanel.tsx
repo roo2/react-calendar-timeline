@@ -5,6 +5,8 @@ export function JobSheetPreviewPanel(props: {
   description: string
   /** When false, hide invoice / order date / due date (e.g. product spec editor sidebar). */
   showJobFields?: boolean
+  /** Job sheet job number (e.g. CUST_1); shown when editing an existing job sheet. */
+  jobCode?: string
   invoiceNo?: string
   orderDate?: string
   dueDate?: string
@@ -13,6 +15,7 @@ export function JobSheetPreviewPanel(props: {
     productCode,
     description,
     showJobFields = true,
+    jobCode = '',
     invoiceNo = '',
     orderDate = '',
     dueDate = '',
@@ -34,6 +37,14 @@ export function JobSheetPreviewPanel(props: {
         </div>
         {showJobFields ? (
           <>
+            <div>
+              <Typography variant="caption" color="text.secondary" display="block">
+                Job code
+              </Typography>
+              <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                {jobCode.trim() ? jobCode : dash}
+              </Typography>
+            </div>
             <div>
               <Typography variant="caption" color="text.secondary" display="block">
                 Invoice No

@@ -552,53 +552,6 @@ export function SpecPayloadForm(props: {
           </DefaultSelectField>
         </Box>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mt: 2 }}>
-          <DefaultSelectField
-            label="Core Type"
-            defaultValue="7mm"
-            value={packaging.core_type || '7mm'}
-            onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
-          >
-            {['7mm', '13mm', 'PVC', 'None'].map((v) => (
-              <MenuItem key={v} value={v}>
-                {v}
-              </MenuItem>
-            ))}
-          </DefaultSelectField>
-          {finishMode === 'Rolls' ? (
-            <DefaultSelectField
-              label="Roll weight billing"
-              defaultValue="core_included"
-              value={identity.roll_weight_billing || 'core_included'}
-              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
-            >
-              <MenuItem value="core_included">Include core</MenuItem>
-              <MenuItem value="core_off">Exclude core</MenuItem>
-              <MenuItem value="core_half_off">Half core</MenuItem>
-            </DefaultSelectField>
-          ) : (
-            <TextField
-              label="Bags per Carton"
-              type="number"
-              inputProps={{ min: 1, step: 1 }}
-              value={packaging.bags_per_carton ?? ''}
-              onChange={(e) =>
-                update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
-              }
-              required
-              error={
-                !!errorFor('spec.packaging.bags_per_carton') ||
-                (!!errorFor('spec.packaging') && finishMode === 'Cartons')
-              }
-              helperText={
-                errorFor('spec.packaging.bags_per_carton') ||
-                (finishMode === 'Cartons' ? errorFor('spec.packaging') : '') ||
-                ''
-              }
-            />
-          )}
-        </Box>
-
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
@@ -888,7 +841,7 @@ export function SpecPayloadForm(props: {
             />
           </Box>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
             <TextField
               label="Thickness/Gauge (µm)"
               type="number"
@@ -898,32 +851,6 @@ export function SpecPayloadForm(props: {
               required
               error={!!errorFor('spec.dimensions.thickness_um')}
               helperText={errorFor('spec.dimensions.thickness_um') || ''}
-            />
-            <TextField
-              label="Trim (%)"
-              type="number"
-              inputProps={{ min: 0, step: 0.1 }}
-              value={identity.trim_pct ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  d.identity.trim_pct = e.target.value === '' ? null : parseFloat(e.target.value)
-                })
-              }
-              error={!!errorFor('spec.identity.trim_pct')}
-              helperText={errorFor('spec.identity.trim_pct') || ''}
-            />
-            <TextField
-              label="Tolerance (mm)"
-              type="number"
-              inputProps={{ min: 0, step: 0.1 }}
-              value={dimensions.width_tolerance_mm ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  const raw = e.target.value
-                  ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
-                })
-              }
-              error={!!errorFor('spec.dimensions.width_tolerance_mm')}
             />
           </Box>
         </Stack>
@@ -1619,7 +1546,83 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <DefaultSelectField
+            label="Core Type"
+            defaultValue="7mm"
+            value={packaging.core_type || '7mm'}
+            onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
+          >
+            {['7mm', '13mm', 'PVC', 'None'].map((v) => (
+              <MenuItem key={v} value={v}>
+                {v}
+              </MenuItem>
+            ))}
+          </DefaultSelectField>
+          {finishMode === 'Rolls' ? (
+            <DefaultSelectField
+              label="Roll weight billing"
+              defaultValue="core_included"
+              value={identity.roll_weight_billing || 'core_included'}
+              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
+            >
+              <MenuItem value="core_included">Include core</MenuItem>
+              <MenuItem value="core_off">Exclude core</MenuItem>
+              <MenuItem value="core_half_off">Half core</MenuItem>
+            </DefaultSelectField>
+          ) : (
+            <TextField
+              label="Bags per Carton"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={packaging.bags_per_carton ?? ''}
+              onChange={(e) =>
+                update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
+              }
+              required
+              error={
+                !!errorFor('spec.packaging.bags_per_carton') ||
+                (!!errorFor('spec.packaging') && finishMode === 'Cartons')
+              }
+              helperText={
+                errorFor('spec.packaging.bags_per_carton') ||
+                (finishMode === 'Cartons' ? errorFor('spec.packaging') : '') ||
+                ''
+              }
+            />
+          )}
+        </Box>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mt: 2 }}>
+          <TextField
+            label="Trim (%)"
+            type="number"
+            inputProps={{ min: 0, step: 0.1 }}
+            value={identity.trim_pct ?? ''}
+            onChange={(e) =>
+              update((d) => {
+                d.identity.trim_pct = e.target.value === '' ? null : parseFloat(e.target.value)
+              })
+            }
+            error={!!errorFor('spec.identity.trim_pct')}
+            helperText={errorFor('spec.identity.trim_pct') || ''}
+          />
+          <TextField
+            label="Tolerance (mm)"
+            type="number"
+            inputProps={{ min: 0, step: 0.1 }}
+            value={dimensions.width_tolerance_mm ?? ''}
+            onChange={(e) =>
+              update((d) => {
+                const raw = e.target.value
+                ;(d.dimensions as any).width_tolerance_mm = raw === '' ? null : parseFloat(raw)
+              })
+            }
+            error={!!errorFor('spec.dimensions.width_tolerance_mm')}
+          />
+        </Box>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
           <TextField
             select
             label="Slit"

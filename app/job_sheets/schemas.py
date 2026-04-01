@@ -17,6 +17,7 @@ class JobSheetCreateRequest(BaseModel):
     product_id: str
     job_no: Optional[str] = None  # Assigned when job is queued; optional on create
     due_date: Optional[date] = None
+    order_date: Optional[date] = None  # Stored on linked draft order when created
     quantity_value: float = Field(..., gt=0)
     quantity_unit: QuantityUnit
     qty_type: QtyType = "kg"
@@ -49,6 +50,7 @@ class JobSheetSummary(BaseModel):
     customer_name: Optional[str] = None
     customer_code: Optional[str] = None
     # From order when this job sheet is attached to an order line
+    order_id: Optional[str] = None
     invoice_no: Optional[str] = None
     order_date: Optional[str] = None
 
@@ -60,6 +62,7 @@ class JobSheetDetail(BaseModel):
 
 class JobSheetUpdateRequest(BaseModel):
     due_date: Optional[date] = None
+    order_date: Optional[date] = None  # Updates linked order header
     quantity_value: float = Field(..., gt=0)
     quantity_unit: QuantityUnit
     qty_type: QtyType = "kg"

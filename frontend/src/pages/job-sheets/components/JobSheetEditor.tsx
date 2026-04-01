@@ -118,7 +118,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [numUnits, setNumUnits] = useState('')
   const [invoiceNo, setInvoiceNo] = useState('')
   const [orderDate, setOrderDate] = useState('')
+  const [orderId, setOrderId] = useState('')
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
+  const orderDateInputRef = useRef<HTMLInputElement | null>(null)
 
   const [productId, setProductId] = useState('')
   const productDetail = useAppSelector((s) =>
@@ -207,6 +209,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setDueDate(js?.due_date || '')
     setInvoiceNo(js?.invoice_no ?? '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
+    setOrderId(js?.order_id ? String(js.order_id) : '')
     const loadedSpec = ensureSpec(res?.spec_payload)
     setSpec(loadedSpec)
     const fm: FinishMode = loadedSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
@@ -319,6 +322,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       return null
     }
   }, [ratebook, spec, effectiveQtyType, totalKgNum, numUnitsNum, numRollsNum, weightPerRollNum])
+
+  const totalMetersReadonly = useMemo(() => {
+    if (!ratebook) return '…'
+    if (!derivedForDisplay) return '—'
+    const m = derivedForDisplay.derivedTotalM
+    if (m == null || !Number.isFinite(Number(m)) || Number(m) <= 0) return '—'
+    return `${Math.round(Number(m)).toLocaleString()} m`
+  }, [ratebook, derivedForDisplay])
 
   const derivedDisplay = derivedForDisplay
     ? {
@@ -501,6 +512,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             customer_id: customerId,
             product_id: effectiveProductId,
             due_date: dueDate,
+            ...(orderDate ? { order_date: orderDate } : {}),
             quantity_value: oq.quantity_value,
             quantity_unit: oq.quantity_unit,
             qty_type: effectiveQtyType,
@@ -516,6 +528,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           }),
         ).unwrap()
         const id = res?.job_sheet?.id
+        if (res?.job_sheet?.order_id) setOrderId(String(res.job_sheet.order_id))
+        if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
+        if (res?.job_sheet?.invoice_no != null && res?.job_sheet?.invoice_no !== undefined) {
+          setInvoiceNo(String(res.job_sheet.invoice_no))
+        }
         setSaveMsg('Saved job sheet.')
         setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${id}`)
@@ -523,6 +540,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         if (!jobSheetId) throw new Error('Missing job sheet id')
         const body: Record<string, unknown> = {
           due_date: dueDate,
+          order_date: orderDate || null,
           quantity_value: oq.quantity_value,
           quantity_unit: oq.quantity_unit,
           qty_type: effectiveQtyType,
@@ -538,6 +556,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         if (specDirty) body.spec = spec
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
         const id = res?.job_sheet?.id
+        if (res?.job_sheet?.order_id) setOrderId(String(res.job_sheet.order_id))
+        if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
+        if (res?.job_sheet?.invoice_no != null && res?.job_sheet?.invoice_no !== undefined) {
+          setInvoiceNo(String(res.job_sheet.invoice_no))
+        }
         setSaveMsg('Saved job sheet.')
         setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${id}`)
@@ -571,6 +594,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         <Button variant="text" color="primary" component={Link} to={returnTo || cancelTo}>
           Cancel
         </Button>
+        {mode === 'edit' && orderId ? (
+          <Button variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(orderId)}`}>
+            View Order
+          </Button>
+        ) : null}
         <Button variant="contained" onClick={onSave} disabled={savingJobSheet}>
           {savingJobSheet ? 'Saving…' : mode === 'new' ? 'Save job sheet' : 'Save changes'}
         </Button>
@@ -587,8 +615,26 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">Job Sheet</Typography>
-            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>{renderJobSheetActions()}</Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', minWidth: 0 }}>
+              <Typography variant="h6" component="span">
+                Job Sheet
+              </Typography>
+              {mode === 'edit' && loadedJobSheet?.job_no ? (
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, flexWrap: 'wrap' }}>
+                  <Typography variant="caption" color="text.secondary" component="span">
+                    Job code
+                  </Typography>
+                  <Typography
+                    component="span"
+                    variant="subtitle1"
+                    sx={{ fontFamily: 'monospace', fontWeight: 700 }}
+                  >
+                    {loadedJobSheet.job_no}
+                  </Typography>
+                </Box>
+              ) : null}
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>{renderJobSheetActions()}</Box>
           </Box>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
@@ -609,6 +655,23 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 </MenuItem>
               ))}
             </TextField>
+
+            <TextField
+              label="Order Date"
+              type="date"
+              value={orderDate}
+              onChange={(e) => setOrderDate(e.target.value)}
+              onClick={() => {
+                const el = orderDateInputRef.current as any
+                if (el && typeof el.showPicker === 'function') el.showPicker()
+              }}
+              onFocus={() => {
+                const el = orderDateInputRef.current as any
+                if (el && typeof el.showPicker === 'function') el.showPicker()
+              }}
+              inputRef={orderDateInputRef}
+              InputLabelProps={{ shrink: true }}
+            />
 
             <TextField
               label="Due Date"
@@ -644,6 +707,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 <MenuItem value="kg">Total KG</MenuItem>
                 {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
               </TextField>
+              <TextField
+                label="Total Meters"
+                value={totalMetersReadonly}
+                disabled
+              />
             </Box>
             <Box
               sx={{
@@ -740,7 +808,16 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
         </Paper>
 
-        {isNarrow ? <JobSheetPreviewPanel invoiceNo={invoiceNo} orderDate={orderDate} dueDate={dueDate} productCode={previewProductCode} description={previewDescription} /> : null}
+        {isNarrow ? (
+          <JobSheetPreviewPanel
+            jobCode={mode === 'edit' && loadedJobSheet?.job_no ? loadedJobSheet.job_no : ''}
+            invoiceNo={invoiceNo}
+            orderDate={orderDate}
+            dueDate={dueDate}
+            productCode={previewProductCode}
+            description={previewDescription}
+          />
+        ) : null}
 
         {mode === 'edit' || mode === 'new' ? (
           <Paper variant="outlined" sx={{ p: 2 }}>
@@ -853,7 +930,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
         {!isNarrow ? (
           <StickySideAside>
-            <JobSheetPreviewPanel invoiceNo={invoiceNo} orderDate={orderDate} dueDate={dueDate} productCode={previewProductCode} description={previewDescription} />
+            <JobSheetPreviewPanel
+              jobCode={mode === 'edit' && loadedJobSheet?.job_no ? loadedJobSheet.job_no : ''}
+              invoiceNo={invoiceNo}
+              orderDate={orderDate}
+              dueDate={dueDate}
+              productCode={previewProductCode}
+              description={previewDescription}
+            />
           </StickySideAside>
         ) : null}
       </Box>
