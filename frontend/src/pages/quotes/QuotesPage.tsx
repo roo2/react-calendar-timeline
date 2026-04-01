@@ -608,8 +608,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const weightPerRollDisplay =
     qtyType === 'total_rolls'
       ? weightPerRollNum
-      : finishMode === 'Rolls' && numRollsNum > 0 && derivedForDisplay?.kgPerRoll != null
-        ? derivedForDisplay.kgPerRoll
+      : finishMode === 'Rolls' && numRollsNum > 0 &&
+          (derivedForDisplay?.billedKgPerRoll != null || derivedForDisplay?.kgPerRoll != null)
+        ? (derivedForDisplay.billedKgPerRoll ?? derivedForDisplay.kgPerRoll)
         : null
 
   const totalKgEditable = qtyType === 'kg'
@@ -1557,7 +1558,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     inputProps={{ min: 0, step: 0.1 }}
                     value={trimPctText}
                     onChange={(e) => setTrimPctText(e.target.value)}
-                    helperText="Optional. Percentage trim allowance."
                   />
                   <TextField
                     label="Tolerance (mm)"
@@ -1565,7 +1565,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     inputProps={{ min: 0, step: 0.1 }}
                     value={widthToleranceMmText}
                     onChange={(e) => setWidthToleranceMmText(e.target.value)}
-                    helperText="Optional. Width tolerance."
                   />
                 </Box>
               </Stack>

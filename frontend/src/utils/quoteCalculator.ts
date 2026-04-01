@@ -359,17 +359,16 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const trimPct = inputs.trim_pct != null && Number.isFinite(Number(inputs.trim_pct)) ? Number(inputs.trim_pct) : null
   const trimFactor = trimPct != null && trimPct > 0 ? clamp(1 - trimPct / 100, 0.01, 1) : null
 
-  // When quantity is given as units (No. of Bags): usable kg = units * kgPerUnit. Trim is waste, so we need to
-  // produce more: produced kg = usableKg / (1 - trimPct/100). When quantity is kg/m/rolls, trim reduces usable length.
+  // Trim % is yield loss: effective plastic = nominal × (1 − trim%/100). Same for bag counts (by mass) and kg/m/rolls.
   let derivedTotalKg: number
   let derivedTotalM: number
   let trimmedTotalKg: number
 
   if (unitsIn != null && kgPerUnit > 0) {
     const usableKg = kgPerUnit * unitsIn
-    derivedTotalKg = trimFactor != null ? usableKg / trimFactor : usableKg
-    trimmedTotalKg = derivedTotalKg
-    derivedTotalM = kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
+    trimmedTotalKg = trimFactor != null ? usableKg * trimFactor : usableKg
+    derivedTotalKg = trimmedTotalKg
+    derivedTotalM = kgPerLinearM > 0 ? trimmedTotalKg / kgPerLinearM : 0
   } else {
     derivedTotalKg =
       totalKgReqPlastic != null
@@ -399,6 +398,18 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const kgPerRoll = canComputeRollStats ? trimmedTotalKg / rolls : null
   const mPerRoll = canComputeRollStats ? derivedTotalM / rolls : null
 
+  // Billed / scale weight (e.g. rolls with core included): customer total_kg includes core; plastic mass is lower.
+  // Costs use trimmedTotalKg (plastic); quotes should show and price per kg using billedTotalsKg.
+  let billedTotalsKg: number
+  if (unitsIn != null && kgPerUnit > 0) {
+    billedTotalsKg = trimmedTotalKg
+  } else if (totalKgReq != null && totalKgReq > 0 && totalKgReqPlastic != null && totalKgReqPlastic > 0) {
+    billedTotalsKg = totalKgReq * (trimmedTotalKg / totalKgReqPlastic)
+  } else {
+    billedTotalsKg = trimmedTotalKg
+  }
+  const billedKgPerRoll = rolls != null && rolls > 0 && billedTotalsKg > 0 ? billedTotalsKg / rolls : null
+
   return {
     units,
     rolls,
@@ -409,9 +420,11 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     kgPerUnit,
     kgPerLinearM,
     derivedTotalKg: trimmedTotalKg,
+    billedTotalsKg,
     derivedTotalM,
     webLengthM,
     kgPerRoll,
+    billedKgPerRoll,
     mPerRoll,
   }
 }
@@ -492,7 +505,7 @@ export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ra
 
 export function computeRollMetrics(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): Pick<QuotePreview, 'kg_per_roll' | 'm_per_roll'> {
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
-  return { kg_per_roll: d.kgPerRoll, m_per_roll: d.mPerRoll }
+  return { kg_per_roll: d.billedKgPerRoll ?? d.kgPerRoll, m_per_roll: d.mPerRoll }
 }
 
 export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): QuotePreview {
@@ -655,16 +668,17 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const finalPrice = margin < 1 ? totalCost / (1 - margin) : totalCost
   const unitPrice = units != null ? finalPrice / units : null
   const costPerKg = derivedTotalKg > 0 ? totalCost / derivedTotalKg : null
+  const billedTotalsKg = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
 
   return {
     // This is a geometric/material property (for discrete products), not dependent on the quote quantity type.
     // Keep it available even when quoting by KG/meters/rolls, so the UI can show "kg / 1000 products".
     kg_per_unit: inputs.continuous_roll ? null : kgPerUnit,
     units_per_roll: null,
-    totals_kg: derivedTotalKg,
+    totals_kg: billedTotalsKg,
     totals_units: units,
     totals_m: d.derivedTotalM > 0 ? roundMoney(d.derivedTotalM) : null,
-    kg_per_roll: kgPerRoll,
+    kg_per_roll: d.billedKgPerRoll ?? kgPerRoll,
     m_per_roll: mPerRoll,
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
     extrusion_hours: extrusionHours,
