@@ -143,6 +143,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const [pvOpen, setPvOpen] = useState(false)
   const [pvProductId, setPvProductId] = useState<string | null>(null)
+  const [pvJobSheetId, setPvJobSheetId] = useState<string | null>(null)
   const [pvTitle, setPvTitle] = useState<string>('')
 
   const [newProductOpen, setNewProductOpen] = useState(false)
@@ -177,8 +178,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const productListErr =
     customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
 
-  function openProductVersionModal(p: { product_id: string; product_code?: string | null }) {
+  function openProductVersionModal(p: { product_id: string; product_code?: string | null; job_sheet_id?: string }) {
     setPvProductId(p.product_id)
+    setPvJobSheetId(p.job_sheet_id ? String(p.job_sheet_id) : null)
     setPvTitle(p.product_code ? `Edit ${p.product_code}` : 'Edit product')
     setPvOpen(true)
   }
@@ -186,6 +188,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   function closeProductVersionModal() {
     setPvOpen(false)
     setPvProductId(null)
+    setPvJobSheetId(null)
     setPvTitle('')
   }
 
@@ -887,8 +890,23 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           {pvProductId ? (
             <ProductVersionEditor
               productId={pvProductId}
+              jobSheetId={pvJobSheetId || undefined}
               onCancel={closeProductVersionModal}
-              onDone={() => closeProductVersionModal()}
+              onDone={async () => {
+                closeProductVersionModal()
+                if (!orderId) return
+                try {
+                  const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+                  setOrderStatus(String(res?.status || orderStatus))
+                  setInvoiceNumber(String(res?.code ?? ''))
+                  setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
+                  const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+                  setItems(nextItems)
+                  originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+                } catch {
+                  // stale table until user refreshes or saves again
+                }
+              }}
               title={pvTitle || undefined}
             />
           ) : null}

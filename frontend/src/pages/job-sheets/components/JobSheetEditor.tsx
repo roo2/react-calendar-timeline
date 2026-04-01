@@ -44,6 +44,7 @@ import { computeProductDescriptionFromSpec, computeProductCodeFromSpec } from '.
 import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../../components/SpecPayloadForm'
 import { StickySideAside } from '../../../components/StickySideAside'
+import { JobSheetIdentityQuantitySection } from './JobSheetIdentityQuantitySection'
 
 type Mode = 'new' | 'edit'
 
@@ -613,185 +614,77 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         {(productsErr || createState.error || saveErr) && <Alert severity="error">{productsErr || createState.error || saveErr}</Alert>}
         {saveMsg && <Alert severity="success">{saveMsg}</Alert>}
 
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', minWidth: 0 }}>
-              <Typography variant="h6" component="span">
-                Job Sheet
-              </Typography>
-              {mode === 'edit' && loadedJobSheet?.job_no ? (
-                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, flexWrap: 'wrap' }}>
-                  <Typography variant="caption" color="text.secondary" component="span">
-                    Job code
-                  </Typography>
-                  <Typography
-                    component="span"
-                    variant="subtitle1"
-                    sx={{ fontFamily: 'monospace', fontWeight: 700 }}
-                  >
-                    {loadedJobSheet.job_no}
-                  </Typography>
-                </Box>
-              ) : null}
-            </Box>
-            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>{renderJobSheetActions()}</Box>
-          </Box>
-
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-            <TextField
-              select
-              label="Customer"
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              required
-              disabled={disableIdentity || customersStatus === 'loading' || customersStatus === 'idle'}
-            >
-              <MenuItem value="" disabled>
-                Select…
-              </MenuItem>
-              {customers.map((c: any) => (
-                <MenuItem key={c.id} value={c.id}>
-                  {c.name} {c.code ? `(${String(c.code).toUpperCase()})` : ''}
-                </MenuItem>
-              ))}
-            </TextField>
-
-            <TextField
-              label="Order Date"
-              type="date"
-              value={orderDate}
-              onChange={(e) => setOrderDate(e.target.value)}
-              onClick={() => {
-                const el = orderDateInputRef.current as any
-                if (el && typeof el.showPicker === 'function') el.showPicker()
-              }}
-              onFocus={() => {
-                const el = orderDateInputRef.current as any
-                if (el && typeof el.showPicker === 'function') el.showPicker()
-              }}
-              inputRef={orderDateInputRef}
-              InputLabelProps={{ shrink: true }}
-            />
-
-            <TextField
-              label="Due Date"
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              onClick={() => {
-                const el = dueDateInputRef.current as any
-                if (el && typeof el.showPicker === 'function') el.showPicker()
-              }}
-              onFocus={() => {
-                const el = dueDateInputRef.current as any
-                if (el && typeof el.showPicker === 'function') el.showPicker()
-              }}
-              inputRef={dueDateInputRef}
-              InputLabelProps={{ shrink: true }}
-              required
-            />
-          </Box>
-
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Quantity
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-              <TextField
-                select
-                label="Qty Type"
-                value={effectiveQtyType}
-                onChange={(e) => setQtyType(e.target.value as QtyType)}
-              >
-                <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
-                <MenuItem value="kg">Total KG</MenuItem>
-                {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
-              </TextField>
-              <TextField
-                label="Total Meters"
-                value={totalMetersReadonly}
-                disabled
-              />
-            </Box>
-            <Box
-              sx={{
-                mt: 2,
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-                gap: 2,
-              }}
-            >
-              <TextField
-                label="Total KG"
-                type="number"
-                inputProps={{ min: 0, step: 0.1 }}
-                value={
-                  totalKgEditable
-                    ? totalKg
-                    : haveDriverForTotalKg && totalKgDisplay != null
-                      ? formatKgDisplay(totalKgDisplay)
-                      : totalKg !== '' && Number.isFinite(Number(totalKg))
-                        ? formatKgDisplay(Number(totalKg))
-                        : totalKg
-                }
-                onChange={totalKgEditable ? (e) => setTotalKg(e.target.value) : undefined}
-                disabled={!totalKgEditable}
-                required={effectiveQtyType === 'kg'}
-              />
-              <TextField
-                label={`No. of ${productUnitLabel}`}
-                type="number"
-                inputProps={{ min: 0, step: 1 }}
-                value={
-                  unitsEditable
-                    ? numUnits
-                    : haveDriverForUnits && derivedForDisplay?.units != null
-                      ? String(Math.round(Number(derivedForDisplay.units)))
-                      : numUnits
-                }
-                onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
-                disabled={!unitsEditable}
-                required={effectiveQtyType === 'units'}
-              />
-              <TextField
-                label="Weight per Roll (kg)"
-                type="number"
-                inputProps={{ min: 0, step: 0.1 }}
-                value={
-                  weightPerRollEditable
-                    ? weightPerRoll
-                    : haveDriverForWeightPerRoll && weightPerRollDisplay != null
-                      ? formatKgDisplay(weightPerRollDisplay)
-                      : finishMode === 'Cartons' && totalKgNum > 0 && numRollsNum > 0
-                        ? formatKgDisplay(cartonsWeightPerRollKg(totalKgNum, numRollsNum))
-                        : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
-                          ? formatKgDisplay(Number(weightPerRoll))
-                          : weightPerRoll
-                }
-                onChange={weightPerRollEditable ? (e) => setWeightPerRoll(e.target.value) : undefined}
-                disabled={!weightPerRollEditable}
-                helperText={finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined}
-              />
-              <TextField
-                label="No. of Rolls"
-                type="number"
-                inputProps={{ min: 1, step: 1 }}
-                value={
-                  rollsEditable
-                    ? numRolls
-                    : rollsDisplay != null && finishMode === 'Rolls'
-                      ? String(rollsDisplay)
-                      : numRolls
-                }
-                onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
-                disabled={!rollsEditable}
-                required
-              />
-            </Box>
-          </Box>
-
-          {mode === 'edit' ? (
-            <Box sx={{ mt: 2 }}>
+        <JobSheetIdentityQuantitySection
+          jobCode={mode === 'edit' && loadedJobSheet?.job_no ? loadedJobSheet.job_no : null}
+          headerActions={renderJobSheetActions()}
+          customers={customers as any}
+          customersStatus={customersStatus}
+          customerId={customerId}
+          onCustomerIdChange={setCustomerId}
+          customerSelectDisabled={disableIdentity}
+          orderDate={orderDate}
+          onOrderDateChange={setOrderDate}
+          dueDate={dueDate}
+          onDueDateChange={setDueDate}
+          orderDateInputRef={orderDateInputRef}
+          dueDateInputRef={dueDateInputRef}
+          productUnitLabel={productUnitLabel}
+          finishMode={finishMode}
+          effectiveQtyType={effectiveQtyType}
+          onQtyTypeChange={setQtyType}
+          totalMetersReadonly={totalMetersReadonly}
+          totalKgField={{
+            value:
+              totalKgEditable
+                ? totalKg
+                : haveDriverForTotalKg && totalKgDisplay != null
+                  ? formatKgDisplay(totalKgDisplay)
+                  : totalKg !== '' && Number.isFinite(Number(totalKg))
+                    ? formatKgDisplay(Number(totalKg))
+                    : totalKg,
+            onChange: totalKgEditable ? (v) => setTotalKg(v) : undefined,
+            disabled: !totalKgEditable,
+            required: effectiveQtyType === 'kg',
+          }}
+          numUnitsField={{
+            value:
+              unitsEditable
+                ? numUnits
+                : haveDriverForUnits && derivedForDisplay?.units != null
+                  ? String(Math.round(Number(derivedForDisplay.units)))
+                  : numUnits,
+            onChange: unitsEditable ? (v) => setNumUnits(v) : undefined,
+            disabled: !unitsEditable,
+            required: effectiveQtyType === 'units',
+          }}
+          weightPerRollField={{
+            value:
+              weightPerRollEditable
+                ? weightPerRoll
+                : haveDriverForWeightPerRoll && weightPerRollDisplay != null
+                  ? formatKgDisplay(weightPerRollDisplay)
+                  : finishMode === 'Cartons' && totalKgNum > 0 && numRollsNum > 0
+                    ? formatKgDisplay(cartonsWeightPerRollKg(totalKgNum, numRollsNum))
+                    : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
+                      ? formatKgDisplay(Number(weightPerRoll))
+                      : weightPerRoll,
+            onChange: weightPerRollEditable ? (v) => setWeightPerRoll(v) : undefined,
+            disabled: !weightPerRollEditable,
+            helperText: finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined,
+          }}
+          numRollsField={{
+            value:
+              rollsEditable
+                ? numRolls
+                : rollsDisplay != null && finishMode === 'Rolls'
+                  ? String(rollsDisplay)
+                  : numRolls,
+            onChange: rollsEditable ? (v) => setNumRolls(v) : undefined,
+            disabled: !rollsEditable,
+            required: true,
+          }}
+          productRow={
+            mode === 'edit' ? (
               <TextField
                 label="Product"
                 value={
@@ -803,10 +696,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 fullWidth
                 sx={{ '& .MuiInputBase-input': { color: 'text.primary' } }}
               />
-            </Box>
-          ) : null}
-
-        </Paper>
+            ) : undefined
+          }
+        />
 
         {isNarrow ? (
           <JobSheetPreviewPanel
