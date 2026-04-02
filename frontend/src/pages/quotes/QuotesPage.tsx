@@ -1662,20 +1662,30 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     onChange={totalKgEditable ? (e) => setTotalKg(e.target.value) : undefined}
                     disabled={!totalKgEditable}
                   />
-                  <TextField
-                    label={`${productUnitLabel} per roll`}
-                    type="number"
-                    inputProps={{ min: 0, step: qtyType === 'rolls_units' ? 1 : 'any' }}
-                    value={
-                      qtyType === 'rolls_units'
-                        ? unitsPerRoll
-                        : productsPerRollDerived != null
-                          ? formatKgDisplay(productsPerRollDerived)
-                          : ''
-                    }
-                    onChange={qtyType === 'rolls_units' ? (e) => setUnitsPerRoll(e.target.value) : undefined}
-                    disabled={qtyType !== 'rolls_units'}
-                  />
+                  {finishMode === 'Rolls' ? (
+                    <TextField
+                      label={`${productUnitLabel} per roll`}
+                      type="number"
+                      inputProps={{ min: 0, step: qtyType === 'rolls_units' ? 1 : 'any' }}
+                      value={
+                        qtyType === 'rolls_units'
+                          ? unitsPerRoll
+                          : productsPerRollDerived != null
+                            ? formatKgDisplay(productsPerRollDerived)
+                            : ''
+                      }
+                      onChange={qtyType === 'rolls_units' ? (e) => setUnitsPerRoll(e.target.value) : undefined}
+                      disabled={qtyType !== 'rolls_units'}
+                    />
+                  ) : (
+                    <TextField
+                      label={`${productUnitLabel} per Carton`}
+                      type="number"
+                      inputProps={{ min: 1, step: 1 }}
+                      value={bagsPerCarton}
+                      onChange={(e) => setBagsPerCarton(e.target.value)}
+                    />
+                  )}
                   <TextField
                     label="Weight per Roll (kg)"
                     type="number"
@@ -1744,15 +1754,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       </MenuItem>
                     ))}
                   </DefaultSelectField>
-                  {finishMode === 'Cartons' ? (
-                    <TextField
-                      label="Bags per Carton"
-                      type="number"
-                      inputProps={{ min: 1, step: 1 }}
-                      value={bagsPerCarton}
-                      onChange={(e) => setBagsPerCarton(e.target.value)}
-                    />
-                  ) : (
+                  {finishMode === 'Rolls' ? (
                     <DefaultSelectField
                       label="Roll weight billing"
                       defaultValue="core_off"
@@ -1763,7 +1765,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       <MenuItem value="core_off">Exclude core</MenuItem>
                       <MenuItem value="core_half_off">Half core</MenuItem>
                     </DefaultSelectField>
-                  )}
+                  ) : null}
                 </Box>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                   <TextField
