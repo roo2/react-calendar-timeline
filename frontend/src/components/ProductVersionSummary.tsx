@@ -148,10 +148,12 @@ export function ProductVersionSummary(props: { spec: any }) {
     spec?.run_requirements?.hole_punched ? 'Punched' : null,
   ].filter(Boolean)
 
-  const lengthUnits = (spec?.dimensions?.length_units as string | undefined) || 'mm'
+  const lengthUnitsRaw = (spec?.dimensions?.length_units as string | undefined) || 'mm'
+  const lengthUnits =
+    lengthUnitsRaw === 'Continuous' || lengthUnitsRaw?.toLowerCase() === 'continuous' ? 'Continuous' : lengthUnitsRaw
   const baseLenMm = spec?.dimensions?.base_length_mm
   const lengthDisplay =
-    baseLenMm == null
+    lengthUnits === 'Continuous' || baseLenMm == null
       ? 'Continuous'
       : lengthUnits === 'M'
         ? `${(Number(baseLenMm) / 1000).toFixed(3).replace(/\.?0+$/, '')} M`

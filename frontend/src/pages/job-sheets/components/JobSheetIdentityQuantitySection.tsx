@@ -56,7 +56,7 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
         <TextField select label="Qty Type" value={effectiveQtyType} onChange={(e) => onQtyTypeChange(e.target.value as QtyType)}>
           <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
           <MenuItem value="kg">Total KG</MenuItem>
-          {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
+          {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Rolls x KG per roll</MenuItem> : null}
         </TextField>
         <TextField label="Total Meters" value={totalMetersReadonly} disabled />
       </Box>

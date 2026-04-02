@@ -7,10 +7,17 @@ import type { QuickQuoteInputs } from './quoteCalculator'
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
 import { productTypeCanHaveGusset } from './specCompat'
 
-function baseLengthMmFromDimensions(dim: any): number {
+function dimensionsAreContinuous(dim: any, productType: string): boolean {
+  const lu = String(dim?.length_units || '')
+  if (lu === 'Continuous' || lu.toLowerCase() === 'continuous') return true
+  return productType === 'Tube'
+}
+
+function baseLengthMmFromDimensions(dim: any, productType: string): number {
+  if (dimensionsAreContinuous(dim, productType)) return 0
   const raw = Number(dim?.base_length_mm || 0)
-  const units = dim?.length_units === 'm' ? 'm' : 'mm'
-  if (units === 'm') return Math.round(raw * 1000)
+  const u = String(dim?.length_units || 'mm')
+  if (u === 'M' || u === 'm') return Math.round(raw * 1000)
   return Math.round(raw)
 }
 
@@ -43,6 +50,8 @@ export type SpecQuantitySlice = {
   numUnits: number
   numRolls: number
   weightPerRoll: number
+  /** For qtyType rolls_units: discrete units per roll (e.g. bags per roll). */
+  unitsPerRoll?: number
 }
 
 /**
@@ -66,7 +75,8 @@ export function buildQuickQuoteInputsFromSpec(
   const derivedGeometry: 'Flat' | 'Gusset' = flagGusset ? 'Gusset' : 'Flat'
 
   const finishMode: FinishMode = id.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-  const baseLengthMm = baseLengthMmFromDimensions(dim)
+  const continuousRoll = dimensionsAreContinuous(dim, productType)
+  const baseLengthMm = baseLengthMmFromDimensions(dim, productType)
   const widthMmNum = Math.round(Number(dim.base_width_mm || 0))
   const ufilmLeftWidthMmNum = Math.round(Number(dim.ufilm_left_width_mm || 0))
   const ufilmRightWidthMmNum = Math.round(Number(dim.ufilm_right_width_mm || 0))
@@ -112,6 +122,7 @@ export function buildQuickQuoteInputsFromSpec(
     quantity.weightPerRoll,
     quantity.numUnits,
     baseLengthMm,
+    quantity.unitsPerRoll ?? 0,
   )
 
   return {
@@ -124,7 +135,7 @@ export function buildQuickQuoteInputsFromSpec(
     ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
     thickness_um: thicknessUmNum,
     base_length_mm: baseLengthMm,
-    continuous_roll: false,
+    continuous_roll: continuousRoll,
     inline_perforation: !!run.inline_perforation,
     inline_seal: !!run.inline_seal,
     hole_punched: !!run.hole_punched,

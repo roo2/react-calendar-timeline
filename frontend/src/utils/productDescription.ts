@@ -73,16 +73,19 @@ export function computeProductDescriptionFromSpec(spec: any): string {
 
   const productType = up(identity?.product_type)
 
-  // Colour: first non-empty colour_code from colour_components, else legacy colour.colour_code.
+  // Colour: from colour_components; skip WHITE when other colours exist (opacity / filler masterbatch).
   let colour = ''
   const comps = formulation?.colour_components
   if (Array.isArray(comps)) {
+    const codes: string[] = []
     for (const row of comps) {
       const cc = (row?.colour_code ?? '').toString().trim()
-      if (cc) {
-        colour = up(cc)
-        break
-      }
+      if (cc) codes.push(up(cc))
+    }
+    if (codes.length > 0) {
+      const hasWhite = codes.includes('WHITE')
+      const hasOther = codes.some((c) => c !== 'WHITE')
+      colour = hasWhite && hasOther ? (codes.find((c) => c !== 'WHITE') ?? '') : codes[0]
     }
   }
   if (!colour) colour = up(formulation?.colour?.colour_code)

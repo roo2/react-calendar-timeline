@@ -409,8 +409,9 @@ export function SpecPayloadForm(props: {
     }
   }, [dimensions.base_width_mm, dimensions.geometry, dimensions.gusset_mm, dimensions.ufilm_left_width_mm, dimensions.ufilm_right_width_mm, gussetEnabled, productType, runUpNum])
 
-  const lengthUnits = (dimensions.length_units as 'mm' | 'M' | undefined) || 'mm'
+  const lengthUnits = (dimensions.length_units as 'mm' | 'M' | 'Continuous' | undefined) || 'mm'
   const lengthDisplay = useMemo(() => {
+    if (lengthUnits === 'Continuous') return ''
     const mm = typeof dimensions.base_length_mm === 'number' ? dimensions.base_length_mm : null
     if (mm == null) return ''
     if (lengthUnits === 'M') return String(Math.round((mm / 1000) * 1000) / 1000)
@@ -449,11 +450,17 @@ export function SpecPayloadForm(props: {
         d.dimensions.gusset_mm = null
       }
 
-      // Tubes are always rolls in our simplified UI (length disabled for Tube).
+      // Tubes are always rolls in our simplified UI (continuous length; no discrete length).
       if (nextType === PRODUCT_TYPE.Tube) {
         d.identity.finish_mode = 'Rolls'
         d.packaging.pack_mode = 'Rolls'
         d.dimensions.base_length_mm = null
+        d.dimensions.length_units = 'Continuous'
+      }
+
+      // Continuous length is not available for Bag or Sleeve.
+      if (nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Sleeve) {
+        if (d.dimensions.length_units === 'Continuous') d.dimensions.length_units = 'mm'
       }
     })
   }
@@ -1064,14 +1071,29 @@ export function SpecPayloadForm(props: {
               label="Length Units"
               defaultValue="mm"
               value={lengthUnits}
-              onChange={(e) => update((d) => (d.dimensions.length_units = e.target.value))}
+              onChange={(e) =>
+                update((d) => {
+                  const v = e.target.value as 'mm' | 'M' | 'Continuous'
+                  d.dimensions.length_units = v
+                  if (v === 'Continuous') d.dimensions.base_length_mm = null
+                })
+              }
               disabled={productType === PRODUCT_TYPE.Tube}
             >
               <MenuItem value="mm">mm</MenuItem>
               <MenuItem value="M">M</MenuItem>
+              {productType !== PRODUCT_TYPE.Bag && productType !== PRODUCT_TYPE.Sleeve ? (
+                <MenuItem value="Continuous">Continuous</MenuItem>
+              ) : null}
             </DefaultSelectField>
             <TextField
-              label={`Length (${lengthUnits})`}
+              label={
+                lengthUnits === 'Continuous'
+                  ? 'Length'
+                  : lengthUnits === 'M'
+                    ? 'Length (M)'
+                    : 'Length (mm)'
+              }
               type="number"
               inputProps={
                 lengthUnits === 'M'
@@ -1096,8 +1118,14 @@ export function SpecPayloadForm(props: {
                   }
                 })
               }
-              disabled={productType === PRODUCT_TYPE.Tube}
-              helperText={productType === PRODUCT_TYPE.Tube ? 'Not used for tubes' : ''}
+              disabled={productType === PRODUCT_TYPE.Tube || lengthUnits === 'Continuous'}
+              helperText={
+                productType === PRODUCT_TYPE.Tube
+                  ? 'Tubes use continuous length'
+                  : lengthUnits === 'Continuous'
+                    ? 'Continuous length (no fixed product length)'
+                    : ''
+              }
               error={!!errorFor('spec.dimensions.base_length_mm')}
             />
           </Box>

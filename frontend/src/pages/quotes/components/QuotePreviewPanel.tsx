@@ -14,10 +14,22 @@ export function QuotePreviewPanel(props: {
   finishMode: 'Rolls' | 'Cartons'
   productType: string
   estimatedPallets: number | null
+  /** From {@link computeProductDescriptionFromSpec} on the current quote spec (same as product list / editor). */
+  productDescription?: string
 }) {
-  const { preview, loading, canCalculate, missing, finishMode, productType, estimatedPallets } = props
+  const {
+    preview,
+    loading,
+    canCalculate,
+    missing,
+    finishMode,
+    productType,
+    estimatedPallets,
+    productDescription = '',
+  } = props
   const p = preview
   const dash = '—'
+  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
@@ -27,13 +39,19 @@ export function QuotePreviewPanel(props: {
         </Typography>
       </Box>
 
+      <Typography variant="body2" sx={{ mt: 1.5, wordBreak: 'break-word' }}>
+        {productDescription.trim() ? productDescription.trim() : '—'}
+      </Typography>
+
+      <Divider sx={{ mt: 2, mb: 1 }} />
+
       {!p && missing.length > 0 ? (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
           Missing: {missing.join(', ')}
         </Typography>
       ) : null}
 
-      <Box sx={{ mt: 1 }}>
+      <Box>
         {p ? (
           <>
             {(() => {
@@ -76,24 +94,30 @@ export function QuotePreviewPanel(props: {
                 Weight / Roll: {fmtQtyNumber(Number(p.kg_per_roll), 2)}kg
               </Typography>
             )}
-            {finishMode === 'Rolls' && p.m_per_roll != null && (
+            {finishMode === 'Rolls' && p.units_per_roll != null && (
               <Typography variant="body2">
-                Meters / Roll: {fmtQtyNumber(Number(p.m_per_roll), 2)}m
+                {productUnitLabel} / Roll: {fmtQtyNumber(Number(p.units_per_roll), 2)}
               </Typography>
             )}
             {p.unit_price != null && (
               <Typography variant="body2">
                 {productType === 'Bag' ? (
-                  <>
-                    Price per 1000 bags: {fmtDollarsPreview(Number(p.unit_price) * 1000, 4)}
-                  </>
+                  <>Price per 1000 bags: {fmtDollarsPreview(Number(p.unit_price) * 1000, 2)}</>
+                ) : productType === 'Centerfold' ? (
+                  <>Price per 1000 Centerfolds: {fmtDollarsPreview(Number(p.unit_price) * 1000, 2)}</>
+                ) : productType === 'Sleeve' ? (
+                  <>Price per 1000 Sleeves: {fmtDollarsPreview(Number(p.unit_price) * 1000, 2)}</>
                 ) : (
-                  <>
-                    Price per {productType}: {fmtDollarsPreview(p.unit_price, 4)}
-                  </>
+                  <>Price per {productType}: {fmtDollarsPreview(p.unit_price, 4)}</>
                 )}
               </Typography>
             )}
+            {productType === 'Centerfold' ? (
+              <Typography variant="body2">
+                Total Centerfolds:{' '}
+                {p.totals_units != null && Number(p.totals_units) > 0 ? fmtCount(Number(p.totals_units)) : dash}
+              </Typography>
+            ) : null}
             {p.totals_m != null && Number(p.totals_m) > 0 && (
               <Typography variant="body2">
                 Total meters: {fmtQtyNumber(Number(p.totals_m), 2)}m

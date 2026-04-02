@@ -3,7 +3,7 @@
  * Mirrors behaviour documented in QuotesPage calcPayload and field editability.
  */
 
-export type QtyType = 'units' | 'kg' | 'total_rolls'
+export type QtyType = 'units' | 'kg' | 'total_rolls' | 'rolls_units'
 export type FinishMode = 'Rolls' | 'Cartons'
 
 /** Build the `quantity` object passed to QuickQuoteInputs / computeDerivedGeometryAndTotals. */
@@ -15,6 +15,7 @@ export function buildQuantityObjectForCalculator(
   weightPerRollNum: number,
   numUnitsNum: number,
   baseLengthMm: number,
+  unitsPerRollNum: number = 0,
 ): { units?: number; total_kg?: number; total_m?: number; rolls?: number } {
   const qty: { units?: number; total_kg?: number; total_m?: number; rolls?: number } = {}
   if (qtyType === 'units') qty.units = numUnitsNum
@@ -24,10 +25,18 @@ export function buildQuantityObjectForCalculator(
       qty.rolls = Math.round(totalKgNum / weightPerRollNum)
     }
   }
+  if (qtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) {
+    const totalUnits = numRollsNum * unitsPerRollNum
+    qty.units = totalUnits
+    qty.rolls = numRollsNum
+    if (baseLengthMm > 0) {
+      qty.total_m = (totalUnits * baseLengthMm) / 1000
+    }
+  }
   if (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
     qty.total_kg = numRollsNum * weightPerRollNum
     qty.rolls = numRollsNum
-  } else if (finishMode === 'Rolls' && qtyType !== 'kg' && numRollsNum > 0) {
+  } else if (finishMode === 'Rolls' && qtyType !== 'kg' && qtyType !== 'rolls_units' && numRollsNum > 0) {
     qty.rolls = numRollsNum
   }
 
@@ -40,9 +49,10 @@ export function buildQuantityObjectForCalculator(
 export function getFieldEditability(finishMode: FinishMode, qtyType: QtyType) {
   const totalKgEditable = qtyType === 'kg'
   const unitsEditable = qtyType === 'units'
-  const rollsEditable = finishMode === 'Rolls' && qtyType === 'total_rolls'
+  const rollsEditable = finishMode === 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')
   const weightPerRollEditable =
-    finishMode === 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'kg')
+    finishMode === 'Rolls' &&
+    (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'kg')
   /** Cartons: rolls are internal for scheduling — user always sets count; weight/roll is derived from total kg. */
   const cartonsRollCountEditable = finishMode === 'Cartons'
   return {
@@ -90,7 +100,7 @@ export function computeTotalKgDisplay(
   derived: DerivedDisplay,
 ): number | null {
   if (qtyType === 'kg') return totalKgNum
-  if (qtyType === 'units') return derived?.derivedTotalKg ?? null
+  if (qtyType === 'units' || qtyType === 'rolls_units') return derived?.derivedTotalKg ?? null
   if (qtyType === 'total_rolls') {
     return numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : null
   }
@@ -125,12 +135,16 @@ export function getOrderQuantityFromJobSheetFields(
   if (qtyType === 'total_rolls') {
     return { quantity_value: numRollsNum > 0 ? numRollsNum : quantityValueFallback, quantity_unit: 'rolls' }
   }
+  if (qtyType === 'rolls_units') {
+    const total = numRollsNum > 0 && numUnitsNum > 0 ? numRollsNum * numUnitsNum : 0
+    return { quantity_value: total > 0 ? total : quantityValueFallback, quantity_unit: 'bags' }
+  }
   return { quantity_value: numUnitsNum > 0 ? numUnitsNum : quantityValueFallback, quantity_unit: 'bags' }
 }
 
-/** Enforce qtyType when finish mode is Cartons (cannot use total_rolls mode — that mode is for Rolls finish). */
+/** Enforce qtyType when finish mode is Cartons (cannot use roll-based modes — those are for Rolls finish). */
 export function coerceQtyTypeForFinishMode(finishMode: FinishMode, qtyType: QtyType): QtyType {
-  if (finishMode !== 'Rolls' && qtyType === 'total_rolls') return 'kg'
+  if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) return 'kg'
   return qtyType
 }
 
@@ -197,6 +211,10 @@ export function validateJobSheetQuantityInputs(
   }
   if (qtyType === 'total_rolls') {
     if (!(numRollsNum > 0) || !(weightPerRollNum > 0)) return 'No. of rolls and weight per roll are required.'
+  }
+  if (qtyType === 'rolls_units') {
+    if (!(numRollsNum > 0)) return 'Enter the number of rolls.'
+    if (!(numUnitsNum > 0)) return 'Enter units per roll.'
   }
   return null
 }

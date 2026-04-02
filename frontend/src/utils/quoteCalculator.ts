@@ -506,9 +506,18 @@ export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ra
   return out
 }
 
-export function computeRollMetrics(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): Pick<QuotePreview, 'kg_per_roll' | 'm_per_roll'> {
+export function computeRollMetrics(
+  inputs: QuickQuoteInputs,
+  ratebook: QuoteRatebook,
+): Pick<QuotePreview, 'kg_per_roll' | 'm_per_roll' | 'units_per_roll'> {
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
-  return { kg_per_roll: d.billedKgPerRoll ?? d.kgPerRoll, m_per_roll: d.mPerRoll }
+  const unitsPerRoll =
+    d.rolls != null && d.rolls > 0 && d.units != null && d.units > 0 ? d.units / d.rolls : null
+  return {
+    kg_per_roll: d.billedKgPerRoll ?? d.kgPerRoll,
+    m_per_roll: d.mPerRoll,
+    units_per_roll: unitsPerRoll,
+  }
 }
 
 export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): QuotePreview {
@@ -674,12 +683,14 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const unitPrice = units != null ? finalPrice / units : null
   const costPerKg = derivedTotalKg > 0 ? totalCost / derivedTotalKg : null
   const billedTotalsKg = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
+  const unitsPerRoll =
+    rolls != null && rolls > 0 && units != null && units > 0 ? units / rolls : null
 
   return {
     // This is a geometric/material property (for discrete products), not dependent on the quote quantity type.
     // Keep it available even when quoting by KG/meters/rolls, so the UI can show "kg / 1000 products".
     kg_per_unit: inputs.continuous_roll ? null : kgPerUnit,
-    units_per_roll: null,
+    units_per_roll: unitsPerRoll,
     totals_kg: billedTotalsKg,
     totals_units: units,
     totals_m: d.derivedTotalM > 0 ? roundMoney(d.derivedTotalM) : null,

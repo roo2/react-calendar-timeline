@@ -14,7 +14,8 @@ export type QuotePayload = {
   gusset_mm?: number | null
   ufilm_left_width_mm?: number | null
   ufilm_right_width_mm?: number | null
-  length_units?: 'mm' | 'M'
+  length_units?: 'mm' | 'M' | 'm' | 'continuous' | 'Continuous'
+  continuous_roll?: boolean
   trim_pct?: number | null
   width_tolerance_mm?: number | null
   blend?: Array<{ resin_code: string; pct: number }>
@@ -33,7 +34,9 @@ export type QuotePayload = {
   inline_seal?: boolean
   hole_punched?: boolean
   run_up?: number | null
-  qtyType?: 'kg' | 'units' | 'total_rolls'
+  qtyType?: 'kg' | 'units' | 'total_rolls' | 'rolls_units'
+  /** When qtyType is rolls_units: products (e.g. bags) per roll. */
+  unitsPerRoll?: string | number
   totalKg?: string | number
   numUnits?: string | number
   numRolls?: string | number
@@ -82,14 +85,32 @@ function normalizeBlend(
  * Build a full SpecPayload from the saved quote payload (or current quote form state).
  * Uses defaults for required fields when quote values are missing.
  */
+function quotePayloadUsesContinuousLength(p: QuotePayload): boolean {
+  const pt = String(p.product_type || '')
+  if (pt === 'Tube') return true
+  if (p.continuous_roll) return true
+  const lu = String(p.length_units || '').toLowerCase()
+  return lu === 'continuous'
+}
+
+function quoteLengthUnitsToSpec(p: QuotePayload, continuous: boolean): 'mm' | 'M' | 'Continuous' {
+  if (continuous) return 'Continuous'
+  const lu = String(p.length_units || 'mm').toLowerCase()
+  if (lu === 'm') return 'M'
+  return 'mm'
+}
+
 export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
   const p = payload as QuotePayload
   const baseWidthMm = Math.max(1, Number(p.base_width_mm) || 1)
   const thicknessUm = Math.max(1, Number(p.thickness_um) || 1)
+  const continuousLength = quotePayloadUsesContinuousLength(p)
   const baseLengthMm =
-    p.finish_mode === 'Rolls'
-      ? (p.base_length_mm != null ? Number(p.base_length_mm) : null) ?? null
-      : Math.max(1, Number(p.base_length_mm) || 1)
+    continuousLength && p.finish_mode === 'Rolls'
+      ? null
+      : p.finish_mode === 'Rolls'
+        ? (p.base_length_mm != null ? Number(p.base_length_mm) : null) ?? null
+        : Math.max(1, Number(p.base_length_mm) || 1)
   const geometry =
     (p.geometry as 'Flat' | 'Gusset' | 'BottomGusset' | 'CentreFold') || 'Flat'
   const gussetMm =
@@ -150,7 +171,7 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       gusset_mm: gussetMm ?? undefined,
       ufilm_left_width_mm: ufilmLeft ?? undefined,
       ufilm_right_width_mm: ufilmRight ?? undefined,
-      length_units: p.length_units || 'mm',
+      length_units: quoteLengthUnitsToSpec(p, continuousLength),
     },
     formulation: {
       blend_type: 'LD',
@@ -206,7 +227,7 @@ export type OrderQuantity = {
 }
 
 /**
- * Derive order item quantity from quote payload (qtyType, totalKg, numUnits, numRolls).
+ * Derive order item quantity from quote payload (qtyType, totalKg, numUnits, numRolls, unitsPerRoll).
  */
 export function getOrderQuantityFromQuotePayload(payload: QuotePayload): OrderQuantity {
   const p = payload
@@ -214,6 +235,7 @@ export function getOrderQuantityFromQuotePayload(payload: QuotePayload): OrderQu
   const totalKg = Number(p.totalKg) || 0
   const numUnits = Math.round(Number(p.numUnits) || 0)
   const numRolls = Math.round(Number(p.numRolls) || 0)
+  const unitsPerRoll = Math.round(Number(p.unitsPerRoll) || 0)
 
   if (qtyType === 'kg') {
     return {
@@ -225,6 +247,13 @@ export function getOrderQuantityFromQuotePayload(payload: QuotePayload): OrderQu
     return {
       quantity_value: numRolls > 0 ? numRolls : 1,
       quantity_unit: 'rolls',
+    }
+  }
+  if (qtyType === 'rolls_units') {
+    const total = numRolls > 0 && unitsPerRoll > 0 ? numRolls * unitsPerRoll : 0
+    return {
+      quantity_value: total > 0 ? total : 1,
+      quantity_unit: 'bags',
     }
   }
   // units (bags / U-Films / etc.)

@@ -113,14 +113,24 @@ def compute_product_description(spec_payload: Any, *, max_len: Optional[int] = N
 
     product_type = _up(identity.get("product_type"))
 
-    # Colour: first non-empty colour_code from colour_components, else legacy colour.colour_code.
+    # Colour: from colour_components; skip WHITE when other colours exist (opacity / filler masterbatch).
     colour = ""
     comps = formulation.get("colour_components")
     if isinstance(comps, list):
+        codes: list[str] = []
         for row in comps:
-            if isinstance(row, dict) and str(row.get("colour_code") or "").strip():
-                colour = _up(row.get("colour_code"))
-                break
+            if not isinstance(row, dict):
+                continue
+            cc = str(row.get("colour_code") or "").strip()
+            if cc:
+                codes.append(_up(cc))
+        if codes:
+            has_white = "WHITE" in codes
+            has_other = any(c != "WHITE" for c in codes)
+            if has_white and has_other:
+                colour = next((c for c in codes if c != "WHITE"), "")
+            else:
+                colour = codes[0]
     if not colour:
         legacy = formulation.get("colour") if isinstance(formulation.get("colour"), dict) else {}
         colour = _up(legacy.get("colour_code"))

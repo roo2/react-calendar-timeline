@@ -68,7 +68,7 @@ class DimensionsSpec(BaseModel):
     # For U-Film, left/right widths can differ. Middle width uses base_width_mm.
     ufilm_left_width_mm: Optional[int] = Field(None, gt=0)
     ufilm_right_width_mm: Optional[int] = Field(None, gt=0)
-    length_units: Optional[Literal["mm", "M"]] = "mm"
+    length_units: Optional[Literal["mm", "M", "Continuous"]] = "mm"
 
     @root_validator(skip_on_failure=True)
     def validate_gusset_and_length(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,6 +206,12 @@ class SpecPayload(BaseModel):
         identity: IdentitySpec = values.get("identity")
         dimensions: DimensionsSpec = values.get("dimensions")
         if identity and dimensions:
+            lu = dimensions.length_units or "mm"
+            pt = identity.product_type
+            if lu == "Continuous" and pt in (ProductType.BAG, ProductType.SLEEVE):
+                raise ValueError("Continuous length is not available for Bag or Sleeve products")
+            if pt == ProductType.TUBE and lu != "Continuous":
+                raise ValueError("Tube products must use Continuous length units")
             if identity.finish_mode == FinishMode.ROLLS:
                 # length may be None in rolls
                 pass
