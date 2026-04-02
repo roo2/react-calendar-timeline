@@ -127,3 +127,49 @@ def ensure_jobs_for_orphan_standalone_sheets(session: Session, *, limit: int = 5
 	)
 	for (sid,) in session.execute(q).all():
 		ensure_scheduling_job_for_job_sheet(session, str(sid))
+
+
+def ensure_jobs_for_order_line_job_sheets_missing_production_job(
+	session: Session, *, limit: int = 500
+) -> None:
+	"""
+	Create production Job rows for order lines (OrderItem → JobSheet) when no Job exists for that line.
+
+	Standalone job sheets created from the UI get a draft order + line immediately, so they are not
+	"orphan" sheets and were previously skipped by ensure_jobs_for_orphan_standalone_sheets. Scheduling
+	lists Jobs, so we backfill missing rows here (and at job/order create time).
+	"""
+	ois = list(
+		session.execute(select(OrderItem).order_by(OrderItem.id.desc()).limit(limit * 4)).scalars().all()
+	)
+	seen_sheet: set[str] = set()
+	fixed = 0
+	for oi in ois:
+		sid = str(oi.job_sheet_id) if oi.job_sheet_id else ""
+		if not sid or sid in seen_sheet:
+			continue
+		order = session.get(Order, oi.order_id)
+		if not order:
+			continue
+		items = list(
+			session.execute(
+				select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id.asc())
+			).scalars().all()
+		)
+		job_code: Optional[int] = None
+		for i, row in enumerate(items):
+			if str(row.job_sheet_id) == sid:
+				job_code = i + 1
+				break
+		if job_code is None:
+			continue
+		existing = session.execute(
+			select(Job).where(Job.order_id == order.id, Job.job_code == job_code)
+		).scalars().first()
+		if existing:
+			continue
+		ensure_scheduling_job_for_job_sheet(session, sid)
+		seen_sheet.add(sid)
+		fixed += 1
+		if fixed >= limit:
+			break

@@ -71,21 +71,18 @@ function formatRunUp(slug: unknown): string {
   return s
 }
 
-/** Non-empty ink/plate/anilox rows for display (same idea as edit form rows). */
-function meaningfulInkPlateRows(pairs: unknown[], printMethod: string): Array<{ ink: string; plate: string; anilox: string }> {
-  const isUteco = printMethod === 'Uteco'
+/** Non-empty ink/plate rows for display (same idea as edit form rows). */
+function meaningfulInkPlateRows(pairs: unknown[]): Array<{ ink: string; plate: string }> {
   return (Array.isArray(pairs) ? pairs : [])
     .map((r: any) => ({
       ink: (r?.ink_code ?? '').toString().trim(),
       plate: (r?.plate_code ?? '').toString().trim(),
-      anilox: (r?.anilox_code ?? '').toString().trim(),
     }))
-    .filter((row) => row.ink || row.plate || (isUteco && row.anilox))
+    .filter((row) => row.ink || row.plate)
 }
 
-function InkPlateTable(props: { title: string; rows: Array<{ ink: string; plate: string; anilox: string }>; printMethod: string }) {
-  const { title, rows, printMethod } = props
-  const isUteco = printMethod === 'Uteco'
+function InkPlateTable(props: { title: string; rows: Array<{ ink: string; plate: string }> }) {
+  const { title, rows } = props
   if (rows.length === 0) {
     return (
       <Stack spacing={0.5} sx={{ mb: 2 }}>
@@ -109,7 +106,6 @@ function InkPlateTable(props: { title: string; rows: Array<{ ink: string; plate:
             <TableCell sx={{ width: 48 }}>#</TableCell>
             <TableCell>Ink</TableCell>
             <TableCell>Plate</TableCell>
-            {isUteco ? <TableCell>Anilox</TableCell> : null}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -118,7 +114,6 @@ function InkPlateTable(props: { title: string; rows: Array<{ ink: string; plate:
               <TableCell>{i + 1}</TableCell>
               <TableCell sx={{ fontFamily: 'monospace' }}>{r.ink || '—'}</TableCell>
               <TableCell sx={{ fontFamily: 'monospace' }}>{r.plate || '—'}</TableCell>
-              {isUteco ? <TableCell sx={{ fontFamily: 'monospace' }}>{r.anilox || '—'}</TableCell> : null}
             </TableRow>
           ))}
         </TableBody>
@@ -137,10 +132,8 @@ export function ProductVersionSummary(props: { spec: any }) {
   const showFrontPrint = printed && (printSide === 'front' || printSide === 'both')
   const showBackPrint = printed && (printSide === 'back' || printSide === 'both')
 
-  const frontRows = meaningfulInkPlateRows(spec?.printing?.front_ink_plate, printMethod)
-  const backRows = meaningfulInkPlateRows(spec?.printing?.back_ink_plate, printMethod)
-  const legacyAnilox = printMethod === 'Uteco' ? (spec?.printing?.anilox_code as string | null | undefined) : null
-  const legacyAniloxStr = legacyAnilox != null && String(legacyAnilox).trim() ? String(legacyAnilox).trim() : ''
+  const frontRows = meaningfulInkPlateRows(spec?.printing?.front_ink_plate)
+  const backRows = meaningfulInkPlateRows(spec?.printing?.back_ink_plate)
 
   const inkCodesLegacy = Array.isArray(spec?.printing?.ink_codes) ? spec.printing.ink_codes.filter(Boolean) : []
   const plateCodesLegacy = Array.isArray(spec?.printing?.plate_codes) ? spec.printing.plate_codes.filter(Boolean) : []
@@ -269,7 +262,7 @@ export function ProductVersionSummary(props: { spec: any }) {
         />
       </SectionCard>
 
-      {/* 4. Printing & Artwork — method, side, ink/plate/anilox tables, Uteco extras, description */}
+      {/* 4. Printing & Artwork — method, side, ink/plate tables, Uteco extras, description */}
       <SectionCard title="4. Printing & Artwork">
         <KVTable
           rows={[
@@ -280,8 +273,8 @@ export function ProductVersionSummary(props: { spec: any }) {
 
         {printed && (printMethod === 'Inline' || printMethod === 'Uteco') ? (
           <Stack sx={{ mt: 2 }}>
-            {showFrontPrint ? <InkPlateTable title="Front print" rows={frontRows} printMethod={printMethod} /> : null}
-            {showBackPrint ? <InkPlateTable title="Back print" rows={backRows} printMethod={printMethod} /> : null}
+            {showFrontPrint ? <InkPlateTable title="Front print" rows={frontRows} /> : null}
+            {showBackPrint ? <InkPlateTable title="Back print" rows={backRows} /> : null}
 
             {frontRows.length === 0 && backRows.length === 0 && (inkCodesLegacy.length > 0 || plateCodesLegacy.length > 0) ? (
               <Stack spacing={1} sx={{ mb: 2 }}>
@@ -295,12 +288,6 @@ export function ProductVersionSummary(props: { spec: any }) {
                   Plates: {plateCodesLegacy.length ? plateCodesLegacy.join(', ') : '—'}
                 </Typography>
               </Stack>
-            ) : null}
-
-            {printMethod === 'Uteco' && legacyAniloxStr ? (
-              <Typography variant="body2" sx={{ mb: 2 }}>
-                <strong>Default anilox (legacy):</strong> {legacyAniloxStr}
-              </Typography>
             ) : null}
 
             {printMethod === 'Uteco' ? (

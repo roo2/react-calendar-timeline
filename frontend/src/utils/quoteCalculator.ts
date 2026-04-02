@@ -18,6 +18,7 @@ export type QuoteRatebook = {
     min_charge: number | null
     setup_fee: number | null
     cost_per_1000m: number
+    meters_per_min?: number | null
   }>
   printing_rates: Record<
     string,
@@ -85,6 +86,8 @@ export type QuotePreview = {
   cost_per_kg: number | null
   extrusion_hours: number | null
   extrusion_waste_minutes: number
+  /** Productive plastic (derived) plus kg run to waste during extrusion downtime (ratebook waste adders + extrusion waste minutes × throughput). */
+  total_extruded_kg: number | null
   conversion_minutes_total?: number | null
   conversion_minutes_run?: number | null
   conversion_minutes_roll_changes?: number | null
@@ -142,11 +145,11 @@ export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRateboo
       } else {
         // Always include printing in the quote cost when a tier applies; still warn if below contractual minimum length.
         const rateCost = (webLengthM / 1000) * Number(tier.cost_per_1000m || 0)
+        const setupFee = Number(tier.setup_fee ?? 0)
         if (pm === 'inline') {
           const minCharge = Number(tier.min_charge ?? 0)
-          printingCost = Math.max(minCharge, rateCost)
+          printingCost = setupFee + Math.max(minCharge, rateCost)
         } else {
-          const setupFee = Number(tier.setup_fee ?? 0)
           printingCost = setupFee + rateCost
         }
         const minM = Number(tier.min_meters || 0)
@@ -648,21 +651,23 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // Waste represents *material wasted* during extrusion.
   // Extrusion waste factors add BOTH:
   // - time (handled above via extrusionExtraMinutes -> extrusionHours)
-  // - wasted material (handled here via wasteKg -> wasteCost)
+  // - wasted material (handled here via extrusionWasteKg -> wasteCost)
+  const throughput =
+    inputs.extruder_code && Array.isArray(ratebook.extruders)
+      ? Number(ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))?.average_kg_hr || 0)
+      : Number(ratebook.extrusion_throughput_kg_per_hr || 0)
   const baseWasteAdderMinutes = (Array.isArray(ratebook.waste_adders) ? ratebook.waste_adders : []).reduce(
     (acc, w) => acc + Number(w?.waste_minutes || 0),
     0,
   )
   const wasteMinutes = baseWasteAdderMinutes + extrusionExtraMinutes
+  const extrusionWasteKg =
+    wasteMinutes > 0 && throughput > 0 ? (wasteMinutes / 60) * throughput : 0
   let wasteCost = 0
-  const throughput =
-    inputs.extruder_code && Array.isArray(ratebook.extruders)
-      ? Number(ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))?.average_kg_hr || 0)
-      : Number(ratebook.extrusion_throughput_kg_per_hr || 0)
-  if (wasteMinutes > 0 && throughput > 0 && materialCostPerKg > 0) {
-    const wasteKg = (wasteMinutes / 60) * throughput
-    wasteCost = wasteKg * materialCostPerKg
+  if (extrusionWasteKg > 0 && materialCostPerKg > 0) {
+    wasteCost = extrusionWasteKg * materialCostPerKg
   }
+  const totalExtrudedKg = derivedTotalKg + extrusionWasteKg
 
   const totalCost = materialCost + extrusionCost + printingCost + conversionCost + coreCost + wasteCost
   const finalPrice = margin < 1 ? totalCost / (1 - margin) : totalCost
@@ -683,6 +688,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
     extrusion_hours: extrusionHours,
     extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
+    total_extruded_kg: totalExtrudedKg > 0 ? roundMoney(totalExtrudedKg) : null,
     conversion_minutes_total: conversionTotalMinutes,
     conversion_minutes_run: conversionRunMinutes,
     conversion_minutes_roll_changes: conversionRollChangeMinutes,

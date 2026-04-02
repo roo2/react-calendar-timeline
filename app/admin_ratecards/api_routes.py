@@ -12,7 +12,6 @@ import uuid
 from app.auth.deps import require_roles, csrf_protect
 from app.db.models.rate_cards import (
     Additive,
-    Anilox,
     CartonOption,
     Colour,
     ConversionFactor,
@@ -26,6 +25,7 @@ from app.db.models.rate_cards import (
     Resin,
     ResinBlend,
     ResinBlendComponent,
+    QuoteDefaults,
     QuotePackagingSettings,
 )
 from app.db.session import SessionLocal
@@ -169,15 +169,6 @@ class InkUpsertRequest(BaseModel):
     printer_type: str = Field(default="inline", min_length=1, max_length=16)
 
 
-class AniloxDTO(BaseModel):
-    anilox_code: str
-    description: str
-
-
-class AniloxUpsertRequest(BaseModel):
-    description: str = Field(..., min_length=1, max_length=255)
-
-
 class PlateDTO(BaseModel):
     customer_id: str
     plate_code: str
@@ -228,6 +219,7 @@ class PrintingPricingTierDTO(BaseModel):
     min_charge: float | None = None
     setup_fee: float | None = None
     cost_per_1000m: float
+    meters_per_min: float | None = None
 
 
 class PrintingPricingTierUpsertRequest(BaseModel):
@@ -235,12 +227,21 @@ class PrintingPricingTierUpsertRequest(BaseModel):
     min_charge: float | None = Field(default=None, ge=0)
     setup_fee: float | None = Field(default=None, ge=0)
     cost_per_1000m: float = Field(..., ge=0)
+    meters_per_min: float | None = Field(default=None, gt=0)
 
 
 class QuotePackagingSettingsDTO(BaseModel):
     packing_factor_rolls: float
     packing_factor_cartons: float
     pallet_volume_m3: float
+
+
+class QuoteDefaultsDTO(BaseModel):
+    default_margin_pct: float
+
+
+class QuoteDefaultsUpsertRequest(BaseModel):
+    default_margin_pct: float = Field(..., ge=0, lt=100)
 
 
 class QuotePackagingSettingsUpsertRequest(BaseModel):
@@ -657,6 +658,40 @@ async def delete_core(core_type: str):
 
 
 @router.get(
+    "/quote-defaults",
+    response_model=QuoteDefaultsDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def get_quote_defaults():
+    with SessionLocal() as db:
+        row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        if not row:
+            return QuoteDefaultsDTO(default_margin_pct=37.0)
+        return QuoteDefaultsDTO(default_margin_pct=float(row.default_margin_pct))
+
+
+@router.put(
+    "/quote-defaults",
+    response_model=QuoteDefaultsDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
+    with SessionLocal.begin() as db:
+        row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        if not row:
+            row = QuoteDefaults(id=1, default_margin_pct=payload.default_margin_pct)
+            db.add(row)
+        else:
+            row.default_margin_pct = payload.default_margin_pct
+
+    with SessionLocal() as db:
+        row2 = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        if not row2:
+            return QuoteDefaultsDTO(default_margin_pct=37.0)
+        return QuoteDefaultsDTO(default_margin_pct=float(row2.default_margin_pct))
+
+
+@router.get(
     "/packaging-settings",
     response_model=QuotePackagingSettingsDTO,
     dependencies=[Depends(require_roles("SYS_ADMIN"))],
@@ -1028,60 +1063,6 @@ async def delete_ink(ink_code: str):
 
 
 @router.get(
-    "/anilox",
-    response_model=List[AniloxDTO],
-    dependencies=[Depends(require_roles("SYS_ADMIN"))],
-)
-async def list_anilox_admin():
-    with SessionLocal() as db:
-        rows = db.execute(select(Anilox).order_by(Anilox.anilox_code.asc())).scalars().all()
-        return [AniloxDTO(anilox_code=r.anilox_code, description=r.description) for r in rows]
-
-
-@router.put(
-    "/anilox/{anilox_code}",
-    response_model=AniloxDTO,
-    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
-)
-async def upsert_anilox(anilox_code: str, payload: AniloxUpsertRequest):
-    code = (anilox_code or "").strip()
-    if not code:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="anilox_code is required")
-
-    with SessionLocal.begin() as db:
-        row = db.get(Anilox, code)
-        if not row:
-            row = Anilox(anilox_code=code, description=payload.description.strip())
-            db.add(row)
-        else:
-            row.description = payload.description.strip()
-
-    with SessionLocal() as db:
-        r2 = db.get(Anilox, code)
-        assert r2 is not None
-        return AniloxDTO(anilox_code=r2.anilox_code, description=r2.description)
-
-
-@router.delete(
-    "/anilox/{anilox_code}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
-)
-async def delete_anilox(anilox_code: str):
-    code = (anilox_code or "").strip()
-    if not code:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="anilox_code is required")
-    try:
-        with SessionLocal.begin() as db:
-            row = db.get(Anilox, code)
-            if not row:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anilox not found")
-            db.delete(row)
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete anilox (in use)")
-
-
-@router.get(
     "/plates",
     response_model=List[PlateDTO],
     dependencies=[Depends(require_roles("SYS_ADMIN"))],
@@ -1327,6 +1308,7 @@ async def list_printing_pricing_tiers():
                 min_charge=float(r.min_charge) if r.min_charge is not None else None,
                 setup_fee=float(r.setup_fee) if r.setup_fee is not None else None,
                 cost_per_1000m=float(r.cost_per_1000m),
+                meters_per_min=float(r.meters_per_min) if r.meters_per_min is not None else None,
             )
             for r in rows
         ]
@@ -1370,6 +1352,7 @@ async def upsert_printing_pricing_tier(
         row.min_charge = payload.min_charge
         row.setup_fee = payload.setup_fee
         row.cost_per_1000m = payload.cost_per_1000m
+        row.meters_per_min = None if m == "inline" else payload.meters_per_min
 
     with SessionLocal() as db:
         r2 = (
@@ -1392,6 +1375,7 @@ async def upsert_printing_pricing_tier(
             min_charge=float(r2.min_charge) if r2.min_charge is not None else None,
             setup_fee=float(r2.setup_fee) if r2.setup_fee is not None else None,
             cost_per_1000m=float(r2.cost_per_1000m),
+            meters_per_min=float(r2.meters_per_min) if r2.meters_per_min is not None else None,
         )
 
 

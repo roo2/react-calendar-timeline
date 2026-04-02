@@ -18,8 +18,6 @@ export type ResinBlendPreset = {
   components: Array<{ resin_code: string; pct: number }>
 }
 
-export type AniloxOption = { anilox_code: string; description: string }
-
 export type CartonOptionRow = { slug: string; name: string; cost_per_unit: number; is_default: boolean }
 
 type ProductSpecState = {
@@ -30,7 +28,6 @@ type ProductSpecState = {
     resins: SpecResinOption[]
     colours: SpecColourOption[]
     additives: SpecAdditiveOption[]
-    anilox: AniloxOption[]
   }
   inks: {
     status: Status
@@ -59,7 +56,6 @@ const initialState: ProductSpecState = {
     resins: [],
     colours: [],
     additives: [],
-    anilox: [],
   },
   inks: { status: 'idle', error: null, items: [], lastPrinterType: null },
   plates: { status: 'idle', error: null, items: [], lastCustomerId: null },
@@ -67,19 +63,17 @@ const initialState: ProductSpecState = {
 }
 
 export const fetchProductSpecBundle = createAsyncThunk('productSpec/bundle', async () => {
-  const [resinBlends, resins, colours, additives, anilox] = await Promise.all([
+  const [resinBlends, resins, colours, additives] = await Promise.all([
     apiFetch<ResinBlendPreset[]>('/api/rate-cards/resin-blends'),
     apiFetch<SpecResinOption[]>('/api/rate-cards/resins'),
     apiFetch<SpecColourOption[]>('/api/rate-cards/colours'),
     apiFetch<SpecAdditiveOption[]>('/api/rate-cards/additives'),
-    apiFetch<AniloxOption[]>('/api/rate-cards/anilox'),
   ])
   return {
     resinBlends: Array.isArray(resinBlends) ? resinBlends : [],
     resins: Array.isArray(resins) ? resins : [],
     colours: Array.isArray(colours) ? colours : [],
     additives: Array.isArray(additives) ? additives : [],
-    anilox: Array.isArray(anilox) ? anilox : [],
   }
 })
 
@@ -119,7 +113,6 @@ const slice = createSlice({
       s.bundle.resins = a.payload.resins
       s.bundle.colours = a.payload.colours
       s.bundle.additives = a.payload.additives
-      s.bundle.anilox = a.payload.anilox
     })
     b.addCase(fetchProductSpecBundle.rejected, (s, a) => {
       s.bundle.status = 'failed'

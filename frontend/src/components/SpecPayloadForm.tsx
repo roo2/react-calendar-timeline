@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -43,22 +43,6 @@ import type { AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
 
-function renderAniloxSelectValue(
-  selected: unknown,
-  options: Array<{ anilox_code: string; description: string }>,
-) {
-  const code = selected == null || selected === '' ? '' : String(selected)
-  if (!code) {
-    return (
-      <Typography component="span" variant="body2" color="text.secondary" sx={{ opacity: 0.72 }}>
-        Anilox
-      </Typography>
-    )
-  }
-  const row = options.find((x) => x.anilox_code === code)
-  return row ? `${row.anilox_code} — ${row.description}` : code
-}
-
 type DerivedDimensions = {
   layflat_mm: number
 }
@@ -98,7 +82,7 @@ export function makeDefaultSpec(): SpecPayload {
       product_type: PRODUCT_TYPE.Bag,
       finish_mode: 'Rolls',
       trim_pct: null,
-      roll_weight_billing: 'core_included',
+      roll_weight_billing: 'core_off',
       industry_flags: [],
       notes: null,
     },
@@ -131,7 +115,6 @@ export function makeDefaultSpec(): SpecPayload {
       front_ink_plate: [],
       back_ink_plate: [],
       cylinder_size_mm: null,
-      anilox_code: null,
     },
     quality_expectations: {
       flags: [],
@@ -171,6 +154,8 @@ export function SpecPayloadForm(props: {
   customerId?: string
   /** Job sheet flows: show only printing method + colours on the page; ink/plates open in a dialog (works nested under another modal). */
   printingSurface?: SpecPayloadFormPrintingSurface
+  /** Inserted after Dimensions & Geometry and before Materials (e.g. job sheet quantity block). */
+  afterDimensionsSlot?: ReactNode
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -178,7 +163,7 @@ export function SpecPayloadForm(props: {
   const platesState = useAppSelector((s) => s.productSpec.plates)
   const cartonState = useAppSelector((s) => s.productSpec.cartonOptions)
 
-  const { value, onChange, fieldErrors, customerId, printingSurface = 'full' } = props
+  const { value, onChange, fieldErrors, customerId, printingSurface = 'full', afterDimensionsSlot } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
@@ -234,7 +219,6 @@ export function SpecPayloadForm(props: {
   const additiveOptions = bundle.additives as AdditiveOption[]
   const inks = inksState.items as InkOption[]
   const plates = platesState.items as PlateOption[]
-  const aniloxOptions = bundle.anilox
   const cartonOptions =
     finishMode === 'Rolls' ? [] : cartonState.items
 
@@ -243,7 +227,6 @@ export function SpecPayloadForm(props: {
   const resinBlendsErr = bundleErr
   const coloursErr = bundleErr
   const additivesErr = bundleErr
-  const aniloxErr = bundleErr
   const inksErr = inksState.status === 'failed' ? inksState.error : null
   const platesErr = platesState.status === 'failed' ? platesState.error : null
 
@@ -285,26 +268,8 @@ export function SpecPayloadForm(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resinBlends])
 
-  function emptyInkPlateRow(method: string | undefined): { ink_code: string; plate_code: string; anilox_code?: string | null } {
-    if (method === 'Uteco') return { ink_code: '', plate_code: '', anilox_code: null }
+  function emptyInkPlateRow(_method: string | undefined): { ink_code: string; plate_code: string } {
     return { ink_code: '', plate_code: '' }
-  }
-
-  /** Copy legacy printing.anilox_code onto each row once, then clear legacy field. */
-  function migrateLegacyPrintingAnilox(d: SpecPayload) {
-    const p = d.printing || {}
-    if (p.method !== 'Uteco') return
-    const legacy = (p as { anilox_code?: string | null }).anilox_code
-    if (!legacy || !String(legacy).trim()) return
-    for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
-      const arr = Array.isArray(p[key]) ? [...p[key]] : []
-      for (let i = 0; i < arr.length; i++) {
-        const row = arr[i] as { ink_code?: string; plate_code?: string; anilox_code?: string | null }
-        if (!row?.anilox_code) arr[i] = { ...row, anilox_code: legacy }
-      }
-      p[key] = arr
-    }
-    ;(p as { anilox_code?: string | null }).anilox_code = null
   }
 
   function ensureFixedInkPlateRows(d: SpecPayload) {
@@ -314,20 +279,13 @@ export function SpecPayloadForm(props: {
     for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
       const cur = Array.isArray(p[key]) ? p[key].slice(0, 4) : []
       while (cur.length < 5) cur.push(emptyInkPlateRow(m))
-      if (m === 'Uteco') {
-        p[key] = cur.map((row: any) => ({
-          ink_code: row?.ink_code ?? '',
-          plate_code: row?.plate_code ?? '',
-          anilox_code: row?.anilox_code ?? null,
-        }))
-      } else {
-        p[key] = cur.map((row: any) => ({
-          ink_code: row?.ink_code ?? '',
-          plate_code: row?.plate_code ?? '',
-        }))
-      }
+      p[key] = cur.map((row: any) => ({
+        ink_code: row?.ink_code ?? '',
+        plate_code: row?.plate_code ?? '',
+      }))
     }
-    migrateLegacyPrintingAnilox(d)
+    const pr = d.printing as Record<string, unknown>
+    if (pr && 'anilox_code' in pr) delete pr.anilox_code
   }
 
   function syncLegacyInkPlateFromPairs(d: SpecPayload) {
@@ -351,18 +309,6 @@ export function SpecPayloadForm(props: {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [printing.method])
-
-  /** Migrate legacy single printing.anilox_code even when ink/plate rows are already padded (5+5). */
-  useEffect(() => {
-    if (!printingEnabled || printing.method !== 'Uteco') return
-    const legacy = (spec.printing as { anilox_code?: string | null } | undefined)?.anilox_code
-    if (!legacy || !String(legacy).trim()) return
-    update((d) => {
-      migrateLegacyPrintingAnilox(d)
-      syncLegacyInkPlateFromPairs(d)
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [printingEnabled, printing.method, spec.printing?.anilox_code])
 
   function syncLegacyColourFromComponents(d: SpecPayload) {
     const comps = Array.isArray(d?.formulation?.colour_components) ? d.formulation.colour_components : []
@@ -566,11 +512,6 @@ export function SpecPayloadForm(props: {
 
   const printingTablesInner = printingEnabled ? (
     <>
-      {printing.method === 'Uteco' && aniloxErr ? (
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          {aniloxErr}
-        </Alert>
-      ) : null}
       {((printing.side || 'front') === 'front' || printing.side === 'both') && (
         <Box sx={{ mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, mb: 1 }}>
@@ -601,32 +542,21 @@ export function SpecPayloadForm(props: {
               <TableRow>
                 <TableCell>Ink</TableCell>
                 <TableCell>Plate</TableCell>
-                {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
                 <TableCell />
               </TableRow>
             </TableHead>
             <TableBody>
               {ensureMinRows(
                 Array.isArray(printing.front_ink_plate) ? printing.front_ink_plate : [],
-                printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
+                { ink_code: '', plate_code: '' },
                 5,
-              ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
-                const r =
-                  printing.method === 'Uteco'
-                    ? {
-                        ink_code: row?.ink_code || '',
-                        plate_code: row?.plate_code || '',
-                        anilox_code: row?.anilox_code ?? '',
-                      }
-                    : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
-                const defaults =
-                  printing.method === 'Uteco'
-                    ? { ink_code: '', plate_code: '', anilox_code: '' }
-                    : { ink_code: '', plate_code: '' }
+              ).map((row: { ink_code?: string; plate_code?: string }, idx: number) => {
+                const r = { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
+                const defaults = { ink_code: '', plate_code: '' }
                 const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
                 return (
                   <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                    <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
+                    <TableCell sx={{ width: '55%' }}>
                       <InkSelect
                         options={inks}
                         valueCode={r.ink_code}
@@ -640,7 +570,7 @@ export function SpecPayloadForm(props: {
                         }
                       />
                     </TableCell>
-                    <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
+                    <TableCell sx={{ width: '35%' }}>
                       <PlateSelect
                         options={plates}
                         valueCode={r.plate_code}
@@ -654,40 +584,6 @@ export function SpecPayloadForm(props: {
                         }
                       />
                     </TableCell>
-                    {printing.method === 'Uteco' ? (
-                      <TableCell sx={{ width: '24%' }}>
-                        <TextField
-                          select
-                          size="small"
-                          fullWidth
-                          hiddenLabel
-                          value={(r as { anilox_code: string }).anilox_code || ''}
-                          SelectProps={{
-                            displayEmpty: true,
-                            renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
-                          }}
-                          onChange={(e) =>
-                            update((d) => {
-                              ensureFixedInkPlateRows(d)
-                              d.printing.front_ink_plate[idx] = {
-                                ...(d.printing.front_ink_plate[idx] || {}),
-                                anilox_code: e.target.value || null,
-                              }
-                              syncLegacyInkPlateFromPairs(d)
-                            })
-                          }
-                        >
-                          <MenuItem value="">
-                            <em>None</em>
-                          </MenuItem>
-                          {aniloxOptions.map((a) => (
-                            <MenuItem key={a.anilox_code} value={a.anilox_code}>
-                              {a.anilox_code} — {a.description}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      </TableCell>
-                    ) : null}
                     <TableCell sx={{ width: '10%' }}>
                       <Button
                         size="small"
@@ -761,32 +657,21 @@ export function SpecPayloadForm(props: {
               <TableRow>
                 <TableCell>Ink</TableCell>
                 <TableCell>Plate</TableCell>
-                {printing.method === 'Uteco' ? <TableCell>Anilox</TableCell> : null}
                 <TableCell />
               </TableRow>
             </TableHead>
             <TableBody>
               {ensureMinRows(
                 Array.isArray(printing.back_ink_plate) ? printing.back_ink_plate : [],
-                printing.method === 'Uteco' ? { ink_code: '', plate_code: '', anilox_code: null } : { ink_code: '', plate_code: '' },
+                { ink_code: '', plate_code: '' },
                 5,
-              ).map((row: { ink_code?: string; plate_code?: string; anilox_code?: string | null }, idx: number) => {
-                const r =
-                  printing.method === 'Uteco'
-                    ? {
-                        ink_code: row?.ink_code || '',
-                        plate_code: row?.plate_code || '',
-                        anilox_code: row?.anilox_code ?? '',
-                      }
-                    : { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
-                const defaults =
-                  printing.method === 'Uteco'
-                    ? { ink_code: '', plate_code: '', anilox_code: '' }
-                    : { ink_code: '', plate_code: '' }
+              ).map((row: { ink_code?: string; plate_code?: string }, idx: number) => {
+                const r = { ink_code: row?.ink_code || '', plate_code: row?.plate_code || '' }
+                const defaults = { ink_code: '', plate_code: '' }
                 const isDefault = isDefaultRow(r as Record<string, unknown>, defaults as Record<string, unknown>)
                 return (
                   <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                    <TableCell sx={{ width: printing.method === 'Uteco' ? '38%' : '55%' }}>
+                    <TableCell sx={{ width: '55%' }}>
                       <InkSelect
                         options={inks}
                         valueCode={r.ink_code}
@@ -800,7 +685,7 @@ export function SpecPayloadForm(props: {
                         }
                       />
                     </TableCell>
-                    <TableCell sx={{ width: printing.method === 'Uteco' ? '28%' : '35%' }}>
+                    <TableCell sx={{ width: '35%' }}>
                       <PlateSelect
                         options={plates}
                         valueCode={r.plate_code}
@@ -814,40 +699,6 @@ export function SpecPayloadForm(props: {
                         }
                       />
                     </TableCell>
-                    {printing.method === 'Uteco' ? (
-                      <TableCell sx={{ width: '24%' }}>
-                        <TextField
-                          select
-                          size="small"
-                          fullWidth
-                          hiddenLabel
-                          value={(r as { anilox_code: string }).anilox_code || ''}
-                          SelectProps={{
-                            displayEmpty: true,
-                            renderValue: (v) => renderAniloxSelectValue(v, aniloxOptions),
-                          }}
-                          onChange={(e) =>
-                            update((d) => {
-                              ensureFixedInkPlateRows(d)
-                              d.printing.back_ink_plate[idx] = {
-                                ...(d.printing.back_ink_plate[idx] || {}),
-                                anilox_code: e.target.value || null,
-                              }
-                              syncLegacyInkPlateFromPairs(d)
-                            })
-                          }
-                        >
-                          <MenuItem value="">
-                            <em>None</em>
-                          </MenuItem>
-                          {aniloxOptions.map((a) => (
-                            <MenuItem key={a.anilox_code} value={a.anilox_code}>
-                              {a.anilox_code} — {a.description}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      </TableCell>
-                    ) : null}
                     <TableCell sx={{ width: '10%' }}>
                       <Button
                         size="small"
@@ -1012,7 +863,7 @@ export function SpecPayloadForm(props: {
                       d.printing.front_ink_plate = []
                       d.printing.back_ink_plate = []
                       d.printing.cylinder_size_mm = null
-                      d.printing.anilox_code = null
+                      delete (d.printing as Record<string, unknown>).anilox_code
                     }
                   })
                 }
@@ -1266,6 +1117,8 @@ export function SpecPayloadForm(props: {
         </Stack>
       </Paper>
 
+      {afterDimensionsSlot}
+
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
           Materials
@@ -1474,14 +1327,14 @@ export function SpecPayloadForm(props: {
                 if ((next === 'Inline' || next === 'Uteco') && !d.printing.side) d.printing.side = 'front'
                 if (next !== 'Uteco') {
                   d.printing.cylinder_size_mm = null
-                  d.printing.anilox_code = null
-                  for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
-                    const arr = Array.isArray(d.printing[key]) ? d.printing[key] : []
-                    d.printing[key] = arr.map((row: any) => ({
-                      ink_code: row?.ink_code ?? '',
-                      plate_code: row?.plate_code ?? '',
-                    }))
-                  }
+                }
+                delete (d.printing as Record<string, unknown>).anilox_code
+                for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
+                  const arr = Array.isArray(d.printing[key]) ? d.printing[key] : []
+                  d.printing[key] = arr.map((row: any) => ({
+                    ink_code: row?.ink_code ?? '',
+                    plate_code: row?.plate_code ?? '',
+                  }))
                 }
               })
             }
@@ -1653,8 +1506,8 @@ export function SpecPayloadForm(props: {
           {finishMode === 'Rolls' ? (
             <DefaultSelectField
               label="Roll weight billing"
-              defaultValue="core_included"
-              value={identity.roll_weight_billing || 'core_included'}
+              defaultValue="core_off"
+              value={identity.roll_weight_billing || 'core_off'}
               onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
             >
               <MenuItem value="core_included">Include core</MenuItem>

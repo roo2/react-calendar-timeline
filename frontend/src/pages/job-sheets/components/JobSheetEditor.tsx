@@ -44,7 +44,11 @@ import { computeProductDescriptionFromSpec, computeProductCodeFromSpec } from '.
 import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../../components/SpecPayloadForm'
 import { StickySideAside } from '../../../components/StickySideAside'
-import { JobSheetIdentityQuantitySection } from './JobSheetIdentityQuantitySection'
+import {
+  JobSheetIdentityQuantitySection,
+  JobSheetQuantityPaper,
+  type JobSheetQuantityFieldsProps,
+} from './JobSheetIdentityQuantitySection'
 
 type Mode = 'new' | 'edit'
 
@@ -589,6 +593,64 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   /** New job sheet: Product Spec card is always shown; spec form only after a product (or draft) is chosen. */
   const showSpecForm = mode === 'edit' || (mode === 'new' && !!productId)
 
+  const jobSheetQuantityFieldsProps: JobSheetQuantityFieldsProps = {
+    productUnitLabel,
+    finishMode,
+    effectiveQtyType,
+    onQtyTypeChange: setQtyType,
+    totalMetersReadonly,
+    totalKgField: {
+      value:
+        totalKgEditable
+          ? totalKg
+          : haveDriverForTotalKg && totalKgDisplay != null
+            ? formatKgDisplay(totalKgDisplay)
+            : totalKg !== '' && Number.isFinite(Number(totalKg))
+              ? formatKgDisplay(Number(totalKg))
+              : totalKg,
+      onChange: totalKgEditable ? (v) => setTotalKg(v) : undefined,
+      disabled: !totalKgEditable,
+      required: effectiveQtyType === 'kg',
+    },
+    numUnitsField: {
+      value:
+        unitsEditable
+          ? numUnits
+          : haveDriverForUnits && derivedForDisplay?.units != null
+            ? String(Math.round(Number(derivedForDisplay.units)))
+            : numUnits,
+      onChange: unitsEditable ? (v) => setNumUnits(v) : undefined,
+      disabled: !unitsEditable,
+      required: effectiveQtyType === 'units',
+    },
+    weightPerRollField: {
+      value:
+        weightPerRollEditable
+          ? weightPerRoll
+          : haveDriverForWeightPerRoll && weightPerRollDisplay != null
+            ? formatKgDisplay(weightPerRollDisplay)
+            : finishMode === 'Cartons' && totalKgNum > 0 && numRollsNum > 0
+              ? formatKgDisplay(cartonsWeightPerRollKg(totalKgNum, numRollsNum))
+              : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
+                ? formatKgDisplay(Number(weightPerRoll))
+                : weightPerRoll,
+      onChange: weightPerRollEditable ? (v) => setWeightPerRoll(v) : undefined,
+      disabled: !weightPerRollEditable,
+      helperText: finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined,
+    },
+    numRollsField: {
+      value:
+        rollsEditable
+          ? numRolls
+          : rollsDisplay != null && finishMode === 'Rolls'
+            ? String(rollsDisplay)
+            : numRolls,
+      onChange: rollsEditable ? (v) => setNumRolls(v) : undefined,
+      disabled: !rollsEditable,
+      required: true,
+    },
+  }
+
   function renderJobSheetActions() {
     const cancelTo = mode === 'edit' && jobSheetId ? `/job-sheets/${jobSheetId}` : '/job-sheets'
     return (
@@ -629,61 +691,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           onDueDateChange={setDueDate}
           orderDateInputRef={orderDateInputRef}
           dueDateInputRef={dueDateInputRef}
-          productUnitLabel={productUnitLabel}
-          finishMode={finishMode}
-          effectiveQtyType={effectiveQtyType}
-          onQtyTypeChange={setQtyType}
-          totalMetersReadonly={totalMetersReadonly}
-          totalKgField={{
-            value:
-              totalKgEditable
-                ? totalKg
-                : haveDriverForTotalKg && totalKgDisplay != null
-                  ? formatKgDisplay(totalKgDisplay)
-                  : totalKg !== '' && Number.isFinite(Number(totalKg))
-                    ? formatKgDisplay(Number(totalKg))
-                    : totalKg,
-            onChange: totalKgEditable ? (v) => setTotalKg(v) : undefined,
-            disabled: !totalKgEditable,
-            required: effectiveQtyType === 'kg',
-          }}
-          numUnitsField={{
-            value:
-              unitsEditable
-                ? numUnits
-                : haveDriverForUnits && derivedForDisplay?.units != null
-                  ? String(Math.round(Number(derivedForDisplay.units)))
-                  : numUnits,
-            onChange: unitsEditable ? (v) => setNumUnits(v) : undefined,
-            disabled: !unitsEditable,
-            required: effectiveQtyType === 'units',
-          }}
-          weightPerRollField={{
-            value:
-              weightPerRollEditable
-                ? weightPerRoll
-                : haveDriverForWeightPerRoll && weightPerRollDisplay != null
-                  ? formatKgDisplay(weightPerRollDisplay)
-                  : finishMode === 'Cartons' && totalKgNum > 0 && numRollsNum > 0
-                    ? formatKgDisplay(cartonsWeightPerRollKg(totalKgNum, numRollsNum))
-                    : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
-                      ? formatKgDisplay(Number(weightPerRoll))
-                      : weightPerRoll,
-            onChange: weightPerRollEditable ? (v) => setWeightPerRoll(v) : undefined,
-            disabled: !weightPerRollEditable,
-            helperText: finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined,
-          }}
-          numRollsField={{
-            value:
-              rollsEditable
-                ? numRolls
-                : rollsDisplay != null && finishMode === 'Rolls'
-                  ? String(rollsDisplay)
-                  : numRolls,
-            onChange: rollsEditable ? (v) => setNumRolls(v) : undefined,
-            disabled: !rollsEditable,
-            required: true,
-          }}
+          includeQuantity={!showSpecForm}
+          {...jobSheetQuantityFieldsProps}
           productRow={
             mode === 'edit' ? (
               <TextField
@@ -814,6 +823,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                   setSpecDirty(true)
                   setSpecFieldErrors({})
                 }}
+                afterDimensionsSlot={<JobSheetQuantityPaper {...jobSheetQuantityFieldsProps} />}
               />
             ) : null}
           </Paper>

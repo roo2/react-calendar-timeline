@@ -12,6 +12,7 @@ from app.db.session import SessionLocal
 from app.db.models.domain import Customer, Product, ProductVersion, JobSheet, Order, OrderItem
 from app.db.models.enums import OrderStatus
 from app.exceptions import DomainError
+from app.job_context import ensure_scheduling_job_for_job_sheet
 from app.products.service import _next_version_number, compute_product_code_full  # reuse version numbering helper
 from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest
 
@@ -166,6 +167,7 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
             raise DomainError("Failed to allocate job number") from last_err
 
         _ensure_draft_order_for_job_sheet_in_db(db, str(js.id), new_order_date=payload.order_date)
+        ensure_scheduling_job_for_job_sheet(db, str(js.id))
 
         # IMPORTANT: capture ID before session closes/attributes expire
         return str(js.id)

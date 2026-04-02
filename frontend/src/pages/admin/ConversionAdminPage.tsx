@@ -14,7 +14,6 @@ import {
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
-import { ScheduleMachinesSection, SCHEDULE_CAPABILITY_DEFAULTS } from './components/ScheduleMachinesSection'
 
 type GaugeRange = { min_gauge_um: number; max_gauge_um: number }
 type LengthRange = { min_length_mm: number; max_length_mm: number }
@@ -166,17 +165,9 @@ export function ConversionAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Packing / Conversion"
-        subtitle="Bagging schedule lanes, conversion speeds (bags/minute), conversion factors, and carton options."
+        subtitle="Conversion speeds (bags/minute), conversion factors, and carton options."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
-
-      <ScheduleMachinesSection
-        machineType="converter_bagger"
-        title="Production schedule — bagging / conversion"
-        description="Each row is a bagger lane on the Schedule board (e.g. BGR01). Capability JSON can list supported finish modes and width limits for routing checks."
-        defaultCapability={SCHEDULE_CAPABILITY_DEFAULTS.converter_bagger}
-        footerHint="Inactive baggers are hidden from the schedule. Add a new row here when you install an additional bagging line."
-      />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>

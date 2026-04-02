@@ -134,7 +134,7 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       product_type: (p.product_type as any) || 'Bag',
       finish_mode: finishMode,
       trim_pct: p.trim_pct != null ? Number(p.trim_pct) : null,
-      roll_weight_billing: p.roll_weight_billing || 'core_included',
+      roll_weight_billing: p.roll_weight_billing || 'core_off',
       industry_flags: [],
       notes: null,
     },
@@ -170,7 +170,6 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       front_ink_plate: [],
       back_ink_plate: [],
       cylinder_size_mm: null,
-      anilox_code: null,
     },
     quality_expectations: {
       flags: [],

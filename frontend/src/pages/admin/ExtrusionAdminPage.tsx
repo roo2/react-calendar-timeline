@@ -11,7 +11,6 @@ import {
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
-import { ScheduleMachinesSection, SCHEDULE_CAPABILITY_DEFAULTS } from './components/ScheduleMachinesSection'
 import type { Extruder, ExtrusionWasteFactor } from './types'
 
 export function ExtrusionAdminPage() {
@@ -106,33 +105,16 @@ export function ExtrusionAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Extrusion"
-        subtitle="Extruder rate cards (quotes & kg/hr), production schedule lanes, and extrusion waste factors."
+        subtitle="Extruder rate cards (quotes & throughput) and extrusion waste factors."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
-
-      <ScheduleMachinesSection
-        machineType="extruder"
-        title="Production schedule — extruders"
-        description={
-          <>
-            These are the extruder <strong>lanes</strong> on the Schedule board. Use the <strong>same code</strong> as a row in
-            the extruder rate table below so run-time estimates use that machine&apos;s <strong>kg/hr</strong> and capability
-            checks match.
-          </>
-        }
-        defaultCapability={SCHEDULE_CAPABILITY_DEFAULTS.extruder}
-        footerHint={
-          <>
-            Inactive extruders are hidden from the schedule. Codes must be unique. For kg/hr, the schedule matches{' '}
-            <code>machines.code</code> to <code>extruders.extruder_code</code>. You cannot rename a code if that lane already
-            has queue items.
-          </>
-        }
-      />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           Extruder rate cards (quotes & throughput)
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 720 }}>
+          Running costs (e.g. cost per hour) are intended to cover wages, maintenance, and electricity.
         </Typography>
         {loading && extruders.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>

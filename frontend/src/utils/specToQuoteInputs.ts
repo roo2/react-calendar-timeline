@@ -34,7 +34,7 @@ function mapRollBilling(
   if (v === 'core_half_off') return 'core_half_off'
   if (v === 'core_off') return 'core_off'
   if (v === 'core_included') return 'core_included'
-  return 'core_included'
+  return 'core_off'
 }
 
 export type SpecQuantitySlice = {

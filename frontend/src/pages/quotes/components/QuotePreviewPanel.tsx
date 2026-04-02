@@ -66,6 +66,11 @@ export function QuotePreviewPanel(props: {
                 Wasted extrusion time: {fmtHoursMinutesPreview(Number(p.extrusion_waste_minutes || 0))}
               </Typography>
             ) : null}
+            {p.total_extruded_kg != null && Number(p.total_extruded_kg) > 0 ? (
+              <Typography variant="body2">
+                Total extruded KGs: {fmtQtyNumber(Number(p.total_extruded_kg), 2)} kg
+              </Typography>
+            ) : null}
             {finishMode === 'Rolls' && p.kg_per_roll != null && (
               <Typography variant="body2">
                 Weight / Roll: {fmtQtyNumber(Number(p.kg_per_roll), 2)}kg
@@ -78,7 +83,15 @@ export function QuotePreviewPanel(props: {
             )}
             {p.unit_price != null && (
               <Typography variant="body2">
-                Price per {productType}: {fmtDollarsPreview(p.unit_price, 4)}
+                {productType === 'Bag' ? (
+                  <>
+                    Price per 1000 bags: {fmtDollarsPreview(Number(p.unit_price) * 1000, 4)}
+                  </>
+                ) : (
+                  <>
+                    Price per {productType}: {fmtDollarsPreview(p.unit_price, 4)}
+                  </>
+                )}
               </Typography>
             )}
             {p.totals_m != null && Number(p.totals_m) > 0 && (

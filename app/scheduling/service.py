@@ -34,6 +34,7 @@ from app.db.models.enums import (
 	PrintingMethod,
 )
 from app.job_context import (
+	ensure_jobs_for_order_line_job_sheets_missing_production_job,
 	ensure_jobs_for_orphan_standalone_sheets,
 	ensure_scheduling_job_for_job_sheet,
 	resolve_job_context,
@@ -41,12 +42,13 @@ from app.job_context import (
 from app.db.models.rate_cards import ConversionFactor, ConversionSpeed, Extruder
 from app.exceptions import DomainError
 from app.machines.service import (
-	_compute_gauge_um_from_spec,
 	layflat_width_mm_from_product_version,
 	validate_capability_dict,
 	validate_extruder_for_spec,
 )
+from app.scheduling.spec_payload import _compute_gauge_um_from_spec
 from app.scheduling.lane_context import ScheduleLane, list_active_lanes, resolve_schedule_lane
+from app.scheduling.web_meters import pick_uteco_printing_tier, web_length_meters_for_uteco_schedule
 from app.production_calendar.logic import (
 	add_operating_hours,
 	calendar_dict_for_gantt,
@@ -1244,12 +1246,28 @@ def _estimate_job_operations_core(
 		)
 
 	if requires_uteco:
-		web_length_m = planned_qty * 0.1
-		printer_speed_m_per_min = 50.0
-		num_colours = (spec.get("printing") or {}).get("num_colours", 1) or 1
-		setup_allowance_hours = 0.5 + (num_colours * 0.1)
-		runtime_hours = (web_length_m / printer_speed_m_per_min) / 60.0
-		duration_hours = setup_allowance_hours + runtime_hours
+		web_length_m = web_length_meters_for_uteco_schedule(session, job, product_version)
+		printing = spec.get("printing") if isinstance(spec.get("printing"), dict) else {}
+		try:
+			num_colours = int(printing.get("num_colours") or 1)
+		except (TypeError, ValueError):
+			num_colours = 1
+		num_colours = max(1, min(num_colours, 12))
+		dims = spec.get("dimensions") if isinstance(spec.get("dimensions"), dict) else {}
+		try:
+			print_width_mm = int(float(dims.get("base_width_mm") or 0))
+		except (TypeError, ValueError):
+			print_width_mm = 0
+		tier = pick_uteco_printing_tier(session, print_width_mm, num_colours) if print_width_mm > 0 else None
+		mpm = float(tier.meters_per_min) if tier is not None and tier.meters_per_min is not None else None
+		if mpm is not None and mpm > 0:
+			runtime_minutes = web_length_m / mpm
+			duration_hours = runtime_minutes / 60.0
+		else:
+			printer_speed_m_per_min = 50.0
+			setup_allowance_hours = 0.5 + (num_colours * 0.1)
+			runtime_hours = (web_length_m / printer_speed_m_per_min) / 60.0
+			duration_hours = setup_allowance_hours + runtime_hours
 		operations.append(
 			OperationEstimateDTO(
 				operation_type=OperationType.PRINTING_UTECO.value,
@@ -2286,6 +2304,7 @@ def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
 	"""
 	with SessionLocal.begin() as session:
 		ensure_jobs_for_orphan_standalone_sheets(session)
+		ensure_jobs_for_order_line_job_sheets_missing_production_job(session)
 
 		extruder_queued = exists(
 			select(1)

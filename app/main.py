@@ -132,10 +132,6 @@ try:
 except Exception:
     tools_admin_router = None
 try:
-    from app.machines.admin_routes import router as machines_admin_router  # type: ignore
-except Exception:
-    machines_admin_router = None
-try:
     from app.dashboard.routes import router as dashboard_router  # type: ignore
 except Exception:
     dashboard_router = None
@@ -245,8 +241,6 @@ if dispatch_router is not None:
     app.include_router(dispatch_router)
 if tools_admin_router is not None:
     app.include_router(tools_admin_router)
-if machines_admin_router is not None:
-    app.include_router(machines_admin_router)
 # Dashboard
 if dashboard_router is not None:
     app.include_router(dashboard_router)

@@ -5,7 +5,6 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { apiFetch } from '../../api/client'
 import type {
   Additive,
-  Anilox,
   Colour,
   Core,
   Extruder,
@@ -21,6 +20,10 @@ export type PackagingSettings = {
   packing_factor_rolls: number
   packing_factor_cartons: number
   pallet_volume_m3: number
+}
+
+export type QuoteDefaultsSettings = {
+  default_margin_pct: number
 }
 
 export type ConversionSpeed = {
@@ -61,7 +64,6 @@ type AdminRateCardsState = {
   inks: ReturnType<typeof listInit<Ink>>
   plates: ReturnType<typeof listInit<Plate>>
   printingPricingTiers: ReturnType<typeof listInit<PrintingPricingTier>>
-  anilox: ReturnType<typeof listInit<Anilox>>
   conversionSpeeds: ReturnType<typeof listInit<ConversionSpeed>>
   conversionFactors: ReturnType<typeof listInit<ConversionFactor>>
   cartonOptions: ReturnType<typeof listInit<CartonOption>>
@@ -69,6 +71,11 @@ type AdminRateCardsState = {
     status: Status
     error: string | null
     data: PackagingSettings | null
+  }
+  quoteDefaults: {
+    status: Status
+    error: string | null
+    data: QuoteDefaultsSettings | null
   }
   /** Used by mega AdminPage load (parallel). */
   hub: { status: Status; error: string | null }
@@ -95,11 +102,11 @@ const initialState: AdminRateCardsState = {
   inks: listInit(),
   plates: listInit(),
   printingPricingTiers: listInit(),
-  anilox: listInit(),
   conversionSpeeds: listInit(),
   conversionFactors: listInit(),
   cartonOptions: listInit(),
   packaging: { status: 'idle', error: null, data: null },
+  quoteDefaults: { status: 'idle', error: null, data: null },
   hub: { status: 'idle', error: null },
   printingBundle: { status: 'idle', error: null },
   resinsMaterials: { status: 'idle', error: null },
@@ -109,11 +116,6 @@ const initialState: AdminRateCardsState = {
 }
 
 // --- Single-resource fetches ---
-
-export const fetchAdminAnilox = createAsyncThunk('adminRateCards/anilox/list', async () => {
-  const rows = await apiFetch<Anilox[]>('/api/admin/rate-cards/anilox')
-  return Array.isArray(rows) ? rows : []
-})
 
 export const fetchAdminColours = createAsyncThunk('adminRateCards/colours/list', async () => {
   const rows = await apiFetch<Colour[]>('/api/admin/rate-cards/colours')
@@ -399,7 +401,7 @@ export const adminSavePrintingTier = createAsyncThunk(
   'adminRateCards/tiers/save',
   async (payload: {
     key: { method: string; max_print_width_mm: number; num_colours: number }
-    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>
+    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m' | 'meters_per_min'>
   }) => {
     const m = (payload.key.method || '').trim().toLowerCase()
     return await apiFetch<PrintingPricingTier>(
@@ -424,23 +426,6 @@ export const adminDeletePrintingTier = createAsyncThunk(
     return { method: m, max_print_width_mm: key.max_print_width_mm, num_colours: key.num_colours }
   },
 )
-
-export const adminSaveAnilox = createAsyncThunk(
-  'adminRateCards/anilox/save',
-  async (payload: { code: string; patch: Omit<Anilox, 'anilox_code'> }) => {
-    const trimmed = payload.code.trim()
-    return await apiFetch<Anilox>(`/api/admin/rate-cards/anilox/${encodeURIComponent(trimmed)}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload.patch),
-    })
-  },
-)
-
-export const adminDeleteAnilox = createAsyncThunk('adminRateCards/anilox/delete', async (code: string) => {
-  const trimmed = code.trim()
-  await apiFetch<void>(`/api/admin/rate-cards/anilox/${encodeURIComponent(trimmed)}`, { method: 'DELETE' })
-  return trimmed
-})
 
 export const adminSaveConversionSpeed = createAsyncThunk(
   'adminRateCards/conversionSpeed/save',
@@ -497,6 +482,20 @@ export const adminSavePackagingSettings = createAsyncThunk(
   },
 )
 
+export const fetchAdminQuoteDefaults = createAsyncThunk('adminRateCards/quoteDefaults/fetch', async () => {
+  return await apiFetch<QuoteDefaultsSettings>('/api/admin/rate-cards/quote-defaults')
+})
+
+export const adminSaveQuoteDefaults = createAsyncThunk(
+  'adminRateCards/quoteDefaults/save',
+  async (payload: QuoteDefaultsSettings) => {
+    return await apiFetch<QuoteDefaultsSettings>('/api/admin/rate-cards/quote-defaults', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+)
+
 function mergeBy<T>(items: T[], saved: T, match: (a: T, b: T) => boolean, sort?: (a: T, b: T) => number) {
   const idx = items.findIndex((x) => match(x, saved))
   let next: T[]
@@ -530,7 +529,6 @@ const slice = createSlice({
       })
     }
 
-    bindListFetch(fetchAdminAnilox, 'anilox')
     bindListFetch(fetchAdminColours, 'colours')
     bindListFetch(fetchAdminAdditives, 'additives')
     bindListFetch(fetchAdminCores, 'cores')
@@ -792,19 +790,6 @@ const slice = createSlice({
       )
     })
 
-    b.addCase(adminSaveAnilox.fulfilled, (s, a) => {
-      const saved = a.payload
-      s.anilox.items = mergeBy(
-        s.anilox.items,
-        saved,
-        (x, y) => x.anilox_code === y.anilox_code,
-        (x, y) => x.anilox_code.localeCompare(y.anilox_code),
-      )
-    })
-    b.addCase(adminDeleteAnilox.fulfilled, (s, a) => {
-      s.anilox.items = s.anilox.items.filter((x) => x.anilox_code !== a.payload)
-    })
-
     b.addCase(adminSaveConversionSpeed.fulfilled, (s, a) => {
       const saved = a.payload
       const sk = (x: ConversionSpeed) =>
@@ -830,6 +815,26 @@ const slice = createSlice({
       s.packaging.data = a.payload
       s.packaging.status = 'succeeded'
       s.packaging.error = null
+    })
+
+    b.addCase(fetchAdminQuoteDefaults.pending, (s) => {
+      s.quoteDefaults.status = 'loading'
+      s.quoteDefaults.error = null
+    })
+    b.addCase(fetchAdminQuoteDefaults.fulfilled, (s, a) => {
+      s.quoteDefaults.status = 'succeeded'
+      s.quoteDefaults.data = a.payload
+      s.quoteDefaults.error = null
+    })
+    b.addCase(fetchAdminQuoteDefaults.rejected, (s, a) => {
+      s.quoteDefaults.status = 'failed'
+      s.quoteDefaults.error = a.error.message || 'Failed to load quote defaults'
+    })
+
+    b.addCase(adminSaveQuoteDefaults.fulfilled, (s, a) => {
+      s.quoteDefaults.data = a.payload
+      s.quoteDefaults.status = 'succeeded'
+      s.quoteDefaults.error = null
     })
   },
 })

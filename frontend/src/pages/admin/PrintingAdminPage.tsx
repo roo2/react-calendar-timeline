@@ -4,22 +4,18 @@ import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchCustomers } from '../../store/slices/customersSlice'
 import {
-  adminDeleteAnilox,
   adminDeleteInk,
   adminDeletePlate,
   adminDeletePrintingTier,
-  adminSaveAnilox,
   adminSaveInk,
   adminSavePlate,
   adminSavePrintingTier,
-  fetchAdminAnilox,
   fetchAdminPrintingBundle,
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
-import { ScheduleMachinesSection, SCHEDULE_CAPABILITY_DEFAULTS } from './components/ScheduleMachinesSection'
-import type { Anilox, CustomerSummary, Ink, Plate, PrintingPricingTier } from './types'
+import type { CustomerSummary, Ink, Plate, PrintingPricingTier } from './types'
 
 function tierKey(t: { method: string; max_print_width_mm: number; num_colours: number }) {
   const m = (t.method || '').trim().toLowerCase()
@@ -35,34 +31,40 @@ export function PrintingAdminPage() {
   const customers = useAppSelector((s) => s.customers.list.items) as CustomerSummary[]
   const customersById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers])
   const { status, error: bundleErr } = useAppSelector((s) => s.adminRateCards.printingBundle)
-  const {
-    items: aniloxRows,
-    status: aniloxStatus,
-    error: aniloxLoadErr,
-  } = useAppSelector((s) => s.adminRateCards.anilox)
   const loading = status === 'loading'
-  const aniloxLoading = aniloxStatus === 'loading'
 
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
 
-  const [newMethod, setNewMethod] = useState<'inline' | 'uteco'>('inline')
-  const [newMaxWidth, setNewMaxWidth] = useState<number | ''>('')
-  const [newNumColours, setNewNumColours] = useState<number | ''>('')
-  const [newMinMeters, setNewMinMeters] = useState<number | ''>('')
-  const [newMinCharge, setNewMinCharge] = useState<number | ''>('')
-  const [newSetupFee, setNewSetupFee] = useState<number | ''>('')
-  const [newRate1000, setNewRate1000] = useState<number | ''>('')
+  const [niMaxW, setNiMaxW] = useState<number | ''>('')
+  const [niColours, setNiColours] = useState<number | ''>('')
+  const [niMinM, setNiMinM] = useState<number | ''>('')
+  const [niMinCharge, setNiMinCharge] = useState<number | ''>('')
+  const [niSetup, setNiSetup] = useState<number | ''>('')
+  const [niRate, setNiRate] = useState<number | ''>('')
 
-  const canCreateTier = useMemo(() => {
-    if (!newMethod) return false
-    if (newMaxWidth === '' || Number(newMaxWidth) <= 0) return false
-    if (newNumColours === '' || Number(newNumColours) < 1) return false
-    if (newMinMeters === '' || Number(newMinMeters) < 0) return false
-    if (newRate1000 === '' || Number(newRate1000) < 0) return false
-    if (newMethod === 'inline') return newMinCharge !== '' && Number(newMinCharge) >= 0
-    return newSetupFee !== '' && Number(newSetupFee) >= 0
-  }, [newMaxWidth, newMethod, newMinCharge, newMinMeters, newNumColours, newRate1000, newSetupFee])
+  const [nuMaxW, setNuMaxW] = useState<number | ''>('')
+  const [nuColours, setNuColours] = useState<number | ''>('')
+  const [nuMinM, setNuMinM] = useState<number | ''>('')
+  const [nuSetup, setNuSetup] = useState<number | ''>('')
+  const [nuRate, setNuRate] = useState<number | ''>('')
+  const [nuMpm, setNuMpm] = useState<number | ''>('')
+
+  const canCreateInlineTier = useMemo(() => {
+    if (niMaxW === '' || Number(niMaxW) <= 0) return false
+    if (niColours === '' || Number(niColours) < 1) return false
+    if (niMinM === '' || Number(niMinM) < 0) return false
+    if (niRate === '' || Number(niRate) < 0) return false
+    return niMinCharge !== '' && Number(niMinCharge) >= 0 && niSetup !== '' && Number(niSetup) >= 0
+  }, [niColours, niMaxW, niMinCharge, niMinM, niRate, niSetup])
+
+  const canCreateUtecoTier = useMemo(() => {
+    if (nuMaxW === '' || Number(nuMaxW) <= 0) return false
+    if (nuColours === '' || Number(nuColours) < 1) return false
+    if (nuMinM === '' || Number(nuMinM) < 0) return false
+    if (nuRate === '' || Number(nuRate) < 0) return false
+    return nuSetup !== '' && Number(nuSetup) >= 0
+  }, [nuColours, nuMaxW, nuMinM, nuRate, nuSetup])
 
   const [newInkCode, setNewInkCode] = useState('')
   const [newInkName, setNewInkName] = useState('')
@@ -74,20 +76,12 @@ export function PrintingAdminPage() {
   const [newPlateDescription, setNewPlateDescription] = useState('')
   const canCreatePlate = useMemo(() => !!newPlateCustomerId.trim() && !!newPlateCode.trim(), [newPlateCode, newPlateCustomerId])
 
-  const [newAniloxCode, setNewAniloxCode] = useState('')
-  const [newAniloxDescription, setNewAniloxDescription] = useState('')
-  const canCreateAnilox = useMemo(
-    () => !!newAniloxCode.trim() && !!newAniloxDescription.trim(),
-    [newAniloxCode, newAniloxDescription],
-  )
-
   useEffect(() => {
     void dispatch(fetchAdminPrintingBundle())
-    void dispatch(fetchAdminAnilox())
     void dispatch(fetchCustomers(undefined))
   }, [dispatch])
 
-  const displayErr = err || bundleErr || aniloxLoadErr
+  const displayErr = err || bundleErr
 
   async function saveInk(code: string, patch: Omit<Ink, 'ink_code'>) {
     const trimmed = code.trim()
@@ -157,7 +151,7 @@ export function PrintingAdminPage() {
 
   async function saveTier(
     key: { method: string; max_print_width_mm: number; num_colours: number },
-    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>,
+    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m' | 'meters_per_min'>,
   ) {
     const m = (key.method || '').trim().toLowerCase()
     if (!m) return
@@ -169,37 +163,6 @@ export function PrintingAdminPage() {
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save printing tier')
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  async function saveAnilox(code: string, patch: Omit<Anilox, 'anilox_code'>) {
-    const trimmed = code.trim()
-    if (!trimmed) return
-    try {
-      setErr(null)
-      setSavingKey(`anilox:${trimmed}`)
-      await dispatch(adminSaveAnilox({ code: trimmed, patch })).unwrap()
-      setDirty(false)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to save anilox')
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  async function deleteAnilox(code: string) {
-    const trimmed = code.trim()
-    if (!trimmed) return
-    if (!confirmDelete(`anilox '${trimmed}'`)) return
-    try {
-      setErr(null)
-      setSavingKey(`anilox:${trimmed}`)
-      await dispatch(adminDeleteAnilox(trimmed)).unwrap()
-      setDirty(false)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to delete anilox')
     } finally {
       setSavingKey(null)
     }
@@ -223,8 +186,18 @@ export function PrintingAdminPage() {
     }
   }
 
-  const tiersSorted = useMemo(() => {
-    return (tiers || []).slice().sort((a, b) => a.method.localeCompare(b.method) || a.max_print_width_mm - b.max_print_width_mm || a.num_colours - b.num_colours)
+  const inlineTiers = useMemo(() => {
+    return (tiers || [])
+      .filter((t) => (t.method || '').toLowerCase() === 'inline')
+      .slice()
+      .sort((a, b) => a.max_print_width_mm - b.max_print_width_mm || a.num_colours - b.num_colours)
+  }, [tiers])
+
+  const utecoTiers = useMemo(() => {
+    return (tiers || [])
+      .filter((t) => (t.method || '').toLowerCase() === 'uteco')
+      .slice()
+      .sort((a, b) => a.max_print_width_mm - b.max_print_width_mm || a.num_colours - b.num_colours)
   }, [tiers])
 
   const platesSorted = useMemo(() => {
@@ -239,21 +212,16 @@ export function PrintingAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Printing"
-        subtitle="Uteco schedule lane, printing pricing tiers, anilox master data, inks, and plates."
+        subtitle="Inline and Uteco printing pricing, inks, and plates."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
-      <ScheduleMachinesSection
-        machineType="printer_uteco"
-        title="Production schedule — Uteco (out-of-line printer)"
-        description="Lanes shown on the Schedule board for Uteco printing. Typically one machine; add another row if you run multiple Uteco lines."
-        defaultCapability={SCHEDULE_CAPABILITY_DEFAULTS.printer_uteco}
-        footerHint="Inactive printers are hidden from the schedule. Capability JSON drives future width/colour checks — adjust to match your Uteco line."
-      />
-
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Printing pricing tiers
+          Inline printing — pricing tiers
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Quote cost uses setup fee plus the greater of min charge or length-based cost (per 1000m).
         </Typography>
         {loading && tiers.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
@@ -261,7 +229,6 @@ export function PrintingAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 120 }}>Method</TableCell>
                 <TableCell sx={{ width: 160 }}>Max width (mm)</TableCell>
                 <TableCell sx={{ width: 140 }}>Colours</TableCell>
                 <TableCell sx={{ width: 140 }}>Min meters</TableCell>
@@ -272,9 +239,10 @@ export function PrintingAdminPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {tiersSorted.map((t) => (
+              {inlineTiers.map((t) => (
                 <TierRow
                   key={tierKey(t)}
+                  tierVariant="inline"
                   row={t}
                   saving={savingKey === `tier:${tierKey(t)}`}
                   onSave={saveTier}
@@ -283,51 +251,46 @@ export function PrintingAdminPage() {
               ))}
               <TableRow>
                 <TableCell>
-                  <TextField select size="small" label="Method" value={newMethod} onChange={(e) => setNewMethod(e.target.value as any)} sx={{ minWidth: 120 }}>
-                    <MenuItem value="inline">inline</MenuItem>
-                    <MenuItem value="uteco">uteco</MenuItem>
-                  </TextField>
+                  <TextField size="small" label="Max width" inputProps={{ inputMode: 'numeric' }} value={niMaxW} onChange={(e) => setNiMaxW(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Max width" inputProps={{ inputMode: 'numeric' }} value={newMaxWidth} onChange={(e) => setNewMaxWidth(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Colours" inputProps={{ inputMode: 'numeric' }} value={niColours} onChange={(e) => setNiColours(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Colours" inputProps={{ inputMode: 'numeric' }} value={newNumColours} onChange={(e) => setNewNumColours(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Min meters" inputProps={{ inputMode: 'numeric' }} value={niMinM} onChange={(e) => setNiMinM(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Min meters" inputProps={{ inputMode: 'numeric' }} value={newMinMeters} onChange={(e) => setNewMinMeters(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Min charge" inputProps={{ inputMode: 'numeric' }} value={niMinCharge} onChange={(e) => setNiMinCharge(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Min charge" inputProps={{ inputMode: 'numeric' }} disabled={newMethod !== 'inline'} value={newMinCharge} onChange={(e) => setNewMinCharge(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Setup fee" inputProps={{ inputMode: 'numeric' }} value={niSetup} onChange={(e) => setNiSetup(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Setup fee" inputProps={{ inputMode: 'numeric' }} disabled={newMethod !== 'uteco'} value={newSetupFee} onChange={(e) => setNewSetupFee(e.target.value ? parseFloat(e.target.value) : '')} />
-                </TableCell>
-                <TableCell>
-                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={newRate1000} onChange={(e) => setNewRate1000(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={niRate} onChange={(e) => setNiRate(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell align="right">
                   <Button
                     size="small"
                     variant="outlined"
-                    disabled={!canCreateTier}
+                    disabled={!canCreateInlineTier}
                     onClick={() => {
-                      if (!canCreateTier) return
+                      if (!canCreateInlineTier) return
                       void saveTier(
-                        { method: newMethod, max_print_width_mm: Number(newMaxWidth), num_colours: Number(newNumColours) },
+                        { method: 'inline', max_print_width_mm: Number(niMaxW), num_colours: Number(niColours) },
                         {
-                          min_meters: Number(newMinMeters),
-                          min_charge: newMethod === 'inline' ? Number(newMinCharge) : null,
-                          setup_fee: newMethod === 'uteco' ? Number(newSetupFee) : null,
-                          cost_per_1000m: Number(newRate1000),
+                          min_meters: Number(niMinM),
+                          min_charge: Number(niMinCharge),
+                          setup_fee: Number(niSetup),
+                          cost_per_1000m: Number(niRate),
+                          meters_per_min: null,
                         },
                       ).then(() => {
-                        setNewMaxWidth('')
-                        setNewNumColours('')
-                        setNewMinMeters('')
-                        setNewMinCharge('')
-                        setNewSetupFee('')
-                        setNewRate1000('')
+                        setNiMaxW('')
+                        setNiColours('')
+                        setNiMinM('')
+                        setNiMinCharge('')
+                        setNiSetup('')
+                        setNiRate('')
                       })
                     }}
                   >
@@ -342,59 +305,90 @@ export function PrintingAdminPage() {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Anilox (Uteco)
+          Uteco printing — pricing tiers
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Master list for Uteco printing specs: code and description (used in product spec dropdown).
+          Quote cost uses setup fee plus length-based cost (per 1000m). Min charge is not used for Uteco. M/min drives Uteco bar length on the schedule (job web meters ÷ m/min).
         </Typography>
-        {aniloxLoading && aniloxRows.length === 0 ? (
+        {loading && tiers.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 200 }}>Code</TableCell>
-                <TableCell>Description</TableCell>
+                <TableCell sx={{ width: 160 }}>Max width (mm)</TableCell>
+                <TableCell sx={{ width: 140 }}>Colours</TableCell>
+                <TableCell sx={{ width: 140 }}>Min meters</TableCell>
+                <TableCell sx={{ width: 160 }}>Setup fee</TableCell>
+                <TableCell sx={{ width: 180 }}>Cost / 1000m</TableCell>
+                <TableCell sx={{ width: 140 }}>M/min</TableCell>
                 <TableCell sx={{ width: 220 }} />
               </TableRow>
             </TableHead>
             <TableBody>
-              {aniloxRows.map((r) => (
-                <AniloxRow
-                  key={r.anilox_code}
-                  row={r}
-                  saving={savingKey === `anilox:${r.anilox_code}`}
-                  onSave={saveAnilox}
-                  onDelete={deleteAnilox}
+              {utecoTiers.map((t) => (
+                <TierRow
+                  key={tierKey(t)}
+                  tierVariant="uteco"
+                  row={t}
+                  saving={savingKey === `tier:${tierKey(t)}`}
+                  onSave={saveTier}
+                  onDelete={deleteTier}
                 />
               ))}
               <TableRow>
                 <TableCell>
-                  <TextField size="small" label="Code" value={newAniloxCode} onChange={(e) => setNewAniloxCode(e.target.value)} />
+                  <TextField size="small" label="Max width" inputProps={{ inputMode: 'numeric' }} value={nuMaxW} onChange={(e) => setNuMaxW(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Colours" inputProps={{ inputMode: 'numeric' }} value={nuColours} onChange={(e) => setNuColours(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Min meters" inputProps={{ inputMode: 'numeric' }} value={nuMinM} onChange={(e) => setNuMinM(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Setup fee" inputProps={{ inputMode: 'numeric' }} value={nuSetup} onChange={(e) => setNuSetup(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={nuRate} onChange={(e) => setNuRate(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
                   <TextField
                     size="small"
-                    fullWidth
-                    label="Description"
-                    value={newAniloxDescription}
-                    onChange={(e) => setNewAniloxDescription(e.target.value)}
+                    label="M/min"
+                    inputProps={{ inputMode: 'decimal', min: 0, step: 'any' }}
+                    value={nuMpm}
+                    onChange={(e) => setNuMpm(e.target.value ? parseFloat(e.target.value) : '')}
+                    helperText="optional"
                   />
                 </TableCell>
                 <TableCell align="right">
                   <Button
                     size="small"
                     variant="outlined"
-                    disabled={!canCreateAnilox || savingKey === `anilox:${newAniloxCode.trim()}`}
+                    disabled={!canCreateUtecoTier}
                     onClick={() => {
-                      if (!canCreateAnilox) return
-                      void saveAnilox(newAniloxCode, { description: newAniloxDescription.trim() }).then(() => {
-                        setNewAniloxCode('')
-                        setNewAniloxDescription('')
+                      if (!canCreateUtecoTier) return
+                      void saveTier(
+                        { method: 'uteco', max_print_width_mm: Number(nuMaxW), num_colours: Number(nuColours) },
+                        {
+                          min_meters: Number(nuMinM),
+                          min_charge: null,
+                          setup_fee: Number(nuSetup),
+                          cost_per_1000m: Number(nuRate),
+                          meters_per_min: nuMpm === '' ? null : Number(nuMpm),
+                        },
+                      ).then(() => {
+                        setNuMaxW('')
+                        setNuColours('')
+                        setNuMinM('')
+                        setNuSetup('')
+                        setNuRate('')
+                        setNuMpm('')
                       })
                     }}
                   >
-                    Add anilox
+                    Add tier
                   </Button>
                 </TableCell>
               </TableRow>
@@ -533,50 +527,78 @@ export function PrintingAdminPage() {
 }
 
 function TierRow(props: {
+  tierVariant: 'inline' | 'uteco'
   row: PrintingPricingTier
   saving: boolean
   onSave: (
     key: { method: string; max_print_width_mm: number; num_colours: number },
-    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m'>,
+    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m' | 'meters_per_min'>,
   ) => Promise<void>
   onDelete: (key: { method: string; max_print_width_mm: number; num_colours: number }) => Promise<void>
 }) {
-  const { row, saving, onSave, onDelete } = props
+  const { tierVariant, row, saving, onSave, onDelete } = props
   const [minMeters, setMinMeters] = useState<number | ''>(row.min_meters)
   const [minCharge, setMinCharge] = useState<number | ''>(row.min_charge ?? '')
   const [setupFee, setSetupFee] = useState<number | ''>(row.setup_fee ?? '')
   const [rate, setRate] = useState<number | ''>(row.cost_per_1000m)
-  const dirty = minMeters !== row.min_meters || minCharge !== (row.min_charge ?? '') || setupFee !== (row.setup_fee ?? '') || rate !== row.cost_per_1000m
+  const [metersPerMin, setMetersPerMin] = useState<number | ''>(row.meters_per_min ?? '')
+  const isInline = tierVariant === 'inline'
+  const dirty =
+    minMeters !== row.min_meters ||
+    minCharge !== (row.min_charge ?? '') ||
+    setupFee !== (row.setup_fee ?? '') ||
+    rate !== row.cost_per_1000m ||
+    (!isInline && metersPerMin !== (row.meters_per_min ?? ''))
   const key = { method: row.method, max_print_width_mm: row.max_print_width_mm, num_colours: row.num_colours }
   return (
     <TableRow hover>
-      <TableCell>{row.method}</TableCell>
       <TableCell>{row.max_print_width_mm}</TableCell>
       <TableCell>{row.num_colours}</TableCell>
       <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={minMeters} onChange={(e) => setMinMeters(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
+      {isInline ? (
+        <TableCell>
+          <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={minCharge} onChange={(e) => setMinCharge(e.target.value ? parseFloat(e.target.value) : '')} />
+        </TableCell>
+      ) : null}
       <TableCell>
-        <TextField size="small" inputProps={{ inputMode: 'numeric' }} disabled={row.method !== 'inline'} value={minCharge} onChange={(e) => setMinCharge(e.target.value ? parseFloat(e.target.value) : '')} />
-      </TableCell>
-      <TableCell>
-        <TextField size="small" inputProps={{ inputMode: 'numeric' }} disabled={row.method !== 'uteco'} value={setupFee} onChange={(e) => setSetupFee(e.target.value ? parseFloat(e.target.value) : '')} />
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={setupFee} onChange={(e) => setSetupFee(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
       <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={rate} onChange={(e) => setRate(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
+      {!isInline ? (
+        <TableCell>
+          <TextField
+            size="small"
+            inputProps={{ inputMode: 'decimal', min: 0, step: 'any' }}
+            value={metersPerMin}
+            onChange={(e) => setMetersPerMin(e.target.value ? parseFloat(e.target.value) : '')}
+            placeholder="—"
+          />
+        </TableCell>
+      ) : null}
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
             size="small"
             variant="outlined"
-            disabled={saving || !dirty || minMeters === '' || rate === '' || (row.method === 'inline' && minCharge === '') || (row.method === 'uteco' && setupFee === '')}
+            disabled={
+              saving ||
+              !dirty ||
+              minMeters === '' ||
+              rate === '' ||
+              setupFee === '' ||
+              (isInline && minCharge === '')
+            }
             onClick={() =>
               void onSave(key, {
                 min_meters: Number(minMeters),
-                min_charge: row.method === 'inline' ? Number(minCharge) : null,
-                setup_fee: row.method === 'uteco' ? Number(setupFee) : null,
+                min_charge: isInline ? Number(minCharge) : null,
+                setup_fee: Number(setupFee),
                 cost_per_1000m: Number(rate),
+                meters_per_min: isInline ? null : metersPerMin === '' ? null : Number(metersPerMin),
               })
             }
           >
@@ -620,40 +642,6 @@ function InkRow(props: {
             {saving ? 'Saving…' : 'Save'}
           </Button>
           <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.ink_code)}>
-            Delete
-          </Button>
-        </Stack>
-      </TableCell>
-    </TableRow>
-  )
-}
-
-function AniloxRow(props: {
-  row: Anilox
-  saving: boolean
-  onSave: (code: string, patch: Omit<Anilox, 'anilox_code'>) => Promise<void>
-  onDelete: (code: string) => Promise<void>
-}) {
-  const { row, saving, onSave, onDelete } = props
-  const [description, setDescription] = useState(row.description)
-  const dirty = description !== row.description
-  return (
-    <TableRow hover>
-      <TableCell sx={{ fontFamily: 'monospace' }}>{row.anilox_code}</TableCell>
-      <TableCell>
-        <TextField size="small" fullWidth value={description} onChange={(e) => setDescription(e.target.value)} />
-      </TableCell>
-      <TableCell align="right">
-        <Stack direction="row" spacing={1} justifyContent="flex-end">
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={saving || !dirty || !description.trim()}
-            onClick={() => void onSave(row.anilox_code, { description: description.trim() })}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-          <Button size="small" variant="outlined" color="error" disabled={saving} onClick={() => void onDelete(row.anilox_code)}>
             Delete
           </Button>
         </Stack>

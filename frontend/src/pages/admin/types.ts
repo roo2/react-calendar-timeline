@@ -56,6 +56,8 @@ export type PrintingPricingTier = {
   min_charge?: number | null
   setup_fee?: number | null
   cost_per_1000m: number
+  /** Uteco: web speed (m/min) for scheduling. Inline tiers omit or null. */
+  meters_per_min?: number | null
 }
 
 export type Ink = {
@@ -68,11 +70,6 @@ export type Plate = {
   customer_id: string
   plate_code: string
   description?: string | null
-}
-
-export type Anilox = {
-  anilox_code: string
-  description: string
 }
 
 export type CustomerSummary = {

@@ -18,6 +18,7 @@ from app.db.models.domain import (
 )
 from app.db.models.enums import OrderStatus, JobStatus
 from app.exceptions import DomainError
+from app.job_context import ensure_scheduling_job_for_job_sheet
 from app.orders.schemas import CreateOrderRequest, CreateJobRequest, CreateOrderItemRequest, UpdateOrderRequest
 from app.job_sheets import service as job_sheets_service
 
@@ -115,6 +116,8 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
             db.add(oi)
 
         db.flush()
+        for js in created_job_sheets:
+            ensure_scheduling_job_for_job_sheet(db, str(js.id))
         db.refresh(order)
         return order
 
@@ -240,6 +243,7 @@ def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: s
             db.add(o)
 
         db.flush()
+        ensure_scheduling_job_for_job_sheet(db, str(js.id))
         db.refresh(oi)
         return oi
 

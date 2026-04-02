@@ -878,12 +878,6 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        "anilox",
-        sa.Column("anilox_code", sa.String(length=32), primary_key=True, nullable=False),
-        sa.Column("description", sa.String(length=255), nullable=False),
-    )
-
-    op.create_table(
         "plates",
         sa.Column(
             "customer_id",
@@ -940,6 +934,7 @@ def upgrade() -> None:
         sa.Column("min_charge", sa.Numeric(12, 4), nullable=True),
         sa.Column("setup_fee", sa.Numeric(12, 4), nullable=True),
         sa.Column("cost_per_1000m", sa.Numeric(12, 4), nullable=False),
+        sa.Column("meters_per_min", sa.Numeric(12, 4), nullable=True),
         sa.UniqueConstraint("method", "max_print_width_mm", "num_colours", name="uq_printing_pricing_tier"),
         sa.CheckConstraint("method IN ('inline','uteco')", name="ck_print_tier_method"),
         sa.CheckConstraint("max_print_width_mm > 0", name="ck_print_tier_max_width_pos"),
@@ -948,6 +943,7 @@ def upgrade() -> None:
         sa.CheckConstraint("min_charge IS NULL OR min_charge >= 0", name="ck_print_tier_min_charge_nonneg"),
         sa.CheckConstraint("setup_fee IS NULL OR setup_fee >= 0", name="ck_print_tier_setup_fee_nonneg"),
         sa.CheckConstraint("cost_per_1000m >= 0", name="ck_print_tier_cost_nonneg"),
+        sa.CheckConstraint("meters_per_min IS NULL OR meters_per_min > 0", name="ck_print_tier_meters_per_min_pos"),
     )
 
     op.create_table(
@@ -1050,11 +1046,24 @@ def upgrade() -> None:
         )
     )
 
+    op.create_table(
+        "quote_defaults",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=False),
+        sa.Column("default_margin_pct", sa.Numeric(6, 3), nullable=False, server_default=sa.text("37")),
+        sa.CheckConstraint("id = 1", name="ck_quote_defaults_singleton"),
+        sa.CheckConstraint(
+            "default_margin_pct >= 0 AND default_margin_pct < 100",
+            name="ck_quote_defaults_margin_range",
+        ),
+    )
+    op.execute(sa.text("INSERT INTO quote_defaults (id, default_margin_pct) VALUES (1, 37)"))
+
 
 def downgrade() -> None:
     conn = op.get_bind()
 
     # Rate cards
+    op.drop_table("quote_defaults")
     op.drop_table("quote_packaging_settings")
     op.drop_table("waste_adders")
     op.drop_table("carton_options")
@@ -1068,7 +1077,6 @@ def downgrade() -> None:
     op.drop_table("cores")
     op.drop_index("ix_plates_customer_id", table_name="plates")
     op.drop_table("plates")
-    op.drop_table("anilox")
     op.drop_table("inks")
     op.drop_table("colours")
     op.drop_table("additives")

@@ -4,6 +4,7 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchJobSheet } from '../../store/slices/jobSheetsSlice'
 import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
 import { computeDerivedGeometryAndTotals } from '../../utils/quoteCalculator'
+import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { buildQuickQuoteInputsFromSpec } from '../../utils/specToQuoteInputs'
 import {
   coerceQtyTypeForFinishMode,
@@ -114,8 +115,15 @@ export function JobSheetShowPage() {
     void dispatch(fetchQuoteRatebook())
   }, [dispatch])
 
-  const totalMetersDisplay = useMemo(() => {
-    if (!data || !ratebook) return null
+  const derivedTotalsRow = useMemo(() => {
+    const pending = {
+      loading: true,
+      kgDisplay: null as string | null,
+      unitsLabel: 'Total units',
+      unitsDisplay: null as string | null,
+      metersDisplay: null as string | null,
+    }
+    if (!data || !ratebook) return pending
     try {
       const spec = ensureSpec(data.spec_payload)
       const js = data.job_sheet
@@ -135,6 +143,7 @@ export function JobSheetShowPage() {
       } else if (effectiveQtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
         totalKgForCalc = numRollsNum * weightPerRollNum
       }
+      const productType = String(spec.identity?.product_type || 'Bag')
       const d = computeDerivedGeometryAndTotals(
         buildQuickQuoteInputsFromSpec(spec, {
           qtyType: effectiveQtyType,
@@ -145,11 +154,47 @@ export function JobSheetShowPage() {
         }),
         ratebook,
       )
+      const billedKg = Number(d?.billedTotalsKg ?? 0)
+      const kgDisplay =
+        Number.isFinite(billedKg) && billedKg > 0
+          ? `${fmtQtyNumber(billedKg, 2)} kg`
+          : totalKgForCalc > 0
+            ? `${fmtQtyNumber(totalKgForCalc, 2)} kg`
+            : null
+
+      const unitsFromCalc = d?.units
+      const unitsCount =
+        unitsFromCalc != null && Number.isFinite(Number(unitsFromCalc)) && Number(unitsFromCalc) > 0
+          ? Math.round(Number(unitsFromCalc))
+          : effectiveQtyType === 'units' && numUnitsNum > 0
+            ? numUnitsNum
+            : null
+      const unitsLabel = productType === 'Bag' ? 'Total bags' : 'Total units'
+      const unitsSuffix = productType === 'Bag' ? 'bags' : 'units'
+      const unitsDisplay =
+        unitsCount != null && unitsCount > 0 ? `${fmtCount(unitsCount)} ${unitsSuffix}` : null
+
       const m = d?.derivedTotalM
-      if (m == null || !Number.isFinite(Number(m)) || Number(m) <= 0) return null
-      return `${Math.round(Number(m)).toLocaleString()} m`
+      const metersDisplay =
+        m != null && Number.isFinite(Number(m)) && Number(m) > 0
+          ? `${Math.round(Number(m)).toLocaleString()} m`
+          : null
+
+      return {
+        loading: false,
+        kgDisplay,
+        unitsLabel,
+        unitsDisplay,
+        metersDisplay,
+      }
     } catch {
-      return null
+      return {
+        loading: false,
+        kgDisplay: null,
+        unitsLabel: 'Total units',
+        unitsDisplay: null,
+        metersDisplay: null,
+      }
     }
   }, [data, ratebook])
 
@@ -223,8 +268,23 @@ export function JobSheetShowPage() {
           </FieldBlock>
         </Box>
 
-        <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-          <FieldBlock label="Total Meters">{totalMetersDisplay ?? (ratebook ? '—' : '…')}</FieldBlock>
+        <Box
+          sx={{
+            mt: 2,
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))' },
+            gap: 2,
+          }}
+        >
+          <FieldBlock label="Total KG">
+            {derivedTotalsRow.loading ? '…' : derivedTotalsRow.kgDisplay ?? '—'}
+          </FieldBlock>
+          <FieldBlock label={derivedTotalsRow.unitsLabel}>
+            {derivedTotalsRow.loading ? '…' : derivedTotalsRow.unitsDisplay ?? '—'}
+          </FieldBlock>
+          <FieldBlock label="Total meters">
+            {derivedTotalsRow.loading ? '…' : derivedTotalsRow.metersDisplay ?? '—'}
+          </FieldBlock>
         </Box>
 
         <Box sx={{ mt: 2 }}>

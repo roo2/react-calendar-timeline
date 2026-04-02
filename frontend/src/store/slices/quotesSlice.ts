@@ -10,6 +10,8 @@ export type QuotesBootstrap = {
   additives?: Array<{ code: string; name: string }>
   cores?: Array<{ type: string; description: string }>
   extruders?: Array<{ code: string; width_range_mm?: unknown; gauge_range_um?: unknown }>
+  /** Default margin % for new quotes (from admin Defaults / DB). */
+  default_margin_pct?: number
   product_types?: string[]
   geometries?: string[]
   print_methods?: string[]

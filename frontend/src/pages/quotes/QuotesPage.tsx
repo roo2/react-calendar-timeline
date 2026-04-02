@@ -135,6 +135,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const preserveLoadedPricePerKgRef = useRef(false)
   const skipNextMarginToPriceRef = useRef(false)
   const payloadForEditDetectionRef = useRef<Record<string, unknown>>({})
+  /** New quote only: apply server default margin once after bootstrap (avoids clobbering user edits). */
+  const defaultMarginFromBootstrapAppliedRef = useRef(false)
 
   // Quantity (four independent values; qtyType only controls which are editable vs computed)
   const [qtyType, setQtyType] = useState<'units' | 'kg' | 'total_rolls'>('kg')
@@ -183,13 +185,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
   // Packaging
   const [coreType, setCoreType] = useState('7mm')
-  const [rollWeightBilling, setRollWeightBilling] = useState<'core_included' | 'core_off' | 'core_half_off'>('core_included')
+  const [rollWeightBilling, setRollWeightBilling] = useState<'core_included' | 'core_off' | 'core_half_off'>('core_off')
   const [bagsPerCarton, setBagsPerCarton] = useState('')
   const [cartonOptionSlug, setCartonOptionSlug] = useState<string | null>(null)
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
 
   // Pricing: margin (%) and price per kg are linked; last-edited field drives the other to avoid loops.
-  const [quickMargin, setQuickMargin] = useState('32')
+  const [quickMargin, setQuickMargin] = useState('37')
   const [suggestedPricePerKg, setSuggestedPricePerKg] = useState('')
   const [priceDriver, setPriceDriver] = useState<'margin' | 'pricePerKg'>('margin')
   const [quickPreview, setQuickPreview] = useState<any>(null)
@@ -203,6 +205,17 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   useEffect(() => {
     void dispatch(fetchQuotesBootstrap())
   }, [dispatch])
+
+  useEffect(() => {
+    if (quoteId || hydratedFromQuote) return
+    if (bootstrapState.status !== 'succeeded' || !bootstrap) return
+    if (defaultMarginFromBootstrapAppliedRef.current) return
+    const raw = bootstrap.default_margin_pct
+    if (raw != null && Number.isFinite(Number(raw))) {
+      setQuickMargin(roundTo2Decimals(String(raw)))
+      defaultMarginFromBootstrapAppliedRef.current = true
+    }
+  }, [quoteId, hydratedFromQuote, bootstrapState.status, bootstrap])
 
   useEffect(() => {
     dispatch(clearUpsertErrors())
@@ -1088,6 +1101,43 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [converting, setConverting] = useState(false)
   const [convertErr, setConvertErr] = useState<string | null>(null)
 
+  /**
+   * Create or update the saved quote. Used by Save and by Convert (convert always saves first).
+   * @returns Saved quote id
+   */
+  async function persistQuote(opts: { navigateToEditOnCreate: boolean }): Promise<string> {
+    if (!customerId.trim()) {
+      throw new Error('Select a customer to save this quote.')
+    }
+    if (quoteId) {
+      await dispatch(
+        updateSavedQuote({
+          quoteId,
+          payload: payloadForSave,
+          cost_per_kg: costPerKgForSave ?? undefined,
+          price_per_kg: pricePerKgForSave ?? undefined,
+        }),
+      ).unwrap()
+      setDirty(false)
+      return quoteId
+    }
+    const quote = await dispatch(
+      createSavedQuote({
+        customer_id: customerId.trim(),
+        payload: payloadForSave,
+        cost_per_kg: costPerKgForSave,
+        price_per_kg: pricePerKgForSave,
+      }),
+    ).unwrap()
+    const id = quote?.id
+    if (!id) throw new Error('Failed to save quote')
+    setDirty(false)
+    if (opts.navigateToEditOnCreate) {
+      navigate(`/quotes/${id}/edit`)
+    }
+    return id
+  }
+
   async function handleConvertToOrder() {
     if (!customerId.trim() || !canCalculate) {
       setConvertErr('Select a customer and complete the quote fields before converting to order.')
@@ -1096,9 +1146,15 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     setConvertErr(null)
     setConverting(true)
     try {
-      const suffix = quoteId
-        ? `${String(quoteId).slice(0, 8)}-${Date.now().toString(36).slice(-4)}`
-        : Date.now().toString(36)
+      let savedQuoteId: string
+      try {
+        savedQuoteId = await persistQuote({ navigateToEditOnCreate: false })
+      } catch (e) {
+        setConvertErr(e instanceof Error ? e.message : 'Failed to save quote before converting to order.')
+        return
+      }
+
+      const suffix = `${String(savedQuoteId).slice(0, 8)}-${Date.now().toString(36).slice(-4)}`
 
       const spec = buildSpecFromQuotePayload(payloadForSave as any)
       const fromSpec = (computeProductCodeFromSpec(spec) || '').trim()
@@ -1158,7 +1214,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           },
         ],
       }
-      if (quoteId) orderPayload.quote_id = quoteId
+      orderPayload.quote_id = savedQuoteId
 
       const createOrderRes = await dispatch(createOrder(orderPayload)).unwrap()
       const orderId = createOrderRes?.order_id
@@ -1182,28 +1238,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     }
     setErr(null)
     try {
-      if (quoteId) {
-        await dispatch(
-          updateSavedQuote({
-            quoteId,
-            payload: payloadForSave,
-            cost_per_kg: costPerKgForSave ?? undefined,
-            price_per_kg: pricePerKgForSave ?? undefined,
-          }),
-        ).unwrap()
-        setDirty(false)
-      } else {
-        const quote = await dispatch(
-          createSavedQuote({
-            customer_id: customerId.trim(),
-            payload: payloadForSave,
-            cost_per_kg: costPerKgForSave,
-            price_per_kg: pricePerKgForSave,
-          }),
-        ).unwrap()
-        setDirty(false)
-        navigate(`/quotes/${quote.id}/edit`)
-      }
+      await persistQuote({ navigateToEditOnCreate: true })
     } catch {
       // Error stored in quotes.upsert.error, shown via displayErr
     }
@@ -1224,10 +1259,10 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         </Button>
         <Button
           variant="contained"
-          disabled={converting || !customerId.trim() || !canCalculate}
+          disabled={saving || converting || !customerId.trim() || !canCalculate}
           onClick={() => void handleConvertToOrder()}
         >
-          {converting ? 'Converting…' : 'Convert to order'}
+          {converting ? 'Converting…' : saving ? 'Saving…' : 'Convert to order'}
         </Button>
       </>
     )
@@ -1304,81 +1339,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <MenuItem value="Cartons">Cartons</MenuItem>
                 </DefaultSelectField>
               </Box>
-            </Paper>
-
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                Quantity
-              </Typography>
-              <Stack spacing={2}>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-                  <DefaultSelectField defaultValue="kg" label="Qty Type" value={qtyType} onChange={(e) => setQtyType(e.target.value as any)}>
-                    <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
-                    <MenuItem value="kg">Total KG</MenuItem>
-                    {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
-                  </DefaultSelectField>
-                </Box>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
-                  <TextField
-                    label="Total KG"
-                    type="number"
-                    inputProps={{ min: 0, step: 0.1 }}
-                    value={
-                      totalKgEditable
-                        ? totalKg
-                        : (haveDriverForTotalKg && totalKgDisplay != null
-                          ? formatKgDisplay(totalKgDisplay)
-                          : totalKg !== '' && Number.isFinite(Number(totalKg))
-                            ? formatKgDisplay(Number(totalKg))
-                            : totalKg)
-                    }
-                    onChange={totalKgEditable ? (e) => setTotalKg(e.target.value) : undefined}
-                    disabled={!totalKgEditable}
-                  />
-                  <TextField
-                    label={`No. of ${productUnitLabel}`}
-                    type="number"
-                    inputProps={{ min: 0, step: 1 }}
-                    value={
-                      unitsEditable
-                        ? numUnits
-                        : (haveDriverForUnits && unitsDisplay != null ? unitsDisplay : numUnits)
-                    }
-                    onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
-                    disabled={!unitsEditable}
-                  />
-                  <TextField
-                    label="Weight per Roll (kg)"
-                    type="number"
-                    inputProps={{ min: 0, step: 'any' }}
-                    value={
-                      weightPerRollEditable
-                        ? weightPerRoll
-                        : (haveDriverForWeightPerRoll && weightPerRollDisplay != null
-                          ? formatKgDisplay(weightPerRollDisplay)
-                          : finishMode === 'Cartons'
-                            ? '—'
-                            : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
-                              ? formatKgDisplay(Number(weightPerRoll))
-                              : weightPerRoll)
-                    }
-                    onChange={weightPerRollEditable ? (e) => setWeightPerRoll(e.target.value) : undefined}
-                    disabled={!weightPerRollEditable}
-                  />
-                  <TextField
-                    label="No. of Rolls"
-                    type="number"
-                    inputProps={{ min: 0, step: 1 }}
-                    value={
-                      rollsEditable
-                        ? numRolls
-                        : (rollsDisplay != null ? rollsDisplay : finishMode === 'Cartons' ? '—' : numRolls)
-                    }
-                    onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
-                    disabled={!rollsEditable}
-                  />
-                </Box>
-              </Stack>
             </Paper>
 
             <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1519,6 +1479,81 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Typography variant="h6" sx={{ mb: 2 }}>
+                Quantity
+              </Typography>
+              <Stack spacing={2}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
+                  <DefaultSelectField defaultValue="kg" label="Qty Type" value={qtyType} onChange={(e) => setQtyType(e.target.value as any)}>
+                    <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
+                    <MenuItem value="kg">Total KG</MenuItem>
+                    {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Total Rolls</MenuItem> : null}
+                  </DefaultSelectField>
+                </Box>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
+                  <TextField
+                    label="Total KG"
+                    type="number"
+                    inputProps={{ min: 0, step: 0.1 }}
+                    value={
+                      totalKgEditable
+                        ? totalKg
+                        : (haveDriverForTotalKg && totalKgDisplay != null
+                          ? formatKgDisplay(totalKgDisplay)
+                          : totalKg !== '' && Number.isFinite(Number(totalKg))
+                            ? formatKgDisplay(Number(totalKg))
+                            : totalKg)
+                    }
+                    onChange={totalKgEditable ? (e) => setTotalKg(e.target.value) : undefined}
+                    disabled={!totalKgEditable}
+                  />
+                  <TextField
+                    label={`No. of ${productUnitLabel}`}
+                    type="number"
+                    inputProps={{ min: 0, step: 1 }}
+                    value={
+                      unitsEditable
+                        ? numUnits
+                        : (haveDriverForUnits && unitsDisplay != null ? unitsDisplay : numUnits)
+                    }
+                    onChange={unitsEditable ? (e) => setNumUnits(e.target.value) : undefined}
+                    disabled={!unitsEditable}
+                  />
+                  <TextField
+                    label="Weight per Roll (kg)"
+                    type="number"
+                    inputProps={{ min: 0, step: 'any' }}
+                    value={
+                      weightPerRollEditable
+                        ? weightPerRoll
+                        : (haveDriverForWeightPerRoll && weightPerRollDisplay != null
+                          ? formatKgDisplay(weightPerRollDisplay)
+                          : finishMode === 'Cartons'
+                            ? '—'
+                            : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
+                              ? formatKgDisplay(Number(weightPerRoll))
+                              : weightPerRoll)
+                    }
+                    onChange={weightPerRollEditable ? (e) => setWeightPerRoll(e.target.value) : undefined}
+                    disabled={!weightPerRollEditable}
+                  />
+                  <TextField
+                    label="No. of Rolls"
+                    type="number"
+                    inputProps={{ min: 0, step: 1 }}
+                    value={
+                      rollsEditable
+                        ? numRolls
+                        : (rollsDisplay != null ? rollsDisplay : finishMode === 'Cartons' ? '—' : numRolls)
+                    }
+                    onChange={rollsEditable ? (e) => setNumRolls(e.target.value) : undefined}
+                    disabled={!rollsEditable}
+                  />
+                </Box>
+              </Stack>
+            </Paper>
+
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2 }}>
                 Run Requirements
               </Typography>
               <Stack spacing={2}>
@@ -1541,7 +1576,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   ) : (
                     <DefaultSelectField
                       label="Roll weight billing"
-                      defaultValue="core_included"
+                      defaultValue="core_off"
                       value={rollWeightBilling}
                       onChange={(e) => setRollWeightBilling(e.target.value as any)}
                     >

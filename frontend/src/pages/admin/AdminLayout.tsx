@@ -3,6 +3,7 @@ import { Box, List, ListItemButton, ListItemText, Paper, Typography } from '@mui
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 
 const items = [
+  { to: '/admin/defaults', label: 'Defaults' },
   { to: '/admin/resins', label: 'Resins' },
   { to: '/admin/extrusion', label: 'Extrusion' },
   { to: '/admin/printing', label: 'Printing' },

@@ -15,7 +15,7 @@ except Exception:
 
 from app.db.models.domain import Customer, Machine, Product, ProductVersion, SavedQuote
 from app.db.models.enums import MachineType
-from app.db.models.rate_cards import Additive, Colour, Core, Resin
+from app.db.models.rate_cards import Additive, Colour, Core, QuoteDefaults, Resin
 from app.db.session import SessionLocal
 from app.products.schemas import FinishMode, Geometry, PrintMethod, ProductType
 from app.quotes.schemas import (
@@ -94,6 +94,9 @@ async def quotes_bootstrap(_identity=Depends(current_identity)):
             for c in db.execute(select(Customer).order_by(Customer.name)).scalars().all()
         ]
 
+        qd = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        default_margin_pct = float(qd.default_margin_pct) if qd is not None else 37.0
+
     return {
         "product_versions": product_versions,
         "customers": customers,
@@ -102,6 +105,7 @@ async def quotes_bootstrap(_identity=Depends(current_identity)):
         "additives": additives,
         "cores": cores,
         "extruders": extruders,
+        "default_margin_pct": default_margin_pct,
         **enums,
     }
 

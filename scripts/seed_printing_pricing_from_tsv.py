@@ -42,6 +42,17 @@ def to_money(v: str) -> float | None:
         return None
 
 
+def to_positive_float(v: str) -> float | None:
+    s = (v or "").strip().lower().replace(",", "")
+    if not s:
+        return None
+    try:
+        n = float(s)
+        return n if n > 0 else None
+    except Exception:
+        return None
+
+
 _COLOUR_RE = re.compile(r"^\s*(\d+)\s*")
 _WIDTH_RE = re.compile(r"\(\s*(?:up\s*to\s*)?(\d+)\s*mm", re.IGNORECASE)
 
@@ -96,14 +107,19 @@ def main() -> None:
     if not inline_tiers:
         raise RuntimeError("Could not parse inline printing tiers from header row")
 
+    # rows[2]=Min meters, [3]=Min charge, [4]=Setup fee, [5]=$/1000m
+    if len(rows) < 6:
+        raise RuntimeError("Inline TSV needs rows: tiers, min meters, min charge, setup fee, $/1000m")
     inline_min_m = [to_int(v) for v in rows[2][1 : 1 + len(inline_tiers)]]
-    inline_min_charge = [to_money(v) for v in rows[3][1 : 1 + len(inline_tiers)]] if len(rows) > 3 else [None] * len(inline_tiers)
-    inline_rate = [to_money(v) for v in rows[4][1 : 1 + len(inline_tiers)]] if len(rows) > 4 else [None] * len(inline_tiers)
+    inline_min_charge = [to_money(v) for v in rows[3][1 : 1 + len(inline_tiers)]]
+    inline_setup_fee = [to_money(v) for v in rows[4][1 : 1 + len(inline_tiers)]]
+    inline_rate = [to_money(v) for v in rows[5][1 : 1 + len(inline_tiers)]]
 
     inline_records: list[dict] = []
     for idx, (num_colours, max_w) in enumerate(inline_tiers):
         min_m = inline_min_m[idx] if idx < len(inline_min_m) else None
         min_charge = inline_min_charge[idx] if idx < len(inline_min_charge) else None
+        setup_fee = inline_setup_fee[idx] if idx < len(inline_setup_fee) else None
         rate_1000 = inline_rate[idx] if idx < len(inline_rate) else None
         if min_m is None or rate_1000 is None:
             continue
@@ -115,8 +131,9 @@ def main() -> None:
                 "num_colours": num_colours,
                 "min_meters": int(min_m),
                 "min_charge": float(min_charge) if min_charge is not None else None,
-                "setup_fee": None,
+                "setup_fee": float(setup_fee) if setup_fee is not None else None,
                 "cost_per_1000m": float(rate_1000),
+                "meters_per_min": None,
             }
         )
 
@@ -132,12 +149,16 @@ def main() -> None:
     uteco_min_m = [to_int(v) for v in rows[2][1 : 1 + len(uteco_tiers)]]
     uteco_setup_fee = [to_money(v) for v in rows[3][1 : 1 + len(uteco_tiers)]] if len(rows) > 3 else [None] * len(uteco_tiers)
     uteco_rate = [to_money(v) for v in rows[4][1 : 1 + len(uteco_tiers)]] if len(rows) > 4 else [None] * len(uteco_tiers)
+    uteco_mpm = (
+        [to_positive_float(v) for v in rows[5][1 : 1 + len(uteco_tiers)]] if len(rows) > 5 else [None] * len(uteco_tiers)
+    )
 
     uteco_records: list[dict] = []
     for idx, (num_colours, max_w) in enumerate(uteco_tiers):
         min_m = uteco_min_m[idx] if idx < len(uteco_min_m) else None
         setup_fee = uteco_setup_fee[idx] if idx < len(uteco_setup_fee) else None
         rate_1000 = uteco_rate[idx] if idx < len(uteco_rate) else None
+        mpm = uteco_mpm[idx] if idx < len(uteco_mpm) else None
         if min_m is None or setup_fee is None or rate_1000 is None:
             continue
         uteco_records.append(
@@ -150,6 +171,7 @@ def main() -> None:
                 "min_charge": None,
                 "setup_fee": float(setup_fee),
                 "cost_per_1000m": float(rate_1000),
+                "meters_per_min": float(mpm) if mpm is not None else None,
             }
         )
 
@@ -164,14 +186,15 @@ def main() -> None:
                 text(
                     """
                     INSERT INTO printing_pricing_tiers
-                      (id, method, max_print_width_mm, num_colours, min_meters, min_charge, setup_fee, cost_per_1000m)
+                      (id, method, max_print_width_mm, num_colours, min_meters, min_charge, setup_fee, cost_per_1000m, meters_per_min)
                     VALUES
-                      (:id, :method, :max_print_width_mm, :num_colours, :min_meters, :min_charge, :setup_fee, :cost_per_1000m)
+                      (:id, :method, :max_print_width_mm, :num_colours, :min_meters, :min_charge, :setup_fee, :cost_per_1000m, :meters_per_min)
                     ON CONFLICT (method, max_print_width_mm, num_colours) DO UPDATE SET
                       min_meters = excluded.min_meters,
                       min_charge = excluded.min_charge,
                       setup_fee = excluded.setup_fee,
-                      cost_per_1000m = excluded.cost_per_1000m
+                      cost_per_1000m = excluded.cost_per_1000m,
+                      meters_per_min = excluded.meters_per_min
                     """
                 ),
                 r,

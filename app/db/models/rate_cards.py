@@ -107,15 +107,6 @@ class Ink(Base):
     printer_type: Mapped[str] = mapped_column(String(16), default="inline")
 
 
-class Anilox(Base):
-    """Uteco anilox roll reference (code + description)."""
-
-    __tablename__ = "anilox"
-
-    anilox_code: Mapped[str] = mapped_column(String(32), primary_key=True)
-    description: Mapped[str] = mapped_column(String(255))
-
-
 class Plate(Base):
     __tablename__ = "plates"
 
@@ -159,6 +150,8 @@ class PrintingPricingTier(Base):
     min_charge: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
     setup_fee: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
     cost_per_1000m: Mapped[float] = mapped_column(Numeric(12, 4))
+    # Uteco: web speed for scheduling (meters of film per minute). Inline tiers leave NULL.
+    meters_per_min: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("method", "max_print_width_mm", "num_colours", name="uq_printing_pricing_tier"),
@@ -169,6 +162,7 @@ class PrintingPricingTier(Base):
         CheckConstraint("min_charge IS NULL OR min_charge >= 0", name="ck_print_tier_min_charge_nonneg"),
         CheckConstraint("setup_fee IS NULL OR setup_fee >= 0", name="ck_print_tier_setup_fee_nonneg"),
         CheckConstraint("cost_per_1000m >= 0", name="ck_print_tier_cost_nonneg"),
+        CheckConstraint("meters_per_min IS NULL OR meters_per_min > 0", name="ck_print_tier_meters_per_min_pos"),
     )
 
 
@@ -288,6 +282,23 @@ class ExtrusionWasteFactor(Base):
     __table_args__ = (
         CheckConstraint("length(slug) > 0", name="ck_extrusion_waste_factors_slug_nonempty"),
         CheckConstraint("minutes >= 0", name="ck_extrusion_waste_factors_minutes_nonneg"),
+    )
+
+
+class QuoteDefaults(Base):
+    """Singleton (id=1): quote calculator defaults (e.g. margin % for new quotes)."""
+
+    __tablename__ = "quote_defaults"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    default_margin_pct: Mapped[float] = mapped_column(Numeric(6, 3), nullable=False, default=37)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_quote_defaults_singleton"),
+        CheckConstraint(
+            "default_margin_pct >= 0 AND default_margin_pct < 100",
+            name="ck_quote_defaults_margin_range",
+        ),
     )
 
 

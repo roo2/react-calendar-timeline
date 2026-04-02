@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional, TYPE_CHECKING
 
 from app.exceptions import DomainError
+from app.scheduling.spec_payload import _compute_gauge_um_from_spec
 
 if TYPE_CHECKING:
     from app.db.models.domain import Machine, ProductVersion
@@ -43,23 +44,6 @@ def _compute_width_mm_from_spec(spec: Any) -> Optional[float]:
         return float(width)
     except Exception:
         return None
-
-
-def _compute_gauge_um_from_spec(spec: Any) -> Optional[float]:
-    if not isinstance(spec, dict):
-        return None
-    materials = spec.get("materials") or {}
-    if isinstance(materials, dict) and materials.get("gauge_um") is not None:
-        try:
-            return float(materials.get("gauge_um"))
-        except Exception:
-            return None
-    if spec.get("gauge_um") is not None:
-        try:
-            return float(spec.get("gauge_um"))
-        except Exception:
-            return None
-    return None
 
 
 def validate_machine_capability(

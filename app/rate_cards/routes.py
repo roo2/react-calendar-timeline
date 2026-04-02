@@ -6,7 +6,6 @@ from sqlalchemy import select
 from app.auth.deps import allow_roles_any
 from app.db.models.rate_cards import (
     Additive,
-    Anilox,
     CartonOption,
     Colour,
     ConversionFactor,
@@ -76,13 +75,6 @@ async def list_additives():
         return [{"additive_code": r[0], "name": r[1]} for r in rows]
 
 
-@router.get("/anilox", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
-async def list_anilox():
-    with SessionLocal() as db:
-        rows = db.execute(select(Anilox.anilox_code, Anilox.description).order_by(Anilox.anilox_code.asc())).all()
-        return [{"anilox_code": r[0], "description": r[1]} for r in rows]
-
-
 @router.get("/inks", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
 async def list_inks(printer_type: str | None = Query(default=None)):
     with SessionLocal() as db:
@@ -146,6 +138,7 @@ async def get_ratebook():
                 PrintingPricingTier.min_charge,
                 PrintingPricingTier.setup_fee,
                 PrintingPricingTier.cost_per_1000m,
+                PrintingPricingTier.meters_per_min,
             ).order_by(
                 PrintingPricingTier.method.asc(),
                 PrintingPricingTier.max_print_width_mm.asc(),
@@ -234,8 +227,9 @@ async def get_ratebook():
                 "min_charge": (float(min_charge) if min_charge is not None else None),
                 "setup_fee": (float(setup_fee) if setup_fee is not None else None),
                 "cost_per_1000m": float(cost_1000m),
+                "meters_per_min": (float(mpm) if mpm is not None else None),
             }
-            for method, max_w, nc, min_m, min_charge, setup_fee, cost_1000m in printing_pricing_tiers
+            for method, max_w, nc, min_m, min_charge, setup_fee, cost_1000m, mpm in printing_pricing_tiers
         ],
         "conversion_speeds": [
             {
