@@ -390,12 +390,15 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const webLengthM = derivedTotalM
 
   // Derive units from total kg whenever we have kgPerUnit (so "No. of product_type" can be shown for any finish mode).
+  // Continuous roll on Rolls: countable unit is the roll (total products = number of rolls).
   const units =
     unitsIn != null
       ? unitsIn
-      : !inputs.continuous_roll && kgPerUnit > 0 && trimmedTotalKg > 0
-        ? Math.max(0, Math.round(trimmedTotalKg / kgPerUnit))
-        : null
+      : inputs.continuous_roll && inputs.finish_mode === 'Rolls' && rolls != null && rolls > 0
+        ? rolls
+        : !inputs.continuous_roll && kgPerUnit > 0 && trimmedTotalKg > 0
+          ? Math.max(0, Math.round(trimmedTotalKg / kgPerUnit))
+          : null
 
   const canComputeRollStats = rolls != null && rolls > 0 && kgPerLinearM > 0 && trimmedTotalKg > 0 && derivedTotalM > 0
   const kgPerRoll = canComputeRollStats ? trimmedTotalKg / rolls : null

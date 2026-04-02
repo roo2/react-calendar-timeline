@@ -193,6 +193,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [bagsPerCarton, setBagsPerCarton] = useState('')
   const [cartonOptionSlug, setCartonOptionSlug] = useState<string | null>(null)
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
+  const [quoteNotes, setQuoteNotes] = useState('')
 
   // Pricing: margin (%) and price per kg are linked; last-edited field drives the other to avoid loops.
   const [quickMargin, setQuickMargin] = useState('37')
@@ -311,6 +312,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.flagSealed != null) setFlagSealed(!!p.flagSealed)
     if (p.flagPunched != null) setFlagPunched(!!p.flagPunched)
     if (p.showNumColours != null) setFlagPrinted(!!p.showNumColours)
+    setQuoteNotes(typeof p.notes === 'string' ? p.notes : '')
     // Prefer price_per_kg as source of truth on load; use saved margin from payload when present so we don't recompute (avoids two-way drift on save/reload).
     // Support string from API and number (legacy); round to 2dp for display.
     const pricePerKgNum = Number(initialData.price_per_kg)
@@ -732,18 +734,31 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       (qtyType === 'rolls_units' && unitsPerRollNum > 0))
 
   // Keep No. of units state in sync when it's computed (Total KG or Total Rolls mode), so switching to Units/Bags shows the value that was displayed instead of clearing it.
+  // Continuous length on Rolls: total products = roll count from the calculator.
   useEffect(() => {
-    if (
-      qtyType !== 'units' &&
-      qtyType !== 'rolls_units' &&
-      derivedForDisplay?.units != null &&
-      ((qtyType === 'kg' && totalKgNum > 0) ||
-        (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0))
-    ) {
-      const computed = Math.round(Number(derivedForDisplay.units))
-      setNumUnits(Number.isFinite(computed) && computed >= 0 ? String(computed) : '')
-    }
-  }, [qtyType, totalKgNum, numRollsNum, weightPerRollNum, derivedForDisplay?.units])
+    if (qtyType === 'units' || qtyType === 'rolls_units') return
+    if (derivedForDisplay?.units == null) return
+    const fromKgOrRollsMode =
+      (qtyType === 'kg' && totalKgNum > 0) ||
+      (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
+    const fromContinuousRolls =
+      isContinuousLength &&
+      finishMode === 'Rolls' &&
+      derivedForDisplay.rolls != null &&
+      Number(derivedForDisplay.rolls) > 0
+    if (!(fromKgOrRollsMode || fromContinuousRolls)) return
+    const computed = Math.round(Number(derivedForDisplay.units))
+    setNumUnits(Number.isFinite(computed) && computed >= 0 ? String(computed) : '')
+  }, [
+    qtyType,
+    totalKgNum,
+    numRollsNum,
+    weightPerRollNum,
+    finishMode,
+    isContinuousLength,
+    derivedForDisplay?.units,
+    derivedForDisplay?.rolls,
+  ])
 
   // Rolls × per roll: weight/roll is derived from geometry + total units (same as total-units mode), not user-entered.
   useEffect(() => {
@@ -866,10 +881,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         quickPreview?.final_price != null && Number.isFinite(Number(quickPreview.final_price))
           ? Number(quickPreview.final_price)
           : null,
+      notes: quoteNotes,
     }),
     [
       calcPayload,
       quickMargin,
+      quoteNotes,
       qtyType,
       length,
       lengthUnits,
@@ -1993,6 +2010,24 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           />
         </MobileFixedBottomAside>
       ) : null}
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Notes
+        </Typography>
+        <TextField
+          label="Notes"
+          multiline
+          minRows={4}
+          fullWidth
+          value={quoteNotes}
+          onChange={(e) => {
+            setQuoteNotes(e.target.value)
+            setDirty(true)
+          }}
+          placeholder="Optional notes for this quote…"
+        />
+      </Paper>
     </Stack>
   )
 }

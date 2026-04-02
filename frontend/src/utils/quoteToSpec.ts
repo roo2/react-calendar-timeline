@@ -45,6 +45,8 @@ export type QuotePayload = {
   quoted_totals_kg?: number | null
   /** Snapshot from last save: suggested total price (excluded from spec edit-detection). */
   quoted_total_price?: number | null
+  /** Free-text quote notes (not part of product spec). */
+  notes?: string | null
   [k: string]: unknown
 }
 
