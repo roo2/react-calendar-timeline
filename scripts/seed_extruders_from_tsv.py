@@ -9,15 +9,25 @@ from sqlalchemy import create_engine, text
 
 
 def get_db_url() -> str:
+    """
+    Resolve DB URL for seeding.
+
+    - If ``DATABASE_URL`` is set, use it (Postgres URLs are normalized for SQLAlchemy + psycopg).
+    - Otherwise use the same default as ``app.config.Settings``: SQLite file ``production.db`` in the
+      repo root (absolute path so the script works regardless of current working directory).
+
+    For Postgres or a non-default SQLite path, set ``DATABASE_URL`` (e.g. in ``.env``).
+    """
     env_url = os.getenv("DATABASE_URL")
     if env_url:
-        # Normalize Heroku-style URLs for SQLAlchemy
         if env_url.startswith("postgres://"):
             return "postgresql+psycopg://" + env_url[len("postgres://") :]
         if env_url.startswith("postgresql://"):
             return "postgresql+psycopg://" + env_url[len("postgresql://") :]
         return env_url
-    return "postgresql+psycopg://app:app@db:5432/app"
+    repo_root = Path(__file__).resolve().parent.parent
+    db_file = (repo_root / "production.db").resolve()
+    return f"sqlite+pysqlite:///{db_file.as_posix()}"
 
 
 def to_int(v: str) -> int | None:
@@ -92,6 +102,13 @@ def main() -> None:
 
     engine = create_engine(get_db_url(), future=True)
     with engine.begin() as conn:
+        deleted = conn.execute(text("DELETE FROM extruders")).rowcount
+        # rowcount may be -1 for some DBAPI drivers; still log when available
+        if deleted is not None and deleted >= 0:
+            print(f"Removed {deleted} existing extruder row(s).")
+        else:
+            print("Cleared existing extruders (DELETE FROM extruders).")
+
         for code, fields in data.items():
             conn.execute(
                 text(
@@ -100,20 +117,12 @@ def main() -> None:
                     (extruder_code, model, film_width_min_mm, film_width_max_mm, decision_width_mm, average_kg_hr, ave_width, cost_per_hr)
                     VALUES
                     (:extruder_code, :model, :film_width_min_mm, :film_width_max_mm, :decision_width_mm, :average_kg_hr, :ave_width, :cost_per_hr)
-                    ON CONFLICT (extruder_code) DO UPDATE SET
-                      model = excluded.model,
-                      film_width_min_mm = excluded.film_width_min_mm,
-                      film_width_max_mm = excluded.film_width_max_mm,
-                      decision_width_mm = excluded.decision_width_mm,
-                      average_kg_hr = excluded.average_kg_hr,
-                      ave_width = excluded.ave_width,
-                      cost_per_hr = excluded.cost_per_hr
                     """
                 ),
                 {"extruder_code": code, **fields},
             )
 
-    print(f"Seeded/updated {len(data)} extruders from {tsv_path.name}")
+    print(f"Seeded {len(data)} extruders from {tsv_path.name}")
 
 
 if __name__ == "__main__":

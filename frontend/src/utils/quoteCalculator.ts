@@ -93,7 +93,6 @@ export type QuotePreview = {
   conversion_minutes_roll_changes?: number | null
   cartons?: number | null
   kg_per_carton?: number | null
-  carton_cost_total?: number | null
   printing_unavailable_reason?: string | null
   cost_breakdown: {
     material_cost: number
@@ -708,7 +707,6 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     conversion_minutes_roll_changes: conversionRollChangeMinutes,
     cartons,
     kg_per_carton: kgPerCarton,
-    carton_cost_total: cartonCostTotal,
     printing_unavailable_reason: printingUnavailableReason,
     cost_breakdown: {
       material_cost: roundMoney(materialCost),

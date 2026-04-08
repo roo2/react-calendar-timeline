@@ -142,9 +142,6 @@ export function QuotePreviewPanel(props: {
                   : ''}
               </Typography>
             )}
-            {p.carton_cost_total != null && Number(p.carton_cost_total || 0) > 0 && (
-              <Typography variant="body2">Carton cost: {fmtDollarsPreview(p.carton_cost_total)}</Typography>
-            )}
           </>
         ) : (
           <Typography variant="body2" color="text.secondary">
