@@ -47,6 +47,8 @@ export type QuotePayload = {
   quoted_total_price?: number | null
   /** Free-text quote notes (not part of product spec). */
   notes?: string | null
+  /** Set when this quote was converted to an order (not part of product spec). */
+  converted_order_id?: string | null
   [k: string]: unknown
 }
 

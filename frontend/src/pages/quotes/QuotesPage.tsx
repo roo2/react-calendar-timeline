@@ -77,6 +77,32 @@ function fmtSavedQuoteDate(raw: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { dateStyle: 'medium' })
 }
 
+/**
+ * RTK `unwrap()` rejects with the value passed to `rejectWithValue` (plain object), not always `Error`.
+ * Use this for createProduct and similar thunks.
+ */
+function formatThunkRejection(e: unknown, fallback: string): string {
+  if (e && typeof e === 'object') {
+    const o = e as Record<string, unknown>
+    const msgs = o.messages
+    if (Array.isArray(msgs) && msgs.length > 0) {
+      const joined = msgs.map(String).filter(Boolean).join(' · ')
+      if (joined) return joined
+    }
+    const fe = o.fieldErrors
+    if (fe && typeof fe === 'object' && !Array.isArray(fe)) {
+      const entries = Object.entries(fe as Record<string, string>).filter(
+        ([, v]) => v != null && String(v).trim() !== '',
+      )
+      if (entries.length > 0) return entries.map(([k, v]) => `${k}: ${v}`).join(' · ')
+    }
+    const m = o.message
+    if (typeof m === 'string' && m.trim() && m !== 'Rejected') return m.trim()
+  }
+  if (e instanceof Error) return e.message || fallback
+  return fallback
+}
+
 /** Reusable alert for printing validation errors; show in both Printing section and at top of form. */
 function PrintingUnavailableAlert({ message, prominent = false }: { message: string | null; prominent?: boolean }) {
   if (!message) return null
@@ -194,6 +220,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [cartonOptionSlug, setCartonOptionSlug] = useState<string | null>(null)
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
   const [quoteNotes, setQuoteNotes] = useState('')
+  /** Persisted in quote payload after a successful convert-to-order. */
+  const [convertedOrderId, setConvertedOrderId] = useState<string | null>(null)
 
   // Pricing: margin (%) and price per kg are linked; last-edited field drives the other to avoid loops.
   const [quickMargin, setQuickMargin] = useState('37')
@@ -313,6 +341,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.flagPunched != null) setFlagPunched(!!p.flagPunched)
     if (p.showNumColours != null) setFlagPrinted(!!p.showNumColours)
     setQuoteNotes(typeof p.notes === 'string' ? p.notes : '')
+    const coRaw = p.converted_order_id
+    if (coRaw != null && String(coRaw).trim() !== '') setConvertedOrderId(String(coRaw).trim())
+    else setConvertedOrderId(null)
     // Prefer price_per_kg as source of truth on load; use saved margin from payload when present so we don't recompute (avoids two-way drift on save/reload).
     // Support string from API and number (legacy); round to 2dp for display.
     const pricePerKgNum = Number(initialData.price_per_kg)
@@ -882,11 +913,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           ? Number(quickPreview.final_price)
           : null,
       notes: quoteNotes,
+      ...(convertedOrderId?.trim() ? { converted_order_id: convertedOrderId.trim() } : {}),
     }),
     [
       calcPayload,
       quickMargin,
       quoteNotes,
+      convertedOrderId,
       qtyType,
       length,
       lengthUnits,
@@ -922,12 +955,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       requested_margin_pct_str: _rmStr,
       quoted_totals_kg: _qtk,
       quoted_total_price: _qtp,
+      converted_order_id: _co,
       ...rest
     } = payloadForSave as {
       requested_margin?: number
       requested_margin_pct_str?: string
       quoted_totals_kg?: unknown
       quoted_total_price?: unknown
+      converted_order_id?: unknown
       [k: string]: unknown
     }
     return rest
@@ -1273,31 +1308,37 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       try {
         savedQuoteId = await persistQuote({ navigateToEditOnCreate: false })
       } catch (e) {
-        setConvertErr(e instanceof Error ? e.message : 'Failed to save quote before converting to order.')
+        setConvertErr(formatThunkRejection(e, 'Failed to save quote before converting to order.'))
         return
       }
 
       const suffix = `${String(savedQuoteId).slice(0, 8)}-${Date.now().toString(36).slice(-4)}`
 
-      const spec = buildSpecFromQuotePayload(payloadForSave as any)
+      const spec = buildSpecFromQuotePayload(payloadForSave as QuotePayload)
       const fromSpec = (computeProductCodeFromSpec(spec) || '').trim()
       const productCode = fromSpec || `Q-${suffix}`
-      const createProductRes = await dispatch(
-        createProduct({
-          data: {
-            customer_id: customerId,
-            code: productCode,
-            spec,
-          },
-        }),
-      ).unwrap()
+      let createProductRes: Awaited<ReturnType<ReturnType<typeof createProduct>['unwrap']>>
+      try {
+        createProductRes = await dispatch(
+          createProduct({
+            data: {
+              customer_id: customerId,
+              code: productCode,
+              spec,
+            },
+          }),
+        ).unwrap()
+      } catch (e) {
+        setConvertErr(formatThunkRejection(e, 'Failed to create product'))
+        return
+      }
       const productId = createProductRes?.product?.id
       if (!productId) {
         setConvertErr('Failed to create product')
         return
       }
 
-      const qty = getOrderQuantityFromQuotePayload(payloadForSave as any)
+      const qty = getOrderQuantityFromQuotePayload(payloadForSave as QuotePayload)
       const pricePerKg = pricePerKgForSave != null ? Number(pricePerKgForSave) : null
       const totalKg = quickPreview?.totals_kg != null ? Number(quickPreview.totals_kg) : null
       const rate = pricePerKg
@@ -1345,10 +1386,26 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         setConvertErr('Failed to create order')
         return
       }
+      try {
+        await dispatch(
+          updateSavedQuote({
+            quoteId: savedQuoteId,
+            payload: { ...payloadForSave, converted_order_id: orderId },
+            cost_per_kg: costPerKgForSave ?? undefined,
+            price_per_kg: pricePerKgForSave ?? undefined,
+          }),
+        ).unwrap()
+      } catch (e) {
+        setConvertErr(
+          `Order was created (id: ${orderId}) but saving the link on this quote failed: ${formatThunkRejection(e, 'Update failed')}. Open the order from the orders list.`,
+        )
+        return
+      }
+      setConvertedOrderId(orderId)
       setDirty(false)
       navigate(`/orders/${orderId}/edit`, { replace: true })
     } catch (e) {
-      setConvertErr(e instanceof Error ? e.message : 'Convert to order failed')
+      setConvertErr(formatThunkRejection(e, 'Convert to order failed'))
     } finally {
       setConverting(false)
     }
@@ -1382,10 +1439,22 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         </Button>
         <Button
           variant="contained"
-          disabled={saving || converting || !customerId.trim() || !canCalculate}
+          disabled={
+            saving ||
+            converting ||
+            !customerId.trim() ||
+            !canCalculate ||
+            Boolean(convertedOrderId?.trim())
+          }
           onClick={() => void handleConvertToOrder()}
         >
-          {converting ? 'Converting…' : saving ? 'Saving…' : 'Convert to order'}
+          {convertedOrderId?.trim()
+            ? 'Converted to order'
+            : converting
+              ? 'Converting…'
+              : saving
+                ? 'Saving…'
+                : 'Convert to order'}
         </Button>
       </>
     )
@@ -1429,6 +1498,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           ) : null}
         </Box>
       </Paper>
+
+      {convertedOrderId?.trim() ? (
+        <Alert severity="info">
+          This quote has been converted to an order.{' '}
+          <Link to={`/orders/${convertedOrderId.trim()}/edit`}>Open order</Link>
+        </Alert>
+      ) : null}
 
       {(displayErr || ratebookErr || convertErr) && (
         <Alert severity="error">{displayErr || ratebookErr || convertErr}</Alert>

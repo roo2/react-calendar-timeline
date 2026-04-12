@@ -20,13 +20,19 @@ function toUpsertError(e: unknown): UpsertError | null {
   if (!(e instanceof ApiError)) return null
   const { fieldErrors, messages } = parseFastApiValidationDetail(e.body?.detail)
   const hasFieldErrors = Object.keys(fieldErrors).length > 0
+  const feLines = Object.entries(fieldErrors).map(([k, v]) => `${k}: ${v}`)
+  let message: string
+  if (hasFieldErrors && messages.length > 0) {
+    message = messages.join(' · ')
+  } else if (hasFieldErrors && feLines.length > 0) {
+    message = feLines.join(' · ')
+  } else if (hasFieldErrors) {
+    message = 'Please fix the highlighted fields and try again.'
+  } else {
+    message = e.message || 'Request failed'
+  }
   return {
-    message:
-      hasFieldErrors && messages.length > 0
-        ? messages.join(' · ')
-        : hasFieldErrors
-          ? 'Please fix the highlighted fields and try again.'
-          : e.message || 'Request failed',
+    message,
     fieldErrors,
     messages,
   }

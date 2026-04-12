@@ -44,5 +44,5 @@ export function QuoteEditPage() {
     updated_at: quote.updated_at ?? null,
   }
 
-  return <QuotesPage quoteId={quote.id} initialData={initialData} />
+  return <QuotesPage key={quote.id} quoteId={quote.id} initialData={initialData} />
 }
