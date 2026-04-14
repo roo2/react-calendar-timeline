@@ -17,6 +17,7 @@ from app.db.models.rate_cards import (
     Plate,
     PrintingRate,
     PrintingPricingTier,
+    QuoteDefaults,
     Resin,
     ResinBlend,
     ResinBlendComponent,
@@ -136,8 +137,10 @@ async def get_ratebook():
                 PrintingPricingTier.num_colours,
                 PrintingPricingTier.min_meters,
                 PrintingPricingTier.min_charge,
-                PrintingPricingTier.setup_fee,
+                PrintingPricingTier.setup_cost,
+                PrintingPricingTier.setup_price,
                 PrintingPricingTier.cost_per_1000m,
+                PrintingPricingTier.price_per_1000m,
                 PrintingPricingTier.meters_per_min,
             ).order_by(
                 PrintingPricingTier.method.asc(),
@@ -145,6 +148,7 @@ async def get_ratebook():
                 PrintingPricingTier.num_colours.asc(),
             )
         ).all()
+        qd_row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
         conversion_speeds = db.execute(
             select(
                 ConversionSpeed.min_gauge_um,
@@ -170,6 +174,9 @@ async def get_ratebook():
         packing_factor_rolls = float(packaging_row.packing_factor_rolls) if packaging_row else 0.7
         packing_factor_cartons = float(packaging_row.packing_factor_cartons) if packaging_row else 0.5
         pallet_volume_m3 = float(packaging_row.pallet_volume_m3) if packaging_row else 1.0
+        extrusion_retail_addon_per_kg = (
+            float(getattr(qd_row, "extrusion_retail_addon_per_kg", 1.8) or 1.8) if qd_row is not None else 1.8
+        )
 
     # Model assumptions (aligned with quotes UI / ratebook pricing):
     # - setup_cost is treated as 1 unit per minute
@@ -225,12 +232,15 @@ async def get_ratebook():
                 "num_colours": int(nc),
                 "min_meters": int(min_m),
                 "min_charge": (float(min_charge) if min_charge is not None else None),
-                "setup_fee": (float(setup_fee) if setup_fee is not None else None),
+                "setup_cost": float(setup_cost or 0),
+                "setup_price": (float(setup_price) if setup_price is not None else None),
                 "cost_per_1000m": float(cost_1000m),
+                "price_per_1000m": float(price_1000m),
                 "meters_per_min": (float(mpm) if mpm is not None else None),
             }
-            for method, max_w, nc, min_m, min_charge, setup_fee, cost_1000m, mpm in printing_pricing_tiers
+            for method, max_w, nc, min_m, min_charge, setup_cost, setup_price, cost_1000m, price_1000m, mpm in printing_pricing_tiers
         ],
+        "extrusion_retail_addon_per_kg": extrusion_retail_addon_per_kg,
         "conversion_speeds": [
             {
                 "min_gauge_um": int(min_g),

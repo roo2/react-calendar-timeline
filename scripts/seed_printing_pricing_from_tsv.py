@@ -10,15 +10,25 @@ from sqlalchemy import create_engine, text
 
 
 def get_db_url() -> str:
+    """
+    Resolve DB URL for seeding.
+
+    - If ``DATABASE_URL`` is set, use it (Postgres URLs are normalized for SQLAlchemy + psycopg).
+    - Otherwise use the same default as ``app.config.Settings``: SQLite file ``production.db`` in the
+      repo root (absolute path so the script works regardless of current working directory).
+
+    For Postgres or a non-default SQLite path, set ``DATABASE_URL`` (e.g. in ``.env``).
+    """
     env_url = os.getenv("DATABASE_URL")
     if env_url:
-        # Normalize Heroku-style URLs for SQLAlchemy
         if env_url.startswith("postgres://"):
             return "postgresql+psycopg://" + env_url[len("postgres://") :]
         if env_url.startswith("postgresql://"):
             return "postgresql+psycopg://" + env_url[len("postgresql://") :]
         return env_url
-    return "postgresql+psycopg://app:app@db:5432/app"
+    repo_root = Path(__file__).resolve().parent.parent
+    db_file = (repo_root / "production.db").resolve()
+    return f"sqlite+pysqlite:///{db_file.as_posix()}"
 
 
 def to_int(v: str) -> int | None:
@@ -107,21 +117,27 @@ def main() -> None:
     if not inline_tiers:
         raise RuntimeError("Could not parse inline printing tiers from header row")
 
-    # rows[2]=Min meters, [3]=Min charge, [4]=Setup fee, [5]=$/1000m
-    if len(rows) < 6:
-        raise RuntimeError("Inline TSV needs rows: tiers, min meters, min charge, setup fee, $/1000m")
+    # rows[2]=Min meters, [3]=Min charge, [4]=Setup cost, [5]=Setup price, [6]=Cost/1000m, [7]=Price/1000m
+    if len(rows) < 8:
+        raise RuntimeError(
+            "Inline TSV needs rows: tiers, min meters, min charge, setup cost, setup price, cost/1000m, price/1000m"
+        )
     inline_min_m = [to_int(v) for v in rows[2][1 : 1 + len(inline_tiers)]]
     inline_min_charge = [to_money(v) for v in rows[3][1 : 1 + len(inline_tiers)]]
-    inline_setup_fee = [to_money(v) for v in rows[4][1 : 1 + len(inline_tiers)]]
-    inline_rate = [to_money(v) for v in rows[5][1 : 1 + len(inline_tiers)]]
+    inline_setup_cost = [to_money(v) for v in rows[4][1 : 1 + len(inline_tiers)]]
+    inline_setup_price = [to_money(v) for v in rows[5][1 : 1 + len(inline_tiers)]]
+    inline_cost_1000 = [to_money(v) for v in rows[6][1 : 1 + len(inline_tiers)]]
+    inline_price_1000 = [to_money(v) for v in rows[7][1 : 1 + len(inline_tiers)]]
 
     inline_records: list[dict] = []
     for idx, (num_colours, max_w) in enumerate(inline_tiers):
         min_m = inline_min_m[idx] if idx < len(inline_min_m) else None
         min_charge = inline_min_charge[idx] if idx < len(inline_min_charge) else None
-        setup_fee = inline_setup_fee[idx] if idx < len(inline_setup_fee) else None
-        rate_1000 = inline_rate[idx] if idx < len(inline_rate) else None
-        if min_m is None or rate_1000 is None:
+        setup_cost = inline_setup_cost[idx] if idx < len(inline_setup_cost) else None
+        setup_price = inline_setup_price[idx] if idx < len(inline_setup_price) else None
+        cost_1000 = inline_cost_1000[idx] if idx < len(inline_cost_1000) else None
+        price_1000 = inline_price_1000[idx] if idx < len(inline_price_1000) else None
+        if min_m is None or setup_cost is None or setup_price is None or cost_1000 is None or price_1000 is None:
             continue
         inline_records.append(
             {
@@ -131,8 +147,10 @@ def main() -> None:
                 "num_colours": num_colours,
                 "min_meters": int(min_m),
                 "min_charge": float(min_charge) if min_charge is not None else None,
-                "setup_fee": float(setup_fee) if setup_fee is not None else None,
-                "cost_per_1000m": float(rate_1000),
+                "setup_cost": float(setup_cost),
+                "setup_price": float(setup_price),
+                "cost_per_1000m": float(cost_1000),
+                "price_per_1000m": float(price_1000),
                 "meters_per_min": None,
             }
         )
@@ -146,20 +164,25 @@ def main() -> None:
     if not uteco_tiers:
         raise RuntimeError("Could not parse uteco printing tiers from header row")
 
+    # rows[2]=Min meters, [3]=Setup cost, [4]=Setup price, [5]=Cost/1000m, [6]=Price/1000m, [7]=m/min
+    if len(rows) < 8:
+        raise RuntimeError("Uteco TSV needs rows: tiers, min meters, setup cost, setup price, cost/1000m, price/1000m, m/min")
     uteco_min_m = [to_int(v) for v in rows[2][1 : 1 + len(uteco_tiers)]]
-    uteco_setup_fee = [to_money(v) for v in rows[3][1 : 1 + len(uteco_tiers)]] if len(rows) > 3 else [None] * len(uteco_tiers)
-    uteco_rate = [to_money(v) for v in rows[4][1 : 1 + len(uteco_tiers)]] if len(rows) > 4 else [None] * len(uteco_tiers)
-    uteco_mpm = (
-        [to_positive_float(v) for v in rows[5][1 : 1 + len(uteco_tiers)]] if len(rows) > 5 else [None] * len(uteco_tiers)
-    )
+    uteco_setup_cost = [to_money(v) for v in rows[3][1 : 1 + len(uteco_tiers)]]
+    uteco_setup_price = [to_money(v) for v in rows[4][1 : 1 + len(uteco_tiers)]]
+    uteco_cost_1000 = [to_money(v) for v in rows[5][1 : 1 + len(uteco_tiers)]]
+    uteco_price_1000 = [to_money(v) for v in rows[6][1 : 1 + len(uteco_tiers)]]
+    uteco_mpm = [to_positive_float(v) for v in rows[7][1 : 1 + len(uteco_tiers)]]
 
     uteco_records: list[dict] = []
     for idx, (num_colours, max_w) in enumerate(uteco_tiers):
         min_m = uteco_min_m[idx] if idx < len(uteco_min_m) else None
-        setup_fee = uteco_setup_fee[idx] if idx < len(uteco_setup_fee) else None
-        rate_1000 = uteco_rate[idx] if idx < len(uteco_rate) else None
+        setup_cost = uteco_setup_cost[idx] if idx < len(uteco_setup_cost) else None
+        setup_price = uteco_setup_price[idx] if idx < len(uteco_setup_price) else None
+        cost_1000 = uteco_cost_1000[idx] if idx < len(uteco_cost_1000) else None
+        price_1000 = uteco_price_1000[idx] if idx < len(uteco_price_1000) else None
         mpm = uteco_mpm[idx] if idx < len(uteco_mpm) else None
-        if min_m is None or setup_fee is None or rate_1000 is None:
+        if min_m is None or setup_cost is None or setup_price is None or cost_1000 is None or price_1000 is None:
             continue
         uteco_records.append(
             {
@@ -169,8 +192,10 @@ def main() -> None:
                 "num_colours": num_colours,
                 "min_meters": int(min_m),
                 "min_charge": None,
-                "setup_fee": float(setup_fee),
-                "cost_per_1000m": float(rate_1000),
+                "setup_cost": float(setup_cost),
+                "setup_price": float(setup_price),
+                "cost_per_1000m": float(cost_1000),
+                "price_per_1000m": float(price_1000),
                 "meters_per_min": float(mpm) if mpm is not None else None,
             }
         )
@@ -179,28 +204,24 @@ def main() -> None:
     if not records:
         raise RuntimeError("No printing pricing tiers parsed")
 
+    insert_sql = text(
+        """
+        INSERT INTO printing_pricing_tiers
+          (id, method, max_print_width_mm, num_colours, min_meters, min_charge,
+           setup_cost, setup_price, cost_per_1000m, price_per_1000m, meters_per_min)
+        VALUES
+          (:id, :method, :max_print_width_mm, :num_colours, :min_meters, :min_charge,
+           :setup_cost, :setup_price, :cost_per_1000m, :price_per_1000m, :meters_per_min)
+        """
+    )
+
     engine = create_engine(get_db_url(), future=True)
     with engine.begin() as conn:
+        conn.execute(text("DELETE FROM printing_pricing_tiers"))
         for r in records:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO printing_pricing_tiers
-                      (id, method, max_print_width_mm, num_colours, min_meters, min_charge, setup_fee, cost_per_1000m, meters_per_min)
-                    VALUES
-                      (:id, :method, :max_print_width_mm, :num_colours, :min_meters, :min_charge, :setup_fee, :cost_per_1000m, :meters_per_min)
-                    ON CONFLICT (method, max_print_width_mm, num_colours) DO UPDATE SET
-                      min_meters = excluded.min_meters,
-                      min_charge = excluded.min_charge,
-                      setup_fee = excluded.setup_fee,
-                      cost_per_1000m = excluded.cost_per_1000m,
-                      meters_per_min = excluded.meters_per_min
-                    """
-                ),
-                r,
-            )
+            conn.execute(insert_sql, r)
 
-    print(f"Seeded/updated {len(records)} printing pricing tiers from TSVs")
+    print(f"Re-seeded {len(records)} printing pricing tiers from TSVs (table cleared first)")
 
 
 if __name__ == "__main__":

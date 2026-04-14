@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import {
@@ -28,6 +28,17 @@ function lengthKey(l: LengthRange) {
 
 function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'min_length_mm' | 'max_length_mm'>) {
   return `${gaugeKey(s)}:${lengthKey(s)}`
+}
+
+/** Cost factors table (first); quote calculator reads these slugs (conversion labour $/hr + default carton). */
+const COST_FACTOR_SLUGS = ['conversion_cost_per_hr', 'conversion_price_per_hr', 'carton_cost'] as const
+
+type CostFactorSlug = (typeof COST_FACTOR_SLUGS)[number]
+
+const COST_FACTOR_DEFAULTS: Record<CostFactorSlug, { name: string }> = {
+  conversion_cost_per_hr: { name: 'Conversion Cost ($/hr)' },
+  conversion_price_per_hr: { name: 'Conversion Price ($/hr)' },
+  carton_cost: { name: 'Cost per carton ($)' },
 }
 
 export function ConversionAdminPage() {
@@ -81,8 +92,22 @@ export function ConversionAdminPage() {
     }
   }, [])
 
-  const factorsSorted = useMemo(() => {
-    return (factors || []).slice().sort((a, b) => a.slug.localeCompare(b.slug))
+  const factorBySlug = useMemo(() => new Map((factors || []).map((f) => [f.slug, f])), [factors])
+
+  const costConversionFactors = useMemo((): ConversionFactor[] => {
+    return COST_FACTOR_SLUGS.map((slug) => {
+      const existing = factorBySlug.get(slug)
+      if (existing) return existing
+      return { slug, name: COST_FACTOR_DEFAULTS[slug].name, value: 0 }
+    })
+  }, [factorBySlug])
+
+  const productionConversionFactors = useMemo(() => {
+    const costSlugs = new Set<string>(COST_FACTOR_SLUGS)
+    return (factors || [])
+      .filter((f) => !costSlugs.has(f.slug))
+      .slice()
+      .sort((a, b) => a.slug.localeCompare(b.slug))
   }, [factors])
 
   useEffect(() => {
@@ -165,9 +190,80 @@ export function ConversionAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Packing / Conversion"
-        subtitle="Conversion speeds (bags/minute), conversion factors, and carton options."
+        subtitle="Conversion factors (rates), conversion speeds (bags/minute), and carton options."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>
+          Conversion factors
+        </Typography>
+        {loading && (factors || []).length === 0 ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : (
+          <Stack spacing={3}>
+            <Box>
+              <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
+                Cost factors
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, maxWidth: 720 }}>
+                Labour rates for quotes (cost vs sell-side), plus default cost per carton when not using a specific
+                carton option. If a row is new, enter a value and click Save. When conversion price per hour is zero or
+                missing, quotes use the cost rate for labour.
+              </Typography>
+              <AdminDataTable>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Name</TableCell>
+                    <TableCell sx={{ width: 180 }}>Value</TableCell>
+                    <TableCell sx={{ width: 220 }} />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {costConversionFactors.map((f) => (
+                    <FactorRow
+                      key={f.slug}
+                      row={f}
+                      isPlaceholder={!factorBySlug.has(f.slug)}
+                      saving={savingKey === `factor:${f.slug}`}
+                      onSave={saveFactor}
+                    />
+                  ))}
+                </TableBody>
+              </AdminDataTable>
+            </Box>
+            <Box>
+              <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
+                Production Factors
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, maxWidth: 720 }}>
+                Throughput and timing inputs used for scheduling and quote conversion minutes (e.g. roll weight, roll
+                change time).
+              </Typography>
+              {productionConversionFactors.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No Production Factors configured.
+                </Typography>
+              ) : (
+                <AdminDataTable>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Name</TableCell>
+                      <TableCell sx={{ width: 180 }}>Value</TableCell>
+                      <TableCell sx={{ width: 220 }} />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {productionConversionFactors.map((f) => (
+                      <FactorRow key={f.slug} row={f} saving={savingKey === `factor:${f.slug}`} onSave={saveFactor} />
+                    ))}
+                  </TableBody>
+                </AdminDataTable>
+              )}
+            </Box>
+          </Stack>
+        )}
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
@@ -284,30 +380,6 @@ export function ConversionAdminPage() {
           </AdminDataTable>
         )}
       </Paper>
-
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Conversion factors
-        </Typography>
-        {loading && factorsSorted.length === 0 ? (
-          <Typography color="text.secondary">Loading…</Typography>
-        ) : (
-          <AdminDataTable>
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell sx={{ width: 180 }}>Value</TableCell>
-                <TableCell sx={{ width: 220 }} />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {factorsSorted.map((f) => (
-                <FactorRow key={f.slug} row={f} saving={savingKey === `factor:${f.slug}`} onSave={saveFactor} />
-              ))}
-            </TableBody>
-          </AdminDataTable>
-        )}
-      </Paper>
     </Stack>
   )
 }
@@ -368,12 +440,17 @@ function CartonOptionRow(props: {
 function FactorRow(props: {
   row: ConversionFactor
   saving: boolean
+  /** True when this slug is not in the DB yet — empty value until the user enters one and saves. */
+  isPlaceholder?: boolean
   onSave: (slug: string, patch: Pick<ConversionFactor, 'name' | 'value'>) => Promise<void>
 }) {
-  const { row, saving, onSave } = props
-  const [value, setValue] = useState(() => String(row.value))
-  useEffect(() => setValue(String(row.value)), [row.slug, row.value])
-  const dirty = value !== String(row.value)
+  const { row, saving, onSave, isPlaceholder = false } = props
+  const [value, setValue] = useState(() => (isPlaceholder ? '' : String(row.value)))
+  useEffect(() => {
+    if (isPlaceholder) return
+    setValue(String(row.value))
+  }, [row.slug, row.value, isPlaceholder])
+  const dirty = isPlaceholder ? value.trim() !== '' : value !== String(row.value)
   return (
     <TableRow hover>
       <TableCell>{row.name}</TableCell>

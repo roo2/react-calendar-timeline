@@ -217,16 +217,20 @@ class PrintingPricingTierDTO(BaseModel):
     num_colours: int
     min_meters: int
     min_charge: float | None = None
-    setup_fee: float | None = None
+    setup_cost: float
+    setup_price: float | None = None
     cost_per_1000m: float
+    price_per_1000m: float
     meters_per_min: float | None = None
 
 
 class PrintingPricingTierUpsertRequest(BaseModel):
     min_meters: int = Field(..., ge=0)
     min_charge: float | None = Field(default=None, ge=0)
-    setup_fee: float | None = Field(default=None, ge=0)
+    setup_cost: float = Field(..., ge=0)
+    setup_price: float | None = Field(default=None, ge=0)
     cost_per_1000m: float = Field(..., ge=0)
+    price_per_1000m: float = Field(..., ge=0)
     meters_per_min: float | None = Field(default=None, gt=0)
 
 
@@ -237,11 +241,11 @@ class QuotePackagingSettingsDTO(BaseModel):
 
 
 class QuoteDefaultsDTO(BaseModel):
-    default_margin_pct: float
+    extrusion_retail_addon_per_kg: float
 
 
 class QuoteDefaultsUpsertRequest(BaseModel):
-    default_margin_pct: float = Field(..., ge=0, lt=100)
+    extrusion_retail_addon_per_kg: float = Field(..., ge=0)
 
 
 class QuotePackagingSettingsUpsertRequest(BaseModel):
@@ -666,8 +670,10 @@ async def get_quote_defaults():
     with SessionLocal() as db:
         row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
         if not row:
-            return QuoteDefaultsDTO(default_margin_pct=37.0)
-        return QuoteDefaultsDTO(default_margin_pct=float(row.default_margin_pct))
+            return QuoteDefaultsDTO(extrusion_retail_addon_per_kg=1.8)
+        return QuoteDefaultsDTO(
+            extrusion_retail_addon_per_kg=float(getattr(row, "extrusion_retail_addon_per_kg", 1.8) or 1.8),
+        )
 
 
 @router.put(
@@ -679,16 +685,18 @@ async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
     with SessionLocal.begin() as db:
         row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
         if not row:
-            row = QuoteDefaults(id=1, default_margin_pct=payload.default_margin_pct)
+            row = QuoteDefaults(id=1, extrusion_retail_addon_per_kg=payload.extrusion_retail_addon_per_kg)
             db.add(row)
         else:
-            row.default_margin_pct = payload.default_margin_pct
+            row.extrusion_retail_addon_per_kg = payload.extrusion_retail_addon_per_kg
 
     with SessionLocal() as db:
         row2 = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
         if not row2:
-            return QuoteDefaultsDTO(default_margin_pct=37.0)
-        return QuoteDefaultsDTO(default_margin_pct=float(row2.default_margin_pct))
+            return QuoteDefaultsDTO(extrusion_retail_addon_per_kg=1.8)
+        return QuoteDefaultsDTO(
+            extrusion_retail_addon_per_kg=float(getattr(row2, "extrusion_retail_addon_per_kg", 1.8) or 1.8),
+        )
 
 
 @router.get(
@@ -1306,8 +1314,10 @@ async def list_printing_pricing_tiers():
                 num_colours=int(r.num_colours),
                 min_meters=int(r.min_meters),
                 min_charge=float(r.min_charge) if r.min_charge is not None else None,
-                setup_fee=float(r.setup_fee) if r.setup_fee is not None else None,
+                setup_cost=float(getattr(r, "setup_cost", 0) or 0),
+                setup_price=float(r.setup_price) if getattr(r, "setup_price", None) is not None else None,
                 cost_per_1000m=float(r.cost_per_1000m),
+                price_per_1000m=float(getattr(r, "price_per_1000m", r.cost_per_1000m)),
                 meters_per_min=float(r.meters_per_min) if r.meters_per_min is not None else None,
             )
             for r in rows
@@ -1350,8 +1360,10 @@ async def upsert_printing_pricing_tier(
             db.add(row)
         row.min_meters = payload.min_meters
         row.min_charge = payload.min_charge
-        row.setup_fee = payload.setup_fee
+        row.setup_cost = payload.setup_cost
+        row.setup_price = payload.setup_price
         row.cost_per_1000m = payload.cost_per_1000m
+        row.price_per_1000m = payload.price_per_1000m
         row.meters_per_min = None if m == "inline" else payload.meters_per_min
 
     with SessionLocal() as db:
@@ -1373,8 +1385,10 @@ async def upsert_printing_pricing_tier(
             num_colours=int(r2.num_colours),
             min_meters=int(r2.min_meters),
             min_charge=float(r2.min_charge) if r2.min_charge is not None else None,
-            setup_fee=float(r2.setup_fee) if r2.setup_fee is not None else None,
+            setup_cost=float(getattr(r2, "setup_cost", 0) or 0),
+            setup_price=float(r2.setup_price) if getattr(r2, "setup_price", None) is not None else None,
             cost_per_1000m=float(r2.cost_per_1000m),
+            price_per_1000m=float(getattr(r2, "price_per_1000m", r2.cost_per_1000m)),
             meters_per_min=float(r2.meters_per_min) if r2.meters_per_min is not None else None,
         )
 

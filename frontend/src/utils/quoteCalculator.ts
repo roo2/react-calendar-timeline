@@ -3,6 +3,8 @@ export type QuoteRatebook = {
   additives_price_per_kg: Record<string, number>
   colours: Record<string, { price_per_kg: number }>
   cores: Record<string, { cost_per_meter: number; kg_per_meter: number }>
+  /** Added to material $/kg for retail (materials + waste-at-retail) vs cost. */
+  extrusion_retail_addon_per_kg?: number
   extruders?: Array<{
     extruder_code: string
     model: string | null
@@ -16,8 +18,10 @@ export type QuoteRatebook = {
     num_colours: number
     min_meters: number
     min_charge: number | null
-    setup_fee: number | null
+    setup_cost: number
+    setup_price: number | null
     cost_per_1000m: number
+    price_per_1000m: number
     meters_per_min?: number | null
   }>
   printing_rates: Record<
@@ -43,7 +47,8 @@ export type QuoteRatebook = {
 }
 
 export type QuickQuoteInputs = {
-  requested_margin: number
+  /** When set (>0), total job price = this × billed kg (overrides sum of retail components). */
+  override_price_per_kg?: number | null
   product_type: string
   geometry: 'Flat' | 'Gusset'
   base_width_mm: number
@@ -78,12 +83,16 @@ export type QuickQuoteInputs = {
 export type QuotePreview = {
   kg_per_unit: number | null
   units_per_roll: number | null
+  /** Roll count for the job when finish mode is Rolls (for per-roll summary). */
+  rolls: number | null
   totals_kg: number | null
   totals_units: number | null
   totals_m: number | null
   kg_per_roll: number | null
   m_per_roll: number | null
   cost_per_kg: number | null
+  /** Effective sell-side $/kg (final job price ÷ billed kg; equals override when set). */
+  price_per_kg: number | null
   extrusion_hours: number | null
   extrusion_waste_minutes: number
   /** Productive plastic (derived) plus kg run to waste during extrusion downtime (ratebook waste adders + extrusion waste minutes × throughput). */
@@ -102,28 +111,68 @@ export type QuotePreview = {
     core_cost: number
     waste_cost: number
   }
+  price_breakdown: {
+    material_price: number
+    extrusion_price: number
+    printing_price: number
+    conversion_price: number
+    core_price: number
+    waste_price: number
+  }
+  /** Sell-side only: delta when `override_price_per_kg` is set (target job price − summed retail). */
+  adjustments_price: number | null
+  /** True when a positive `override_price_per_kg` is applied (shows Adjustments row in preview). */
+  price_override_active: boolean
   total_cost: number
+  /** Sum of retail component prices (before per-kg override). */
+  total_price_retail: number
+  /** (final_price − total_cost) / final_price when final_price > 0; negative when selling below cost; upper cap ~100%. */
   margin: number
   final_price: number
   unit_price: number | null
 }
 
-export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): { printing_cost: number; printing_unavailable_reason: string | null } {
+function printingTierMoney(
+  tier: NonNullable<QuoteRatebook['printing_pricing_tiers']>[number],
+  webLengthM: number,
+  pm: 'inline' | 'uteco',
+  side: 'cost' | 'price',
+): number {
+  const t = tier as Record<string, unknown>
+  const setupCost = Number(t.setup_cost ?? 0)
+  const setupPrice = Number(t.setup_price ?? t.setup_fee ?? 0)
+  const costPer1000 = Number(t.cost_per_1000m ?? 0)
+  const pricePer1000 = Number(t.price_per_1000m ?? t.cost_per_1000m ?? 0)
+  const setup = side === 'cost' ? setupCost : setupPrice
+  const per1000 = side === 'cost' ? costPer1000 : pricePer1000
+  const ratePart = (webLengthM / 1000) * per1000
+  if (pm === 'inline') {
+    const minCharge = side === 'price' ? Number(tier.min_charge ?? 0) : 0
+    return setup + Math.max(minCharge, ratePart)
+  }
+  return setup + ratePart
+}
+
+export function computePrinting(
+  inputs: QuickQuoteInputs,
+  ratebook: QuoteRatebook,
+): { printing_cost: number; printing_price: number; printing_unavailable_reason: string | null } {
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
-  const webLengthM = d.webLengthM
-  if (!(webLengthM > 0)) return { printing_cost: 0, printing_unavailable_reason: null }
+  const runUpM = printingWebLengthMultiplierFromRunUp(inputs)
+  const webLengthM = d.webLengthM * runUpM
+  if (!(webLengthM > 0)) return { printing_cost: 0, printing_price: 0, printing_unavailable_reason: null }
 
   const pm = inputs.print_method === 'Inline' ? 'inline' : inputs.print_method === 'Uteco' ? 'uteco' : 'none'
   let printingCost = 0
+  let printingPrice = 0
   let printingUnavailableReason: string | null = null
 
   if (pm !== 'none') {
     const printWidthMm = Number(inputs.base_width_mm || 0)
     const numColours = Math.max(0, Math.round(Number(inputs.num_colours || 0)))
 
-    // numColours === 0 is treated as "printing disabled" (no error; cost is 0).
     if (!Number.isFinite(numColours) || numColours < 1) {
-      // no-op
+      // printing disabled
     } else if (!Number.isFinite(printWidthMm) || printWidthMm <= 0) {
       printingUnavailableReason = 'Printing unavailable: base width is required'
     } else if (pm === 'inline' && printWidthMm > 1000 && numColours > 1) {
@@ -142,15 +191,8 @@ export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRateboo
               ? 'Printing unavailable: Inline max print width is 1400mm'
               : 'Printing unavailable: no pricing tier configured for this width/colour'
       } else {
-        // Always include printing in the quote cost when a tier applies; still warn if below contractual minimum length.
-        const rateCost = (webLengthM / 1000) * Number(tier.cost_per_1000m || 0)
-        const setupFee = Number(tier.setup_fee ?? 0)
-        if (pm === 'inline') {
-          const minCharge = Number(tier.min_charge ?? 0)
-          printingCost = setupFee + Math.max(minCharge, rateCost)
-        } else {
-          printingCost = setupFee + rateCost
-        }
+        printingCost = printingTierMoney(tier, webLengthM, pm, 'cost')
+        printingPrice = printingTierMoney(tier, webLengthM, pm, 'price')
         const minM = Number(tier.min_meters || 0)
         if (minM > 0 && webLengthM < minM) {
           printingUnavailableReason = `Printing unavailable: below minimum length (${minM}m)`
@@ -159,7 +201,7 @@ export function computePrinting(inputs: QuickQuoteInputs, ratebook: QuoteRateboo
     }
   }
 
-  return { printing_cost: printingCost, printing_unavailable_reason: printingUnavailableReason }
+  return { printing_cost: printingCost, printing_price: printingPrice, printing_unavailable_reason: printingUnavailableReason }
 }
 
 export function computePrintingUnavailableReason(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): string | null {
@@ -237,6 +279,18 @@ function computeLayflatMm(spec: {
   return w
 }
 
+/**
+ * Sheet/Centerfold run-up: one extruded metre is slit into `run_up` lanes along the tube,
+ * so printed web length (min charge / min metres / per-1000m) scales with extruded metres × run_up.
+ */
+function printingWebLengthMultiplierFromRunUp(inputs: QuickQuoteInputs): number {
+  const pt = String(inputs.product_type || '')
+  if (pt !== 'Sheet' && pt !== 'Centerfold') return 1
+  const ru = Number(inputs.run_up ?? 0)
+  if (!Number.isFinite(ru) || ru <= 0) return 1
+  return ru
+}
+
 export function computeLayflatWidthMm(spec: {
   product_type: string
   geometry: string
@@ -268,6 +322,12 @@ function convFactor(ratebook: QuoteRatebook, slug: string, fallback = 0): number
   const v = (ratebook as any)?.conversion_factors?.[slug]
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
+}
+
+/** Conversion factor `roll_weight_avg` (kg) — admin Conversion → Production Factors (e.g. Average Roll Weight). */
+export function getRollWeightAvgKg(ratebook: QuoteRatebook | null | undefined): number {
+  if (!ratebook) return 0
+  return convFactor(ratebook, 'roll_weight_avg', 0)
 }
 
 /** Returns blend density in kg/m³ for pallet volume calculation (volume_m3 = totals_kg / density). */
@@ -441,19 +501,33 @@ export type AppliedExtrusionWasteFactor = {
 
 /**
  * Waste minutes for extrusion cost and material waste.
- * - simple_job: base (operator time), always applies.
- * - Other operator-time factors (gusset, complex_set_up_print_or_perforation): stack (add).
- * - non_standard_resin_or_colour: extruder machine time only, runs in parallel with operator factors.
- * Total = max(operator stacked minutes, non_standard_resin minutes) so parallel work is not double-counted.
+ * - simple_job: base time, always applies first.
+ * - gusset (and any future non-parallel slugs): stack after simple.
+ * - non_standard_resin_or_colour vs complex_set_up_print_or_perforation: only the longer counts
+ *   (resin/colour change overlaps in time with print/perforation setup on the line).
+ * Example: simple 20 + non-standard 10 → 30; add complex 15 → 20 + max(10,15) = 35.
  */
 function computeExtrusionWasteMinutes(applied: AppliedExtrusionWasteFactor[]): number {
-  const simpleJob = applied.find((f) => f.slug === 'simple_job')?.minutes ?? 0
-  const operatorFactors = applied.filter(
-    (f) => f.slug !== 'simple_job' && f.slug !== 'non_standard_resin_or_colour',
-  )
-  const operatorStacked = Math.max(0, Number(simpleJob || 0)) + operatorFactors.reduce((acc, f) => acc + Math.max(0, Number(f.minutes || 0)), 0)
-  const extruderOnly = applied.find((f) => f.slug === 'non_standard_resin_or_colour')?.minutes ?? 0
-  return Math.max(operatorStacked, Math.max(0, Number(extruderOnly || 0)))
+  const m = (slug: string) => Math.max(0, Number(applied.find((f) => f.slug === slug)?.minutes ?? 0) || 0)
+  const simpleJob = m('simple_job')
+  let sequentialExtra = 0
+  let nonStandard = 0
+  let complex = 0
+  for (const f of applied) {
+    const slug = String(f.slug || '')
+    const mins = Math.max(0, Number(f.minutes || 0) || 0)
+    if (slug === 'simple_job') continue
+    if (slug === 'non_standard_resin_or_colour') {
+      nonStandard = mins
+      continue
+    }
+    if (slug === 'complex_set_up_print_or_perforation') {
+      complex = mins
+      continue
+    }
+    sequentialExtra += mins
+  }
+  return simpleJob + sequentialExtra + Math.max(nonStandard, complex)
 }
 
 function buildExtrusionWasteCfg(ratebook: QuoteRatebook): Map<string, number> {
@@ -469,11 +543,11 @@ function buildExtrusionWasteCfg(ratebook: QuoteRatebook): Map<string, number> {
 export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): AppliedExtrusionWasteFactor[] {
   const cfg = buildExtrusionWasteCfg(ratebook)
 
-  // Waste factor logic (minutes from DB). Stacking: simple_job + gusset + complex_set_up stack (operator time);
-  // non_standard_resin_or_colour is extruder-only and combined in parallel (see computeExtrusionWasteMinutes).
+  // Waste factor logic (minutes from DB). See computeExtrusionWasteMinutes:
+  // simple_job + gusset + max(non_standard_resin_or_colour, complex_set_up_print_or_perforation).
   // - simple_job: always applies
-  // - gusset: gusseted geometry
-  // - non_standard_resin_or_colour: any colour OR additives OR resin blend other than default (extruder time, parallel)
+  // - gusset: gusseted geometry (stacks after simple)
+  // - non_standard_resin_or_colour: colour / additives / non-LD blend (overlaps with complex setup time)
   // - complex_set_up_print_or_perforation: printing OR conversion flags that complicate setup
   const hasAnyColour =
     Array.isArray(inputs.colour_components) && inputs.colour_components.some((c) => (Number(c?.strength_pct || 0) || 0) > 0)
@@ -523,7 +597,7 @@ export function computeRollMetrics(
 }
 
 export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): QuotePreview {
-  const margin = clamp(Number(inputs.requested_margin || 0), 0, 0.999)
+  const retailAddonPerKg = Number(ratebook.extrusion_retail_addon_per_kg ?? 1.8)
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
   const units = d.units
   const rolls = d.rolls
@@ -586,6 +660,8 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const denom = 1 + colourExtraFrac + additivesExtraFrac
   const materialCostPerKg = denom > 0 ? (resinBaseCostPerKg + colourNumerator + additivesNumerator) / denom : 0
   const materialCost = materialCostPerKg * derivedTotalKg
+  const materialRetailPerKg = materialCostPerKg + (Number.isFinite(retailAddonPerKg) && retailAddonPerKg > 0 ? retailAddonPerKg : 0)
+  const materialPrice = materialRetailPerKg * derivedTotalKg
 
   const appliedExtrusionWasteFactors = computeAppliedExtrusionWasteFactors(inputs, ratebook)
   const extrusionExtraMinutes = computeExtrusionWasteMinutes(appliedExtrusionWasteFactors)
@@ -607,10 +683,15 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     }
   }
 
-  const { printing_cost: printingCost, printing_unavailable_reason: printingUnavailableReason } = computePrinting(inputs, ratebook)
+  const {
+    printing_cost: printingCost,
+    printing_price: printingPrice,
+    printing_unavailable_reason: printingUnavailableReason,
+  } = computePrinting(inputs, ratebook)
 
   // Conversion (only for cartons)
   let conversionCost = 0
+  let conversionPrice = 0
   let conversionRunMinutes: number | null = null
   let conversionRollChangeMinutes: number | null = null
   let conversionTotalMinutes: number | null = null
@@ -631,7 +712,10 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
       (conversionRunMinutes != null ? conversionRunMinutes : 0) + (conversionRollChangeMinutes != null ? conversionRollChangeMinutes : 0)
 
     const costPerHr = convFactor(ratebook, 'conversion_cost_per_hr', 0)
+    const pricePerHr = convFactor(ratebook, 'conversion_price_per_hr', 0)
+    const billHr = pricePerHr > 0 ? pricePerHr : costPerHr
     const runningCost = costPerHr > 0 ? (conversionTotalMinutes / 60) * costPerHr : 0
+    const runningPrice = billHr > 0 ? (conversionTotalMinutes / 60) * billHr : 0
 
     const bagsPerCarton = inputs.bags_per_carton != null ? Math.round(Number(inputs.bags_per_carton || 0)) : 0
     cartons = bagsPerCarton > 0 ? Math.ceil(units / bagsPerCarton) : null
@@ -645,6 +729,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     cartonCostTotal = cartons != null && cartons > 0 && cartonCost >= 0 ? cartons * cartonCost : 0
 
     conversionCost = runningCost + (cartonCostTotal || 0)
+    conversionPrice = runningPrice + (cartonCostTotal || 0)
   }
 
   // Core cost (only for rolls):
@@ -678,13 +763,29 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   if (extrusionWasteKg > 0 && materialCostPerKg > 0) {
     wasteCost = extrusionWasteKg * materialCostPerKg
   }
+  // Sell-side: no separate retail line for waste (material uplift policy); cost side still has wasteCost.
+  const wastePrice = 0
   const totalExtrudedKg = derivedTotalKg + extrusionWasteKg
 
+  // Sell-side: extrusion and core are not separate retail lines — extrusion is reflected in material $/kg uplift.
+  const extrusionPrice = 0
+  const corePrice = 0
+
   const totalCost = materialCost + extrusionCost + printingCost + conversionCost + coreCost + wasteCost
-  const finalPrice = margin < 1 ? totalCost / (1 - margin) : totalCost
-  const unitPrice = units != null ? finalPrice / units : null
-  const costPerKg = derivedTotalKg > 0 ? totalCost / derivedTotalKg : null
+  const totalPriceRetail = materialPrice + printingPrice + conversionPrice + extrusionPrice + corePrice + wastePrice
+
   const billedTotalsKg = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
+  const overridePk = toNum(inputs.override_price_per_kg)
+  const priceOverrideActive = overridePk != null && overridePk > 0 && billedTotalsKg > 0
+  const targetJobPrice = priceOverrideActive ? overridePk * billedTotalsKg : totalPriceRetail
+  const adjustmentsPrice = priceOverrideActive ? roundMoney(targetJobPrice - totalPriceRetail) : null
+  const finalPrice = priceOverrideActive ? roundMoney(targetJobPrice) : totalPriceRetail
+  // Margin = (price − cost) / price; allow negative when selling below cost. Cap upper only (pathological >100%).
+  const rawMargin = finalPrice > 0 && Number.isFinite(finalPrice) ? (finalPrice - totalCost) / finalPrice : 0
+  const marginPct = Number.isFinite(rawMargin) ? Math.min(0.999999, rawMargin) : 0
+  const unitPrice = units != null && units > 0 ? finalPrice / units : null
+  const costPerKg = billedTotalsKg > 0 ? totalCost / billedTotalsKg : null
+  const pricePerKgOut = billedTotalsKg > 0 ? finalPrice / billedTotalsKg : null
   const unitsPerRoll =
     rolls != null && rolls > 0 && units != null && units > 0 ? units / rolls : null
 
@@ -693,12 +794,14 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     // Keep it available even when quoting by KG/meters/rolls, so the UI can show "kg / 1000 products".
     kg_per_unit: inputs.continuous_roll ? null : kgPerUnit,
     units_per_roll: unitsPerRoll,
+    rolls: rolls != null && rolls > 0 ? rolls : null,
     totals_kg: billedTotalsKg,
     totals_units: units,
     totals_m: d.derivedTotalM > 0 ? roundMoney(d.derivedTotalM) : null,
     kg_per_roll: d.billedKgPerRoll ?? kgPerRoll,
     m_per_roll: mPerRoll,
     cost_per_kg: costPerKg != null ? roundMoney(costPerKg) : null,
+    price_per_kg: pricePerKgOut != null ? roundMoney(pricePerKgOut) : null,
     extrusion_hours: extrusionHours,
     extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
     total_extruded_kg: totalExtrudedKg > 0 ? roundMoney(totalExtrudedKg) : null,
@@ -716,8 +819,19 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
       core_cost: roundMoney(coreCost),
       waste_cost: roundMoney(wasteCost),
     },
+    price_breakdown: {
+      material_price: roundMoney(materialPrice),
+      extrusion_price: roundMoney(extrusionPrice),
+      printing_price: roundMoney(printingPrice),
+      conversion_price: roundMoney(conversionPrice),
+      core_price: roundMoney(corePrice),
+      waste_price: roundMoney(wastePrice),
+    },
+    adjustments_price: adjustmentsPrice,
+    price_override_active: priceOverrideActive,
     total_cost: roundMoney(totalCost),
-    margin,
+    total_price_retail: roundMoney(totalPriceRetail),
+    margin: marginPct,
     final_price: roundMoney(finalPrice),
     unit_price: unitPrice != null ? roundMoney(unitPrice) : null,
   }

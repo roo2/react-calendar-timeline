@@ -55,6 +55,7 @@ def _product_summary(p) -> dict:
     identity = spec.get("identity") if isinstance(spec, dict) else None
     packaging = spec.get("packaging") if isinstance(spec, dict) else None
     product_type = identity.get("product_type") if isinstance(identity, dict) else None
+    finish_mode = identity.get("finish_mode") if isinstance(identity, dict) else None
     pack_mode = packaging.get("pack_mode") if isinstance(packaging, dict) else None
     computed_desc = service.compute_product_description(spec) if isinstance(spec, dict) else None
 
@@ -69,6 +70,7 @@ def _product_summary(p) -> dict:
         "created_at": str(getattr(p, "created_at", "")),
         "customer_name": customer_name,
         "product_type": product_type,
+        "finish_mode": finish_mode,
         "pack_mode": pack_mode,
     }
 

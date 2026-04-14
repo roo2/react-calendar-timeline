@@ -44,7 +44,6 @@ import {
 } from '@mui/material'
 import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext'
 
-const DefaultsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/DefaultsAdminPage')).DefaultsAdminPage }))
 const ResinsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ResinsAdminPage')).ResinsAdminPage }))
 const ExtrusionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ExtrusionAdminPage')).ExtrusionAdminPage }))
 const ConversionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ConversionAdminPage')).ConversionAdminPage }))
@@ -236,15 +235,8 @@ function App() {
               <Route path="/job-sheets/:jobSheetId/edit" element={<JobSheetEditPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
               <Route path="/admin" element={<AdminLayout />}>
-                <Route index element={<Navigate to="defaults" replace />} />
-                <Route
-                  path="defaults"
-                  element={
-                    <Suspense fallback={<PageLoading />}>
-                      <DefaultsAdminPage />
-                    </Suspense>
-                  }
-                />
+                <Route index element={<Navigate to="resins" replace />} />
+                <Route path="defaults" element={<Navigate to="../resins" replace />} />
                 <Route
                   path="resins"
                   element={

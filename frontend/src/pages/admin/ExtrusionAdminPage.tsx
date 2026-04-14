@@ -6,7 +6,9 @@ import {
   adminDeleteExtruder,
   adminSaveExtruder,
   adminSaveExtrusionWasteFactor,
+  adminSaveQuoteDefaults,
   fetchAdminExtrusionTab,
+  fetchAdminQuoteDefaults,
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
@@ -18,10 +20,13 @@ export function ExtrusionAdminPage() {
   const { setDirty } = useUnsavedChanges()
   const extruders = useAppSelector((s) => s.adminRateCards.extruders.items)
   const wasteFactors = useAppSelector((s) => s.adminRateCards.extrusionWasteFactors.items)
+  const quoteDefaults = useAppSelector((s) => s.adminRateCards.quoteDefaults)
   const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.extrusionTab)
   const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
+  const [retailAddonPerKg, setRetailAddonPerKg] = useState<number | ''>(1.8)
+  const [savingRetail, setSavingRetail] = useState(false)
 
   const [newExtruderCode, setNewExtruderCode] = useState('')
   const [newExtruderModel, setNewExtruderModel] = useState('')
@@ -36,9 +41,39 @@ export function ExtrusionAdminPage() {
 
   useEffect(() => {
     void dispatch(fetchAdminExtrusionTab())
+    void dispatch(fetchAdminQuoteDefaults())
   }, [dispatch])
 
+  useEffect(() => {
+    const d = quoteDefaults.data
+    if (!d) return
+    setRetailAddonPerKg(d.extrusion_retail_addon_per_kg)
+  }, [quoteDefaults.data])
+
   const displayErr = err || tabErr
+
+  const retailDirty =
+    quoteDefaults.data != null &&
+    retailAddonPerKg !== '' &&
+    Number(retailAddonPerKg) !== quoteDefaults.data.extrusion_retail_addon_per_kg
+
+  async function saveRetailAddon() {
+    const v = Number(retailAddonPerKg)
+    if (!Number.isFinite(v) || v < 0) {
+      setErr('Retail price per kg must be a non-negative number.')
+      return
+    }
+    try {
+      setErr(null)
+      setSavingRetail(true)
+      await dispatch(adminSaveQuoteDefaults({ extrusion_retail_addon_per_kg: v })).unwrap()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save retail price per kg')
+    } finally {
+      setSavingRetail(false)
+    }
+  }
 
   async function saveExtruder(code: string, patch: Omit<Extruder, 'extruder_code'>) {
     const trimmed = code.trim()
@@ -108,6 +143,34 @@ export function ExtrusionAdminPage() {
         subtitle="Extruder rate cards (quotes & throughput) and extrusion waste factors."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
+
+      <Paper variant="outlined" sx={{ p: 2, maxWidth: 560 }}>
+        <Typography variant="subtitle1" sx={{ mb: 1 }}>
+          Quote retail — materials
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          For quotes, sell-side material $/kg is blended material cost plus this amount (per kg of product plastic). Waste
+          material is priced at the same retail $/kg.
+        </Typography>
+        {quoteDefaults.status === 'loading' && !quoteDefaults.data ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : (
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'flex-end' }}>
+            <TextField
+              size="small"
+              label="Retail price per kg ($/kg)"
+              type="number"
+              inputProps={{ min: 0, step: 0.01 }}
+              value={retailAddonPerKg}
+              onChange={(e) => setRetailAddonPerKg(e.target.value === '' ? '' : Number(e.target.value))}
+              sx={{ minWidth: 240 }}
+            />
+            <Button variant="contained" disabled={savingRetail || !retailDirty} onClick={() => void saveRetailAddon()}>
+              {savingRetail ? 'Saving…' : 'Save'}
+            </Button>
+          </Stack>
+        )}
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>

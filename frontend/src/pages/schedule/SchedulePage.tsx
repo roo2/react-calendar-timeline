@@ -1,4 +1,4 @@
-import { Box, Typography } from '@mui/material'
+import { Box } from '@mui/material'
 import { useEffect } from 'react'
 import { GanttBoard } from './GanttBoard'
 
@@ -30,9 +30,6 @@ export function SchedulePage() {
         overflow: 'hidden',
       }}
     >
-      <Typography variant="h5" sx={{ mb: 1, flexShrink: 0 }}>
-        Schedule
-      </Typography>
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <GanttBoard />
       </Box>

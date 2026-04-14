@@ -23,7 +23,7 @@ export type PackagingSettings = {
 }
 
 export type QuoteDefaultsSettings = {
-  default_margin_pct: number
+  extrusion_retail_addon_per_kg: number
 }
 
 export type ConversionSpeed = {
@@ -401,7 +401,10 @@ export const adminSavePrintingTier = createAsyncThunk(
   'adminRateCards/tiers/save',
   async (payload: {
     key: { method: string; max_print_width_mm: number; num_colours: number }
-    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m' | 'meters_per_min'>
+    patch: Pick<
+      PrintingPricingTier,
+      'min_meters' | 'min_charge' | 'setup_cost' | 'setup_price' | 'cost_per_1000m' | 'price_per_1000m' | 'meters_per_min'
+    >
   }) => {
     const m = (payload.key.method || '').trim().toLowerCase()
     return await apiFetch<PrintingPricingTier>(

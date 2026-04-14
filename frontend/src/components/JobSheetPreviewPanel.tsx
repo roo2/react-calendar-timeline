@@ -1,4 +1,5 @@
-import { Box, Paper, Typography } from '@mui/material'
+import { Box, Link as MuiLink, Paper, Typography } from '@mui/material'
+import { Link } from 'react-router-dom'
 
 export function JobSheetPreviewPanel(props: {
   productCode: string
@@ -7,6 +8,8 @@ export function JobSheetPreviewPanel(props: {
   showJobFields?: boolean
   /** Job sheet job number (e.g. CUST_1); shown when editing an existing job sheet. */
   jobCode?: string
+  /** When set, show a link to the job sheet detail page in the preview header. */
+  jobSheetId?: string | null
   invoiceNo?: string
   orderDate?: string
   dueDate?: string
@@ -16,16 +19,40 @@ export function JobSheetPreviewPanel(props: {
     description,
     showJobFields = true,
     jobCode = '',
+    jobSheetId = null,
     invoiceNo = '',
     orderDate = '',
     dueDate = '',
   } = props
   const dash = '—'
+  const sheetId = jobSheetId != null && String(jobSheetId).trim() ? String(jobSheetId).trim() : ''
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 1.5 }}>
-        Preview
-      </Typography>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 1,
+          mb: 1.5,
+          flexWrap: 'wrap',
+        }}
+      >
+        <Typography variant="h6">Preview</Typography>
+        {sheetId ? (
+          <MuiLink
+            component={Link}
+            to={`/job-sheets/${encodeURIComponent(sheetId)}`}
+            target="_blank"
+            rel="noreferrer"
+            underline="hover"
+            variant="body2"
+            sx={{ flexShrink: 0 }}
+          >
+            Open job sheet
+          </MuiLink>
+        ) : null}
+      </Box>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <div>
           <Typography variant="caption" color="text.secondary" display="block">

@@ -66,7 +66,10 @@ class GanttBarDTO(BaseModel):
 	product_code: str
 	planned_qty: float
 	estimated_duration_hours: float
-	roll_count: int = Field(default=1, description="Rolls for UI segmentation (from spec or 1)")
+	roll_count: int = Field(
+		default=1,
+		description="Rolls for UI segmentation: carton finish uses conversion roll_weight_avg over job kg; else job sheet / spec",
+	)
 	hours_per_roll: float = Field(default=0.0, description="Hours per roll segment when roll_count > 1")
 	job_sheet_job_no: Optional[str] = None
 	tentative_start: Optional[datetime] = None

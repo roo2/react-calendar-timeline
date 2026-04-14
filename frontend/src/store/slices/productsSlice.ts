@@ -48,6 +48,8 @@ export type ProductListItem = {
   active_version_number?: number | null
   version_count?: number | null
   product_type?: string | null
+  /** From active version spec identity when available. */
+  finish_mode?: 'Rolls' | 'Cartons' | string | null
   customer_id?: string
   pack_mode?: string | null
 }

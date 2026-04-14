@@ -2,4 +2,5 @@ Slug	Name	Value
 roll_weight_avg	Average Roll Weight (KG)	70
 roll_change_minutes	Time per Roll Change (minutes)	10
 conversion_cost_per_hr	Conversion Cost ($/hr)	45
+conversion_price_per_hr	Conversion Price ($/hr)	55
 carton_cost	Cost per Carton($)	1.0

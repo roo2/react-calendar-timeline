@@ -1,0 +1,92 @@
+{
+  "resins": {
+    "LDPE": { "price_per_kg": 2.5, "density": 0.00092 },
+    "LLDPE": { "price_per_kg": 2.7, "density": 0.00092 }
+  },
+  "additives_price_per_kg": {},
+  "colours": {
+    "WHITE": { "price_per_kg": 1.0 },
+    "GREEN": { "price_per_kg": 3.0 },
+    "RED": { "price_per_kg": 3.5 },
+    "SILVER": { "price_per_kg": 4.0 }
+  },
+  "cores": {
+    "7mm": { "cost_per_meter": 0.05, "kg_per_meter": 0.02 }
+  },
+  "extrusion_retail_addon_per_kg": 1.8,
+  "extruders": [
+    {
+      "extruder_code": "EX1",
+      "model": "Smoke",
+      "decision_width_mm": 2000,
+      "average_kg_hr": 200,
+      "cost_per_hr": 120
+    }
+  ],
+  "printing_pricing_tiers": [
+    {
+      "method": "inline",
+      "max_print_width_mm": 2000,
+      "num_colours": 1,
+      "min_meters": 0,
+      "min_charge": 0,
+      "setup_cost": 50,
+      "setup_price": 80,
+      "cost_per_1000m": 10,
+      "price_per_1000m": 18,
+      "meters_per_min": null
+    },
+    {
+      "method": "inline",
+      "max_print_width_mm": 2000,
+      "num_colours": 4,
+      "min_meters": 0,
+      "min_charge": 0,
+      "setup_cost": 80,
+      "setup_price": 120,
+      "cost_per_1000m": 14,
+      "price_per_1000m": 22,
+      "meters_per_min": null
+    },
+    {
+      "method": "inline",
+      "max_print_width_mm": 2000,
+      "num_colours": 5,
+      "min_meters": 0,
+      "min_charge": 0,
+      "setup_cost": 90,
+      "setup_price": 140,
+      "cost_per_1000m": 15,
+      "price_per_1000m": 24,
+      "meters_per_min": null
+    }
+  ],
+  "printing_rates": {},
+  "conversion_speeds": [
+    {
+      "min_gauge_um": 1,
+      "max_gauge_um": 500,
+      "min_length_mm": 1,
+      "max_length_mm": 100000,
+      "bags_per_minute": 120
+    }
+  ],
+  "conversion_factors": {
+    "roll_weight_avg": 250,
+    "roll_change_minutes": 5,
+    "conversion_cost_per_hr": 90,
+    "conversion_price_per_hr": 120,
+    "carton_cost": 0.5
+  },
+  "carton_options": [],
+  "waste_adders": [],
+  "extrusion_waste_factors": [
+    { "slug": "simple_job", "minutes": 20 },
+    { "slug": "non_standard_resin_or_colour", "minutes": 10 },
+    { "slug": "complex_set_up_print_or_perforation", "minutes": 15 }
+  ],
+  "extrusion_throughput_kg_per_hr": 200,
+  "packing_factor_rolls": 0.7,
+  "packing_factor_cartons": 0.5,
+  "pallet_volume_m3": 1.5
+}

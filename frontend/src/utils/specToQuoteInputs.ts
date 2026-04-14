@@ -126,7 +126,7 @@ export function buildQuickQuoteInputsFromSpec(
   )
 
   return {
-    requested_margin: 0,
+    override_price_per_kg: null,
     product_type: productType,
     geometry: derivedGeometry,
     base_width_mm: widthMmNum,

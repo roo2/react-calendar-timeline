@@ -238,6 +238,10 @@ async def show_order(order_id: str):
                 p.code = computed_code
                 db.add(p)
                 changed_items = True
+            spec_payload = pv.spec_payload if isinstance(getattr(pv, "spec_payload", None), dict) else {}
+            iden_raw = spec_payload.get("identity")
+            iden = iden_raw if isinstance(iden_raw, dict) else {}
+            item_finish_mode = iden.get("finish_mode")
             dto.items.append(
                 {
                     "id": str(oi.id),
@@ -248,6 +252,7 @@ async def show_order(order_id: str):
                     "product_name": getattr(p, "description", None),
                     "product_version_id": str(pv.id),
                     "version_number": pv.version_number,
+                    "finish_mode": item_finish_mode,
                     "due_date": (str(js.due_date.date()) if getattr(js, "due_date", None) is not None else None),
                     "quantity_value": float(js.quantity_value),
                     "quantity_unit": js.quantity_unit,

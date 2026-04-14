@@ -68,6 +68,16 @@ export function OrderShowPage() {
     return `$${Number(v).toFixed(2)}`
   }
 
+  function formatOrderUnit(u: string | undefined): string {
+    const x = String(u || '').toLowerCase()
+    if (x === 'kg') return 'KG'
+    if (x === 'rolls') return 'Roll'
+    if (x === 'cartons') return 'Carton'
+    if (x === 'bags') return 'Bags (legacy)'
+    if (x === 'meters') return 'Meters (legacy)'
+    return u || '—'
+  }
+
   async function onPublish() {
     if (!orderId) return
     if (publishing) return
@@ -121,9 +131,9 @@ export function OrderShowPage() {
               <TableCell>Job No</TableCell>
               <TableCell>Product Code</TableCell>
               <TableCell>Product Name</TableCell>
-              <TableCell>Qty Type</TableCell>
-              <TableCell>Qty Total</TableCell>
-              <TableCell align="right">Rate</TableCell>
+              <TableCell align="right">Qty</TableCell>
+              <TableCell>Unit</TableCell>
+              <TableCell align="right">Price</TableCell>
               <TableCell align="right">Total Price</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -134,10 +144,10 @@ export function OrderShowPage() {
                 <TableCell>{it.job_no || '-'}</TableCell>
                 <TableCell>{it.product_code || '-'}</TableCell>
                 <TableCell>{it.product_name || '-'}</TableCell>
-                <TableCell>{it.quantity_unit || '-'}</TableCell>
-                <TableCell>
-                  {it.quantity_value != null ? `${Number(it.quantity_value).toLocaleString()} ${it.quantity_unit || ''}`.trim() : '-'}
+                <TableCell align="right">
+                  {it.quantity_value != null ? Number(it.quantity_value).toLocaleString() : '—'}
                 </TableCell>
+                <TableCell>{formatOrderUnit(it.quantity_unit)}</TableCell>
                 <TableCell align="right">{fmtCurrency(it.rate)}</TableCell>
                 <TableCell align="right">{fmtCurrency(it.total_price)}</TableCell>
                 <TableCell align="right">

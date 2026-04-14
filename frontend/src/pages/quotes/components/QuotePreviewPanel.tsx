@@ -1,10 +1,50 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Box, Divider, Paper, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import {
   fmtCount,
+  fmtDollarsLineItem,
   fmtDollarsPreview,
   fmtHoursMinutesPreview,
   fmtQtyNumber,
 } from '../../../utils/quoteFormat'
+
+/** Brief yellow highlight when `watch` (serialized) changes — skips first paint. */
+function FlashSpan(props: { watch: unknown; children: ReactNode }) {
+  const { watch, children } = props
+  const key = watch == null || (typeof watch === 'number' && !Number.isFinite(Number(watch))) ? '' : String(watch)
+  const prev = useRef<string | null>(null)
+  const [gen, setGen] = useState(0)
+  useEffect(() => {
+    if (prev.current === null) {
+      prev.current = key
+      return
+    }
+    if (prev.current !== key) {
+      prev.current = key
+      setGen((g) => g + 1)
+    }
+  }, [key])
+  return (
+    <Box
+      component="span"
+      key={gen}
+      sx={{
+        display: 'inline-block',
+        borderRadius: 0.5,
+        px: 0.25,
+        mx: -0.25,
+        '@keyframes quotePreviewFlash': {
+          '0%': { backgroundColor: 'rgba(255, 236, 179, 0.92)' },
+          '40%': { backgroundColor: 'rgba(255, 236, 179, 0.5)' },
+          '100%': { backgroundColor: 'transparent' },
+        },
+        animation: gen > 0 ? 'quotePreviewFlash 1.35s ease-out forwards' : 'none',
+      }}
+    >
+      {children}
+    </Box>
+  )
+}
 
 export function QuotePreviewPanel(props: {
   preview: any
@@ -69,11 +109,6 @@ export function QuotePreviewPanel(props: {
                 </Typography>
               )
             })()}
-            {p.cost_per_kg != null && (
-              <Typography variant="body2">
-                Cost / kg: {fmtDollarsPreview(p.cost_per_kg)}
-              </Typography>
-            )}
             {p.extrusion_hours != null ? (
               <Typography variant="body2">
                 Extrusion time: {fmtHoursMinutesPreview(Number(p.extrusion_hours) * 60)}
@@ -102,13 +137,13 @@ export function QuotePreviewPanel(props: {
             {p.unit_price != null && (
               <Typography variant="body2">
                 {productType === 'Bag' ? (
-                  <>Price per 1000 bags: {fmtDollarsPreview(Number(p.unit_price) * 1000, 2)}</>
+                  <>Price per 1000 bags: {fmtDollarsLineItem(Number(p.unit_price) * 1000, 2)}</>
                 ) : productType === 'Centerfold' ? (
-                  <>Price per 1000 Centerfolds: {fmtDollarsPreview(Number(p.unit_price) * 1000, 2)}</>
+                  <>Price per 1000 Centerfolds: {fmtDollarsLineItem(Number(p.unit_price) * 1000, 2)}</>
                 ) : productType === 'Sleeve' ? (
-                  <>Price per 1000 Sleeves: {fmtDollarsPreview(Number(p.unit_price) * 1000, 2)}</>
+                  <>Price per 1000 Sleeves: {fmtDollarsLineItem(Number(p.unit_price) * 1000, 2)}</>
                 ) : (
-                  <>Price per {productType}: {fmtDollarsPreview(p.unit_price, 4)}</>
+                  <>Price per {productType}: {fmtDollarsLineItem(p.unit_price, 4)}</>
                 )}
               </Typography>
             )}
@@ -159,25 +194,65 @@ export function QuotePreviewPanel(props: {
         <TableHead>
           <TableRow>
             <TableCell>Stage</TableCell>
-            <TableCell>Cost</TableCell>
+            <TableCell align="right">Cost</TableCell>
+            <TableCell align="right">Price</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           <TableRow>
             <TableCell>Material</TableCell>
-            <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.material_cost) : dash}</TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.cost_breakdown?.material_cost}>{fmtDollarsLineItem(p.cost_breakdown?.material_cost)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.price_breakdown?.material_price}>{fmtDollarsLineItem(p.price_breakdown?.material_price)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
           </TableRow>
           <TableRow>
             <TableCell>Extrusion</TableCell>
-            <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.extrusion_cost) : dash}</TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.cost_breakdown?.extrusion_cost}>{fmtDollarsLineItem(p.cost_breakdown?.extrusion_cost)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.price_breakdown?.extrusion_price}>{fmtDollarsLineItem(p.price_breakdown?.extrusion_price)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
           </TableRow>
           <TableRow>
             <TableCell>Printing</TableCell>
-            <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.printing_cost) : dash}</TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.cost_breakdown?.printing_cost}>{fmtDollarsLineItem(p.cost_breakdown?.printing_cost)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.price_breakdown?.printing_price}>{fmtDollarsLineItem(p.price_breakdown?.printing_price)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
           </TableRow>
           {p?.printing_unavailable_reason ? (
             <TableRow>
-              <TableCell colSpan={2} sx={{ py: 0.5, pt: 0, borderBottom: 'none' }}>
+              <TableCell colSpan={3} sx={{ py: 0.5, pt: 0, borderBottom: 'none' }}>
                 <Typography variant="caption" sx={{ color: 'error.main', display: 'block' }}>
                   {String(p.printing_unavailable_reason)}
                 </Typography>
@@ -186,52 +261,142 @@ export function QuotePreviewPanel(props: {
           ) : null}
           <TableRow>
             <TableCell>Conversion</TableCell>
-            <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.conversion_cost) : dash}</TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.cost_breakdown?.conversion_cost}>{fmtDollarsLineItem(p.cost_breakdown?.conversion_cost)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.price_breakdown?.conversion_price}>{fmtDollarsLineItem(p.price_breakdown?.conversion_price)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
           </TableRow>
           {finishMode === 'Rolls' ? (
             <TableRow>
               <TableCell>Core</TableCell>
-              <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.core_cost) : dash}</TableCell>
+              <TableCell align="right">
+                {p ? <FlashSpan watch={p.cost_breakdown?.core_cost}>{fmtDollarsLineItem(p.cost_breakdown?.core_cost)}</FlashSpan> : dash}
+              </TableCell>
+              <TableCell align="right">
+                {p ? <FlashSpan watch={p.price_breakdown?.core_price}>{fmtDollarsLineItem(p.price_breakdown?.core_price)}</FlashSpan> : dash}
+              </TableCell>
             </TableRow>
           ) : null}
           <TableRow>
             <TableCell>Waste</TableCell>
-            <TableCell>{p ? fmtDollarsPreview(p.cost_breakdown?.waste_cost) : dash}</TableCell>
+            <TableCell align="right">
+              {p ? <FlashSpan watch={p.cost_breakdown?.waste_cost}>{fmtDollarsLineItem(p.cost_breakdown?.waste_cost)}</FlashSpan> : dash}
+            </TableCell>
+            <TableCell align="right">
+              {p ? <FlashSpan watch={p.price_breakdown?.waste_price}>{fmtDollarsLineItem(p.price_breakdown?.waste_price)}</FlashSpan> : dash}
+            </TableCell>
           </TableRow>
+          {p?.price_override_active ? (
+            <TableRow>
+              <TableCell>Adjustments</TableCell>
+              <TableCell align="right">{dash}</TableCell>
+              <TableCell align="right">
+                {p.adjustments_price != null ? (
+                  <FlashSpan watch={p.adjustments_price}>{fmtDollarsPreview(p.adjustments_price)}</FlashSpan>
+                ) : (
+                  dash
+                )}
+              </TableCell>
+            </TableRow>
+          ) : null}
 
           <TableRow>
-            <TableCell colSpan={2} sx={{ py: 0.5 }} />
+            <TableCell colSpan={3} sx={{ py: 0.5 }} />
           </TableRow>
           <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Total cost</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>{p ? fmtDollarsPreview(p.total_cost) : dash}</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 400 }}>
+              {p ? <FlashSpan watch={p.total_cost}>{fmtDollarsLineItem(p.total_cost)}</FlashSpan> : dash}
+            </TableCell>
+            <TableCell align="right" sx={{ fontWeight: 600 }}>
+              {p ? <FlashSpan watch={p.final_price}>{fmtDollarsLineItem(p.final_price)}</FlashSpan> : dash}
+            </TableCell>
           </TableRow>
           <TableRow>
             <TableCell sx={{ fontWeight: 600 }}>Margin (%)</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>
-              {p ? `${fmtQtyNumber(Number(p.margin || 0) * 100, 2)}%` : dash}
+            <TableCell align="right" sx={{ fontWeight: 600 }} colSpan={2}>
+              {p ? (
+                <Typography
+                  component="span"
+                  variant="body2"
+                  sx={{ fontWeight: 600, color: Number(p.margin) < 0 ? 'error.main' : 'inherit' }}
+                >
+                  <FlashSpan watch={p.margin}>{`${fmtQtyNumber(Number(p.margin || 0) * 100, 2)}%`}</FlashSpan>
+                </Typography>
+              ) : (
+                dash
+              )}
             </TableCell>
           </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Suggested price</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>{p ? fmtDollarsPreview(p.final_price) : dash}</TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Total KG</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>
-              {p && p.totals_kg != null && Number.isFinite(Number(p.totals_kg)) && Number(p.totals_kg) > 0
-                ? `${fmtQtyNumber(Number(p.totals_kg), 2)} kg`
-                : dash}
-            </TableCell>
-          </TableRow>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Suggested price / kg</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>
-              {p && Number(p.totals_kg || 0) > 0
-                ? `${fmtDollarsPreview(Number(p.final_price || 0) / Number(p.totals_kg || 1))} /kg`
-                : dash}
-            </TableCell>
-          </TableRow>
+          {(() => {
+            const kgOk = p && Number(p.totals_kg || 0) > 0 && p.cost_per_kg != null && p.price_per_kg != null
+            if (!kgOk) return null
+            return (
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>per Kg</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 400 }}>
+                  <FlashSpan watch={p.cost_per_kg}>{fmtDollarsLineItem(Number(p.cost_per_kg))}</FlashSpan>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <FlashSpan watch={p.price_per_kg}>{fmtDollarsLineItem(Number(p.price_per_kg))}</FlashSpan>
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )
+          })()}
+          {(() => {
+            if (!p || finishMode !== 'Rolls') return null
+            const n = Number(p.rolls || 0)
+            if (!(n > 0)) return null
+            const c = Number(p.total_cost) / n
+            const pr = Number(p.final_price) / n
+            if (!Number.isFinite(c) || !Number.isFinite(pr)) return null
+            return (
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>per Roll</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 400 }}>
+                  <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(c)}</FlashSpan>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )
+          })()}
+          {(() => {
+            if (!p || finishMode !== 'Cartons') return null
+            const n = Number(p.cartons || 0)
+            if (!(n > 0)) return null
+            const c = Number(p.total_cost) / n
+            const pr = Number(p.final_price) / n
+            if (!Number.isFinite(c) || !Number.isFinite(pr)) return null
+            return (
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>per Carton</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 400 }}>
+                  <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(c)}</FlashSpan>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )
+          })()}
         </TableBody>
       </Table>
     </Paper>

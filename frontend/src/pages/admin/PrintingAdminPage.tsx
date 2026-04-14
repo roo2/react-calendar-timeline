@@ -40,31 +40,49 @@ export function PrintingAdminPage() {
   const [niColours, setNiColours] = useState<number | ''>('')
   const [niMinM, setNiMinM] = useState<number | ''>('')
   const [niMinCharge, setNiMinCharge] = useState<number | ''>('')
-  const [niSetup, setNiSetup] = useState<number | ''>('')
-  const [niRate, setNiRate] = useState<number | ''>('')
+  const [niSetupCost, setNiSetupCost] = useState<number | ''>('')
+  const [niSetupPrice, setNiSetupPrice] = useState<number | ''>('')
+  const [niCostPer1000, setNiCostPer1000] = useState<number | ''>('')
+  const [niPricePer1000, setNiPricePer1000] = useState<number | ''>('')
 
   const [nuMaxW, setNuMaxW] = useState<number | ''>('')
   const [nuColours, setNuColours] = useState<number | ''>('')
   const [nuMinM, setNuMinM] = useState<number | ''>('')
-  const [nuSetup, setNuSetup] = useState<number | ''>('')
-  const [nuRate, setNuRate] = useState<number | ''>('')
+  const [nuSetupCost, setNuSetupCost] = useState<number | ''>('')
+  const [nuSetupPrice, setNuSetupPrice] = useState<number | ''>('')
+  const [nuCostPer1000, setNuCostPer1000] = useState<number | ''>('')
+  const [nuPricePer1000, setNuPricePer1000] = useState<number | ''>('')
   const [nuMpm, setNuMpm] = useState<number | ''>('')
 
   const canCreateInlineTier = useMemo(() => {
     if (niMaxW === '' || Number(niMaxW) <= 0) return false
     if (niColours === '' || Number(niColours) < 1) return false
     if (niMinM === '' || Number(niMinM) < 0) return false
-    if (niRate === '' || Number(niRate) < 0) return false
-    return niMinCharge !== '' && Number(niMinCharge) >= 0 && niSetup !== '' && Number(niSetup) >= 0
-  }, [niColours, niMaxW, niMinCharge, niMinM, niRate, niSetup])
+    if (niCostPer1000 === '' || Number(niCostPer1000) < 0) return false
+    if (niPricePer1000 === '' || Number(niPricePer1000) < 0) return false
+    return (
+      niMinCharge !== '' &&
+      Number(niMinCharge) >= 0 &&
+      niSetupCost !== '' &&
+      Number(niSetupCost) >= 0 &&
+      niSetupPrice !== '' &&
+      Number(niSetupPrice) >= 0
+    )
+  }, [niColours, niMaxW, niMinCharge, niMinM, niCostPer1000, niPricePer1000, niSetupCost, niSetupPrice])
 
   const canCreateUtecoTier = useMemo(() => {
     if (nuMaxW === '' || Number(nuMaxW) <= 0) return false
     if (nuColours === '' || Number(nuColours) < 1) return false
     if (nuMinM === '' || Number(nuMinM) < 0) return false
-    if (nuRate === '' || Number(nuRate) < 0) return false
-    return nuSetup !== '' && Number(nuSetup) >= 0
-  }, [nuColours, nuMaxW, nuMinM, nuRate, nuSetup])
+    if (nuCostPer1000 === '' || Number(nuCostPer1000) < 0) return false
+    if (nuPricePer1000 === '' || Number(nuPricePer1000) < 0) return false
+    return (
+      nuSetupCost !== '' &&
+      Number(nuSetupCost) >= 0 &&
+      nuSetupPrice !== '' &&
+      Number(nuSetupPrice) >= 0
+    )
+  }, [nuColours, nuMaxW, nuMinM, nuCostPer1000, nuPricePer1000, nuSetupCost, nuSetupPrice])
 
   const [newInkCode, setNewInkCode] = useState('')
   const [newInkName, setNewInkName] = useState('')
@@ -151,7 +169,10 @@ export function PrintingAdminPage() {
 
   async function saveTier(
     key: { method: string; max_print_width_mm: number; num_colours: number },
-    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m' | 'meters_per_min'>,
+    patch: Pick<
+      PrintingPricingTier,
+      'min_meters' | 'min_charge' | 'setup_cost' | 'setup_price' | 'cost_per_1000m' | 'price_per_1000m' | 'meters_per_min'
+    >,
   ) {
     const m = (key.method || '').trim().toLowerCase()
     if (!m) return
@@ -221,7 +242,8 @@ export function PrintingAdminPage() {
           Inline printing — pricing tiers
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Quote cost uses setup fee plus the greater of min charge or length-based cost (per 1000m).
+          Cost columns drive quote cost; price columns drive quote sell-side printing. Inline price uses the greater of min
+          charge or length-based price (per 1000m).
         </Typography>
         {loading && tiers.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
@@ -229,13 +251,15 @@ export function PrintingAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 160 }}>Max width (mm)</TableCell>
-                <TableCell sx={{ width: 140 }}>Colours</TableCell>
-                <TableCell sx={{ width: 140 }}>Min meters</TableCell>
-                <TableCell sx={{ width: 160 }}>Min charge</TableCell>
-                <TableCell sx={{ width: 160 }}>Setup fee</TableCell>
-                <TableCell sx={{ width: 180 }}>Cost / 1000m</TableCell>
-                <TableCell sx={{ width: 220 }} />
+                <TableCell sx={{ width: 120 }}>Max width (mm)</TableCell>
+                <TableCell sx={{ width: 100 }}>Colours</TableCell>
+                <TableCell sx={{ width: 120 }}>Min meters</TableCell>
+                <TableCell sx={{ width: 120 }}>Min charge</TableCell>
+                <TableCell sx={{ width: 120 }}>Setup cost</TableCell>
+                <TableCell sx={{ width: 120 }}>Setup price</TableCell>
+                <TableCell sx={{ width: 120 }}>Cost / 1000m</TableCell>
+                <TableCell sx={{ width: 120 }}>Price / 1000m</TableCell>
+                <TableCell sx={{ width: 200 }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -263,10 +287,16 @@ export function PrintingAdminPage() {
                   <TextField size="small" label="Min charge" inputProps={{ inputMode: 'numeric' }} value={niMinCharge} onChange={(e) => setNiMinCharge(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Setup fee" inputProps={{ inputMode: 'numeric' }} value={niSetup} onChange={(e) => setNiSetup(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Setup cost" inputProps={{ inputMode: 'numeric' }} value={niSetupCost} onChange={(e) => setNiSetupCost(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={niRate} onChange={(e) => setNiRate(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Setup price" inputProps={{ inputMode: 'numeric' }} value={niSetupPrice} onChange={(e) => setNiSetupPrice(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={niCostPer1000} onChange={(e) => setNiCostPer1000(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Price / 1000m" inputProps={{ inputMode: 'numeric' }} value={niPricePer1000} onChange={(e) => setNiPricePer1000(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell align="right">
                   <Button
@@ -280,8 +310,10 @@ export function PrintingAdminPage() {
                         {
                           min_meters: Number(niMinM),
                           min_charge: Number(niMinCharge),
-                          setup_fee: Number(niSetup),
-                          cost_per_1000m: Number(niRate),
+                          setup_cost: Number(niSetupCost),
+                          setup_price: Number(niSetupPrice),
+                          cost_per_1000m: Number(niCostPer1000),
+                          price_per_1000m: Number(niPricePer1000),
                           meters_per_min: null,
                         },
                       ).then(() => {
@@ -289,8 +321,10 @@ export function PrintingAdminPage() {
                         setNiColours('')
                         setNiMinM('')
                         setNiMinCharge('')
-                        setNiSetup('')
-                        setNiRate('')
+                        setNiSetupCost('')
+                        setNiSetupPrice('')
+                        setNiCostPer1000('')
+                        setNiPricePer1000('')
                       })
                     }}
                   >
@@ -308,7 +342,8 @@ export function PrintingAdminPage() {
           Uteco printing — pricing tiers
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Quote cost uses setup fee plus length-based cost (per 1000m). Min charge is not used for Uteco. M/min drives Uteco bar length on the schedule (job web meters ÷ m/min).
+          Cost vs price columns as for Inline. Min charge is not used for Uteco. M/min drives Uteco bar length on the schedule
+          (job web meters ÷ m/min).
         </Typography>
         {loading && tiers.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
@@ -316,13 +351,15 @@ export function PrintingAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 160 }}>Max width (mm)</TableCell>
-                <TableCell sx={{ width: 140 }}>Colours</TableCell>
-                <TableCell sx={{ width: 140 }}>Min meters</TableCell>
-                <TableCell sx={{ width: 160 }}>Setup fee</TableCell>
-                <TableCell sx={{ width: 180 }}>Cost / 1000m</TableCell>
-                <TableCell sx={{ width: 140 }}>M/min</TableCell>
-                <TableCell sx={{ width: 220 }} />
+                <TableCell sx={{ width: 120 }}>Max width (mm)</TableCell>
+                <TableCell sx={{ width: 100 }}>Colours</TableCell>
+                <TableCell sx={{ width: 120 }}>Min meters</TableCell>
+                <TableCell sx={{ width: 120 }}>Setup cost</TableCell>
+                <TableCell sx={{ width: 120 }}>Setup price</TableCell>
+                <TableCell sx={{ width: 120 }}>Cost / 1000m</TableCell>
+                <TableCell sx={{ width: 120 }}>Price / 1000m</TableCell>
+                <TableCell sx={{ width: 100 }}>M/min</TableCell>
+                <TableCell sx={{ width: 180 }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -347,10 +384,16 @@ export function PrintingAdminPage() {
                   <TextField size="small" label="Min meters" inputProps={{ inputMode: 'numeric' }} value={nuMinM} onChange={(e) => setNuMinM(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Setup fee" inputProps={{ inputMode: 'numeric' }} value={nuSetup} onChange={(e) => setNuSetup(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Setup cost" inputProps={{ inputMode: 'numeric' }} value={nuSetupCost} onChange={(e) => setNuSetupCost(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
-                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={nuRate} onChange={(e) => setNuRate(e.target.value ? parseFloat(e.target.value) : '')} />
+                  <TextField size="small" label="Setup price" inputProps={{ inputMode: 'numeric' }} value={nuSetupPrice} onChange={(e) => setNuSetupPrice(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Cost / 1000m" inputProps={{ inputMode: 'numeric' }} value={nuCostPer1000} onChange={(e) => setNuCostPer1000(e.target.value ? parseFloat(e.target.value) : '')} />
+                </TableCell>
+                <TableCell>
+                  <TextField size="small" label="Price / 1000m" inputProps={{ inputMode: 'numeric' }} value={nuPricePer1000} onChange={(e) => setNuPricePer1000(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
                 <TableCell>
                   <TextField
@@ -374,16 +417,20 @@ export function PrintingAdminPage() {
                         {
                           min_meters: Number(nuMinM),
                           min_charge: null,
-                          setup_fee: Number(nuSetup),
-                          cost_per_1000m: Number(nuRate),
+                          setup_cost: Number(nuSetupCost),
+                          setup_price: Number(nuSetupPrice),
+                          cost_per_1000m: Number(nuCostPer1000),
+                          price_per_1000m: Number(nuPricePer1000),
                           meters_per_min: nuMpm === '' ? null : Number(nuMpm),
                         },
                       ).then(() => {
                         setNuMaxW('')
                         setNuColours('')
                         setNuMinM('')
-                        setNuSetup('')
-                        setNuRate('')
+                        setNuSetupCost('')
+                        setNuSetupPrice('')
+                        setNuCostPer1000('')
+                        setNuPricePer1000('')
                         setNuMpm('')
                       })
                     }}
@@ -532,22 +579,51 @@ function TierRow(props: {
   saving: boolean
   onSave: (
     key: { method: string; max_print_width_mm: number; num_colours: number },
-    patch: Pick<PrintingPricingTier, 'min_meters' | 'min_charge' | 'setup_fee' | 'cost_per_1000m' | 'meters_per_min'>,
+    patch: Pick<
+      PrintingPricingTier,
+      'min_meters' | 'min_charge' | 'setup_cost' | 'setup_price' | 'cost_per_1000m' | 'price_per_1000m' | 'meters_per_min'
+    >,
   ) => Promise<void>
   onDelete: (key: { method: string; max_print_width_mm: number; num_colours: number }) => Promise<void>
 }) {
   const { tierVariant, row, saving, onSave, onDelete } = props
   const [minMeters, setMinMeters] = useState<number | ''>(row.min_meters)
   const [minCharge, setMinCharge] = useState<number | ''>(row.min_charge ?? '')
-  const [setupFee, setSetupFee] = useState<number | ''>(row.setup_fee ?? '')
-  const [rate, setRate] = useState<number | ''>(row.cost_per_1000m)
+  const [setupCost, setSetupCost] = useState<number | ''>(Number(row.setup_cost ?? 0))
+  const [setupPrice, setSetupPrice] = useState<number | ''>(row.setup_price != null ? Number(row.setup_price) : '')
+  const [costPer1000, setCostPer1000] = useState<number | ''>(row.cost_per_1000m)
+  const [pricePer1000, setPricePer1000] = useState<number | ''>(row.price_per_1000m)
   const [metersPerMin, setMetersPerMin] = useState<number | ''>(row.meters_per_min ?? '')
   const isInline = tierVariant === 'inline'
+
+  useEffect(() => {
+    setMinMeters(row.min_meters)
+    setMinCharge(row.min_charge ?? '')
+    setSetupCost(Number(row.setup_cost ?? 0))
+    setSetupPrice(row.setup_price != null ? Number(row.setup_price) : '')
+    setCostPer1000(row.cost_per_1000m)
+    setPricePer1000(row.price_per_1000m)
+    setMetersPerMin(row.meters_per_min ?? '')
+  }, [
+    row.method,
+    row.max_print_width_mm,
+    row.num_colours,
+    row.min_meters,
+    row.min_charge,
+    row.setup_cost,
+    row.setup_price,
+    row.cost_per_1000m,
+    row.price_per_1000m,
+    row.meters_per_min,
+  ])
+
   const dirty =
     minMeters !== row.min_meters ||
     minCharge !== (row.min_charge ?? '') ||
-    setupFee !== (row.setup_fee ?? '') ||
-    rate !== row.cost_per_1000m ||
+    setupCost !== Number(row.setup_cost ?? 0) ||
+    setupPrice !== (row.setup_price != null ? Number(row.setup_price) : '') ||
+    costPer1000 !== row.cost_per_1000m ||
+    pricePer1000 !== row.price_per_1000m ||
     (!isInline && metersPerMin !== (row.meters_per_min ?? ''))
   const key = { method: row.method, max_print_width_mm: row.max_print_width_mm, num_colours: row.num_colours }
   return (
@@ -563,10 +639,16 @@ function TierRow(props: {
         </TableCell>
       ) : null}
       <TableCell>
-        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={setupFee} onChange={(e) => setSetupFee(e.target.value ? parseFloat(e.target.value) : '')} />
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={setupCost} onChange={(e) => setSetupCost(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
       <TableCell>
-        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={rate} onChange={(e) => setRate(e.target.value ? parseFloat(e.target.value) : '')} />
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={setupPrice} onChange={(e) => setSetupPrice(e.target.value ? parseFloat(e.target.value) : '')} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={costPer1000} onChange={(e) => setCostPer1000(e.target.value ? parseFloat(e.target.value) : '')} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={pricePer1000} onChange={(e) => setPricePer1000(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
       {!isInline ? (
         <TableCell>
@@ -588,16 +670,20 @@ function TierRow(props: {
               saving ||
               !dirty ||
               minMeters === '' ||
-              rate === '' ||
-              setupFee === '' ||
+              costPer1000 === '' ||
+              pricePer1000 === '' ||
+              setupCost === '' ||
+              setupPrice === '' ||
               (isInline && minCharge === '')
             }
             onClick={() =>
               void onSave(key, {
                 min_meters: Number(minMeters),
                 min_charge: isInline ? Number(minCharge) : null,
-                setup_fee: Number(setupFee),
-                cost_per_1000m: Number(rate),
+                setup_cost: Number(setupCost),
+                setup_price: Number(setupPrice),
+                cost_per_1000m: Number(costPer1000),
+                price_per_1000m: Number(pricePer1000),
                 meters_per_min: isInline ? null : metersPerMin === '' ? null : Number(metersPerMin),
               })
             }

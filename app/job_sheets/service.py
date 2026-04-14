@@ -210,6 +210,18 @@ def create_job_sheet_from_product_latest_version(
     qt, npu0, wpr0, nr0 = _infer_qty_fields_for_order_line(
         float(quantity_value), str(quantity_unit), qty_type, num_rolls
     )
+    qu_l = str(quantity_unit).lower()
+    if qu_l == "cartons" and num_product_units is None:
+        pv_obj = db.get(ProductVersion, str(product.active_version_id))
+        bpc = 0
+        if pv_obj and isinstance(getattr(pv_obj, "spec_payload", None), dict):
+            pack = (pv_obj.spec_payload or {}).get("packaging") or {}
+            try:
+                bpc = int(pack.get("bags_per_carton") or 0)
+            except (TypeError, ValueError):
+                bpc = 0
+        if bpc > 0:
+            npu0 = float(quantity_value) * float(bpc)
     npu = float(num_product_units) if num_product_units is not None else npu0
     wpr = float(weight_per_roll_kg) if weight_per_roll_kg is not None else wpr0
 
@@ -264,7 +276,7 @@ def _infer_qty_fields_for_order_line(
         qt = "total_rolls"
     elif qu == "kg":
         qt = "kg"
-    elif qu in ("bags", "meters"):
+    elif qu in ("bags", "meters", "cartons"):
         qt = "units"
     else:
         qt = "kg"

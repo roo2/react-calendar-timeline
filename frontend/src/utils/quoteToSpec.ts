@@ -227,42 +227,79 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
 
 export type OrderQuantity = {
   quantity_value: number
-  quantity_unit: 'kg' | 'rolls' | 'bags' | 'meters'
+  quantity_unit: 'kg' | 'rolls' | 'cartons'
+}
+
+export type OrderQuantityPreview = {
+  totals_kg?: number | null
+  rolls?: number | null
+  cartons?: number | null
+}
+
+function positiveOrOne(n: number): number {
+  return n > 0 ? n : 1
 }
 
 /**
- * Derive order item quantity from quote payload (qtyType, totalKg, numUnits, numRolls, unitsPerRoll).
+ * Derive order item quantity from quote payload (finish mode, qtyType, totals, rolls, cartons).
+ * Optional `preview` aligns with calculator outputs when form totals are ambiguous.
  */
-export function getOrderQuantityFromQuotePayload(payload: QuotePayload): OrderQuantity {
+export function getOrderQuantityFromQuotePayload(
+  payload: QuotePayload,
+  preview?: OrderQuantityPreview,
+): OrderQuantity {
   const p = payload
+  const finish = p.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
   const qtyType = p.qtyType || 'kg'
   const totalKg = Number(p.totalKg) || 0
   const numUnits = Math.round(Number(p.numUnits) || 0)
   const numRolls = Math.round(Number(p.numRolls) || 0)
-  const unitsPerRoll = Math.round(Number(p.unitsPerRoll) || 0)
+  const bagsPerCarton = Math.max(0, Math.round(Number(p.bags_per_carton) || 0))
 
+  const pk = positiveOrOne
+
+  if (finish === 'Cartons') {
+    if (qtyType === 'kg') {
+      return { quantity_value: pk(totalKg), quantity_unit: 'kg' }
+    }
+    if (qtyType === 'units' && bagsPerCarton > 0 && numUnits > 0) {
+      return {
+        quantity_value: Math.max(1, Math.ceil(numUnits / bagsPerCarton)),
+        quantity_unit: 'cartons',
+      }
+    }
+    const pc = preview?.cartons != null ? Number(preview.cartons) : NaN
+    if (Number.isFinite(pc) && pc > 0) {
+      return { quantity_value: Math.max(1, Math.ceil(pc)), quantity_unit: 'cartons' }
+    }
+    const tk = preview?.totals_kg != null ? Number(preview.totals_kg) : NaN
+    if (Number.isFinite(tk) && tk > 0) {
+      return { quantity_value: tk, quantity_unit: 'kg' }
+    }
+    return { quantity_value: pk(totalKg), quantity_unit: 'kg' }
+  }
+
+  // Rolls finish
+  if (qtyType === 'total_rolls' || qtyType === 'rolls_units') {
+    const r =
+      numRolls > 0
+        ? numRolls
+        : preview?.rolls != null && Number(preview.rolls) > 0
+          ? Math.round(Number(preview.rolls))
+          : 1
+    return { quantity_value: pk(r), quantity_unit: 'rolls' }
+  }
   if (qtyType === 'kg') {
-    return {
-      quantity_value: totalKg > 0 ? totalKg : 1,
-      quantity_unit: 'kg',
-    }
+    const kg =
+      totalKg > 0
+        ? totalKg
+        : preview?.totals_kg != null && Number(preview.totals_kg) > 0
+          ? Number(preview.totals_kg)
+          : 1
+    return { quantity_value: kg, quantity_unit: 'kg' }
   }
-  if (qtyType === 'total_rolls') {
-    return {
-      quantity_value: numRolls > 0 ? numRolls : 1,
-      quantity_unit: 'rolls',
-    }
-  }
-  if (qtyType === 'rolls_units') {
-    const total = numRolls > 0 && unitsPerRoll > 0 ? numRolls * unitsPerRoll : 0
-    return {
-      quantity_value: total > 0 ? total : 1,
-      quantity_unit: 'bags',
-    }
-  }
-  // units (bags / U-Films / etc.)
-  return {
-    quantity_value: numUnits > 0 ? numUnits : 1,
-    quantity_unit: 'bags',
-  }
+  const kgFromPreview =
+    preview?.totals_kg != null && Number(preview.totals_kg) > 0 ? Number(preview.totals_kg) : NaN
+  const kg = Number.isFinite(kgFromPreview) ? kgFromPreview : totalKg > 0 ? totalKg : 1
+  return { quantity_value: kg, quantity_unit: 'kg' }
 }

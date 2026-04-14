@@ -121,25 +121,40 @@ export function computeWeightPerRollDisplay(
   return null
 }
 
-/** Map job sheet persisted fields → order line quantity_value / quantity_unit (legacy columns). */
+/** Map job sheet persisted fields → order line quantity_value / quantity_unit. */
 export function getOrderQuantityFromJobSheetFields(
   qtyType: QtyType,
   quantityValueFallback: number,
   totalKgNum: number,
   numUnitsNum: number,
   numRollsNum: number,
-): { quantity_value: number; quantity_unit: 'kg' | 'rolls' | 'bags' | 'meters' } {
+  finishMode: FinishMode = 'Rolls',
+  bagsPerCarton: number | null | undefined = null,
+): { quantity_value: number; quantity_unit: 'kg' | 'rolls' | 'cartons' } {
+  const fb = quantityValueFallback > 0 ? quantityValueFallback : 1
   if (qtyType === 'kg') {
-    return { quantity_value: totalKgNum > 0 ? totalKgNum : quantityValueFallback, quantity_unit: 'kg' }
+    return { quantity_value: totalKgNum > 0 ? totalKgNum : fb, quantity_unit: 'kg' }
   }
   if (qtyType === 'total_rolls') {
-    return { quantity_value: numRollsNum > 0 ? numRollsNum : quantityValueFallback, quantity_unit: 'rolls' }
+    return { quantity_value: numRollsNum > 0 ? numRollsNum : fb, quantity_unit: 'rolls' }
   }
   if (qtyType === 'rolls_units') {
-    const total = numRollsNum > 0 && numUnitsNum > 0 ? numRollsNum * numUnitsNum : 0
-    return { quantity_value: total > 0 ? total : quantityValueFallback, quantity_unit: 'bags' }
+    return { quantity_value: numRollsNum > 0 ? numRollsNum : fb, quantity_unit: 'rolls' }
   }
-  return { quantity_value: numUnitsNum > 0 ? numUnitsNum : quantityValueFallback, quantity_unit: 'bags' }
+  // units (product count): cartons finish → carton count when BPC known; rolls finish → bill in kg
+  if (finishMode === 'Cartons') {
+    const bpc = Math.max(0, Math.round(Number(bagsPerCarton) || 0))
+    if (bpc > 0 && numUnitsNum > 0) {
+      return {
+        quantity_value: Math.max(1, Math.ceil(numUnitsNum / bpc)),
+        quantity_unit: 'cartons',
+      }
+    }
+    if (totalKgNum > 0) return { quantity_value: totalKgNum, quantity_unit: 'kg' }
+    return { quantity_value: numUnitsNum > 0 ? numUnitsNum : fb, quantity_unit: 'kg' }
+  }
+  if (totalKgNum > 0) return { quantity_value: totalKgNum, quantity_unit: 'kg' }
+  return { quantity_value: numUnitsNum > 0 ? numUnitsNum : fb, quantity_unit: 'kg' }
 }
 
 /** Enforce qtyType when finish mode is Cartons (cannot use roll-based modes — those are for Rolls finish). */
@@ -198,6 +213,8 @@ export function validateJobSheetQuantityInputs(
   numUnitsNum: number,
   numRollsNum: number,
   weightPerRollNum: number,
+  /** When qtyType is `rolls_units`, units per roll (e.g. bags per roll). */
+  unitsPerRollNum: number = 0,
 ): string | null {
   if (!(numRollsNum >= 1)) return 'Number of rolls must be at least 1 (required for scheduling).'
   if (finishMode === 'Cartons') {
@@ -214,7 +231,7 @@ export function validateJobSheetQuantityInputs(
   }
   if (qtyType === 'rolls_units') {
     if (!(numRollsNum > 0)) return 'Enter the number of rolls.'
-    if (!(numUnitsNum > 0)) return 'Enter units per roll.'
+    if (!(unitsPerRollNum > 0)) return 'Enter units per roll.'
   }
   return null
 }

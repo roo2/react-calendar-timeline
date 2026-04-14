@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, TYPE_CHECKING
 
 from app.exceptions import DomainError
 from app.scheduling.spec_payload import _compute_gauge_um_from_spec
@@ -91,6 +91,23 @@ def layflat_width_mm_from_product_version(product_version: Optional["ProductVers
     return _compute_width_mm_from_spec(spec)
 
 
+def extruder_layflat_advisory_warnings(extruder: "Extruder", spec: Any) -> List[str]:
+    """
+    Layflat below the extruder’s rate-book minimum is allowed (narrow webs can run on wider lines).
+    Surface as Gantt warnings so planners see it next to overlap-style advisories.
+    """
+    width_mm = _compute_width_mm_from_spec(spec)
+    if width_mm is None or extruder.film_width_min_mm is None:
+        return []
+    lo = float(extruder.film_width_min_mm)
+    if width_mm + 1e-6 < lo:
+        return [
+            f"Layflat is {width_mm:.1f} mm, below this extruder’s minimum rated width ({extruder.film_width_min_mm} mm). "
+            "Narrow jobs can often still run on wider extruders — confirm if unsure."
+        ]
+    return []
+
+
 def validate_extruder_for_spec(
     extruder: "Extruder",
     spec: Any,
@@ -99,11 +116,12 @@ def validate_extruder_for_spec(
     """Extrusion lanes use rate-card `extruders` columns (not generic machine capability JSON)."""
     width_mm = _compute_width_mm_from_spec(spec)
     gauge_um = _compute_gauge_um_from_spec(spec)
-    if width_mm is not None and extruder.film_width_min_mm is not None and extruder.film_width_max_mm is not None:
-        lo, hi = float(extruder.film_width_min_mm), float(extruder.film_width_max_mm)
-        if not (lo <= width_mm <= hi):
+    # Hard stop only when wider than the line’s maximum; below minimum is advisory (see extruder_layflat_advisory_warnings).
+    if width_mm is not None and extruder.film_width_max_mm is not None:
+        hi = float(extruder.film_width_max_mm)
+        if width_mm > hi + 1e-6:
             raise DomainError(
-                f"This extruder accepts film width {extruder.film_width_min_mm}–{extruder.film_width_max_mm} mm; "
+                f"This extruder accepts up to {extruder.film_width_max_mm} mm film width; "
                 f"this job’s layflat from the product spec is {width_mm:.1f} mm."
             )
     if gauge_um is not None and extruder.decision_width_mm is not None:

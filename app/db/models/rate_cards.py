@@ -148,8 +148,10 @@ class PrintingPricingTier(Base):
     num_colours: Mapped[int] = mapped_column(Integer)
     min_meters: Mapped[int] = mapped_column(Integer)
     min_charge: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
-    setup_fee: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    setup_cost: Mapped[float] = mapped_column(Numeric(12, 4), default=0)
+    setup_price: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
     cost_per_1000m: Mapped[float] = mapped_column(Numeric(12, 4))
+    price_per_1000m: Mapped[float] = mapped_column(Numeric(12, 4))
     # Uteco: web speed for scheduling (meters of film per minute). Inline tiers leave NULL.
     meters_per_min: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
 
@@ -160,8 +162,10 @@ class PrintingPricingTier(Base):
         CheckConstraint("num_colours >= 1", name="ck_print_tier_num_colours_ge1"),
         CheckConstraint("min_meters >= 0", name="ck_print_tier_min_m_ge0"),
         CheckConstraint("min_charge IS NULL OR min_charge >= 0", name="ck_print_tier_min_charge_nonneg"),
-        CheckConstraint("setup_fee IS NULL OR setup_fee >= 0", name="ck_print_tier_setup_fee_nonneg"),
-        CheckConstraint("cost_per_1000m >= 0", name="ck_print_tier_cost_nonneg"),
+        CheckConstraint("setup_cost >= 0", name="ck_print_tier_setup_cost_nonneg"),
+        CheckConstraint("setup_price IS NULL OR setup_price >= 0", name="ck_print_tier_setup_price_nonneg"),
+        CheckConstraint("cost_per_1000m >= 0", name="ck_print_tier_cost_per_1000_nonneg"),
+        CheckConstraint("price_per_1000m >= 0", name="ck_print_tier_price_per_1000_nonneg"),
         CheckConstraint("meters_per_min IS NULL OR meters_per_min > 0", name="ck_print_tier_meters_per_min_pos"),
     )
 
@@ -286,19 +290,16 @@ class ExtrusionWasteFactor(Base):
 
 
 class QuoteDefaults(Base):
-    """Singleton (id=1): quote calculator defaults (e.g. margin % for new quotes)."""
+    """Singleton (id=1): quote calculator defaults (e.g. extrusion retail $/kg add-on)."""
 
     __tablename__ = "quote_defaults"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
-    default_margin_pct: Mapped[float] = mapped_column(Numeric(6, 3), nullable=False, default=37)
+    extrusion_retail_addon_per_kg: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=1.8)
 
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_quote_defaults_singleton"),
-        CheckConstraint(
-            "default_margin_pct >= 0 AND default_margin_pct < 100",
-            name="ck_quote_defaults_margin_range",
-        ),
+        CheckConstraint("extrusion_retail_addon_per_kg >= 0", name="ck_quote_defaults_extrusion_addon_nonneg"),
     )
 
 

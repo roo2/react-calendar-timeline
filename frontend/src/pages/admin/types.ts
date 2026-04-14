@@ -54,8 +54,10 @@ export type PrintingPricingTier = {
   num_colours: number
   min_meters: number
   min_charge?: number | null
-  setup_fee?: number | null
+  setup_cost: number
+  setup_price: number | null
   cost_per_1000m: number
+  price_per_1000m: number
   /** Uteco: web speed (m/min) for scheduling. Inline tiers omit or null. */
   meters_per_min?: number | null
 }

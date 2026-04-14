@@ -42,6 +42,7 @@ from app.job_context import (
 from app.db.models.rate_cards import ConversionFactor, ConversionSpeed, Extruder
 from app.exceptions import DomainError
 from app.machines.service import (
+	extruder_layflat_advisory_warnings,
 	layflat_width_mm_from_product_version,
 	validate_capability_dict,
 	validate_extruder_for_spec,
@@ -357,6 +358,17 @@ def _routing_warnings_for_enqueue(session: Session, lane: ScheduleLane, job: Job
 			if not has_print:
 				warnings.append("Conversion queued before required Uteco Printing run exists")
 	return warnings
+
+
+def _lane_enqueue_warnings(
+	session: Session, lane: ScheduleLane, job: Job, product_version: Optional[ProductVersion]
+) -> List[str]:
+	"""Routing hard-stops + soft extrusion layflat vs rate-book minimum (narrow web allowed)."""
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	out = list(_routing_warnings_for_enqueue(session, lane, job, product_version))
+	if lane.kind == "extrusion" and lane.extruder is not None:
+		out.extend(extruder_layflat_advisory_warnings(lane.extruder, spec))
+	return out
 
 
 def _spec_finish_requires_conversion(spec: Optional[dict]) -> bool:
@@ -1030,6 +1042,25 @@ def _num_rolls_for_job(session: Session, job: Job, product_version: Optional[Pro
 	return max(1, min(fallback, 500))
 
 
+def _gantt_roll_segment_count_for_job(session: Session, job: Job, product_version: Optional[ProductVersion]) -> int:
+	"""
+	Roll count for Gantt bar dividers (extrusion / Uteco / bagging).
+
+	Carton-finish jobs: segment by conversion factor ``roll_weight_avg`` (kg per roll) over
+	estimated extrusion kg — same basis as conversion roll-change minutes — so boxes show
+	one divider per ~average roll of film. Otherwise use job sheet / spec roll count.
+	"""
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	if not isinstance(spec, dict):
+		spec = {}
+	if _spec_finish_requires_conversion(spec):
+		roll_avg_kg = _conversion_factor_value(session, "roll_weight_avg", 0.0)
+		derived_kg = _estimated_extrusion_kg(job, product_version)
+		if roll_avg_kg > 0 and derived_kg > 0:
+			return max(1, min(int(math.ceil(derived_kg / roll_avg_kg)), 500))
+	return max(1, min(_num_rolls_for_job(session, job, product_version), 500))
+
+
 def _roll_count_from_spec(spec: dict) -> int:
 	if not isinstance(spec, dict):
 		return 1
@@ -1634,17 +1665,26 @@ def add_job(
 		if job.status == JobStatus.PLANNED:
 			job.status = JobStatus.SCHEDULED
 
-		warnings = _routing_warnings_for_enqueue(session, lane, job, product_version)
+		warnings = _lane_enqueue_warnings(session, lane, job, product_version)
 
 		operation_type = _operation_type_for_lane(lane)
 		_validate_lane_for_job(lane, product_version, operation_type)
 		required_codes = _required_tool_type_codes(job, operation_type, product_version)
+		# ``tool_reservations.planned_from/planned_to`` are NOT NULL — derive a window from the queued
+		# scheduled start + estimated duration (same basis as Gantt), even when overlap logic is still MVP.
+		dur_h = max(0.25, _estimate_lane_duration_hours(session, lane, job, product_version))
+		start_local = sched_utc.astimezone(ctx.tz)
+		end_local = add_operating_hours(start_local, dur_h, ctx)
+		tool_window = (
+			start_local.astimezone(timezone.utc),
+			end_local.astimezone(timezone.utc),
+		)
 		tool_conflicts = _reserve_tools(
 			session=session,
 			job=job,
 			operation_type=operation_type,
 			lane=lane,
-			window=None,
+			window=tool_window,
 			tool_type_codes=required_codes,
 		)
 
@@ -1871,7 +1911,7 @@ def move_bar(
 			if operation_type == OperationType.EXTRUSION:
 				ctx_sync = load_operating_context(session)
 				_sync_chain_queue_starts_from_extrusion(session, job, ctx_sync)
-			warnings = _routing_warnings_for_enqueue(session, target, job, product_version)
+			warnings = _lane_enqueue_warnings(session, target, job, product_version)
 			ref = _load_lane_items_for_update(session, source_lane)
 			ld = _lane_dto(source_lane.lane_id, ref, warnings=warnings, conflicts=tool_conflicts)
 			return MoveResult(source_lane=ld, target_lane=ld)
@@ -2007,7 +2047,7 @@ def move_bar(
 			ctx_sync = load_operating_context(session)
 			_sync_chain_queue_starts_from_extrusion(session, job, ctx_sync)
 
-		warnings = _routing_warnings_for_enqueue(session, target, job, product_version)
+		warnings = _lane_enqueue_warnings(session, target, job, product_version)
 
 		source_ref = _load_lane_items_for_update(session, source_lane)
 		target_ref = _load_lane_items_for_update(session, target)
@@ -2156,7 +2196,7 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 
 				duration_hours = _estimate_lane_duration_hours(session, lane, job, product_version)
 				spec = (product_version.spec_payload if product_version else {}) or {}
-				roll_count = _num_rolls_for_job(session, job, product_version)
+				roll_count = _gantt_roll_segment_count_for_job(session, job, product_version)
 				hours_per_roll = duration_hours / roll_count if roll_count > 0 else duration_hours
 				job_sheet_job_no = _job_sheet_job_no_for_job(session, job)
 
@@ -2169,8 +2209,11 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 				readiness = "running" if status_str == "running" else "ready"
 				printing_method = _get_printing_method_from_spec(product_version)
 
-				warnings = list(_routing_warnings_for_enqueue(session, lane, job, product_version))
-				if warnings:
+				routing_warnings = list(_routing_warnings_for_enqueue(session, lane, job, product_version))
+				warnings = list(routing_warnings)
+				if lane.kind == "extrusion" and lane.extruder is not None:
+					warnings.extend(extruder_layflat_advisory_warnings(lane.extruder, spec))
+				if routing_warnings:
 					readiness = "blocked"
 
 				tool_strips: List[ToolStripDTO] = []
@@ -2325,7 +2368,7 @@ def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
 		out: List[UnqueuedScheduleJobDTO] = []
 		for job in jobs:
 			_, order, product_version = resolve_job_context(session, uuid.UUID(str(job.id)))
-			rc = _num_rolls_for_job(session, job, product_version)
+			rc = _gantt_roll_segment_count_for_job(session, job, product_version)
 			product = session.get(Product, product_version.product_id) if product_version else None
 			job_sheet_no = _job_sheet_job_no_for_job(session, job)
 			layflat_mm = layflat_width_mm_from_product_version(product_version)

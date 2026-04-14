@@ -6,6 +6,8 @@ export type JobSheetCustomerOption = { id: string; name: string; code?: string |
 
 export type JobSheetQuantityFieldsProps = {
   productUnitLabel: string
+  /** When Bag, qty menu uses "Bags (total units)" / "Rolls x bags per roll". */
+  productTypeIsBag: boolean
   finishMode: FinishMode
   effectiveQtyType: QtyType
   onQtyTypeChange: (t: QtyType) => void
@@ -16,11 +18,16 @@ export type JobSheetQuantityFieldsProps = {
     disabled: boolean
     required: boolean
   }
-  numUnitsField: {
-    value: string
-    onChange?: (value: string) => void
-    disabled: boolean
-    required: boolean
+  /** Rolls: units per roll (rolls_units) or derived average; Cartons: bags per carton. */
+  rollOrCartonSizingField: {
+    rollsLabel: string
+    rollsValue: string
+    rollsOnChange?: (value: string) => void
+    rollsDisabled: boolean
+    rollsInputStep: number | 'any'
+    cartonsLabel: string
+    cartonsValue: string
+    cartonsOnChange: (value: string) => void
   }
   weightPerRollField: {
     value: string
@@ -34,28 +41,41 @@ export type JobSheetQuantityFieldsProps = {
     disabled: boolean
     required: boolean
   }
+  totalProductsField: {
+    value: string
+    onChange?: (value: string) => void
+    disabled: boolean
+  }
 }
 
-/** Quantity inputs only (no outer Paper). */
+/** Quantity inputs only (no outer Paper). Layout matches Quotes page Quantity block. */
 export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
   const {
     productUnitLabel,
+    productTypeIsBag,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange,
     totalMetersReadonly,
     totalKgField,
-    numUnitsField,
+    rollOrCartonSizingField,
     weightPerRollField,
     numRollsField,
+    totalProductsField,
   } = props
+
+  const unitsMenuLabel = productTypeIsBag ? 'Bags (total units)' : `${productUnitLabel} (total units)`
+  const rollsPerRollMenuLabel = productTypeIsBag
+    ? 'Rolls x bags per roll'
+    : `Rolls x ${productUnitLabel.toLowerCase()} per roll`
 
   return (
     <>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
         <TextField select label="Qty Type" value={effectiveQtyType} onChange={(e) => onQtyTypeChange(e.target.value as QtyType)}>
-          <MenuItem value="units">{productUnitLabel} (Units)</MenuItem>
+          <MenuItem value="units">{unitsMenuLabel}</MenuItem>
           <MenuItem value="kg">Total KG</MenuItem>
+          {finishMode === 'Rolls' ? <MenuItem value="rolls_units">{rollsPerRollMenuLabel}</MenuItem> : null}
           {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Rolls x KG per roll</MenuItem> : null}
         </TextField>
         <TextField label="Total Meters" value={totalMetersReadonly} disabled />
@@ -64,7 +84,7 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
         sx={{
           mt: 2,
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+          gridTemplateColumns: 'repeat(2, 1fr)',
           gap: 2,
         }}
       >
@@ -77,15 +97,26 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
           disabled={totalKgField.disabled}
           required={totalKgField.required}
         />
-        <TextField
-          label={`No. of ${productUnitLabel}`}
-          type="number"
-          inputProps={{ min: 0, step: 1 }}
-          value={numUnitsField.value}
-          onChange={numUnitsField.onChange ? (e) => numUnitsField.onChange!(e.target.value) : undefined}
-          disabled={numUnitsField.disabled}
-          required={numUnitsField.required}
-        />
+        {finishMode === 'Rolls' ? (
+          <TextField
+            label={rollOrCartonSizingField.rollsLabel}
+            type="number"
+            inputProps={{ min: 0, step: rollOrCartonSizingField.rollsInputStep }}
+            value={rollOrCartonSizingField.rollsValue}
+            onChange={
+              rollOrCartonSizingField.rollsOnChange ? (e) => rollOrCartonSizingField.rollsOnChange!(e.target.value) : undefined
+            }
+            disabled={rollOrCartonSizingField.rollsDisabled}
+          />
+        ) : (
+          <TextField
+            label={rollOrCartonSizingField.cartonsLabel}
+            type="number"
+            inputProps={{ min: 1, step: 1 }}
+            value={rollOrCartonSizingField.cartonsValue}
+            onChange={(e) => rollOrCartonSizingField.cartonsOnChange(e.target.value)}
+          />
+        )}
         <TextField
           label="Weight per Roll (kg)"
           type="number"
@@ -98,11 +129,20 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
         <TextField
           label="No. of Rolls"
           type="number"
-          inputProps={{ min: 1, step: 1 }}
+          inputProps={{ min: 0, step: 1 }}
           value={numRollsField.value}
           onChange={numRollsField.onChange ? (e) => numRollsField.onChange!(e.target.value) : undefined}
           disabled={numRollsField.disabled}
           required={numRollsField.required}
+        />
+        <TextField
+          label="Total products"
+          type="number"
+          inputProps={{ min: 0, step: 1 }}
+          sx={{ gridColumn: '1 / -1' }}
+          value={totalProductsField.value}
+          onChange={totalProductsField.onChange ? (e) => totalProductsField.onChange!(e.target.value) : undefined}
+          disabled={totalProductsField.disabled}
         />
       </Box>
     </>
@@ -168,28 +208,32 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
     orderDateInputRef,
     dueDateInputRef,
     productUnitLabel,
+    productTypeIsBag,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange,
     totalMetersReadonly,
     totalKgField,
-    numUnitsField,
+    rollOrCartonSizingField,
     weightPerRollField,
     numRollsField,
+    totalProductsField,
     includeQuantity = true,
     productRow,
   } = props
 
   const quantityProps: JobSheetQuantityFieldsProps = {
     productUnitLabel,
+    productTypeIsBag,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange,
     totalMetersReadonly,
     totalKgField,
-    numUnitsField,
+    rollOrCartonSizingField,
     weightPerRollField,
     numRollsField,
+    totalProductsField,
   }
 
   return (

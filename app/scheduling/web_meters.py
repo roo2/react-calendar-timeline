@@ -48,11 +48,35 @@ def job_sheet_for_job(session: Session, job: Job) -> Optional[JobSheet]:
 	return None
 
 
+def run_up_lane_count_from_spec(spec: dict) -> int:
+	"""Sheet/Centerfold run-up lane count (0 if not applicable or ``none``). Matches quote UI slugs."""
+	identity = spec.get("identity") or {}
+	pt = str(identity.get("product_type") or "")
+	if pt not in ("Sheet", "Centerfold"):
+		return 0
+	run_req = spec.get("run_requirements") or {}
+	ru_slug = str(run_req.get("run_up") or "none")
+	if ru_slug == "1up":
+		return 1
+	if ru_slug == "2up":
+		return 2
+	if ru_slug == "4up":
+		return 4
+	if ru_slug == "6up":
+		return 6
+	return 0
+
+
+def printing_run_up_length_multiplier_from_spec(spec: dict) -> float:
+	"""Extruded metres × this = printed web metres (min length / Uteco duration). See ``printingWebLengthMultiplierFromRunUp`` in the frontend."""
+	ru = run_up_lane_count_from_spec(spec)
+	return float(ru) if ru > 0 else 1.0
+
+
 def layflat_mm_from_spec(spec: dict) -> float:
 	"""Match ``computeLayflatMm`` in the quotes UI."""
 	identity = spec.get("identity") or {}
 	dims = spec.get("dimensions") or {}
-	run_req = spec.get("run_requirements") or {}
 	pt = str(identity.get("product_type") or "")
 	geom = str(dims.get("geometry") or "Flat").lower()
 	try:
@@ -63,16 +87,7 @@ def layflat_mm_from_spec(spec: dict) -> float:
 		g = float(dims.get("gusset_mm") or 0)
 	except (TypeError, ValueError):
 		g = 0.0
-	ru_slug = str(run_req.get("run_up") or "none")
-	ru = 0
-	if ru_slug == "1up":
-		ru = 1
-	elif ru_slug == "2up":
-		ru = 2
-	elif ru_slug == "4up":
-		ru = 4
-	elif ru_slug == "6up":
-		ru = 6
+	ru = run_up_lane_count_from_spec(spec)
 	if (pt == "Sheet" or pt == "Centerfold") and ru > 0:
 		return w * (ru / 2.0)
 	if pt == "Centerfold" or geom in ("centrefold", "centre_fold", "centerfold"):
@@ -227,7 +242,8 @@ def web_length_meters_from_spec_and_quantity(session: Session, spec: dict, qty: 
 	tf = trim_factor_from_spec(spec)
 	if tf is not None and derived_total_m > 0:
 		derived_total_m *= tf
-	return max(0.0, float(derived_total_m))
+	m = max(0.0, float(derived_total_m))
+	return m * printing_run_up_length_multiplier_from_spec(spec)
 
 
 def web_length_meters_for_uteco_schedule(session: Session, job: Job, product_version: Optional[ProductVersion]) -> float:

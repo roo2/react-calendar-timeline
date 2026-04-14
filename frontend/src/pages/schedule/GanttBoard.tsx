@@ -35,12 +35,102 @@ import {
 } from '../../store/slices/scheduleSlice'
 import { SelectedJobPanel } from './components/SelectedJobPanel'
 
-const SIDEBAR_WIDTH = 160
+/** Machine / lane labels column (px). */
+const SIDEBAR_WIDTH = 150
 const HOUR_MS = 3600000
+/** Initial time-axis zoom: ~1 month visible (do not tie to `calendar.end`, which spans the full horizon). */
+const DEFAULT_GANTT_VISIBLE_SPAN_MS = 31 * 24 * HOUR_MS
+/** Default row / bar baseline (px) for `lineHeight` and non-extrusion tasks on `<Timeline />`. */
+const DEFAULT_LANE_ROW_PX = 54
+/** Passed to `<Timeline />`; when `itemVerticalGap` is set, bar pixel height uses `item.height` directly (no × ratio). */
+const GANTT_ITEM_HEIGHT_RATIO = 0.75
+/**
+ * Vertical inset inside each lane row. Passed as `itemVerticalGap` so tall job bars stay
+ * aligned when `lineHeight` is smaller than the rendered bar height.
+ */
+const GANTT_LANE_ITEM_VERTICAL_GAP_PX = 2
+/**
+ * Extruder lane row height and extrusion bar row height share the same px/mm scale (job layflat vs machine
+ * max film width). Values are kept modest so many extruders fit on screen; bars sit slightly inside the
+ * lane row via `GANTT_LANE_ITEM_VERTICAL_GAP_PX` and `timelineItemHeightProp`.
+ */
+const EXTRUDER_ROW_PX_PER_MM = 0.112
+const EXTRUDER_ROW_HEIGHT_MIN_PX = 32
+const EXTRUDER_ROW_HEIGHT_MAX_PX = 118
+/** When min/max are missing, assume a wide line for lane sizing (mm). */
+const EXTRUDER_LANE_FALLBACK_MAX_MM = 1000
+const EXTRUSION_BAR_FALLBACK_LAYFLAT_MM = 320
 /** Must match `buffer` on `<Timeline />` (library canvas width = viewport × buffer). */
 const TIMELINE_BUFFER = 2
 /** Synthetic row id so the unqueued drop ghost is not treated as a real job. */
 const UNQUEUED_DROP_PREVIEW_ITEM_ID = '__unqueued_drop_preview__'
+
+function clampNumber(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n))
+}
+
+/** Maximum extrusion / film width (mm) for lane height: prefer `film_width_max_mm`, else min, else fallback. */
+function maxExtrusionFilmWidthMmForLane(lane: GanttLane): number {
+  const min = lane.film_width_min_mm
+  const max = lane.film_width_max_mm
+  const minN = min != null && Number.isFinite(Number(min)) ? Number(min) : null
+  const maxN = max != null && Number.isFinite(Number(max)) ? Number(max) : null
+  if (maxN != null && maxN > 0) return maxN
+  if (minN != null && minN > 0) return minN
+  return EXTRUDER_LANE_FALLBACK_MAX_MM
+}
+
+/** Row height (px) from film / layflat width (mm); shared by extruder lanes and extrusion bars. */
+function extrusionGeometryRowPxFromMm(mm: number): number {
+  return clampNumber(EXTRUDER_ROW_PX_PER_MM * mm, EXTRUDER_ROW_HEIGHT_MIN_PX, EXTRUDER_ROW_HEIGHT_MAX_PX)
+}
+
+/** Fixed row height (px) for a machine lane — extruders scale with max on-machine film width; others default. */
+function extruderLaneRowHeightPx(lane: GanttLane): number {
+  if (lane.machine_type !== 'extruder') return DEFAULT_LANE_ROW_PX
+  return extrusionGeometryRowPxFromMm(maxExtrusionFilmWidthMmForLane(lane))
+}
+
+/** Extruder-only: allowed width range from rate-card film min/max (mm), for sidebar next to the machine code. */
+function extruderLaneMmRangeLabel(lane: GanttLane): string | null {
+  if (lane.machine_type !== 'extruder') return null
+  const min = lane.film_width_min_mm
+  const max = lane.film_width_max_mm
+  const minN = min != null && Number.isFinite(Number(min)) && Number(min) > 0 ? Number(min) : null
+  const maxN = max != null && Number.isFinite(Number(max)) && Number(max) > 0 ? Number(max) : null
+  const fmt = (mm: number) => (Math.abs(mm - Math.round(mm)) < 0.05 ? String(Math.round(mm)) : mm.toFixed(1))
+  if (minN != null && maxN != null) {
+    if (Math.abs(minN - maxN) < 0.5) return `${fmt(minN)} mm`
+    return `${fmt(minN)}–${fmt(maxN)} mm`
+  }
+  if (maxN != null) return `max ${fmt(maxN)} mm`
+  if (minN != null) return `min ${fmt(minN)} mm`
+  return null
+}
+
+function layflatMmFromJobFields(layflat: number | null | undefined): number {
+  if (layflat != null && Number.isFinite(Number(layflat)) && Number(layflat) > 0) return Number(layflat)
+  return EXTRUSION_BAR_FALLBACK_LAYFLAT_MM
+}
+
+/** Vertical space (px) for an extrusion bar from job layflat; other operations use the default lane size. */
+function extrusionTaskBarRowPxFromBar(bar: GanttBar): number {
+  if (bar.operation_type !== 'extrusion') return DEFAULT_LANE_ROW_PX
+  return extrusionGeometryRowPxFromMm(layflatMmFromJobFields(bar.job_layflat_width_mm))
+}
+
+function extrusionTaskBarRowPxFromUnqueuedJob(job: UnqueuedScheduleJob): number {
+  return extrusionGeometryRowPxFromMm(layflatMmFromJobFields(job.job_layflat_width_mm))
+}
+
+/**
+ * `item.height` for react-calendar-timeline when `itemVerticalGap` is set: the library uses this as the
+ * item’s pixel height directly (see `getItemDimensions` — no `itemHeightRatio` multiply). Match lane `rowPx`
+ * from layflat / film width but inset by twice `itemVerticalGap` so the bar fits inside the extruder row.
+ */
+function timelineItemHeightProp(rowPx: number): number {
+  return Math.max(20, rowPx - 2 * GANTT_LANE_ITEM_VERTICAL_GAP_PX)
+}
 
 const GANTT_ITEM_ID_SEP = '|'
 
@@ -383,6 +473,12 @@ type TimelineGroup = {
   id: string
   title: string
   machineType: string
+  /** Fixed lane row height (px); extruder = film-width curve, other machines = default. */
+  height?: number
+  /** Left sidebar: machine code (shown bold when `sidebarWidthRange` is set). */
+  sidebarMachineCode: string
+  /** Extruder: e.g. `200–400 mm`; non-extruder / unknown range: `null`. */
+  sidebarWidthRange: string | null
 }
 
 type TimelineItem = {
@@ -397,6 +493,8 @@ type TimelineItem = {
   end_time: number
   canMove: boolean
   canResize: false
+  /** Passed to timeline as `item.height` (extrusion: from job layflat only). */
+  height?: number
   /** Segments shown as vertical dividers inside the bar (from API `roll_count`). */
   roll_count?: number
   itemProps?: {
@@ -793,6 +891,7 @@ function buildGanttTimelineItems(
         }
       }
 
+      const barRowPx = extrusionTaskBarRowPxFromBar(bar)
       out.push({
         id: itemId,
         parentItem,
@@ -803,6 +902,7 @@ function buildGanttTimelineItems(
         canMove: bar.status !== 'running',
         canResize: false,
         roll_count: Math.max(1, bar.roll_count ?? 1),
+        height: timelineItemHeightProp(barRowPx),
         itemProps: {
           style: {
             background: bar.status === 'running' ? '#e8f5e9' : '#e3f2fd',
@@ -816,6 +916,46 @@ function buildGanttTimelineItems(
     }
   }
   return out
+}
+
+function ganttTimelineGroupRenderer({ group }: { group: TimelineGroup }) {
+  const rowStyle: CSSProperties = {
+    paddingLeft: 8,
+    paddingRight: 6,
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    minWidth: 0,
+    overflow: 'hidden',
+  }
+  if (group.machineType === 'extruder') {
+    return (
+      <div style={rowStyle} title={group.title}>
+        <span style={{ fontWeight: 700, flexShrink: 0 }}>{group.sidebarMachineCode}</span>
+        {group.sidebarWidthRange ? (
+          <span
+            style={{
+              fontWeight: 400,
+              color: 'rgba(13, 27, 42, 0.62)',
+              marginLeft: 4,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontSize: '0.8125rem',
+            }}
+          >
+            {' · '}
+            {group.sidebarWidthRange}
+          </span>
+        ) : null}
+      </div>
+    )
+  }
+  return (
+    <div style={rowStyle} title={group.title}>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.sidebarMachineCode}</span>
+    </div>
+  )
 }
 
 export function GanttBoard() {
@@ -879,11 +1019,18 @@ export function GanttBoard() {
   }, [lanes, selectedJobId])
 
   const groups = useMemo<TimelineGroup[]>(() => {
-    return lanes.map((lane) => ({
-      id: lane.machine_id,
-      title: lane.machine_code,
-      machineType: lane.machine_type,
-    }))
+    return lanes.map((lane) => {
+      const range = extruderLaneMmRangeLabel(lane)
+      const title = range != null ? `${lane.machine_code} · ${range}` : lane.machine_code
+      return {
+        id: lane.machine_id,
+        title,
+        machineType: lane.machine_type,
+        height: extruderLaneRowHeightPx(lane),
+        sidebarMachineCode: lane.machine_code,
+        sidebarWidthRange: range,
+      }
+    })
   }, [lanes])
 
   /** Factory inactive wall spans (UTC) → ms for overlay shading + operating-time drag preview */
@@ -974,6 +1121,7 @@ export function GanttBoard() {
     const g = groups[unqueuedDropPreview.groupIndex]
     if (!g) return items
     const invalid = unqueuedDropPreview.invalidLane
+    const ghostBarRowPx = extrusionTaskBarRowPxFromUnqueuedJob(externalDragUnqueuedJob)
     const ghost: TimelineItem = {
       id: UNQUEUED_DROP_PREVIEW_ITEM_ID,
       group: g.id,
@@ -983,6 +1131,7 @@ export function GanttBoard() {
       canMove: false,
       canResize: false,
       roll_count: Math.max(1, externalDragUnqueuedJob.roll_count || 1),
+      height: timelineItemHeightProp(ghostBarRowPx),
       itemProps: {
         style: {
           opacity: 0.5,
@@ -1005,10 +1154,9 @@ export function GanttBoard() {
   }, [])
 
   /**
-   * Uncontrolled Timeline defaults: local midnight today → Unix epoch ms, end from API window / fallback span.
-   * Locked after the first successful gantt payload so refetches do not change defaults: the API moves
-   * `calendar.end` with `now` every time, which would otherwise change this every save and remount the
-   * Timeline (resetting zoom/scroll).
+   * Uncontrolled Timeline defaults: local midnight today → ~1 month visible. Locked after the first
+   * successful gantt payload so refetches do not change defaults (avoids remounting the Timeline when the
+   * API shifts `calendar.end` with each `now`).
    */
   const [lockedTimelineDefaults, setLockedTimelineDefaults] = useState<{
     defaultTimeStartMs: number
@@ -1017,13 +1165,9 @@ export function GanttBoard() {
 
   const computedTimelineDefaults = useMemo(() => {
     const start = dayjs().startOf('day').valueOf()
-    let end = start + 96 * HOUR_MS
-    if (calendar?.end) {
-      const apiEnd = new Date(calendar.end).getTime()
-      if (apiEnd > start) end = Math.max(end, apiEnd)
-    }
+    const end = start + DEFAULT_GANTT_VISIBLE_SPAN_MS
     return { defaultTimeStartMs: start, defaultTimeEndMs: end }
-  }, [calendar?.end])
+  }, [])
 
   useLayoutEffect(() => {
     if (!gantt.data) return
@@ -1327,26 +1471,12 @@ export function GanttBoard() {
         ) : undefined}
       </Snackbar>
 
-      {/* Fixed height so Saving… does not shift layout when toggling */}
-      <Box
-        aria-busy={mutation.status === 'loading'}
-        sx={{ flexShrink: 0, height: 32, display: 'flex', alignItems: 'center', gap: 1 }}
-      >
-        {mutation.status === 'loading' ? (
-          <>
-            <CircularProgress size={20} />
-            <Typography variant="body2" color="text.secondary">
-              Saving…
-            </Typography>
-          </>
-        ) : null}
-      </Box>
-
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: 2, overflow: 'hidden' }}>
         <Box
           sx={{
             width: { xs: '100%', lg: 320 },
             minWidth: 0,
+            flexShrink: { lg: 0 },
             height: { xs: '40dvh', lg: '100%' },
             minHeight: 0,
             display: 'flex',
@@ -1358,6 +1488,29 @@ export function GanttBoard() {
             overflow: 'hidden',
           }}
         >
+          <Box
+            sx={{
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1,
+              minWidth: 0,
+            }}
+          >
+            <Typography variant="h5" component="h1" sx={{ lineHeight: 1.2, minWidth: 0 }}>
+              Schedule
+            </Typography>
+            {mutation.status === 'loading' ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0 }} aria-live="polite" aria-busy="true">
+                <CircularProgress size={18} />
+                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                  Saving…
+                </Typography>
+              </Box>
+            ) : null}
+          </Box>
+
           <Paper variant="outlined" sx={{ p: 1, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>
               Unqueued (extrusion)
@@ -1407,23 +1560,6 @@ export function GanttBoard() {
 
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <Box
-            sx={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: 1,
-              mb: 1,
-              flexShrink: 0,
-              rowGap: 1,
-            }}
-          >
-            <Typography variant="subtitle2">Timeline</Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ ml: { sm: 'auto' } }}>
-              Default view: {dayjs(defaultTimeStartMs).format('ddd D MMM')} (local) — scroll / zoom to navigate
-            </Typography>
-          </Box>
-
-          <Box
             onDragOver={(e) => {
               if (!externalDragUnqueuedJobId) return
               e.preventDefault()
@@ -1462,8 +1598,9 @@ export function GanttBoard() {
               minZoom={24 * HOUR_MS}
               maxZoom={45 * 24 * HOUR_MS}
               stackItems={false}
-              lineHeight={54}
-              itemHeightRatio={0.75}
+              lineHeight={DEFAULT_LANE_ROW_PX}
+              itemHeightRatio={GANTT_ITEM_HEIGHT_RATIO}
+              itemVerticalGap={GANTT_LANE_ITEM_VERTICAL_GAP_PX}
               buffer={TIMELINE_BUFFER}
               selected={selectedTimelineItemIds}
               onItemSelect={(itemId: string | number) => {
@@ -1479,6 +1616,8 @@ export function GanttBoard() {
               }
               /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- library itemRenderer props not exported from package root */
               itemRenderer={ganttTimelineItemRenderer as any}
+              /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- library groupRenderer props not exported from package root */
+              groupRenderer={ganttTimelineGroupRenderer as any}
             >
               <TimelineMarkers>
                 {inactiveBandMarkerEntries.map((e) => (

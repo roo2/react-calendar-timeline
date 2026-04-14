@@ -44,7 +44,7 @@ import { computeProductCodeFromSpec } from '../../../utils/productDescription'
 type Mode = 'new' | 'edit'
 
 type Product = ProductListItem
-type QuantityUnit = 'kg' | 'rolls' | 'bags' | 'meters'
+type QuantityUnit = 'kg' | 'rolls' | 'cartons'
 
 type OrderLine = {
   id: string // react key
@@ -56,12 +56,35 @@ type OrderLine = {
   quantity_value: string
   rate: string
   total_price: string
+  /** From product spec (list or order item); drives which units are offered. */
+  finish_mode?: 'Rolls' | 'Cartons' | null
   // edit-mode only
   order_item_id?: string
   job_sheet_id?: string
 }
 
+function normalizeFinishFromApi(v: unknown): 'Rolls' | 'Cartons' | null {
+  if (v === 'Cartons') return 'Cartons'
+  if (v === 'Rolls') return 'Rolls'
+  return null
+}
+
+function normalizeQuantityUnitFromApi(
+  raw: string | undefined,
+  finish: 'Rolls' | 'Cartons' | null,
+): QuantityUnit {
+  const x = String(raw || 'kg').toLowerCase()
+  if (x === 'rolls') return 'rolls'
+  if (x === 'cartons') return 'cartons'
+  if (x === 'bags' && finish === 'Cartons') return 'cartons'
+  return 'kg'
+}
+
 function lineFromApiItem(it: any): OrderLine {
+  let finish = normalizeFinishFromApi(it.finish_mode)
+  const rawU = String(it.quantity_unit || '').toLowerCase()
+  if (!finish && rawU === 'cartons') finish = 'Cartons'
+  if (!finish && rawU === 'rolls') finish = 'Rolls'
   return {
     id: String(it.id),
     order_item_id: String(it.id),
@@ -70,11 +93,26 @@ function lineFromApiItem(it: any): OrderLine {
     product_code: String(it.product_code || ''),
     product_name: (it.product_name as string | null | undefined) ?? null,
     due_date: String(it.due_date || ''),
-    quantity_unit: (it.quantity_unit as QuantityUnit) || 'kg',
+    finish_mode: finish,
+    quantity_unit: normalizeQuantityUnitFromApi(it.quantity_unit as string | undefined, finish),
     quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
     rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
     total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
   }
+}
+
+function finishModeForProduct(p: Product): 'Rolls' | 'Cartons' | null {
+  const fm = p.finish_mode
+  if (fm === 'Cartons') return 'Cartons'
+  if (fm === 'Rolls') return 'Rolls'
+  return null
+}
+
+/** When finish is unknown, treat as Rolls so we do not offer Carton until spec is known. */
+function unitChoices(finish: 'Rolls' | 'Cartons' | null | undefined): QuantityUnit[] {
+  const f = finish === 'Cartons' ? 'Cartons' : 'Rolls'
+  if (f === 'Cartons') return ['kg', 'cartons']
+  return ['kg', 'rolls']
 }
 
 /** Default due date: 4 weeks from today (YYYY-MM-DD). */
@@ -169,6 +207,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
 
+  /** One-shot: open embedded job sheet dialog after quote → order (see `openJobSheetFor` in location state). */
+  const convertJobSheetModalHandledRef = useRef(false)
+
   const products = useMemo((): Product[] => {
     if (!customerId || productList.lastCustomerId !== customerId) return []
     return productList.items as Product[]
@@ -245,6 +286,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           product_code: p.code,
           product_name: p.description || null,
           due_date: defaultDueDate(),
+          finish_mode: finishModeForProduct(p),
           quantity_unit: 'kg',
           quantity_value: '1',
           rate: '',
@@ -351,6 +393,46 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     })()
   }, [mode, orderId, dispatch])
 
+  useEffect(() => {
+    convertJobSheetModalHandledRef.current = false
+  }, [orderId])
+
+  useEffect(() => {
+    if (mode !== 'edit' || !orderId) return
+    if (convertJobSheetModalHandledRef.current) return
+    const st = loc.state as
+      | { openJobSheetFor?: { job_sheet_id: string; product_id: string; product_code?: string | null } }
+      | undefined
+    const req = st?.openJobSheetFor
+    if (!req?.job_sheet_id || !req.product_id) return
+    if (!items.length) return
+
+    const clearOpenFlag = () => {
+      nav({ pathname: loc.pathname, search: loc.search, hash: loc.hash }, { replace: true, state: {} })
+    }
+
+    const line = items.find((it) => String(it.job_sheet_id) === String(req.job_sheet_id))
+    convertJobSheetModalHandledRef.current = true
+
+    if (!line) {
+      clearOpenFlag()
+      return
+    }
+
+    clearOpenFlag()
+
+    if (!canEditProduct) return
+
+    const code = (req.product_code != null && String(req.product_code).trim() !== ''
+      ? String(req.product_code)
+      : line.product_code) || ''
+    openProductVersionModal({
+      product_id: String(req.product_id),
+      product_code: code || null,
+      job_sheet_id: String(req.job_sheet_id),
+    })
+  }, [mode, orderId, items, loc.state, loc.pathname, loc.search, loc.hash, canEditProduct, nav])
+
   async function loadProductsForCustomer(id: string) {
     if (!id) return
     if (loadingProducts) return
@@ -365,6 +447,27 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (!customerId) return
     void dispatch(fetchProducts({ customer_id: customerId }))
   }, [customerId, dispatch])
+
+  useEffect(() => {
+    if (!customerId || productList.lastCustomerId !== customerId) return
+    const plist = productList.items as Product[]
+    if (!plist.length) return
+    setItems((prev) => {
+      let changed = false
+      const next = prev.map((l) => {
+        if (l.finish_mode) return l
+        const p = plist.find((x) => x.id === l.product_id)
+        const fm = finishModeForProduct(p as Product)
+        if (!fm) return l
+        changed = true
+        const allowed = unitChoices(fm)
+        let qtyUnit = l.quantity_unit
+        if (!allowed.includes(qtyUnit)) qtyUnit = allowed[0]
+        return { ...l, finish_mode: fm, quantity_unit: qtyUnit }
+      })
+      return changed ? next : prev
+    })
+  }, [customerId, productList.items, productList.lastCustomerId])
 
   useEffect(() => {
     if (mode !== 'new') return
@@ -391,6 +494,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         product_code: p.code,
         product_name: p.description || null,
         due_date: defaultDueDate(),
+        finish_mode: finishModeForProduct(p),
         quantity_unit: 'kg',
         quantity_value: '1',
         rate: '',
@@ -736,9 +840,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 <TableRow>
                   <TableCell>Product</TableCell>
                   <TableCell>Due Date</TableCell>
-                  <TableCell>Qty Type</TableCell>
-                  <TableCell>Qty Total</TableCell>
-                  <TableCell>Rate ($)</TableCell>
+                  <TableCell>Qty</TableCell>
+                  <TableCell>Unit</TableCell>
+                  <TableCell>Price ($)</TableCell>
                   <TableCell>Total ($)</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
@@ -765,24 +869,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                     </TableCell>
                     <TableCell>
                       <TextField
-                        select
-                        size="small"
-                        value={it.quantity_unit}
-                        onChange={(e) => {
-                          const v = e.target.value as QuantityUnit
-                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: v } : x)))
-                        }}
-                        sx={{ minWidth: 140 }}
-                        disabled={saving || publishing || orderLocked}
-                      >
-                        <MenuItem value="kg">Total KGs</MenuItem>
-                        <MenuItem value="rolls">No. of Rolls</MenuItem>
-                        <MenuItem value="bags">No. of Bags</MenuItem>
-                        <MenuItem value="meters">Total Meters</MenuItem>
-                      </TextField>
-                    </TableCell>
-                    <TableCell>
-                      <TextField
                         size="small"
                         value={it.quantity_value}
                         onChange={(e) => {
@@ -793,6 +879,27 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         inputProps={{ inputMode: 'decimal' }}
                         disabled={saving || publishing || orderLocked}
                       />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        select
+                        size="small"
+                        value={it.quantity_unit}
+                        onChange={(e) => {
+                          const v = e.target.value as QuantityUnit
+                          const allowed = unitChoices(it.finish_mode)
+                          const next = allowed.includes(v) ? v : allowed[0]
+                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: next } : x)))
+                        }}
+                        sx={{ minWidth: 120 }}
+                        disabled={saving || publishing || orderLocked}
+                      >
+                        {unitChoices(it.finish_mode).map((u) => (
+                          <MenuItem key={u} value={u}>
+                            {u === 'kg' ? 'KG' : u === 'rolls' ? 'Roll' : 'Carton'}
+                          </MenuItem>
+                        ))}
+                      </TextField>
                     </TableCell>
                     <TableCell>
                       <TextField
