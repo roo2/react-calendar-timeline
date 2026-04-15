@@ -6,13 +6,13 @@ Includes:
 - Conversion factors: per-minute slugs → per-hour (×60) when present
 - Remove ``quote_defaults.default_margin_pct`` (+ check constraint on Postgres)
 
-Revision ID: 0004_retail_pricing_conversion_defaults
+Revision ID: 0004_retail_conv_defaults (must fit ``alembic_version.version_num`` VARCHAR(32) on Postgres).
 Revises: 0003_views_and_seeds
 
 If the DB was migrated with the older split revisions (``0004_drop_anilox_table``,
 ``0004_quote_retail_pricing``, ``0005_conversion_factors_per_min``,
 ``0007_drop_quote_defaults_default_margin``), stamp to this revision after the schema matches, e.g.
-``alembic stamp 0004_retail_pricing_conversion_defaults``.
+``alembic stamp 0004_retail_conv_defaults``.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect
 
-revision = "0004_retail_pricing_conversion_defaults"
+revision = "0004_retail_conv_defaults"
 down_revision = "0003_views_and_seeds"
 branch_labels = None
 depends_on = None
