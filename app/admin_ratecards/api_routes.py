@@ -12,7 +12,6 @@ import uuid
 from app.auth.deps import require_roles, csrf_protect
 from app.db.models.rate_cards import (
     Additive,
-    CartonOption,
     Colour,
     ConversionFactor,
     ConversionSpeed,
@@ -143,19 +142,6 @@ class ConversionFactorDTO(BaseModel):
 class ConversionFactorUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     value: float
-
-
-class CartonOptionDTO(BaseModel):
-    slug: str
-    name: str
-    cost_per_unit: float
-    is_default: bool
-
-
-class CartonOptionUpsertRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    cost_per_unit: float = Field(..., ge=0)
-    is_default: bool = False
 
 
 class InkDTO(BaseModel):
@@ -927,92 +913,6 @@ async def delete_conversion_factor(slug: str):
             db.delete(row)
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete conversion factor (in use)")
-
-
-@router.get(
-    "/carton-options",
-    response_model=List[CartonOptionDTO],
-    dependencies=[Depends(require_roles("SYS_ADMIN"))],
-)
-async def list_carton_options():
-    with SessionLocal() as db:
-        rows = db.execute(select(CartonOption).order_by(CartonOption.slug.asc())).scalars().all()
-        return [
-            CartonOptionDTO(slug=r.slug, name=r.name, cost_per_unit=float(r.cost_per_unit), is_default=bool(r.is_default))
-            for r in rows
-        ]
-
-
-@router.put(
-    "/carton-options/{slug}",
-    response_model=CartonOptionDTO,
-    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
-)
-async def upsert_carton_option(slug: str, payload: CartonOptionUpsertRequest):
-    s = (slug or "").strip()
-    if not s:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="slug is required")
-
-    with SessionLocal.begin() as db:
-        row = db.get(CartonOption, s)
-        if not row:
-            row = CartonOption(slug=s, name=payload.name, cost_per_unit=payload.cost_per_unit, is_default=payload.is_default)
-            db.add(row)
-        else:
-            row.name = payload.name
-            row.cost_per_unit = payload.cost_per_unit
-            row.is_default = payload.is_default
-        if payload.is_default:
-            db.execute(update(CartonOption).where(CartonOption.slug != s).values(is_default=False))
-
-    with SessionLocal() as db:
-        r2 = db.get(CartonOption, s)
-        assert r2 is not None
-        return CartonOptionDTO(
-            slug=r2.slug, name=r2.name, cost_per_unit=float(r2.cost_per_unit), is_default=bool(r2.is_default)
-        )
-
-
-@router.post(
-    "/carton-options/{slug}/set-default",
-    response_model=CartonOptionDTO,
-    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
-)
-async def set_default_carton_option(slug: str):
-    s = (slug or "").strip()
-    if not s:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="slug is required")
-    with SessionLocal.begin() as db:
-        row = db.get(CartonOption, s)
-        if not row:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="carton option not found")
-        db.execute(update(CartonOption).values(is_default=False))
-        db.execute(update(CartonOption).where(CartonOption.slug == s).values(is_default=True))
-    with SessionLocal() as db:
-        r2 = db.get(CartonOption, s)
-        assert r2 is not None
-        return CartonOptionDTO(
-            slug=r2.slug, name=r2.name, cost_per_unit=float(r2.cost_per_unit), is_default=bool(r2.is_default)
-        )
-
-
-@router.delete(
-    "/carton-options/{slug}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
-)
-async def delete_carton_option(slug: str):
-    s = (slug or "").strip()
-    if not s:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="slug is required")
-    try:
-        with SessionLocal.begin() as db:
-            row = db.get(CartonOption, s)
-            if not row:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="carton option not found")
-            db.delete(row)
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete carton option (in use)")
 
 
 @router.get(

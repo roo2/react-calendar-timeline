@@ -47,6 +47,20 @@ function parseArgs(argv: string[]): { ratebook: string; input: string; output: s
   return { ratebook: ratebook as string, input: input as string, output }
 }
 
+function pickDefaultExtruder(rb: QuoteRatebook): string | null {
+  const rows = Array.isArray(rb.extruders) ? rb.extruders : []
+  const code = rows[0]?.extruder_code
+  return code != null && String(code).trim() ? String(code).trim() : null
+}
+
+/** Use CSV extruder only if it exists on the ratebook; otherwise first extruder; otherwise null (throughput fallback in calculator). */
+function resolveExtruderCode(rb: QuoteRatebook, rowCell: string | undefined): string | null {
+  const list = Array.isArray(rb.extruders) ? rb.extruders : []
+  const want = String(rowCell ?? '').trim()
+  if (want && list.some((e) => String(e?.extruder_code || '') === want)) return want
+  return pickDefaultExtruder(rb)
+}
+
 function parseMoney(s: string | undefined): number | null {
   if (s == null) return null
   const t = String(s).replace(/[$,\s]/g, '').trim()
@@ -55,15 +69,42 @@ function parseMoney(s: string | undefined): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-function pickDefaultExtruder(rb: QuoteRatebook): string | null {
-  const rows = Array.isArray(rb.extruders) ? rb.extruders : []
-  const code = rows[0]?.extruder_code
-  return code != null && String(code).trim() ? String(code).trim() : null
+function customerFromRow(row: Record<string, string>): string {
+  return String(row.customer ?? '').trim()
+}
+
+function quoterFromRow(row: Record<string, string>): string {
+  return String(row.quoter ?? '').trim()
+}
+
+/** `existing_quote_price` or legacy `existing_price`. */
+function existingQuotePriceFromRow(row: Record<string, string>): string | undefined {
+  const a = row.existing_quote_price
+  if (a != null && String(a).trim() !== '') return String(a)
+  const b = row.existing_price
+  if (b != null && String(b).trim() !== '') return String(b)
+  return undefined
 }
 
 function csvEscape(s: string): string {
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
+}
+
+/** Two-decimal string for CSV / terminal summary (empty only when non-finite). */
+function fmtMoney2(n: unknown): string {
+  const x = typeof n === 'number' ? n : Number(n)
+  if (!Number.isFinite(x)) return ''
+  return (Math.round((x + Number.EPSILON) * 100) / 100).toFixed(2)
+}
+
+/** % change vs existing: `(final − existing) / existing × 100`. Empty if existing is missing or zero. */
+function fmtDeltaPct(finalNum: number, existingNum: number | null): string {
+  if (existingNum == null || !Number.isFinite(existingNum) || existingNum === 0) return ''
+  if (!Number.isFinite(finalNum)) return ''
+  const pct = ((finalNum - existingNum) / existingNum) * 100
+  if (!Number.isFinite(pct)) return ''
+  return (Math.round((pct + Number.EPSILON) * 100) / 100).toFixed(2)
 }
 
 function main() {
@@ -75,10 +116,10 @@ function main() {
 
   const csvRaw = readFileSync(resolve(cwd, inputPath), 'utf8')
   const { rows } = parseCsv(csvRaw)
-  const defaultEx = pickDefaultExtruder(ratebook)
 
   const outCols = [
-    'row_id',
+    'customer',
+    'quoter',
     'label',
     'final_price',
     'price_per_kg',
@@ -86,48 +127,76 @@ function main() {
     'totals_units',
     'rolls',
     'printing_unavailable_reason',
-    'ref_production',
-    'ref_existing',
-    'delta_vs_ref_production',
-    'delta_vs_ref_existing',
+    'existing_quote_price',
+    'price_delta',
+    'price_delta_pct',
   ]
 
   const lines: string[] = []
   lines.push(outCols.join(','))
+  const summaryRows: string[] = []
 
-  for (const row of rows) {
-    const rowId = String(row.row_id ?? '').trim() || '?'
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const lineNo = i + 1
     try {
       const { spec, quantity } = buildSpecAndQuantityFromRow(row)
-      const ex = String(row.extruder_code || '').trim() || defaultEx || ''
-      const inputs = buildQuickQuoteInputsFromSpec(spec, quantity, { extruderCode: ex || null })
+      const extruderCode = resolveExtruderCode(ratebook, row.extruder_code)
+      const inputs = buildQuickQuoteInputsFromSpec(spec, quantity, { extruderCode: extruderCode, ratebook })
       const preview = computeQuickQuotePreview(inputs, ratebook)
 
-      const refP = parseMoney(row.ref_production)
-      const refE = parseMoney(row.ref_existing)
-      const finalP = Number(preview.final_price)
-      const dProd = refP != null && Number.isFinite(finalP) ? round2(finalP - refP) : ''
-      const dExist = refE != null && Number.isFinite(finalP) ? round2(finalP - refE) : ''
+      const priceStr = fmtMoney2(preview.final_price)
+      const finalNum = Number(preview.final_price)
+      const existingRaw = existingQuotePriceFromRow(row)
+      const existingNum = parseMoney(existingRaw)
+      const deltaStr =
+        existingNum != null && Number.isFinite(finalNum)
+          ? fmtMoney2(finalNum - existingNum)
+          : ''
+      const deltaPctStr =
+        existingNum != null && Number.isFinite(finalNum) ? fmtDeltaPct(finalNum, existingNum) : ''
+      const existingEcho = existingRaw != null ? String(existingRaw).trim() : ''
+      const customer = customerFromRow(row)
+      const quoter = quoterFromRow(row)
 
       const cells = [
-        rowId,
+        customer,
+        quoter,
         String(row.label ?? ''),
-        round2(preview.final_price),
-        preview.price_per_kg != null ? String(preview.price_per_kg) : '',
+        priceStr,
+        preview.price_per_kg != null ? fmtMoney2(preview.price_per_kg) : '',
         preview.totals_kg != null ? String(preview.totals_kg) : '',
         preview.totals_units != null ? String(preview.totals_units) : '',
         preview.rolls != null ? String(preview.rolls) : '',
         String(preview.printing_unavailable_reason ?? ''),
-        row.ref_production != null ? String(row.ref_production) : '',
-        row.ref_existing != null ? String(row.ref_existing) : '',
-        dProd === '' ? '' : String(dProd),
-        dExist === '' ? '' : String(dExist),
+        existingEcho,
+        deltaStr,
+        deltaPctStr !== '' ? `${deltaPctStr}%` : '',
       ].map((c) => csvEscape(c))
       lines.push(cells.join(','))
+
+      const labelShort = String(row.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 64)
+      const custQuot =
+        customer || quoter
+          ? `[${[customer, quoter].filter(Boolean).join(' · ')}] `.slice(0, 48)
+          : ''
+      const dollars = priceStr ? `$${priceStr}` : '—'
+      const pctFmt =
+        deltaPctStr !== '' ? ` (${Number(deltaPctStr) >= 0 ? '+' : ''}${deltaPctStr}%)` : ''
+      const deltaFmt =
+        deltaStr !== ''
+          ? ` Δ ${Number(deltaStr) >= 0 ? '+' : ''}$${deltaStr}${pctFmt}`
+          : existingEcho
+            ? ' Δ —'
+            : ''
+      summaryRows.push(`  #${String(lineNo).padEnd(4)} ${custQuot}${dollars.padStart(14)}${deltaFmt} ${labelShort}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      const existingRaw = existingQuotePriceFromRow(row)
+      const existingEcho = existingRaw != null ? String(existingRaw).trim() : ''
       const cells = [
-        rowId,
+        customerFromRow(row),
+        quoterFromRow(row),
         String(row.label ?? ''),
         '',
         '',
@@ -135,12 +204,12 @@ function main() {
         '',
         '',
         `ERROR: ${msg}`,
-        row.ref_production != null ? String(row.ref_production) : '',
-        row.ref_existing != null ? String(row.ref_existing) : '',
+        existingEcho,
         '',
         '',
       ].map((c) => csvEscape(c))
       lines.push(cells.join(','))
+      summaryRows.push(`  #${lineNo} ${'—'.padStart(14)}  ERROR: ${msg.replace(/\s+/g, ' ').slice(0, 100)}`)
     }
   }
 
@@ -151,11 +220,16 @@ function main() {
   } else {
     process.stdout.write(text)
   }
-}
 
-function round2(n: number): string {
-  if (!Number.isFinite(n)) return ''
-  return String(Math.round((n + Number.EPSILON) * 100) / 100)
+  if (summaryRows.length > 0) {
+    console.error('')
+    console.error(
+      'Final price (per CSV row):  Δ = estimate − existing_quote_price; % = (estimate − existing) / existing × 100 when existing is set and non-zero',
+    )
+    console.error('  #    final_price    (delta vs existing)  label')
+    for (const s of summaryRows) console.error(s)
+    console.error('')
+  }
 }
 
 main()

@@ -5,6 +5,7 @@
 
 import type { SpecQuantitySlice } from '../../../frontend/src/utils/specToQuoteInputs'
 import type { QtyType } from '../../../frontend/src/utils/quantityRollFields'
+import { productTypeCanHaveGusset } from '../../../frontend/src/utils/specCompat'
 
 export type CsvRow = Record<string, string>
 
@@ -39,31 +40,35 @@ function mapPrintMethod(s: string | undefined): string {
   return 'None'
 }
 
-/** Parse optional colour column: "GREEN" or "GREEN:3" (strength %). */
+/** Default masterbatch / tint loading when CSV omits strength (matches typical LDPE tint, not full compound). */
+const DEFAULT_COLOUR_STRENGTH_PCT = 2
+
+/**
+ * Parse optional colour column: `GREEN` (defaults to {@link DEFAULT_COLOUR_STRENGTH_PCT}%),
+ * or `GREEN:3` for an explicit strength % in the compound.
+ */
 function colourComponentsFromCell(v: string | undefined): Array<{ colour_code: string; strength_pct: number }> {
   const raw = strCell(v)
   if (!raw) return []
   const parts = raw.split(':')
   const code = parts[0]?.trim()
   if (!code) return []
-  const strength = parts.length > 1 ? numCell(parts[1], 100) : 100
+  const strength =
+    parts.length > 1 ? numCell(parts[1], DEFAULT_COLOUR_STRENGTH_PCT) : DEFAULT_COLOUR_STRENGTH_PCT
   return [{ colour_code: code.toUpperCase(), strength_pct: strength }]
 }
 
 export function buildSpecAndQuantityFromRow(row: CsvRow): { spec: any; quantity: SpecQuantitySlice } {
   const productType = strCell(row.product_type) || 'Bag'
-  const geometry = strCell(row.geometry) === 'Gusset' ? 'Gusset' : 'Flat'
   const finishMode = strCell(row.finish_mode) === 'Cartons' ? 'Cartons' : 'Rolls'
-  const lengthUnitsRaw = strCell(row.length_units) || 'mm'
-  const lengthUnits =
-    lengthUnitsRaw.toLowerCase() === 'continuous' || lengthUnitsRaw === 'Continuous'
-      ? 'Continuous'
-      : lengthUnitsRaw === 'M' || lengthUnitsRaw === 'm'
-        ? 'M'
-        : 'mm'
+  /** CSV length is always interpreted as mm; spec stores `mm` (Tube still uses continuous length in the calculator). */
+  const lengthUnits = 'mm'
 
   const baseWidth = Math.round(numCell(row.base_width_mm, 0))
-  const gussetMm = geometry === 'Gusset' ? Math.round(numCell(row.gusset_mm, 0)) : null
+  const gussetMmRaw = Math.round(numCell(row.gusset_mm, 0))
+  const canGusset = productTypeCanHaveGusset(productType)
+  const geometry = canGusset && gussetMmRaw > 0 ? 'Gusset' : 'Flat'
+  const gussetMm = geometry === 'Gusset' ? gussetMmRaw : null
   const baseLengthMm = Math.round(numCell(row.base_length_mm, 0))
   const thicknessUm = Math.round(numCell(row.thickness_um, 0))
 
@@ -110,7 +115,6 @@ export function buildSpecAndQuantityFromRow(row: CsvRow): { spec: any; quantity:
       core_type: strCell(row.core_type) || '7mm',
       core_policy: 'Include',
       bags_per_carton: finishMode === 'Cartons' ? Math.round(numCell(row.bags_per_carton, 0)) || null : null,
-      carton_option_slug: strCell(row.carton_option_slug) || null,
       pallet_type: 'Std',
       notes: null,
     },

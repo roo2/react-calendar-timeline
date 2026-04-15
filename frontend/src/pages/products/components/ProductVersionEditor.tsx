@@ -291,7 +291,7 @@ export function ProductVersionEditor(props: {
           weightPerRoll: weightPerRollNum,
           unitsPerRoll: unitsPerRollNum,
         },
-        {},
+        { ratebook },
       )
       return computeDerivedGeometryAndTotals(inputs, ratebook)
     } catch {

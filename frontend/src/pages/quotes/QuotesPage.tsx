@@ -220,7 +220,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [coreType, setCoreType] = useState('7mm')
   const [rollWeightBilling, setRollWeightBilling] = useState<'core_included' | 'core_off' | 'core_half_off'>('core_off')
   const [bagsPerCarton, setBagsPerCarton] = useState('')
-  const [cartonOptionSlug, setCartonOptionSlug] = useState<string | null>(null)
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
   const [quoteNotes, setQuoteNotes] = useState('')
   /** Persisted in quote payload after a successful convert-to-order. */
@@ -301,7 +300,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.num_colours != null) setDesiredNumColours(p.num_colours === 0 ? '' : String(p.num_colours))
     if (p.finish_mode === 'Cartons') {
       if (p.bags_per_carton != null) setBagsPerCarton(String(p.bags_per_carton))
-      if (p.carton_option_slug != null) setCartonOptionSlug(p.carton_option_slug)
     }
     if (p.core_type != null) setCoreType(p.core_type)
     if (p.roll_weight_billing != null) setRollWeightBilling(p.roll_weight_billing)
@@ -367,13 +365,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   useEffect(() => {
     void dispatch(fetchQuoteResinBlends())
   }, [dispatch])
-
-  useEffect(() => {
-    const opts = ratebook?.carton_options
-    if (!Array.isArray(opts) || opts.length === 0) return
-    const defaultOpt = opts.find((o) => o?.is_default)
-    if (defaultOpt && cartonOptionSlug === null) setCartonOptionSlug(defaultOpt.slug)
-  }, [ratebook?.carton_options, cartonOptionSlug])
 
   useEffect(() => {
     if (!Array.isArray(resinBlends) || resinBlends.length === 0) return
@@ -615,7 +606,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       core_type: coreType,
       roll_weight_billing: finishMode === 'Rolls' ? rollWeightBilling : null,
       bags_per_carton: finishMode === 'Cartons' ? (bagsPerCarton ? Number(bagsPerCarton) : null) : null,
-      carton_option_slug: finishMode === 'Cartons' ? (cartonOptionSlug || null) : null,
       pallet_type: palletType,
 
       quantity: qty,
@@ -628,7 +618,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     baseLengthMm,
     bagsPerCarton,
     canHaveGusset,
-    cartonOptionSlug,
     colourRows,
     coreType,
     defaultResinCode,
@@ -887,7 +876,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       num_colours: Number(calcPayload.num_colours || 0),
       finish_mode: calcPayload.finish_mode,
       bags_per_carton: calcPayload.bags_per_carton != null ? Number(calcPayload.bags_per_carton) : null,
-      carton_option_slug: calcPayload.carton_option_slug ?? null,
       core_type: calcPayload.core_type,
       roll_weight_billing: calcPayload.roll_weight_billing != null ? calcPayload.roll_weight_billing : null,
       extruder_code: selectedExtruder.extruder?.extruder_code || null,
@@ -920,7 +908,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       coreType,
       rollWeightBilling,
       bagsPerCarton,
-      cartonOptionSlug,
       palletType,
       flagPerforated,
       flagSealed,
@@ -956,7 +943,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       coreType,
       rollWeightBilling,
       bagsPerCarton,
-      cartonOptionSlug,
       palletType,
       flagPerforated,
       flagSealed,
@@ -987,7 +973,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   payloadForEditDetectionRef.current = payloadForEditDetection
 
   // Edit mode: capture payload snapshot for edit-detection only after pricing inputs are available and defaults
-  // (resin blend list, carton slug, etc.) have settled. Otherwise a full tab refresh can normalize the form after the
+  // (resin blend list, etc.) have settled. Otherwise a full tab refresh can normalize the form after the
   // first snapshot and falsely clear `preserveLoadedPricePerKgRef`, losing the saved price/kg adjustment.
   useEffect(() => {
     if (!isEditMode || !hydratedFromQuote) return
@@ -1008,7 +994,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     quoteRatebookState.status,
     quoteResinBlendsState.status,
     resinBlendCode,
-    cartonOptionSlug,
   ])
 
   // Edit mode: when user edits the form spec, clear the "preserve loaded price/kg" guard so recalculated retail can update the override field.
@@ -2062,22 +2047,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                 Packaging
               </Typography>
               <Stack spacing={2}>
-                {finishMode === 'Cartons' && ratebook?.carton_options && ratebook.carton_options.length > 0 ? (
-                  <DefaultSelectField
-                    label="Carton option"
-                    defaultValue={ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? ''}
-                    value={cartonOptionSlug ?? (ratebook.carton_options.find((o) => o.is_default)?.slug ?? ratebook.carton_options[0]?.slug ?? '')}
-                    onChange={(e) => setCartonOptionSlug(e.target.value || null)}
-                  >
-                    <MenuItem value="">—</MenuItem>
-                    {ratebook.carton_options.map((opt) => (
-                      <MenuItem key={opt.slug} value={opt.slug}>
-                        {opt.name} (${Number(opt.cost_per_unit).toFixed(2)})
-                      </MenuItem>
-                    ))}
-                  </DefaultSelectField>
-                ) : null}
-
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
                   <DefaultSelectField defaultValue="Chep" label="Pallet Type" value={palletType} onChange={(e) => setPalletType(e.target.value as any)}>
                     {(['Chep', 'Plain', 'Resin', 'None'] as const).map((v) => (

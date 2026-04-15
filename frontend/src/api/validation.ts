@@ -54,9 +54,6 @@ export function parseFastApiValidationDetail(detail: unknown): {
         if (lower.includes('bags_per_carton') || lower.includes('bags per carton')) {
           if (!fieldErrors['spec.packaging.bags_per_carton']) fieldErrors['spec.packaging.bags_per_carton'] = msg
         }
-        if (lower.includes('carton_option')) {
-          if (!fieldErrors['spec.packaging.carton_option_slug']) fieldErrors['spec.packaging.carton_option_slug'] = msg
-        }
       }
     }
   }

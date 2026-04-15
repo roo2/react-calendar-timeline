@@ -366,7 +366,6 @@ export function ProductVersionSummary(props: { spec: any }) {
       <SectionCard title="7. Packaging & Logistics">
         <KVTable
           rows={[
-            { k: 'Carton option', v: spec?.packaging?.carton_option_slug || '-' },
             { k: 'Pallet type', v: spec?.packaging?.pallet_type || '-' },
             { k: 'Packing notes', v: spec?.packaging?.notes || '-' },
           ]}

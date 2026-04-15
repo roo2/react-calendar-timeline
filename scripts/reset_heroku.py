@@ -18,7 +18,6 @@ SEED_EXTRUDERS_SCRIPT = Path("scripts") / "seed_extruders_from_tsv.py"
 SEED_WASTE_FACTORS_SCRIPT = Path("scripts") / "seed_waste_factors_from_tsv.py"
 SEED_PRINTING_PRICING_SCRIPT = Path("scripts") / "seed_printing_pricing_from_tsv.py"
 SEED_CONVERSION_SCRIPT = Path("scripts") / "seed_conversion_from_tsv.py"
-SEED_CARTON_OPTIONS_SCRIPT = Path("scripts") / "seed_carton_options_from_tsv.py"
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -127,7 +126,7 @@ def main(argv: list[str]) -> int:
             "Steps:\n"
             "1. heroku pg:reset DATABASE (unless --skip-reset)\n"
             "2. alembic upgrade head\n"
-            "3. Seed from TSVs: extruders, waste factors, printing pricing, conversion, carton options (unless --skip-tsv-seeds)\n"
+            "3. Seed from TSVs: extruders, waste factors, printing pricing, conversion (unless --skip-tsv-seeds)\n"
             "4. create_admin.py (admin user with SYS_ADMIN)\n"
             "5. API import: plate customers + print plates from plate-db.tsv (unless --skip-plate-import)\n\n"
             "Use --skip-reset to re-run migrations/seeds without wiping the database."
@@ -211,7 +210,6 @@ def main(argv: list[str]) -> int:
         _run(["heroku", "run", "-a", app_name, "--", "python", SEED_WASTE_FACTORS_SCRIPT.as_posix()])
         _run(["heroku", "run", "-a", app_name, "--", "python", SEED_PRINTING_PRICING_SCRIPT.as_posix()])
         _run(["heroku", "run", "-a", app_name, "--", "python", SEED_CONVERSION_SCRIPT.as_posix()])
-        _run(["heroku", "run", "-a", app_name, "--", "python", SEED_CARTON_OPTIONS_SCRIPT.as_posix()])
     else:
         print("Skipping TSV seeds (--skip-tsv-seeds).", flush=True)
 

@@ -149,13 +149,17 @@ export function JobSheetShowPage() {
       }
       const productType = String(spec.identity?.product_type || 'Bag')
       const d = computeDerivedGeometryAndTotals(
-        buildQuickQuoteInputsFromSpec(spec, {
-          qtyType: effectiveQtyType,
-          totalKg: totalKgForCalc,
-          numUnits: numUnitsNum,
-          numRolls: numRollsNum,
-          weightPerRoll: weightPerRollNum,
-        }),
+        buildQuickQuoteInputsFromSpec(
+          spec,
+          {
+            qtyType: effectiveQtyType,
+            totalKg: totalKgForCalc,
+            numUnits: numUnitsNum,
+            numRolls: numRollsNum,
+            weightPerRoll: weightPerRollNum,
+          },
+          { ratebook },
+        ),
         ratebook,
       )
       const billedKg = Number(d?.billedTotalsKg ?? 0)

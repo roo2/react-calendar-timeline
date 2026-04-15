@@ -28,7 +28,6 @@ export type QuotePayload = {
   core_type?: string | null
   roll_weight_billing?: string | null
   bags_per_carton?: number | null
-  carton_option_slug?: string | null
   pallet_type?: string
   inline_perforation?: boolean
   inline_seal?: boolean
@@ -219,7 +218,6 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       core_type: coreType,
       core_policy: corePolicy,
       bags_per_carton: bagsPerCarton ?? null,
-      carton_option_slug: p.carton_option_slug ?? null,
       pallet_type: palletType,
       notes: null,
     },

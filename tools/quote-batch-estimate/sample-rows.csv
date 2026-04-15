@@ -1,11 +1,13 @@
-row_id,label,product_type,geometry,base_width_mm,gusset_mm,base_length_mm,length_units,thickness_um,finish_mode,print_method,num_colours,colour,resin_blend,run_up,qty_type,num_units,num_rolls,units_per_roll,total_kg,weight_per_roll_kg,extruder_code,ref_production,ref_existing
-1,"TUBE LDPE LF W450mm L78550mm 150um 30KG",Tube,Flat,450,,78550,mm,150,Rolls,None,0,,LD,,kg,0,0,0,30,0,EX1,184.09,177.00
-2,"BAG LDPE G W550+320 L1780 35um GREEN 9875 bags",Bag,Gusset,550,320,1780,mm,35,Rolls,None,0,GREEN,LD,,units,9875,0,0,0,0,EX1,5360.31,5451.49
-3,"BAG LDPE LF W420 L700 100um WHITE PRINTED 5 COL",Bag,Flat,420,,700,mm,100,Rolls,Inline,5,WHITE,LD,,units,5000,0,0,0,0,EX1,2752.95,3375.00
-4,"BAG LDPE G W390+300 L460 35um 75 rolls x 500 bags",Bag,Gusset,390,300,460,mm,35,Rolls,None,0,,LD,,rolls_units,0,75,500,0,0,EX1,3623.54,4245.00
-5,"CENTERFOLD LDPE W720 L500 35um 10 rolls x 1000",Centerfold,Flat,720,,500,mm,35,Rolls,None,0,,LD,2up,rolls_units,0,10,1000,0,0,EX1,740.55,850.00
-6,"BAG LDPE LF W460 L960 75um RED 56 rolls x 250",Bag,Flat,460,,960,mm,75,Rolls,None,0,RED,LD,,rolls_units,0,56,250,0,0,EX1,5842.19,5541.20
-7,"SLEEVE LDPE W635 L6100 190um PRINT 1 COL 11 rolls x 17",Sleeve,Flat,635,,6100,mm,190,Rolls,Inline,1,,LD,,rolls_units,0,11,17,0,0,EX1,1964.80,2035.00
-8,"TUBE LDPE LF W360 150um WHITE 250KG",Tube,Flat,360,,0,mm,150,Rolls,None,0,WHITE,LD,,kg,0,0,0,250,0,EX1,1476.39,1075.00
-9,"TUBE LDPE LF W175 150um PRINT 1 COL 300KG",Tube,Flat,175,,0,mm,150,Rolls,Inline,1,,LD,,kg,0,0,0,300,0,EX1,2492.00,1590.00
-10,"TUBE LDPE LF W225 150um SILVER PRINT 4 COL 400KG",Tube,Flat,225,,0,mm,150,Rolls,Inline,4,SILVER,LD,,kg,0,0,0,400,0,EX1,3572.26,3240.00
+customer,quoter,label,product_type,base_width_mm,gusset_mm,base_length_mm,thickness_um,finish_mode,print_method,num_colours,colour,resin_blend,run_up,qty_type,num_units,num_rolls,units_per_roll,total_kg,weight_per_roll_kg,existing_quote_price
+,,TUBE LDPE LF W450mm L78550mm 150um 30KG,Tube,450,,78550,150,Rolls,None,0,,LD,,kg,0,0,0,30,0,
+,,BAG LDPE G W550+320 L1780 35um GREEN 9875 bags,Bag,550,320,1780,35,Rolls,None,0,GREEN,LD,,units,9875,0,0,0,0,
+,,BAG LDPE LF W420 L700 100um WHITE PRINTED 5 COL,Bag,420,,700,100,Rolls,Inline,5,WHITE,LD,,units,5000,0,0,0,0,
+,,BAG LDPE G W390+300 L460 35um 75 rolls x 500 bags,Bag,390,300,460,35,Rolls,None,0,,LD,,rolls_units,0,75,500,0,0,
+,,CENTERFOLD LDPE W720 L500 35um 10 rolls x 1000,Centerfold,720,,500,35,Rolls,None,0,,LD,2up,rolls_units,0,10,1000,0,0,
+,,BAG LDPE LF W460 L960 75um RED 56 rolls x 250,Bag,460,,960,75,Rolls,None,0,RED,LD,,rolls_units,0,56,250,0,0,
+,,SLEEVE LDPE W635 L6100 190um PRINT 1 COL 11 rolls x 17,Sleeve,635,,6100,190,Rolls,Inline,1,,LD,,rolls_units,0,11,17,0,0,
+,,TUBE LDPE LF W360 150um WHITE 250KG,Tube,360,,0,150,Rolls,None,0,WHITE,LD,,kg,0,0,0,250,0,
+,,TUBE LDPE LF W175 150um PRINT 1 COL 300KG,Tube,175,,0,150,Rolls,Inline,1,,LD,,kg,0,0,0,300,0,
+,,TUBE LDPE LF W225 150um SILVER PRINT 4 COL 400KG,Tube,225,,0,150,Rolls,Inline,4,SILVER,LD,,kg,0,0,0,400,0,
+,,Blue TINT LDPE bags on roll 510mm x 770mm x 30um 500/roll,Bag,510,,770,30,Rolls,None,0,RED,LD,,rolls_units,0,20,500,0,0,
+Example Co,ross,PBR 1000x1675x100 50/roll,Bag,1000,,1675,100,Rolls,None,0,RED,LD,,rolls_units,0,470,50,0,0,"30,163.56"

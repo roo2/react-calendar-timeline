@@ -40,13 +40,6 @@ export type ConversionFactor = {
   value: number
 }
 
-export type CartonOption = {
-  slug: string
-  name: string
-  cost_per_unit: number
-  is_default: boolean
-}
-
 type Status = 'idle' | 'loading' | 'succeeded' | 'failed'
 
 function listInit<T>(): { status: Status; error: string | null; items: T[] } {
@@ -66,7 +59,6 @@ type AdminRateCardsState = {
   printingPricingTiers: ReturnType<typeof listInit<PrintingPricingTier>>
   conversionSpeeds: ReturnType<typeof listInit<ConversionSpeed>>
   conversionFactors: ReturnType<typeof listInit<ConversionFactor>>
-  cartonOptions: ReturnType<typeof listInit<CartonOption>>
   packaging: {
     status: Status
     error: string | null
@@ -104,7 +96,6 @@ const initialState: AdminRateCardsState = {
   printingPricingTiers: listInit(),
   conversionSpeeds: listInit(),
   conversionFactors: listInit(),
-  cartonOptions: listInit(),
   packaging: { status: 'idle', error: null, data: null },
   quoteDefaults: { status: 'idle', error: null, data: null },
   hub: { status: 'idle', error: null },
@@ -173,15 +164,13 @@ export const fetchAdminExtrusionTab = createAsyncThunk('adminRateCards/extrusion
 })
 
 export const fetchAdminConversionTab = createAsyncThunk('adminRateCards/conversionTab', async () => {
-  const [speeds, factors, cartons] = await Promise.all([
+  const [speeds, factors] = await Promise.all([
     apiFetch<ConversionSpeed[]>('/api/admin/rate-cards/conversion-speeds'),
     apiFetch<ConversionFactor[]>('/api/admin/rate-cards/conversion-factors'),
-    apiFetch<CartonOption[]>('/api/admin/rate-cards/carton-options'),
   ])
   return {
     speeds: Array.isArray(speeds) ? speeds : [],
     factors: Array.isArray(factors) ? factors : [],
-    cartons: Array.isArray(cartons) ? cartons : [],
   }
 })
 
@@ -446,24 +435,6 @@ export const adminSaveConversionSpeed = createAsyncThunk(
   },
 )
 
-export const adminSaveCartonOption = createAsyncThunk(
-  'adminRateCards/carton/save',
-  async (payload: { slug: string; name: string; cost_per_unit: number; is_default: boolean }) => {
-    return await apiFetch<CartonOption>(`/api/admin/rate-cards/carton-options/${encodeURIComponent(payload.slug)}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        name: payload.name,
-        cost_per_unit: payload.cost_per_unit,
-        is_default: payload.is_default,
-      }),
-    })
-  },
-)
-
-export const adminSetDefaultCartonOption = createAsyncThunk('adminRateCards/carton/default', async (slug: string) => {
-  return await apiFetch<CartonOption>(`/api/admin/rate-cards/carton-options/${encodeURIComponent(slug)}/set-default`, { method: 'POST' })
-})
-
 export const adminSaveConversionFactor = createAsyncThunk(
   'adminRateCards/conversionFactor/save',
   async (payload: { slug: string; patch: Pick<ConversionFactor, 'name' | 'value'> }) => {
@@ -616,8 +587,6 @@ const slice = createSlice({
       s.conversionSpeeds.status = 'succeeded'
       s.conversionFactors.items = a.payload.factors
       s.conversionFactors.status = 'succeeded'
-      s.cartonOptions.items = a.payload.cartons
-      s.cartonOptions.status = 'succeeded'
     })
     b.addCase(fetchAdminConversionTab.rejected, (s, a) => {
       s.conversionTab.status = 'failed'
@@ -798,15 +767,6 @@ const slice = createSlice({
       const sk = (x: ConversionSpeed) =>
         `${x.min_gauge_um}-${x.max_gauge_um}:${x.min_length_mm}-${x.max_length_mm}`
       s.conversionSpeeds.items = mergeBy(s.conversionSpeeds.items, saved, (x, y) => sk(x) === sk(y))
-    })
-
-    b.addCase(adminSaveCartonOption.fulfilled, (s, a) => {
-      const saved = a.payload
-      s.cartonOptions.items = s.cartonOptions.items.map((c) => (c.slug === saved.slug ? saved : c))
-    })
-    b.addCase(adminSetDefaultCartonOption.fulfilled, (s, a) => {
-      const saved = a.payload
-      s.cartonOptions.items = s.cartonOptions.items.map((c) => (c.slug === saved.slug ? saved : { ...c, is_default: false }))
     })
 
     b.addCase(adminSaveConversionFactor.fulfilled, (s, a) => {

@@ -156,11 +156,6 @@ function App() {
                     'Anonymous'
                   )}
                 </Typography>
-                {roles.length > 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    [{roles.join(', ')}]
-                  </Typography>
-                )}
               </Stack>
 
               {auth.identity?.user ? (

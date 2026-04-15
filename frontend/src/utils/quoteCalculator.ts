@@ -36,7 +36,6 @@ export type QuoteRatebook = {
     bags_per_minute: number
   }>
   conversion_factors?: Record<string, number>
-  carton_options?: Array<{ slug: string; name: string; cost_per_unit: number; is_default: boolean }>
   waste_adders: Array<{ condition: string; waste_minutes: number }>
   extrusion_waste_factors?: Array<{ slug: string; minutes: number }>
   extrusion_throughput_kg_per_hr: number
@@ -68,7 +67,6 @@ export type QuickQuoteInputs = {
   num_colours: number
   finish_mode: 'Rolls' | 'Cartons'
   bags_per_carton?: number | null
-  carton_option_slug?: string | null
   core_type: string | null
   roll_weight_billing?: 'core_included' | 'core_off' | 'core_half_off' | null
   extruder_code?: string | null
@@ -379,6 +377,20 @@ function convFactor(ratebook: QuoteRatebook, slug: string, fallback = 0): number
 export function getRollWeightAvgKg(ratebook: QuoteRatebook | null | undefined): number {
   if (!ratebook) return 0
   return convFactor(ratebook, 'roll_weight_avg', 0)
+}
+
+/**
+ * When a spec has no `formulation.blend`, quotes use a single resin code for density + $/kg.
+ * Prefer `LDPE` if present on the ratebook; otherwise the first listed resin (matches Quotes bootstrap fallback).
+ * Avoids hard-coding `LDPE` when it is missing — that previously forced default density (~920 kg/m³) and $0 price.
+ */
+export function getDefaultResinCodeFromRatebook(ratebook: QuoteRatebook | null | undefined): string {
+  const map = ratebook?.resins
+  if (!map || typeof map !== 'object') return 'LDPE'
+  const keys = Object.keys(map)
+  if (keys.length === 0) return 'LDPE'
+  const hit = keys.find((k) => String(k).toUpperCase() === 'LDPE')
+  return hit || keys[0] || 'LDPE'
 }
 
 /** Returns blend density in kg/m³ for pallet volume calculation (volume_m3 = totals_kg / density). */
@@ -790,12 +802,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     const bagsPerCarton = inputs.bags_per_carton != null ? Math.round(Number(inputs.bags_per_carton || 0)) : 0
     cartons = bagsPerCarton > 0 ? Math.ceil(units / bagsPerCarton) : null
     kgPerCarton = bagsPerCarton > 0 && kgPerUnit > 0 ? kgPerUnit * bagsPerCarton : null
-    let cartonCost = convFactor(ratebook, 'carton_cost', 0)
-    const slug = inputs.carton_option_slug?.trim()
-    if (slug && Array.isArray(ratebook.carton_options)) {
-      const opt = ratebook.carton_options.find((o) => String(o?.slug) === slug)
-      if (opt != null && Number.isFinite(opt.cost_per_unit)) cartonCost = opt.cost_per_unit
-    }
+    const cartonCost = convFactor(ratebook, 'carton_cost', 0)
     cartonCostTotal = cartons != null && cartons > 0 && cartonCost >= 0 ? cartons * cartonCost : 0
 
     conversionCost = runningCost + (cartonCostTotal || 0)

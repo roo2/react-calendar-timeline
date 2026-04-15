@@ -3,7 +3,7 @@
  */
 
 import type { SpecPayload } from '../components/SpecPayloadForm'
-import type { QuickQuoteInputs } from './quoteCalculator'
+import { getDefaultResinCodeFromRatebook, type QuickQuoteInputs, type QuoteRatebook } from './quoteCalculator'
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
 import { productTypeCanHaveGusset } from './specCompat'
 
@@ -153,14 +153,13 @@ export function buildQuickQuoteInputsFromSpec(
     num_colours: numColours,
     finish_mode: finishMode,
     bags_per_carton: finishMode === 'Cartons' ? (pack.bags_per_carton != null ? Number(pack.bags_per_carton) : null) : null,
-    carton_option_slug: finishMode === 'Cartons' ? (pack.carton_option_slug ?? null) : null,
     core_type: pack.core_type != null ? String(pack.core_type) : '7mm',
     roll_weight_billing: finishMode === 'Rolls' ? mapRollBilling(id.roll_weight_billing) : null,
     extruder_code: opts?.extruderCode ?? null,
     colour_components: colourComponents,
     additives,
     blend: blend.length ? blend : undefined,
-    resin_code: blend.length ? null : 'LDPE',
+    resin_code: blend.length ? null : getDefaultResinCodeFromRatebook(opts?.ratebook ?? null),
     quantity: qty,
     nominal_weight_per_roll_kg:
       finishMode === 'Rolls' && Number.isFinite(quantity.weightPerRoll) && quantity.weightPerRoll > 0

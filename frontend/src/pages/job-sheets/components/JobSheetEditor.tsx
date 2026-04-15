@@ -294,7 +294,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           weightPerRoll: weightPerRollNum,
           unitsPerRoll: unitsPerRollNum,
         },
-        {},
+        { ratebook },
       )
       return computeDerivedGeometryAndTotals(inputs, ratebook)
     } catch {

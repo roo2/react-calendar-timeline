@@ -18,8 +18,6 @@ export type ResinBlendPreset = {
   components: Array<{ resin_code: string; pct: number }>
 }
 
-export type CartonOptionRow = { slug: string; name: string; cost_per_unit: number; is_default: boolean }
-
 type ProductSpecState = {
   bundle: {
     status: Status
@@ -41,11 +39,6 @@ type ProductSpecState = {
     items: SpecPlateOption[]
     lastCustomerId: string | null
   }
-  cartonOptions: {
-    status: Status
-    error: string | null
-    items: CartonOptionRow[]
-  }
 }
 
 const initialState: ProductSpecState = {
@@ -59,7 +52,6 @@ const initialState: ProductSpecState = {
   },
   inks: { status: 'idle', error: null, items: [], lastPrinterType: null },
   plates: { status: 'idle', error: null, items: [], lastCustomerId: null },
-  cartonOptions: { status: 'idle', error: null, items: [] },
 }
 
 export const fetchProductSpecBundle = createAsyncThunk('productSpec/bundle', async () => {
@@ -90,11 +82,6 @@ export const fetchProductSpecPlates = createAsyncThunk('productSpec/plates', asy
     customerId: customerId.trim(),
     items: Array.isArray(rows) ? (rows as SpecPlateOption[]) : [],
   }
-})
-
-export const fetchProductSpecCartonOptions = createAsyncThunk('productSpec/cartons', async () => {
-  const rb = await apiFetch<{ carton_options?: CartonOptionRow[] }>('/api/rate-cards/ratebook')
-  return Array.isArray(rb.carton_options) ? rb.carton_options : []
 })
 
 const slice = createSlice({
@@ -149,21 +136,6 @@ const slice = createSlice({
       s.plates.status = 'failed'
       s.plates.error = a.error.message || 'Failed to load plates'
       s.plates.items = []
-    })
-
-    b.addCase(fetchProductSpecCartonOptions.pending, (s) => {
-      s.cartonOptions.status = 'loading'
-      s.cartonOptions.error = null
-    })
-    b.addCase(fetchProductSpecCartonOptions.fulfilled, (s, a) => {
-      s.cartonOptions.status = 'succeeded'
-      s.cartonOptions.error = null
-      s.cartonOptions.items = a.payload
-    })
-    b.addCase(fetchProductSpecCartonOptions.rejected, (s) => {
-      s.cartonOptions.status = 'failed'
-      s.cartonOptions.error = null
-      s.cartonOptions.items = []
     })
   },
 })

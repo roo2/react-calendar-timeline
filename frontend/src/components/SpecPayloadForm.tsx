@@ -23,12 +23,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
-import {
-  fetchProductSpecBundle,
-  fetchProductSpecCartonOptions,
-  fetchProductSpecInks,
-  fetchProductSpecPlates,
-} from '../store/slices/productSpecSlice'
+import { fetchProductSpecBundle, fetchProductSpecInks, fetchProductSpecPlates } from '../store/slices/productSpecSlice'
 import { DefaultSelectField } from './DefaultSelectField'
 import { defaultRowSx, isDefaultRow } from './DefaultRowTable'
 import {
@@ -137,7 +132,6 @@ export function makeDefaultSpec(): SpecPayload {
       core_type: '7mm',
       core_policy: 'Include',
       bags_per_carton: null,
-      carton_option_slug: null,
       pallet_type: 'Chep',
       notes: null,
     },
@@ -161,7 +155,6 @@ export function SpecPayloadForm(props: {
   const bundle = useAppSelector((s) => s.productSpec.bundle)
   const inksState = useAppSelector((s) => s.productSpec.inks)
   const platesState = useAppSelector((s) => s.productSpec.plates)
-  const cartonState = useAppSelector((s) => s.productSpec.cartonOptions)
 
   const { value, onChange, fieldErrors, customerId, printingSurface = 'full', afterDimensionsSlot } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
@@ -219,8 +212,6 @@ export function SpecPayloadForm(props: {
   const additiveOptions = bundle.additives as AdditiveOption[]
   const inks = inksState.items as InkOption[]
   const plates = platesState.items as PlateOption[]
-  const cartonOptions =
-    finishMode === 'Rolls' ? [] : cartonState.items
 
   const bundleErr = bundle.status === 'failed' ? bundle.error : null
   const resinsErr = bundleErr
@@ -243,11 +234,6 @@ export function SpecPayloadForm(props: {
   useEffect(() => {
     void dispatch(fetchProductSpecPlates(customerId || ''))
   }, [customerId, dispatch])
-
-  useEffect(() => {
-    if (finishMode === 'Rolls') return
-    void dispatch(fetchProductSpecCartonOptions())
-  }, [dispatch, finishMode])
 
   useEffect(() => {
     if (!Array.isArray(resinBlends) || resinBlends.length === 0) return
@@ -1648,24 +1634,6 @@ export function SpecPayloadForm(props: {
         )}
 
         <Stack spacing={2}>
-          {finishMode === 'Cartons' && cartonOptions.length > 0 ? (
-            <DefaultSelectField
-              label="Carton option"
-              defaultValue={cartonOptions.find((o) => o.is_default)?.slug ?? cartonOptions[0]?.slug ?? ''}
-              value={packaging.carton_option_slug ?? (cartonOptions.find((o) => o.is_default)?.slug ?? cartonOptions[0]?.slug ?? '')}
-              onChange={(e) => update((d) => (d.packaging.carton_option_slug = e.target.value || null))}
-              error={!!errorFor('spec.packaging.carton_option_slug')}
-              helperText={errorFor('spec.packaging.carton_option_slug') || ''}
-            >
-              <MenuItem value="">—</MenuItem>
-              {cartonOptions.map((opt) => (
-                <MenuItem key={opt.slug} value={opt.slug}>
-                  {opt.name} (${Number(opt.cost_per_unit).toFixed(2)})
-                </MenuItem>
-              ))}
-            </DefaultSelectField>
-          ) : null}
-
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
             <DefaultSelectField
               label="Pallet Type"
