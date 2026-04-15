@@ -37,7 +37,8 @@ import type { AdditiveOption } from '../../components/AdditiveSelect'
 import { MaterialsColoursAndAdditives } from '../../components/MaterialsColoursAndAdditives'
 import { DefaultSelectField } from '../../components/DefaultSelectField'
 import { productTypeCanHaveGusset } from '../../utils/specCompat'
-import type { QtyType } from '../../utils/quantityRollFields'
+import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
+import { computeWeightPerRollDisplay } from '../../utils/quantityRollFields'
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   computeAppliedExtrusionWasteFactors,
@@ -53,6 +54,8 @@ import {
 import {
   buildSpecFromQuotePayload,
   getOrderQuantityFromQuotePayload,
+  parsePositiveKgLoose,
+  resolveWeightPerRollKgForOrderConvert,
   type QuotePayload,
 } from '../../utils/quoteToSpec'
 import { QuotePreviewPanel } from './components/QuotePreviewPanel'
@@ -303,7 +306,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.core_type != null) setCoreType(p.core_type)
     if (p.roll_weight_billing != null) setRollWeightBilling(p.roll_weight_billing)
     if (p.pallet_type != null) setPalletType(p.pallet_type)
-    if (p.qtyType != null) setQtyType(p.qtyType)
+    const qtyTypeHydrated = (p.qtyType ?? (p as { qty_type?: QtyType }).qty_type) as QtyType | undefined
+    if (qtyTypeHydrated != null) setQtyType(qtyTypeHydrated)
     if (p.length != null) setLength(p.length)
     const luRaw = p.lengthUnits ?? (p as { length_units?: string }).length_units
     const luStr = luRaw != null ? String(luRaw).toLowerCase() : ''
@@ -317,15 +321,23 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     }
     if (p.numUnits != null) setNumUnits(String(p.numUnits))
     if (p.unitsPerRoll != null) setUnitsPerRoll(String(p.unitsPerRoll))
-    if (p.numRolls != null) setNumRolls(String(p.numRolls))
+    const numRollsHydrated = p.numRolls ?? (p as { num_rolls?: string | number }).num_rolls
+    if (numRollsHydrated != null) setNumRolls(String(numRollsHydrated))
     if (p.totalKg != null) setTotalKg(String(p.totalKg))
-    if (p.weightPerRoll != null) setWeightPerRoll(String(p.weightPerRoll))
+    const wprHydrated =
+      p.weightPerRoll ??
+      (p as { weight_per_roll_kg?: string | number }).weight_per_roll_kg ??
+      (p as { weight_per_roll?: string | number }).weight_per_roll
+    if (wprHydrated != null) setWeightPerRoll(String(wprHydrated))
     if (p.quantity?.units != null) setNumUnits(String(p.quantity.units))
     if (p.quantity?.total_kg != null) setTotalKg(String(p.quantity.total_kg))
     if (p.quantity?.rolls != null) setNumRolls(String(p.quantity.rolls))
     if (p.flagPerforated != null) setFlagPerforated(!!p.flagPerforated)
+    else if (p.inline_perforation != null) setFlagPerforated(!!p.inline_perforation)
     if (p.flagSealed != null) setFlagSealed(!!p.flagSealed)
+    else if (p.inline_seal != null) setFlagSealed(!!p.inline_seal)
     if (p.flagPunched != null) setFlagPunched(!!p.flagPunched)
+    else if (p.hole_punched != null) setFlagPunched(!!p.hole_punched)
     if (p.showNumColours != null) setFlagPrinted(!!p.showNumColours)
     setQuoteNotes(typeof p.notes === 'string' ? p.notes : '')
     const coRaw = p.converted_order_id
@@ -456,7 +468,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const numUnitsNum = Math.round(Number(numUnits || 0))
   const numRollsNum = Math.round(Number(numRolls || 0))
   const unitsPerRollNum = Math.max(0, Math.round(Number(unitsPerRoll || 0)))
-  const weightPerRollNum = Number(weightPerRoll || 0)
+  const weightPerRollNum = parsePositiveKgLoose(weightPerRoll) ?? 0
 
   const showRunUp = !isUFilm && (productType === 'Sheet' || productType === 'Centerfold')
   const runUpOptions: number[] = productType === 'Centerfold' ? [1, 2] : productType === 'Sheet' ? [2, 4, 6] : [1]
@@ -484,8 +496,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   }, [productType, lengthUnits])
 
   useEffect(() => {
-    if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) setQtyType('kg')
-  }, [finishMode, qtyType])
+    if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) {
+      setQtyType('kg')
+      return
+    }
+    if (isContinuousLength && qtyType === 'rolls_units') setQtyType('kg')
+  }, [finishMode, qtyType, isContinuousLength])
 
   /** Carton finish: default weight/roll to conversion factor `roll_weight_avg` (Average Roll Weight in admin). */
   useEffect(() => {
@@ -524,6 +540,27 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (qtyType === 'units' && numUnitsNum > 0 && baseLengthMm > 0) {
       // Provide total_m so printing/core costing can work for bag-style quotes.
       qty.total_m = (numUnitsNum * baseLengthMm) / 1000
+    }
+
+    // Continuous length + "total units": one counted unit = one roll (Rolls) or one carton worth of web (Cartons).
+    // Populate rolls + total_kg so the calculator's reference mass is not null (avoids the 1m stub for kg/product).
+    if (isContinuousLength && qtyType === 'units' && numUnitsNum > 0) {
+      if (finishMode === 'Rolls') {
+        qty.rolls = numUnitsNum
+        const perRollKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+        if (perRollKg > 0) {
+          qty.total_kg = numUnitsNum * perRollKg
+        }
+      } else if (finishMode === 'Cartons') {
+        const bpc = bagsPerCarton.trim() !== '' ? Math.max(1, Math.round(Number(bagsPerCarton))) : 0
+        if (bpc > 0) {
+          const cartons = Math.ceil(numUnitsNum / bpc)
+          const perCartonKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+          if (perCartonKg > 0) {
+            qty.total_kg = cartons * perCartonKg
+          }
+        }
+      }
     }
 
     const blendPreset = resinBlendCode ? resinBlends.find((b) => b.blend_code === resinBlendCode) : null
@@ -582,6 +619,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       pallet_type: palletType,
 
       quantity: qty,
+      /** Ensures continuous + Rolls + total-units can resolve reference kg/roll even if `quantity.total_kg` is absent. */
+      nominal_weight_per_roll_kg:
+        finishMode === 'Rolls' && Number.isFinite(weightPerRollNum) && weightPerRollNum > 0 ? weightPerRollNum : null,
     }
   }, [
     additiveRows,
@@ -609,6 +649,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     printMethod,
     numRollsNum,
     numUnitsNum,
+    ratebook,
     unitsPerRollNum,
     qtyType,
     totalKgNum,
@@ -671,19 +712,29 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         : (derivedForDisplay?.units != null ? derivedForDisplay.units : null)
   const rollsDisplay =
     finishMode === 'Rolls'
-      ? qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
-        ? Math.round(totalKgNum / weightPerRollNum)
-        : qtyType === 'units' && derivedForDisplay?.derivedTotalKg != null && weightPerRollNum > 0
-          ? Math.round(derivedForDisplay.derivedTotalKg / weightPerRollNum)
-          : numRollsNum
+      ? isContinuousLength && qtyType === 'units' && numUnitsNum > 0
+        ? numUnitsNum
+        : qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
+          ? Math.round(totalKgNum / weightPerRollNum)
+          : qtyType === 'units' && derivedForDisplay?.derivedTotalKg != null && weightPerRollNum > 0
+            ? Math.round(derivedForDisplay.derivedTotalKg / weightPerRollNum)
+            : numRollsNum
       : null
-  const weightPerRollDisplay =
-    qtyType === 'total_rolls'
-      ? weightPerRollNum
-      : finishMode === 'Rolls' && numRollsNum > 0 &&
-          (derivedForDisplay?.billedKgPerRoll != null || derivedForDisplay?.kgPerRoll != null)
-        ? (derivedForDisplay.billedKgPerRoll ?? derivedForDisplay.kgPerRoll)
-        : null
+  const derivedDisplayForQty: DerivedDisplay = derivedForDisplay
+    ? {
+        derivedTotalKg: derivedForDisplay.derivedTotalKg ?? null,
+        units: derivedForDisplay.units ?? null,
+        kgPerRoll: derivedForDisplay.kgPerRoll ?? null,
+        billedKgPerRoll: derivedForDisplay.billedKgPerRoll ?? null,
+      }
+    : null
+  const weightPerRollDisplay = computeWeightPerRollDisplay(
+    qtyType,
+    finishMode,
+    numRollsNum,
+    weightPerRollNum,
+    derivedDisplayForQty,
+  )
 
   /** Roll count used to derive average products per roll when not in Rolls × per-roll mode. */
   const rollCountForProductsPerRoll =
@@ -727,7 +778,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
   const haveDriverForWeightPerRoll =
     finishMode === 'Rolls' &&
-    numRollsNum > 0 &&
+    (numRollsNum > 0 || (isContinuousLength && qtyType === 'units' && numUnitsNum > 0)) &&
     ((qtyType === 'kg' && totalKgNum > 0) ||
       (qtyType === 'units' && numUnitsNum > 0) ||
       (qtyType === 'rolls_units' && unitsPerRollNum > 0))
@@ -845,6 +896,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       blend: calcPayload.blend,
       resin_code: calcPayload.resin_code,
       quantity: calcPayload.quantity || {},
+      nominal_weight_per_roll_kg:
+        (calcPayload as { nominal_weight_per_roll_kg?: number | null }).nominal_weight_per_roll_kg ?? null,
     }),
     [calcPayload, suggestedPricePerKg, selectedExtruder.extruder?.extruder_code],
   )
@@ -990,7 +1043,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       : qtyType === 'rolls_units'
         ? numRollsNum > 0 && unitsPerRollNum > 0
         : qtyType === 'units'
-          ? numUnitsNum > 0
+          ? numUnitsNum > 0 &&
+            (!isContinuousLength ||
+              (finishMode === 'Rolls' && (weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)) ||
+              (finishMode === 'Cartons' &&
+                Number(bagsPerCarton || 0) >= 1 &&
+                (weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)))
           : qtyType === 'kg'
             ? totalKg.trim() !== '' && (finishMode !== 'Rolls' || weightPerRollNum > 0)
             : false) &&
@@ -1009,6 +1067,15 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       missing.push(
         `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
       )
+    else if (
+      qtyType === 'units' &&
+      isContinuousLength &&
+      finishMode === 'Rolls' &&
+      numUnitsNum > 0 &&
+      !(weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)
+    ) {
+      missing.push('Weight per roll (or conversion average roll weight)')
+    }
     else if (qtyType === 'kg') {
       if (!(totalKgNum > 0)) missing.push('Total KG')
       if (finishMode === 'Rolls' && !(weightPerRollNum > 0)) missing.push('Weight per roll')
@@ -1050,6 +1117,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     qtyType,
     ratebook,
     totalKgNum,
+    weightPerRoll,
     weightPerRollNum,
     showNumColours,
     thicknessUmNum,
@@ -1211,7 +1279,19 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
       const suffix = `${String(savedQuoteId).slice(0, 8)}-${Date.now().toString(36).slice(-4)}`
 
-      const spec = buildSpecFromQuotePayload(payloadForSave as QuotePayload)
+      // Merge live quantity fields so convert matches the form even if `payloadForSave` lagged a render
+      // or persisted payload keys differ (e.g. snake_case-only reload edge cases).
+      const qpLive: QuotePayload = {
+        ...(payloadForSave as QuotePayload),
+        qtyType,
+        numRolls,
+        weightPerRoll,
+        totalKg,
+        numUnits,
+        unitsPerRoll,
+      }
+
+      const spec = buildSpecFromQuotePayload(qpLive)
       const fromSpec = (computeProductCodeFromSpec(spec) || '').trim()
       const productCode = fromSpec || `Q-${suffix}`
       let createProductRes: { ok?: boolean; product?: { id: string }; version?: { id: string } }
@@ -1240,7 +1320,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         rolls: quickPreview?.rolls != null ? Number(quickPreview.rolls) : null,
         cartons: quickPreview?.cartons != null ? Number(quickPreview.cartons) : null,
       }
-      const qty = getOrderQuantityFromQuotePayload(payloadForSave as QuotePayload, previewNums)
+      const qty = getOrderQuantityFromQuotePayload(qpLive, previewNums)
       const pricePerKg =
         pricePerKgForSave != null && Number.isFinite(Number(pricePerKgForSave))
           ? Number(pricePerKgForSave)
@@ -1273,6 +1353,56 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       dueDate.setDate(dueDate.getDate() + 28)
       const dueDateStr = dueDate.toISOString().slice(0, 10)
 
+      // Use live form state for job-sheet extras. Weight/roll must match quote preview + PUT payload
+      // logic: `computeQuickQuotePreview().kg_per_roll` (= billedKgPerRoll ?? kgPerRoll from geometry),
+      // not the raw nominal "weight per roll" input (e.g. 100kg ÷ 10.1 → 10 rolls → ~10kg/roll billed).
+      const qtyTypeForOrder = String(
+        qpLive.qtyType || (qpLive as { qty_type?: string }).qty_type || '',
+      ).trim()
+      const previewKgPerRoll =
+        quickPreview?.kg_per_roll != null &&
+        Number.isFinite(Number(quickPreview.kg_per_roll)) &&
+        Number(quickPreview.kg_per_roll) > 0
+          ? Number(quickPreview.kg_per_roll)
+          : null
+      const derivedKgPerRoll =
+        derivedForDisplay != null
+          ? (() => {
+              const x = derivedForDisplay.billedKgPerRoll ?? derivedForDisplay.kgPerRoll
+              return x != null && Number.isFinite(Number(x)) && Number(x) > 0 ? Number(x) : null
+            })()
+          : null
+      const wprResolved =
+        previewKgPerRoll ??
+        derivedKgPerRoll ??
+        resolveWeightPerRollKgForOrderConvert(qpLive, {
+          qtyTypeOverride: qtyType,
+          weightPerRollOverride: weightPerRoll,
+        })
+      const wprOk = wprResolved != null && wprResolved > 0
+      const wprNum = wprResolved ?? 0
+
+      const previewRolls =
+        quickPreview?.rolls != null &&
+        Number.isFinite(Number(quickPreview.rolls)) &&
+        Number(quickPreview.rolls) > 0
+          ? Math.max(1, Math.round(Number(quickPreview.rolls)))
+          : null
+      const nrState = Math.max(0, Math.round(Number(numRolls) || 0))
+      const nrOrder = Math.max(1, Math.round(Number(qty.quantity_value) || 1))
+      const rollsFinish = finishMode === 'Rolls'
+      const numRollsForSheet =
+        nrState > 0
+          ? nrState
+          : rollsFinish && previewRolls != null
+            ? previewRolls
+            : qty.quantity_unit === 'rolls'
+              ? nrOrder
+              : undefined
+
+      const sendWeightPerRoll =
+        rollsFinish && wprOk && (qty.quantity_unit === 'rolls' || qty.quantity_unit === 'kg')
+
       const orderPayload: {
         customer_id: string
         quote_id?: string
@@ -1285,6 +1415,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           due_date?: string | null
           rate?: number | null
           total_price?: number | null
+          qty_type?: string
+          weight_per_roll_kg?: number
+          num_rolls?: number
         }>
       } = {
         customer_id: customerId,
@@ -1298,6 +1431,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
             due_date: dueDateStr,
             ...(rate != null && Number.isFinite(rate) ? { rate } : {}),
             ...(totalPrice != null && Number.isFinite(totalPrice) ? { total_price: totalPrice } : {}),
+            ...(qtyTypeForOrder ? { qty_type: qtyTypeForOrder } : {}),
+            ...(sendWeightPerRoll ? { weight_per_roll_kg: wprNum } : {}),
+            ...(numRollsForSheet != null && numRollsForSheet >= 1 ? { num_rolls: numRollsForSheet } : {}),
           },
         ],
       }
@@ -1663,7 +1799,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <DefaultSelectField defaultValue="kg" label="Qty Type" value={qtyType} onChange={(e) => setQtyType(e.target.value as QtyType)}>
                     <MenuItem value="units">{productUnitLabel} (total units)</MenuItem>
                     <MenuItem value="kg">Total KG</MenuItem>
-                    {finishMode === 'Rolls' ? (
+                    {finishMode === 'Rolls' && !isContinuousLength ? (
                       <MenuItem value="rolls_units">Rolls × {productUnitLabel.toLowerCase()} per roll</MenuItem>
                     ) : null}
                     {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Rolls x KG per roll</MenuItem> : null}

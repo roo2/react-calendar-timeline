@@ -8,6 +8,8 @@ export type JobSheetQuantityFieldsProps = {
   productUnitLabel: string
   /** When Bag, qty menu uses "Bags (total units)" / "Rolls x bags per roll". */
   productTypeIsBag: boolean
+  /** Hide "Rolls × … per roll" when length is continuous (no fixed units per roll). */
+  showRollsUnitsQtyType?: boolean
   finishMode: FinishMode
   effectiveQtyType: QtyType
   onQtyTypeChange: (t: QtyType) => void
@@ -53,6 +55,7 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
   const {
     productUnitLabel,
     productTypeIsBag,
+    showRollsUnitsQtyType = true,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange,
@@ -75,7 +78,7 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
         <TextField select label="Qty Type" value={effectiveQtyType} onChange={(e) => onQtyTypeChange(e.target.value as QtyType)}>
           <MenuItem value="units">{unitsMenuLabel}</MenuItem>
           <MenuItem value="kg">Total KG</MenuItem>
-          {finishMode === 'Rolls' ? <MenuItem value="rolls_units">{rollsPerRollMenuLabel}</MenuItem> : null}
+          {finishMode === 'Rolls' && showRollsUnitsQtyType ? <MenuItem value="rolls_units">{rollsPerRollMenuLabel}</MenuItem> : null}
           {finishMode === 'Rolls' ? <MenuItem value="total_rolls">Rolls x KG per roll</MenuItem> : null}
         </TextField>
         <TextField label="Total Meters" value={totalMetersReadonly} disabled />
@@ -209,6 +212,7 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
     dueDateInputRef,
     productUnitLabel,
     productTypeIsBag,
+    showRollsUnitsQtyType,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange,
@@ -225,6 +229,7 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
   const quantityProps: JobSheetQuantityFieldsProps = {
     productUnitLabel,
     productTypeIsBag,
+    showRollsUnitsQtyType,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange,

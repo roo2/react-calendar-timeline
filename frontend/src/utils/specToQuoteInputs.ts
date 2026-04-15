@@ -114,6 +114,9 @@ export function buildQuickQuoteInputsFromSpec(
 
   const trimPct = id.trim_pct != null && id.trim_pct !== '' ? Number(id.trim_pct) : null
 
+  const bagsPerCartonNum =
+    finishMode === 'Cartons' && pack.bags_per_carton != null ? Math.round(Number(pack.bags_per_carton || 0)) : 0
+
   const qty = buildQuantityObjectForCalculator(
     quantity.qtyType,
     finishMode,
@@ -123,6 +126,10 @@ export function buildQuickQuoteInputsFromSpec(
     quantity.numUnits,
     baseLengthMm,
     quantity.unitsPerRoll ?? 0,
+    {
+      continuousLength: continuousRoll,
+      bagsPerCarton: bagsPerCartonNum > 0 ? bagsPerCartonNum : undefined,
+    },
   )
 
   return {
@@ -155,5 +162,9 @@ export function buildQuickQuoteInputsFromSpec(
     blend: blend.length ? blend : undefined,
     resin_code: blend.length ? null : 'LDPE',
     quantity: qty,
+    nominal_weight_per_roll_kg:
+      finishMode === 'Rolls' && Number.isFinite(quantity.weightPerRoll) && quantity.weightPerRoll > 0
+        ? quantity.weightPerRoll
+        : null,
   }
 }

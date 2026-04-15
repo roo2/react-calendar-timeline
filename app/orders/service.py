@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, time
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
@@ -38,6 +38,30 @@ def _ensure_customer_exists(db, customer_id: str) -> None:
     # Validate customer exists
     if not db.get(Customer, str(customer_id)):
         raise DomainError("Customer not found")
+
+
+def _job_sheet_extras_from_order_item(it: Any) -> dict[str, Any]:
+    """Optional qty fields for create_job_sheet_from_product_latest_version (e.g. quote → order)."""
+    extra: dict[str, Any] = {}
+    data = it.model_dump() if hasattr(it, "model_dump") else it.dict()
+    qt = data.get("qty_type")
+    if qt is not None and str(qt).strip():
+        extra["qty_type"] = str(qt).strip()
+    npu = data.get("num_product_units")
+    if npu is not None:
+        extra["num_product_units"] = float(npu)
+    wpr = data.get("weight_per_roll_kg")
+    if wpr is not None:
+        try:
+            wf = float(wpr)
+        except (TypeError, ValueError):
+            wf = float("nan")
+        if wf == wf and wf > 0:  # finite and positive (reject NaN)
+            extra["weight_per_roll_kg"] = wf
+    nr = data.get("num_rolls")
+    if nr is not None:
+        extra["num_rolls"] = int(nr)
+    return extra
 
 
 def _next_job_code(db, order_id: str) -> int:
@@ -89,6 +113,7 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
                 created_by=created_by or "system",
                 unit_rate=float(it.rate) if it.rate is not None else None,
                 line_total=float(it.total_price) if it.total_price is not None else None,
+                **_job_sheet_extras_from_order_item(it),
             )
             created_job_sheets.append(js)
 
@@ -232,6 +257,7 @@ def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: s
             created_by=created_by or "system",
             unit_rate=float(item.rate) if item.rate is not None else None,
             line_total=float(item.total_price) if item.total_price is not None else None,
+            **_job_sheet_extras_from_order_item(item),
         )
 
         oi = OrderItemModel(order_id=str(o.id), job_sheet_id=str(js.id))

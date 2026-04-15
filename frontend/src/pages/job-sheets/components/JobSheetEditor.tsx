@@ -195,7 +195,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setSpec(loadedSpec)
     const fm: FinishMode = loadedSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
     const rawQt = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
-    const qt = coerceQtyTypeForFinishMode(fm, rawQt)
+    const pt = String(loadedSpec.identity?.product_type || 'Bag')
+    const lenRaw = String(loadedSpec.dimensions?.length_units || '')
+    const continuousLength =
+      pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
+    const qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
     setQtyType(qt)
     const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
     const wpr =
@@ -262,12 +266,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const previewProductCode = useMemo(() => computeProductCodeFromSpec(spec), [spec])
 
   const finishMode: FinishMode = spec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-  const effectiveQtyType = useMemo(() => coerceQtyTypeForFinishMode(finishMode, qtyType), [finishMode, qtyType])
-
   const productType = (spec.identity?.product_type as string) || 'Bag'
   const lengthUnitsRaw = String(spec.dimensions?.length_units || '')
   const isContinuousLength =
     productType === 'Tube' || lengthUnitsRaw === 'Continuous' || lengthUnitsRaw.toLowerCase() === 'continuous'
+  const effectiveQtyType = useMemo(
+    () => coerceQtyTypeForFinishMode(finishMode, qtyType, isContinuousLength),
+    [finishMode, qtyType, isContinuousLength],
+  )
 
   const totalKgNum = Number(totalKg || 0)
   const numRollsNum = Math.max(0, Math.round(Number(numRolls || 0)))
@@ -640,6 +646,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const jobSheetQuantityFieldsProps: JobSheetQuantityFieldsProps = {
     productUnitLabel,
     productTypeIsBag,
+    showRollsUnitsQtyType: !isContinuousLength,
     finishMode,
     effectiveQtyType,
     onQtyTypeChange: setQtyType,

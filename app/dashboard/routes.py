@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.auth.deps import require_roles
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 async def dashboard_index(request: Request, start: Optional[str] = Query(default=None, description="ISO week e.g. 2026-W01")):
     window = DashboardService.resolve_window_from_params(start)
     ctx = DashboardService.get_overview(window)
-    return JSONResponse(ctx)
+    return JSONResponse(jsonable_encoder(ctx))
 
 
 @router.get(
@@ -34,7 +35,7 @@ async def dashboard_card_partial(
     ctx = DashboardService.get_card(card, window)
     if card not in ("inventory_snapshot", "throughput_weekly"):
         return PlainTextResponse("Unknown card", status_code=404)
-    return JSONResponse(ctx)
+    return JSONResponse(jsonable_encoder(ctx))
 
 
 @router.get(

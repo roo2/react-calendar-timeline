@@ -143,8 +143,10 @@ class RunRequirementsSpec(BaseModel):
     preferred_printer: Optional[str] = None
     preferred_converter: Optional[str] = None
     run_up: Optional[Literal["none", "2up", "4up", "6up"]] = "none"
+    slit: Optional[Literal["none", "one_side", "both_sides", "middle"]] = "none"
     treat_inside_outside: Optional[TreatIO] = TreatIO.NONE
     inline_perforation: Optional[bool] = False
+    hole_punched: Optional[bool] = False
     inline_seal: Optional[bool] = False
     notes: Optional[str] = None
 

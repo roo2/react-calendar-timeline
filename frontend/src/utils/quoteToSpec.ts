@@ -33,6 +33,8 @@ export type QuotePayload = {
   inline_perforation?: boolean
   inline_seal?: boolean
   hole_punched?: boolean
+  /** Quotes UI checkbox; may appear without `hole_punched` on some payloads. */
+  flagPunched?: boolean
   run_up?: number | null
   qtyType?: 'kg' | 'units' | 'total_rolls' | 'rolls_units'
   /** When qtyType is rolls_units: products (e.g. bags) per roll. */
@@ -207,9 +209,9 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       run_up: runUpToSpec(p.run_up ?? null),
       slit: 'none',
       treat_inside_outside: 'none',
-      inline_perforation: !!p.inline_perforation,
-      hole_punched: !!p.hole_punched,
-      inline_seal: !!p.inline_seal,
+      inline_perforation: !!(p.inline_perforation ?? (p as { flagPerforated?: boolean }).flagPerforated),
+      hole_punched: !!(p.hole_punched ?? p.flagPunched),
+      inline_seal: !!(p.inline_seal ?? (p as { flagSealed?: boolean }).flagSealed),
       notes: null,
     },
     packaging: {
@@ -240,6 +242,45 @@ function positiveOrOne(n: number): number {
   return n > 0 ? n : 1
 }
 
+/** Parse a positive finite kg value from UI / saved payload (comma decimals tolerated). */
+export function parsePositiveKgLoose(v: unknown): number | null {
+  if (v == null) return null
+  const s = String(v).trim().replace(/,/g, '.')
+  if (s === '') return null
+  const n = Number(s)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * Resolve weight per roll (kg) when converting a quote → order job sheet.
+ * Prefer live `weightPerRoll` / payload fields; fall back to `quantity.total_kg / rolls` for total_rolls.
+ */
+export function resolveWeightPerRollKgForOrderConvert(
+  payload: QuotePayload,
+  opts?: { qtyTypeOverride?: string | null; weightPerRollOverride?: string | null },
+): number | null {
+  const p = payload
+  const wLive = parsePositiveKgLoose(opts?.weightPerRollOverride)
+  if (wLive != null) return wLive
+  const wPayload = parsePositiveKgLoose(p.weightPerRoll ?? (p as { weight_per_roll_kg?: unknown }).weight_per_roll_kg)
+  if (wPayload != null) return wPayload
+
+  const qtyTypeRaw = String(opts?.qtyTypeOverride ?? p.qtyType ?? (p as { qty_type?: string }).qty_type ?? '').trim()
+  const q = (p as { quantity?: { total_kg?: unknown; rolls?: unknown } }).quantity || {}
+  const rollsFromQty = Math.round(Number(q.rolls))
+  const rolls =
+    Number.isFinite(rollsFromQty) && rollsFromQty > 0
+      ? rollsFromQty
+      : Math.max(0, Math.round(Number(p.numRolls) || 0))
+  const tk = Number(q.total_kg)
+  if (rolls > 0 && Number.isFinite(tk) && tk > 0) {
+    if (qtyTypeRaw === 'total_rolls') return tk / rolls
+    // Continuous-length "total units": quantity carries implied rolls = units and total_kg for pricing geometry.
+    if (qtyTypeRaw === 'units' && quotePayloadUsesContinuousLength(p)) return tk / rolls
+  }
+  return null
+}
+
 /**
  * Derive order item quantity from quote payload (finish mode, qtyType, totals, rolls, cartons).
  * Optional `preview` aligns with calculator outputs when form totals are ambiguous.
@@ -250,7 +291,7 @@ export function getOrderQuantityFromQuotePayload(
 ): OrderQuantity {
   const p = payload
   const finish = p.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-  const qtyType = p.qtyType || 'kg'
+  const qtyType = String(p.qtyType || (p as { qty_type?: string }).qty_type || 'kg').trim()
   const totalKg = Number(p.totalKg) || 0
   const numUnits = Math.round(Number(p.numUnits) || 0)
   const numRolls = Math.round(Number(p.numRolls) || 0)

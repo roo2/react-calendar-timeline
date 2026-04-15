@@ -16,6 +16,13 @@ export function buildQuantityObjectForCalculator(
   numUnitsNum: number,
   baseLengthMm: number,
   unitsPerRollNum: number = 0,
+  opts?: {
+    /** When true, total units on a continuous web imply one roll (or one carton mass slice) per counted unit. */
+    continuousLength?: boolean
+    bagsPerCarton?: number
+    /** Fallback kg/roll (or kg/carton when Cartons) from ratebook when weight field is empty. */
+    rollWeightAvgKg?: number
+  },
 ): { units?: number; total_kg?: number; total_m?: number; rolls?: number } {
   const qty: { units?: number; total_kg?: number; total_m?: number; rolls?: number } = {}
   if (qtyType === 'units') qty.units = numUnitsNum
@@ -43,6 +50,35 @@ export function buildQuantityObjectForCalculator(
   if (qtyType === 'units' && numUnitsNum > 0 && baseLengthMm > 0) {
     qty.total_m = (numUnitsNum * baseLengthMm) / 1000
   }
+
+  if (opts?.continuousLength && qtyType === 'units' && numUnitsNum > 0) {
+    if (finishMode === 'Rolls') {
+      qty.rolls = numUnitsNum
+      const perRollKg =
+        weightPerRollNum > 0
+          ? weightPerRollNum
+          : opts.rollWeightAvgKg != null && opts.rollWeightAvgKg > 0
+            ? opts.rollWeightAvgKg
+            : 0
+      if (perRollKg > 0) {
+        qty.total_kg = numUnitsNum * perRollKg
+      }
+    } else if (finishMode === 'Cartons') {
+      const bpc = opts.bagsPerCarton != null && opts.bagsPerCarton > 0 ? Math.max(1, Math.round(opts.bagsPerCarton)) : 0
+      if (bpc > 0) {
+        const cartons = Math.ceil(numUnitsNum / bpc)
+        const perCartonKg =
+          weightPerRollNum > 0
+            ? weightPerRollNum
+            : opts.rollWeightAvgKg != null && opts.rollWeightAvgKg > 0
+              ? opts.rollWeightAvgKg
+              : 0
+        if (perCartonKg > 0) {
+          qty.total_kg = cartons * perCartonKg
+        }
+      }
+    }
+  }
   return qty
 }
 
@@ -68,6 +104,8 @@ export type DerivedDisplay = {
   derivedTotalKg: number | null
   units: number | null
   kgPerRoll: number | null
+  /** When set (e.g. core billing), matches quote preview / `computeQuickQuotePreview().kg_per_roll`. */
+  billedKgPerRoll?: number | null
 } | null
 
 /** Display helpers (same rules as QuotesPage rollsDisplay / totalKgDisplay). */
@@ -114,9 +152,14 @@ export function computeWeightPerRollDisplay(
   weightPerRollNum: number,
   derived: DerivedDisplay,
 ): number | null {
-  if (qtyType === 'total_rolls') return weightPerRollNum
-  if (finishMode === 'Rolls' && numRollsNum > 0 && derived?.kgPerRoll != null) {
-    return derived.kgPerRoll
+  if (qtyType === 'total_rolls') {
+    const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll
+    if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) return Number(w)
+    return weightPerRollNum > 0 ? weightPerRollNum : null
+  }
+  if (finishMode === 'Rolls' && numRollsNum > 0) {
+    const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll
+    if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) return Number(w)
   }
   return null
 }
@@ -158,8 +201,14 @@ export function getOrderQuantityFromJobSheetFields(
 }
 
 /** Enforce qtyType when finish mode is Cartons (cannot use roll-based modes — those are for Rolls finish). */
-export function coerceQtyTypeForFinishMode(finishMode: FinishMode, qtyType: QtyType): QtyType {
+export function coerceQtyTypeForFinishMode(
+  finishMode: FinishMode,
+  qtyType: QtyType,
+  /** When true, rolls × units-per-roll is undefined (no fixed product length). */
+  continuousLength = false,
+): QtyType {
   if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) return 'kg'
+  if (continuousLength && qtyType === 'rolls_units') return 'kg'
   return qtyType
 }
 
@@ -201,7 +250,11 @@ export function resolveWeightPerRollForPersistence(
     const w = cartonsWeightPerRollKg(totalKgNum, numRollsNum)
     return w != null && w > 0 ? w : null
   }
-  if (qtyType === 'total_rolls') return weightPerRollNum > 0 ? weightPerRollNum : null
+  if (qtyType === 'total_rolls') {
+    const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll
+    if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) return Number(w)
+    return weightPerRollNum > 0 ? weightPerRollNum : null
+  }
   const w = computeWeightPerRollDisplay(qtyType, finishMode, numRollsNum, weightPerRollNum, derived)
   return w != null && w > 0 ? w : null
 }

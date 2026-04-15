@@ -88,6 +88,11 @@ export type CreateOrderBody = {
     due_date?: string | null
     rate?: number | null
     total_price?: number | null
+    /** Job sheet qty (e.g. from quote convert): total_rolls needs weight_per_roll_kg */
+    qty_type?: string
+    num_product_units?: number
+    weight_per_roll_kg?: number
+    num_rolls?: number
   }>
 }
 

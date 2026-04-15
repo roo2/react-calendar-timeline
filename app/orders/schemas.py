@@ -17,6 +17,11 @@ class CreateOrderItemRequest(BaseModel):
     quantity_unit: QuantityUnit
     rate: Optional[Decimal] = None  # unit rate (e.g. price per kg)
     total_price: Optional[Decimal] = None  # line total
+    # Optional: copied to job sheet when creating from quote (matches job_sheets qty fields).
+    qty_type: Optional[str] = None
+    num_product_units: Optional[Decimal] = None
+    weight_per_roll_kg: Optional[Decimal] = None
+    num_rolls: Optional[int] = Field(default=None, ge=1)
 
 
 class CreateOrderRequest(BaseModel):

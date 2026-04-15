@@ -129,7 +129,11 @@ export function JobSheetShowPage() {
       const js = data.job_sheet
       const fm: FinishMode = spec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
       const rawQt = (js.qty_type as QtyType) || inferQtyTypeFromUnit(js.quantity_unit)
-      const effectiveQtyType = coerceQtyTypeForFinishMode(fm, rawQt)
+      const pt = String(spec.identity?.product_type || 'Bag')
+      const lenRaw = String(spec.dimensions?.length_units || '')
+      const continuousLength =
+        pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
+      const effectiveQtyType = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
       const qv = Number(js.quantity_value || 0)
       const numRollsNum = Math.max(1, Math.round(Number(js.num_rolls ?? 1)))
       const weightPerRollNum = Number(js.weight_per_roll_kg ?? 0)

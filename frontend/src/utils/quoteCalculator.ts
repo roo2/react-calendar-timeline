@@ -78,6 +78,11 @@ export type QuickQuoteInputs = {
   blend?: Array<{ resin_code: string; pct: number }>
   resin_code?: string | null
   quantity: { units?: number; total_kg?: number; total_m?: number; rolls?: number }
+  /**
+   * Rolls + continuous length: nominal billed kg per roll from the quote form.
+   * Used when resolving reference mass per "product" if `quantity.total_kg` is missing or not yet wired.
+   */
+  nominal_weight_per_roll_kg?: number | null
 }
 
 export type QuotePreview = {
@@ -303,6 +308,52 @@ export function computeLayflatWidthMm(spec: {
   return computeLayflatMm(spec)
 }
 
+/**
+ * For continuous-length products (tube on roll, etc.), treat one "product length" as the web length
+ * that carries one roll's (or one carton's) billed mass: refKg / kgPerLinearM. Used instead of a
+ * nominal 1m stub so kg/product, printing, and conversion speed buckets match physical rolls/cartons.
+ */
+function referenceMassKgForContinuousProduct(
+  inputs: QuickQuoteInputs,
+  totalKgReq: number | null,
+  totalMReq: number | null,
+  rolls: number | null,
+  unitsIn: number | null,
+  kgPerLinearM: number,
+): number | null {
+  const rollsN = rolls != null && rolls > 0 ? rolls : null
+  const nominalWpr = toNum(inputs.nominal_weight_per_roll_kg)
+  if (inputs.finish_mode === 'Rolls') {
+    if (totalKgReq != null && totalKgReq > 0 && rollsN != null) return totalKgReq / rollsN
+    // One product per roll: rolls and units match; use form weight/roll when job total_kg is absent.
+    if (
+      inputs.continuous_roll &&
+      nominalWpr != null &&
+      nominalWpr > 0 &&
+      rollsN != null &&
+      unitsIn != null &&
+      unitsIn > 0 &&
+      rollsN === unitsIn
+    ) {
+      return nominalWpr
+    }
+    if (totalMReq != null && totalMReq > 0 && rollsN != null && kgPerLinearM > 0) {
+      const tk = totalMReq * kgPerLinearM
+      return tk > 0 ? tk / rollsN : null
+    }
+    return null
+  }
+  if (inputs.finish_mode === 'Cartons') {
+    const bpc = inputs.bags_per_carton != null ? Math.max(0, Math.round(Number(inputs.bags_per_carton || 0))) : 0
+    if (totalKgReq != null && totalKgReq > 0 && unitsIn != null && unitsIn > 0 && bpc > 0) {
+      const cartons = Math.max(1, Math.ceil(unitsIn / bpc))
+      return totalKgReq / cartons
+    }
+    return null
+  }
+  return null
+}
+
 function pickConversionSpeed(
   ratebook: QuoteRatebook,
   gaugeUm: number,
@@ -370,8 +421,6 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   })
 
   const unitLengthMm = inputs.continuous_roll ? null : Number(inputs.base_length_mm || 0)
-  const effectiveLenM = inputs.continuous_roll ? 1 : mmToM(unitLengthMm || 0)
-  const areaPerUnitM2 = effectiveLenM * mmToM(layflatMm)
 
   // Build blend with densities
   const blendIn =
@@ -391,9 +440,23 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const density = blendDensity(blend)
   const thicknessM = umToM(Number(inputs.thickness_um || 0))
   const kgPerM2 = density * thicknessM
-  const kgPerUnit = areaPerUnitM2 * kgPerM2
-
   const kgPerLinearM = kgPerM2 * mmToM(layflatMm)
+
+  // Continuous length: one "unit" of product length = web length that holds one roll/carton billed mass
+  // (e.g. 20kg roll → metres = 20 / kgPerLinearM), not a fixed 1m stub.
+  let effectiveLenM: number
+  if (inputs.continuous_roll) {
+    const refKg = referenceMassKgForContinuousProduct(inputs, totalKgReq, totalMReq, rolls, unitsIn, kgPerLinearM)
+    if (refKg != null && refKg > 0 && kgPerLinearM > 0) {
+      effectiveLenM = refKg / kgPerLinearM
+    } else {
+      effectiveLenM = 1
+    }
+  } else {
+    effectiveLenM = mmToM(unitLengthMm || 0)
+  }
+  const areaPerUnitM2 = effectiveLenM * mmToM(layflatMm)
+  const kgPerUnit = areaPerUnitM2 * kgPerM2
 
   // If quoting by total KG in Rolls mode, adjust "plastic produced" by core billing.
   // The input total_kg is treated as the billed weight; plastic weight is reduced by core weight
@@ -484,6 +547,8 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     kgPerM2,
     kgPerUnit,
     kgPerLinearM,
+    /** Metres of web used to model one "product" when `continuous_roll` (one roll/carton mass). */
+    effectiveProductLengthM: effectiveLenM,
     derivedTotalKg: trimmedTotalKg,
     billedTotalsKg,
     derivedTotalM,
@@ -699,7 +764,12 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   let kgPerCarton: number | null = null
   let cartonCostTotal: number | null = null
   if (inputs.finish_mode === 'Cartons' && units != null) {
-    const speed = pickConversionSpeed(ratebook, Number(inputs.thickness_um || 0), Number(inputs.base_length_mm || 0))
+    const effLenM = d.effectiveProductLengthM
+    const lengthMmForConv =
+      inputs.continuous_roll && effLenM != null && effLenM > 0
+        ? Math.max(1, Math.round(effLenM * 1000))
+        : Number(inputs.base_length_mm || 0)
+    const speed = pickConversionSpeed(ratebook, Number(inputs.thickness_um || 0), lengthMmForConv)
     const bpm = speed ? Number(speed.bags_per_minute || 0) : 0
     conversionRunMinutes = bpm > 0 ? units / bpm : null
 
@@ -789,10 +859,16 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const unitsPerRoll =
     rolls != null && rolls > 0 && units != null && units > 0 ? units / rolls : null
 
+  const kgPerUnitPreview =
+    inputs.continuous_roll && units != null && units > 0 && billedTotalsKg > 0
+      ? roundMoney(billedTotalsKg / units)
+      : inputs.continuous_roll
+        ? null
+        : kgPerUnit
+
   return {
-    // This is a geometric/material property (for discrete products), not dependent on the quote quantity type.
-    // Keep it available even when quoting by KG/meters/rolls, so the UI can show "kg / 1000 products".
-    kg_per_unit: inputs.continuous_roll ? null : kgPerUnit,
+    // Geometric kg/product for fixed length; for continuous roll, derive from billed job kg ÷ counted units (e.g. one roll per unit).
+    kg_per_unit: kgPerUnitPreview,
     units_per_roll: unitsPerRoll,
     rolls: rolls != null && rolls > 0 ? rolls : null,
     totals_kg: billedTotalsKg,
