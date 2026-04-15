@@ -295,7 +295,6 @@
       "meters_per_min": 20.0
     }
   ],
-  "extrusion_retail_addon_per_kg": 1.8,
   "conversion_speeds": [
     {
       "min_gauge_um": 25,
@@ -466,5 +465,160 @@
   "extrusion_throughput_kg_per_hr": 0,
   "packing_factor_rolls": 0.7,
   "packing_factor_cartons": 0.5,
-  "pallet_volume_m3": 1.0
+  "pallet_volume_m3": 1.0,
+  "materials_retail_bands": [
+    {
+      "id": 1,
+      "product_group": "tube",
+      "width_min_mm": 0,
+      "width_max_mm": 99,
+      "moq_plain_kg": 200,
+      "retail_price_per_kg": null,
+      "moq_printed_kg": 200
+    },
+    {
+      "id": 2,
+      "product_group": "tube",
+      "width_min_mm": 100,
+      "width_max_mm": 399,
+      "moq_plain_kg": 300,
+      "retail_price_per_kg": null,
+      "moq_printed_kg": 300
+    },
+    {
+      "id": 3,
+      "product_group": "tube",
+      "width_min_mm": 400,
+      "width_max_mm": 799,
+      "moq_plain_kg": 400,
+      "retail_price_per_kg": null,
+      "moq_printed_kg": 500
+    },
+    {
+      "id": 4,
+      "product_group": "tube",
+      "width_min_mm": 800,
+      "width_max_mm": 1800,
+      "moq_plain_kg": null,
+      "retail_price_per_kg": null,
+      "moq_printed_kg": null
+    },
+    {
+      "id": 5,
+      "product_group": "centerfold",
+      "width_min_mm": 200,
+      "width_max_mm": 399,
+      "moq_plain_kg": 200,
+      "retail_price_per_kg": 4.45,
+      "moq_printed_kg": 250
+    },
+    {
+      "id": 6,
+      "product_group": "centerfold",
+      "width_min_mm": 400,
+      "width_max_mm": 799,
+      "moq_plain_kg": 300,
+      "retail_price_per_kg": 4.4,
+      "moq_printed_kg": 300
+    },
+    {
+      "id": 7,
+      "product_group": "centerfold",
+      "width_min_mm": 800,
+      "width_max_mm": 1460,
+      "moq_plain_kg": 400,
+      "retail_price_per_kg": 4.35,
+      "moq_printed_kg": 400
+    },
+    {
+      "id": 8,
+      "product_group": "sheet",
+      "width_min_mm": 200,
+      "width_max_mm": 399,
+      "moq_plain_kg": 300,
+      "retail_price_per_kg": 5.0,
+      "moq_printed_kg": 300
+    },
+    {
+      "id": 9,
+      "product_group": "sheet",
+      "width_min_mm": 400,
+      "width_max_mm": 799,
+      "moq_plain_kg": 300,
+      "retail_price_per_kg": 4.85,
+      "moq_printed_kg": 400
+    },
+    {
+      "id": 10,
+      "product_group": "sheet",
+      "width_min_mm": 800,
+      "width_max_mm": 999,
+      "moq_plain_kg": 400,
+      "retail_price_per_kg": 4.75,
+      "moq_printed_kg": 500
+    },
+    {
+      "id": 11,
+      "product_group": "sheet",
+      "width_min_mm": 1000,
+      "width_max_mm": 1460,
+      "moq_plain_kg": 500,
+      "retail_price_per_kg": 4.75,
+      "moq_printed_kg": 600
+    },
+    {
+      "id": 12,
+      "product_group": "u_film",
+      "width_min_mm": 300,
+      "width_max_mm": 499,
+      "moq_plain_kg": 250,
+      "retail_price_per_kg": 4.5,
+      "moq_printed_kg": 300
+    },
+    {
+      "id": 13,
+      "product_group": "u_film",
+      "width_min_mm": 500,
+      "width_max_mm": 999,
+      "moq_plain_kg": 300,
+      "retail_price_per_kg": 4.4,
+      "moq_printed_kg": 300
+    },
+    {
+      "id": 14,
+      "product_group": "u_film",
+      "width_min_mm": 1000,
+      "width_max_mm": 1460,
+      "moq_plain_kg": 400,
+      "retail_price_per_kg": 4.35,
+      "moq_printed_kg": 500
+    },
+    {
+      "id": 15,
+      "product_group": "bag",
+      "width_min_mm": 350,
+      "width_max_mm": 499,
+      "moq_plain_kg": 250,
+      "retail_price_per_kg": 5.0,
+      "moq_printed_kg": 350
+    },
+    {
+      "id": 16,
+      "product_group": "bag",
+      "width_min_mm": 500,
+      "width_max_mm": 799,
+      "moq_plain_kg": 300,
+      "retail_price_per_kg": 4.65,
+      "moq_printed_kg": 400
+    },
+    {
+      "id": 17,
+      "product_group": "bag",
+      "width_min_mm": 800,
+      "width_max_mm": 1800,
+      "moq_plain_kg": 400,
+      "retail_price_per_kg": 4.5,
+      "moq_printed_kg": 500
+    }
+  ]
 }

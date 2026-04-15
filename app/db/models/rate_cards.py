@@ -289,6 +289,32 @@ class QuoteDefaults(Base):
     )
 
 
+class QuoteMaterialsRetailBand(Base):
+    """Width bands for quote sell-side material $/kg and minimum order quantities (plain vs printed)."""
+
+    __tablename__ = "quote_materials_retail_bands"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_group: Mapped[str] = mapped_column(String(32), nullable=False)
+    width_min_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    width_max_mm: Mapped[int] = mapped_column(Integer, nullable=False)
+    moq_plain_kg: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    retail_price_per_kg: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    moq_printed_kg: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("width_max_mm >= width_min_mm", name="ck_qmrb_width_range"),
+        CheckConstraint(
+            "product_group IN ('tube','centerfold','sheet','u_film','bag')",
+            name="ck_qmrb_product_group",
+        ),
+        CheckConstraint("moq_plain_kg IS NULL OR moq_plain_kg >= 0", name="ck_qmrb_moq_plain_nonneg"),
+        CheckConstraint("moq_printed_kg IS NULL OR moq_printed_kg >= 0", name="ck_qmrb_moq_printed_nonneg"),
+        CheckConstraint("retail_price_per_kg IS NULL OR retail_price_per_kg >= 0", name="ck_qmrb_retail_price_nonneg"),
+        UniqueConstraint("product_group", "width_min_mm", "width_max_mm", name="uq_qmrb_group_width"),
+    )
+
+
 class QuotePackagingSettings(Base):
     """Singleton (id=1) for quote pallet estimation: packing factors by finish mode and pallet volume."""
     __tablename__ = "quote_packaging_settings"

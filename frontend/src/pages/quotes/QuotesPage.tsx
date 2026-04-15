@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
@@ -48,6 +48,9 @@ import {
   computeQuickQuotePreview,
   getBlendDensityKgPerM3,
   getRollWeightAvgKg,
+  buildMaterialsBandMatchWarning,
+  mapProductTypeToMaterialsRetailGroup,
+  resolveMaterialsRetailBand,
   type AppliedExtrusionWasteFactor,
   type QuickQuoteInputs,
 } from '../../utils/quoteCalculator'
@@ -217,7 +220,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [desiredNumColours, setDesiredNumColours] = useState('')
 
   // Packaging
-  const [coreType, setCoreType] = useState('7mm')
+  const [coreType, setCoreType] = useState('13mm')
   const [rollWeightBilling, setRollWeightBilling] = useState<'core_included' | 'core_off' | 'core_half_off'>('core_off')
   const [bagsPerCarton, setBagsPerCarton] = useState('')
   const [palletType, setPalletType] = useState<'Chep' | 'Plain' | 'Resin' | 'None'>('Chep')
@@ -1022,6 +1025,27 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     return computePrintingUnavailableReason(inputsForPrint, ratebook)
   }, [calcInputs, desiredNumColours, flagPrinted, numColours, printMethod, ratebook])
 
+  const materialsMoqPanelLine = useMemo(() => {
+    if (!(widthMmNum > 0) || !ratebook) return null
+    if (quickPreview?.materials_moq_summary_line) return quickPreview.materials_moq_summary_line
+    if (!mapProductTypeToMaterialsRetailGroup(productType)) {
+      return 'This product type does not use width-based material minimum order quantities.'
+    }
+    if (!quickPreview) {
+      return 'Minimum order quantity will appear here once the quote can be calculated (add gauge, length, and quantity).'
+    }
+    const res = resolveMaterialsRetailBand(ratebook, productType, widthMmNum)
+    if (!res.band) return 'No materials retail bands are configured for this product type.'
+    return 'No minimum order quantity is set for the band used for this width.'
+  }, [widthMmNum, ratebook, quickPreview, productType])
+
+  const materialsWidthBandWarning = useMemo(() => {
+    if (!(widthMmNum > 0) || !ratebook) return null
+    if (!mapProductTypeToMaterialsRetailGroup(productType)) return null
+    const res = resolveMaterialsRetailBand(ratebook, productType, widthMmNum)
+    return buildMaterialsBandMatchWarning(productType, widthMmNum, res)
+  }, [widthMmNum, ratebook, productType])
+
   const canCalculate =
     (qtyType === 'total_rolls'
       ? numRollsNum > 0 && weightPerRollNum > 0
@@ -1205,6 +1229,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         : null
 
   const { setDirty } = useUnsavedChanges()
+
+  const clearPricePerKgOverride = useCallback(() => {
+    preserveLoadedPricePerKgRef.current = false
+    setSuggestedPricePerKg('')
+    setDirty(true)
+  }, [setDirty])
 
   const [converting, setConverting] = useState(false)
   const [convertErr, setConvertErr] = useState<string | null>(null)
@@ -1779,6 +1809,23 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               <Typography variant="h6" sx={{ mb: 2 }}>
                 Quantity
               </Typography>
+              {widthMmNum > 0 && ratebook && (materialsWidthBandWarning || materialsMoqPanelLine) ? (
+                <Stack spacing={1} sx={{ mb: 2 }}>
+                  {materialsWidthBandWarning ? (
+                    <Alert severity="warning">
+                      <Typography variant="body2">{materialsWidthBandWarning}</Typography>
+                    </Alert>
+                  ) : null}
+                  {materialsMoqPanelLine ? (
+                    <Alert severity="info">
+                      <Typography variant="body2">{materialsMoqPanelLine}</Typography>
+                    </Alert>
+                  ) : null}
+                  {quickPreview?.materials_moq_warning ? (
+                    <Alert severity="warning">{quickPreview.materials_moq_warning}</Alert>
+                  ) : null}
+                </Stack>
+              ) : null}
               <Stack spacing={2}>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
                   <DefaultSelectField defaultValue="kg" label="Qty Type" value={qtyType} onChange={(e) => setQtyType(e.target.value as QtyType)}>
@@ -1892,7 +1939,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               </Typography>
               <Stack spacing={2}>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-                  <DefaultSelectField defaultValue="7mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
+                  <DefaultSelectField defaultValue="13mm" label="Core Type" value={coreType} onChange={(e) => setCoreType(e.target.value)}>
                     {['7mm', '13mm', 'PVC', 'None'].map((v) => (
                       <MenuItem key={v} value={v}>
                         {v}
@@ -2128,6 +2175,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               productType={productType}
               estimatedPallets={estimatedPallets}
               productDescription={liveQuoteProductDescription}
+              onClearPricePerKgOverride={clearPricePerKgOverride}
             />
           </StickySideAside>
         ) : null}
@@ -2144,6 +2192,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
             productType={productType}
             estimatedPallets={estimatedPallets}
             productDescription={liveQuoteProductDescription}
+            onClearPricePerKgOverride={clearPricePerKgOverride}
           />
         </MobileFixedBottomAside>
       ) : null}

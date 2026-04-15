@@ -127,7 +127,7 @@ export function buildSpecAndQuantityFromRow(
     },
     packaging: {
       pack_mode: 'Rolls',
-      core_type: strCell(row.core_type) || '7mm',
+      core_type: strCell(row.core_type) || '13mm',
       core_policy: 'Include',
       bags_per_carton: finishMode === 'Cartons' ? Math.round(numCell(row.bags_per_carton, 0)) || null : null,
       pallet_type: 'Std',

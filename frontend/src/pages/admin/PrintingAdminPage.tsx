@@ -402,7 +402,6 @@ export function PrintingAdminPage() {
                     inputProps={{ inputMode: 'decimal', min: 0, step: 'any' }}
                     value={nuMpm}
                     onChange={(e) => setNuMpm(e.target.value ? parseFloat(e.target.value) : '')}
-                    helperText="optional"
                   />
                 </TableCell>
                 <TableCell align="right">

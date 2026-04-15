@@ -153,7 +153,7 @@ export function buildQuickQuoteInputsFromSpec(
     num_colours: numColours,
     finish_mode: finishMode,
     bags_per_carton: finishMode === 'Cartons' ? (pack.bags_per_carton != null ? Number(pack.bags_per_carton) : null) : null,
-    core_type: pack.core_type != null ? String(pack.core_type) : '7mm',
+    core_type: pack.core_type != null ? String(pack.core_type) : '13mm',
     roll_weight_billing: finishMode === 'Rolls' ? mapRollBilling(id.roll_weight_billing) : null,
     extruder_code: opts?.extruderCode ?? null,
     colour_components: colourComponents,

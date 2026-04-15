@@ -16,7 +16,7 @@ from app.db.models.rate_cards import (
     Plate,
     PrintingRate,
     PrintingPricingTier,
-    QuoteDefaults,
+    QuoteMaterialsRetailBand,
     Resin,
     ResinBlend,
     ResinBlendComponent,
@@ -147,7 +147,6 @@ async def get_ratebook():
                 PrintingPricingTier.num_colours.asc(),
             )
         ).all()
-        qd_row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
         conversion_speeds = db.execute(
             select(
                 ConversionSpeed.min_gauge_um,
@@ -168,8 +167,22 @@ async def get_ratebook():
         packing_factor_rolls = float(packaging_row.packing_factor_rolls) if packaging_row else 0.7
         packing_factor_cartons = float(packaging_row.packing_factor_cartons) if packaging_row else 0.5
         pallet_volume_m3 = float(packaging_row.pallet_volume_m3) if packaging_row else 1.0
-        extrusion_retail_addon_per_kg = (
-            float(getattr(qd_row, "extrusion_retail_addon_per_kg", 1.8) or 1.8) if qd_row is not None else 1.8
+        materials_retail_bands_rows = (
+            db.execute(
+                select(
+                    QuoteMaterialsRetailBand.id,
+                    QuoteMaterialsRetailBand.product_group,
+                    QuoteMaterialsRetailBand.width_min_mm,
+                    QuoteMaterialsRetailBand.width_max_mm,
+                    QuoteMaterialsRetailBand.moq_plain_kg,
+                    QuoteMaterialsRetailBand.retail_price_per_kg,
+                    QuoteMaterialsRetailBand.moq_printed_kg,
+                ).order_by(
+                    QuoteMaterialsRetailBand.product_group.asc(),
+                    QuoteMaterialsRetailBand.width_min_mm.asc(),
+                )
+            )
+            .all()
         )
 
     # Model assumptions (aligned with quotes UI / ratebook pricing):
@@ -234,7 +247,18 @@ async def get_ratebook():
             }
             for method, max_w, nc, min_m, min_charge, setup_cost, setup_price, cost_1000m, price_1000m, mpm in printing_pricing_tiers
         ],
-        "extrusion_retail_addon_per_kg": extrusion_retail_addon_per_kg,
+        "materials_retail_bands": [
+            {
+                "id": int(rid),
+                "product_group": str(pg),
+                "width_min_mm": int(wmin),
+                "width_max_mm": int(wmax),
+                "moq_plain_kg": (float(mp) if mp is not None else None),
+                "retail_price_per_kg": (float(rppk) if rppk is not None else None),
+                "moq_printed_kg": (float(mprt) if mprt is not None else None),
+            }
+            for rid, pg, wmin, wmax, mp, rppk, mprt in materials_retail_bands_rows
+        ],
         "conversion_speeds": [
             {
                 "min_gauge_um": int(min_g),

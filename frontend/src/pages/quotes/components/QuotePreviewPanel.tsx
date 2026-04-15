@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Box, Divider, Paper, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { Box, Divider, IconButton, Paper, SvgIcon, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import {
   fmtCount,
   fmtDollarsLineItem,
@@ -56,6 +56,8 @@ export function QuotePreviewPanel(props: {
   estimatedPallets: number | null
   /** From {@link computeProductDescriptionFromSpec} on the current quote spec (same as product list / editor). */
   productDescription?: string
+  /** Clears the optional Price per kg override (e.g. from the Adjustments row). */
+  onClearPricePerKgOverride?: () => void
 }) {
   const {
     preview,
@@ -66,6 +68,7 @@ export function QuotePreviewPanel(props: {
     productType,
     estimatedPallets,
     productDescription = '',
+    onClearPricePerKgOverride,
   } = props
   const p = preview
   const dash = '—'
@@ -298,7 +301,23 @@ export function QuotePreviewPanel(props: {
           </TableRow>
           {p?.price_override_active ? (
             <TableRow>
-              <TableCell>Adjustments</TableCell>
+              <TableCell>
+                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, verticalAlign: 'middle' }}>
+                  Adjustments
+                  {onClearPricePerKgOverride ? (
+                    <IconButton
+                      size="small"
+                      aria-label="Clear price per kg override"
+                      onClick={onClearPricePerKgOverride}
+                      sx={{ p: 0.25, ml: 0.25, color: 'text.secondary', '&:hover': { color: 'text.primary' } }}
+                    >
+                      <SvgIcon fontSize="small" viewBox="0 0 24 24" aria-hidden>
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                      </SvgIcon>
+                    </IconButton>
+                  ) : null}
+                </Box>
+              </TableCell>
               <TableCell align="right">{dash}</TableCell>
               <TableCell align="right">
                 {p.adjustments_price != null ? (

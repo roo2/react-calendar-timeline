@@ -1,32 +1,159 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import {
   adminDeleteExtruder,
   adminSaveExtruder,
   adminSaveExtrusionWasteFactor,
-  adminSaveQuoteDefaults,
+  adminSaveMaterialsRetailBands,
   fetchAdminExtrusionTab,
-  fetchAdminQuoteDefaults,
+  type MaterialsRetailBand,
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 import type { Extruder, ExtrusionWasteFactor } from './types'
 
+const MATERIAL_GROUPS: Array<{ key: MaterialsRetailBand['product_group']; title: string }> = [
+  { key: 'tube', title: 'Tube' },
+  { key: 'centerfold', title: 'Centerfold' },
+  { key: 'sheet', title: 'Sheet' },
+  { key: 'u_film', title: 'U-Film' },
+  { key: 'bag', title: 'Bag' },
+]
+
+function numOrNull(v: string): number | null {
+  const s = v.trim()
+  if (s === '' || s === '—') return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+
+function fmtCell(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(Number(n))) return ''
+  return String(n)
+}
+
+type NewMaterialsBandPayload = Omit<MaterialsRetailBand, 'id'>
+
+function NewMaterialsBandRow(props: {
+  group: MaterialsRetailBand['product_group']
+  disabled: boolean
+  onAdd: (row: NewMaterialsBandPayload) => void
+}) {
+  const { group, disabled, onAdd } = props
+  const [wmin, setWmin] = useState('')
+  const [wmax, setWmax] = useState('')
+  const [moqPlain, setMoqPlain] = useState('')
+  const [moqPrinted, setMoqPrinted] = useState('')
+  const [retail, setRetail] = useState('')
+
+  const canAdd = useMemo(() => {
+    const wminN = Number(wmin)
+    const wmaxN = Number(wmax)
+    if (wmin === '' || wmax === '') return false
+    if (!Number.isFinite(wminN) || !Number.isFinite(wmaxN)) return false
+    if (wminN < 0) return false
+    if (wmaxN < wminN) return false
+    return true
+  }, [wmin, wmax])
+
+  function submit() {
+    if (!canAdd || disabled) return
+    const wminN = Math.round(Number(wmin))
+    const wmaxN = Math.round(Number(wmax))
+    const rt = retail.trim()
+    const retailN = rt === '' || rt === '—' ? null : Number(rt)
+    onAdd({
+      product_group: group,
+      width_min_mm: wminN,
+      width_max_mm: wmaxN,
+      moq_plain_kg: numOrNull(moqPlain),
+      retail_price_per_kg: retailN != null && Number.isFinite(retailN) ? retailN : null,
+      moq_printed_kg: numOrNull(moqPrinted),
+    })
+    setWmin('')
+    setWmax('')
+    setMoqPlain('')
+    setMoqPrinted('')
+    setRetail('')
+  }
+
+  return (
+    <TableRow>
+      <TableCell>
+        <TextField
+          size="small"
+          label="Width min (mm)"
+          inputProps={{ inputMode: 'numeric' }}
+          value={wmin}
+          onChange={(e) => setWmin(e.target.value)}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          label="Width max (mm)"
+          inputProps={{ inputMode: 'numeric' }}
+          value={wmax}
+          onChange={(e) => setWmax(e.target.value)}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          label="MOQ plain (kg)"
+          placeholder="—"
+          value={moqPlain}
+          onChange={(e) => setMoqPlain(e.target.value)}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          label="Retail ($/kg)"
+          placeholder="—"
+          inputProps={{ inputMode: 'decimal' }}
+          value={retail}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) setRetail(v)
+          }}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          label="MOQ printed (kg)"
+          placeholder="—"
+          value={moqPrinted}
+          onChange={(e) => setMoqPrinted(e.target.value)}
+        />
+      </TableCell>
+      <TableCell align="right">
+        <Button size="small" variant="outlined" disabled={disabled || !canAdd} onClick={() => submit()}>
+          Add band
+        </Button>
+      </TableCell>
+    </TableRow>
+  )
+}
+
 export function ExtrusionAdminPage() {
   const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
   const extruders = useAppSelector((s) => s.adminRateCards.extruders.items)
   const wasteFactors = useAppSelector((s) => s.adminRateCards.extrusionWasteFactors.items)
-  const quoteDefaults = useAppSelector((s) => s.adminRateCards.quoteDefaults)
+  const serverBands = useAppSelector((s) => s.adminRateCards.materialsRetailBands.items)
   const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.extrusionTab)
   const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
-  const [retailAddonPerKg, setRetailAddonPerKg] = useState<number | ''>(1.8)
-  const [savingRetail, setSavingRetail] = useState(false)
+  const [draftBands, setDraftBands] = useState<MaterialsRetailBand[]>([])
+  /** In-progress retail $/kg text keyed by band id (allows typing `4.` before blur). */
+  const [retailPriceText, setRetailPriceText] = useState<Record<number, string>>({})
+  const [savingBands, setSavingBands] = useState(false)
 
   const [newExtruderCode, setNewExtruderCode] = useState('')
   const [newExtruderModel, setNewExtruderModel] = useState('')
@@ -41,38 +168,74 @@ export function ExtrusionAdminPage() {
 
   useEffect(() => {
     void dispatch(fetchAdminExtrusionTab())
-    void dispatch(fetchAdminQuoteDefaults())
   }, [dispatch])
 
   useEffect(() => {
-    const d = quoteDefaults.data
-    if (!d) return
-    setRetailAddonPerKg(d.extrusion_retail_addon_per_kg)
-  }, [quoteDefaults.data])
+    setDraftBands((serverBands || []).map((b) => ({ ...b })))
+    setRetailPriceText({})
+  }, [serverBands])
+
+  const bandsDirty = useMemo(() => {
+    const a = JSON.stringify(draftBands || [])
+    const b = JSON.stringify(serverBands || [])
+    const overlayDirty = Object.keys(retailPriceText).length > 0
+    return a !== b || overlayDirty
+  }, [draftBands, serverBands, retailPriceText])
 
   const displayErr = err || tabErr
 
-  const retailDirty =
-    quoteDefaults.data != null &&
-    retailAddonPerKg !== '' &&
-    Number(retailAddonPerKg) !== quoteDefaults.data.extrusion_retail_addon_per_kg
-
-  async function saveRetailAddon() {
-    const v = Number(retailAddonPerKg)
-    if (!Number.isFinite(v) || v < 0) {
-      setErr('Retail price per kg must be a non-negative number.')
-      return
+  function retailPricePerKgForSave(r: MaterialsRetailBand): number | null {
+    if (Object.prototype.hasOwnProperty.call(retailPriceText, r.id)) {
+      const s = String(retailPriceText[r.id] ?? '').trim()
+      if (s === '' || s === '—') return null
+      const n = Number(s)
+      return Number.isFinite(n) ? n : r.retail_price_per_kg ?? null
     }
+    return r.retail_price_per_kg ?? null
+  }
+
+  async function saveMaterialsBands() {
     try {
       setErr(null)
-      setSavingRetail(true)
-      await dispatch(adminSaveQuoteDefaults({ extrusion_retail_addon_per_kg: v })).unwrap()
+      setSavingBands(true)
+      const payload = (draftBands || []).map((r) => ({
+        product_group: r.product_group,
+        width_min_mm: Math.round(Number(r.width_min_mm || 0)),
+        width_max_mm: Math.round(Number(r.width_max_mm || 0)),
+        moq_plain_kg: r.moq_plain_kg,
+        retail_price_per_kg: retailPricePerKgForSave(r),
+        moq_printed_kg: r.moq_printed_kg,
+      }))
+      await dispatch(adminSaveMaterialsRetailBands(payload)).unwrap()
+      setRetailPriceText({})
       setDirty(false)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to save retail price per kg')
+      setErr(e instanceof Error ? e.message : 'Failed to save materials retail bands')
     } finally {
-      setSavingRetail(false)
+      setSavingBands(false)
     }
+  }
+
+  function updateBandRow(id: number, patch: Partial<MaterialsRetailBand>) {
+    setDirty(true)
+    setDraftBands((cur) => cur.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+  }
+
+  function appendMaterialsBand(row: NewMaterialsBandPayload) {
+    setDirty(true)
+    const negIds = draftBands.map((b) => b.id).filter((x) => x < 0)
+    const nextId = (negIds.length ? Math.min(...negIds) : 0) - 1
+    setDraftBands((cur) => [...cur, { id: nextId, ...row }])
+  }
+
+  function removeBandRow(id: number) {
+    setDirty(true)
+    setRetailPriceText((cur) => {
+      const next = { ...cur }
+      delete next[id]
+      return next
+    })
+    setDraftBands((cur) => cur.filter((r) => r.id !== id))
   }
 
   async function saveExtruder(code: string, patch: Omit<Extruder, 'extruder_code'>) {
@@ -121,7 +284,6 @@ export function ExtrusionAdminPage() {
     }
   }
 
-  /** Match ratebook + schedule: decision width ascending, null/missing width last, then code. */
   const extrudersSorted = useMemo(() => {
     return (extruders || [])
       .slice()
@@ -140,34 +302,131 @@ export function ExtrusionAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Extrusion"
-        subtitle="Extruder rate cards (quotes & throughput) and extrusion waste factors."
+        subtitle="Extruder rate cards (quotes & throughput), extrusion waste factors, and quote materials retail bands."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
-      <Paper variant="outlined" sx={{ p: 2, maxWidth: 560 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Quote retail — materials
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          For quotes, sell-side material $/kg is blended material cost plus this amount (per kg of product plastic). Waste
-          material is priced at the same retail $/kg.
-        </Typography>
-        {quoteDefaults.status === 'loading' && !quoteDefaults.data ? (
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ sm: 'center' }} justifyContent="space-between" spacing={2} sx={{ mb: 1 }}>
+          <Box>
+            <Typography variant="subtitle1">Quote materials retail (width bands)</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 900, mt: 0.5 }}>
+              Film size is matched against <b>product width</b> (mm) on the quote. Tube pricing uses the Tube table;{' '}
+              <b>Sleeve</b> uses the same rows as Tube. Sell-side material $/kg uses <b>Retail price ($/kg)</b> when set;
+              otherwise it falls back to blended resin cost. Minimum order quantities drive the Quantity panel hints on
+              quotes.
+            </Typography>
+          </Box>
+          <Button variant="contained" disabled={savingBands || !bandsDirty} onClick={() => void saveMaterialsBands()}>
+            {savingBands ? 'Saving…' : 'Save materials bands'}
+          </Button>
+        </Stack>
+
+        {loading && draftBands.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
         ) : (
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'flex-end' }}>
-            <TextField
-              size="small"
-              label="Retail price per kg ($/kg)"
-              type="number"
-              inputProps={{ min: 0, step: 0.01 }}
-              value={retailAddonPerKg}
-              onChange={(e) => setRetailAddonPerKg(e.target.value === '' ? '' : Number(e.target.value))}
-              sx={{ minWidth: 240 }}
-            />
-            <Button variant="contained" disabled={savingRetail || !retailDirty} onClick={() => void saveRetailAddon()}>
-              {savingRetail ? 'Saving…' : 'Save'}
-            </Button>
+          <Stack spacing={3}>
+            {MATERIAL_GROUPS.map((g) => {
+              const rows = draftBands.filter((b) => b.product_group === g.key).sort((a, b) => a.width_min_mm - b.width_min_mm)
+              return (
+                <Box key={g.key}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    {g.title}
+                  </Typography>
+                  <AdminDataTable>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: 120 }}>Width min (mm)</TableCell>
+                        <TableCell sx={{ width: 120 }}>Width max (mm)</TableCell>
+                        <TableCell sx={{ width: 170 }}>Minimum order quantity (kg)</TableCell>
+                        <TableCell sx={{ width: 160 }}>Retail price ($/kg)</TableCell>
+                        <TableCell sx={{ width: 220 }}>Minimum order quantity (printed) (kg)</TableCell>
+                        <TableCell sx={{ width: 120 }} />
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {rows.map((r) => (
+                          <TableRow key={`${r.id}-${r.product_group}-${r.width_min_mm}-${r.width_max_mm}`} hover>
+                            <TableCell>
+                              <TextField
+                                size="small"
+                                inputProps={{ inputMode: 'numeric' }}
+                                value={String(r.width_min_mm)}
+                                onChange={(e) => updateBandRow(r.id, { width_min_mm: Math.round(Number(e.target.value || 0)) })}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                size="small"
+                                inputProps={{ inputMode: 'numeric' }}
+                                value={String(r.width_max_mm)}
+                                onChange={(e) => updateBandRow(r.id, { width_max_mm: Math.round(Number(e.target.value || 0)) })}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                size="small"
+                                placeholder="—"
+                                value={fmtCell(r.moq_plain_kg)}
+                                onChange={(e) => updateBandRow(r.id, { moq_plain_kg: numOrNull(e.target.value) })}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                size="small"
+                                placeholder="—"
+                                inputProps={{ inputMode: 'decimal' }}
+                                value={Object.prototype.hasOwnProperty.call(retailPriceText, r.id) ? retailPriceText[r.id] : fmtCell(r.retail_price_per_kg)}
+                                onFocus={() => {
+                                  setRetailPriceText((cur) => ({
+                                    ...cur,
+                                    [r.id]: fmtCell(r.retail_price_per_kg),
+                                  }))
+                                }}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) {
+                                    setDirty(true)
+                                    setRetailPriceText((cur) => ({ ...cur, [r.id]: v }))
+                                  }
+                                }}
+                                onBlur={() => {
+                                  const raw = (retailPriceText[r.id] ?? fmtCell(r.retail_price_per_kg)).trim()
+                                  setRetailPriceText((cur) => {
+                                    const next = { ...cur }
+                                    delete next[r.id]
+                                    return next
+                                  })
+                                  const parsed = raw === '' || raw === '—' ? null : Number(raw)
+                                  const nextVal = parsed != null && Number.isFinite(parsed) ? parsed : null
+                                  const prev = r.retail_price_per_kg ?? null
+                                  if (nextVal !== prev) {
+                                    updateBandRow(r.id, { retail_price_per_kg: nextVal })
+                                  }
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                size="small"
+                                placeholder="—"
+                                value={fmtCell(r.moq_printed_kg)}
+                                onChange={(e) => updateBandRow(r.id, { moq_printed_kg: numOrNull(e.target.value) })}
+                              />
+                            </TableCell>
+                            <TableCell align="right">
+                              <Button size="small" color="error" variant="outlined" onClick={() => removeBandRow(r.id)}>
+                                Remove
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      <NewMaterialsBandRow group={g.key} disabled={savingBands} onAdd={appendMaterialsBand} />
+                    </TableBody>
+                  </AdminDataTable>
+                </Box>
+              )
+            })}
           </Stack>
         )}
       </Paper>
@@ -284,12 +543,7 @@ export function ExtrusionAdminPage() {
             </TableHead>
             <TableBody>
               {wasteFactors.map((r) => (
-                <WasteFactorRow
-                  key={r.factor}
-                  row={r}
-                  saving={savingKey === `wf:${r.factor}`}
-                  onSave={saveWasteFactor}
-                />
+                <WasteFactorRow key={r.factor} row={r} saving={savingKey === `wf:${r.factor}`} onSave={saveWasteFactor} />
               ))}
             </TableBody>
           </AdminDataTable>
@@ -409,4 +663,3 @@ function WasteFactorRow(props: {
     </TableRow>
   )
 }
-

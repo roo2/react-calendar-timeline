@@ -24,7 +24,7 @@ from app.db.models.rate_cards import (
     Resin,
     ResinBlend,
     ResinBlendComponent,
-    QuoteDefaults,
+    QuoteMaterialsRetailBand,
     QuotePackagingSettings,
 )
 from app.db.session import SessionLocal
@@ -224,14 +224,6 @@ class QuotePackagingSettingsDTO(BaseModel):
     packing_factor_rolls: float
     packing_factor_cartons: float
     pallet_volume_m3: float
-
-
-class QuoteDefaultsDTO(BaseModel):
-    extrusion_retail_addon_per_kg: float
-
-
-class QuoteDefaultsUpsertRequest(BaseModel):
-    extrusion_retail_addon_per_kg: float = Field(..., ge=0)
 
 
 class QuotePackagingSettingsUpsertRequest(BaseModel):
@@ -647,42 +639,116 @@ async def delete_core(core_type: str):
 
 
 
+_MATERIALS_RETAIL_GROUPS = frozenset({"tube", "centerfold", "sheet", "u_film", "bag"})
+
+
+class MaterialsRetailBandDTO(BaseModel):
+    id: int
+    product_group: str
+    width_min_mm: int
+    width_max_mm: int
+    moq_plain_kg: float | None
+    retail_price_per_kg: float | None
+    moq_printed_kg: float | None
+
+
+class MaterialsRetailBandUpsertRow(BaseModel):
+    product_group: str = Field(..., min_length=1, max_length=32)
+    width_min_mm: int
+    width_max_mm: int
+    moq_plain_kg: float | None = None
+    retail_price_per_kg: float | None = None
+    moq_printed_kg: float | None = None
+
+
+class MaterialsRetailBandsUpsertRequest(BaseModel):
+    bands: List[MaterialsRetailBandUpsertRow]
+
+
 @router.get(
-    "/quote-defaults",
-    response_model=QuoteDefaultsDTO,
+    "/materials-retail-bands",
+    response_model=List[MaterialsRetailBandDTO],
     dependencies=[Depends(require_roles("SYS_ADMIN"))],
 )
-async def get_quote_defaults():
+async def list_materials_retail_bands():
     with SessionLocal() as db:
-        row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
-        if not row:
-            return QuoteDefaultsDTO(extrusion_retail_addon_per_kg=1.8)
-        return QuoteDefaultsDTO(
-            extrusion_retail_addon_per_kg=float(getattr(row, "extrusion_retail_addon_per_kg", 1.8) or 1.8),
+        rows = (
+            db.execute(
+                select(QuoteMaterialsRetailBand).order_by(
+                    QuoteMaterialsRetailBand.product_group.asc(),
+                    QuoteMaterialsRetailBand.width_min_mm.asc(),
+                )
+            )
+            .scalars()
+            .all()
         )
+        return [
+            MaterialsRetailBandDTO(
+                id=int(r.id),
+                product_group=str(r.product_group),
+                width_min_mm=int(r.width_min_mm),
+                width_max_mm=int(r.width_max_mm),
+                moq_plain_kg=(float(r.moq_plain_kg) if r.moq_plain_kg is not None else None),
+                retail_price_per_kg=(float(r.retail_price_per_kg) if r.retail_price_per_kg is not None else None),
+                moq_printed_kg=(float(r.moq_printed_kg) if r.moq_printed_kg is not None else None),
+            )
+            for r in rows
+        ]
 
 
 @router.put(
-    "/quote-defaults",
-    response_model=QuoteDefaultsDTO,
+    "/materials-retail-bands",
+    response_model=List[MaterialsRetailBandDTO],
     dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
 )
-async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
+async def replace_materials_retail_bands(payload: MaterialsRetailBandsUpsertRequest):
+    for b in payload.bands:
+        g = (b.product_group or "").strip()
+        if g not in _MATERIALS_RETAIL_GROUPS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid product_group: {g}",
+            )
+        if int(b.width_max_mm) < int(b.width_min_mm):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="width_max_mm must be >= width_min_mm")
+
     with SessionLocal.begin() as db:
-        row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
-        if not row:
-            row = QuoteDefaults(id=1, extrusion_retail_addon_per_kg=payload.extrusion_retail_addon_per_kg)
-            db.add(row)
-        else:
-            row.extrusion_retail_addon_per_kg = payload.extrusion_retail_addon_per_kg
+        db.execute(delete(QuoteMaterialsRetailBand))
+        for b in payload.bands:
+            db.add(
+                QuoteMaterialsRetailBand(
+                    product_group=(b.product_group or "").strip(),
+                    width_min_mm=int(b.width_min_mm),
+                    width_max_mm=int(b.width_max_mm),
+                    moq_plain_kg=b.moq_plain_kg,
+                    retail_price_per_kg=b.retail_price_per_kg,
+                    moq_printed_kg=b.moq_printed_kg,
+                )
+            )
 
     with SessionLocal() as db:
-        row2 = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
-        if not row2:
-            return QuoteDefaultsDTO(extrusion_retail_addon_per_kg=1.8)
-        return QuoteDefaultsDTO(
-            extrusion_retail_addon_per_kg=float(getattr(row2, "extrusion_retail_addon_per_kg", 1.8) or 1.8),
+        rows = (
+            db.execute(
+                select(QuoteMaterialsRetailBand).order_by(
+                    QuoteMaterialsRetailBand.product_group.asc(),
+                    QuoteMaterialsRetailBand.width_min_mm.asc(),
+                )
+            )
+            .scalars()
+            .all()
         )
+        return [
+            MaterialsRetailBandDTO(
+                id=int(r.id),
+                product_group=str(r.product_group),
+                width_min_mm=int(r.width_min_mm),
+                width_max_mm=int(r.width_max_mm),
+                moq_plain_kg=(float(r.moq_plain_kg) if r.moq_plain_kg is not None else None),
+                retail_price_per_kg=(float(r.retail_price_per_kg) if r.retail_price_per_kg is not None else None),
+                moq_printed_kg=(float(r.moq_printed_kg) if r.moq_printed_kg is not None else None),
+            )
+            for r in rows
+        ]
 
 
 @router.get(

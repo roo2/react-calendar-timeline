@@ -22,8 +22,14 @@ export type PackagingSettings = {
   pallet_volume_m3: number
 }
 
-export type QuoteDefaultsSettings = {
-  extrusion_retail_addon_per_kg: number
+export type MaterialsRetailBand = {
+  id: number
+  product_group: string
+  width_min_mm: number
+  width_max_mm: number
+  moq_plain_kg: number | null
+  retail_price_per_kg: number | null
+  moq_printed_kg: number | null
 }
 
 export type ConversionSpeed = {
@@ -54,6 +60,7 @@ type AdminRateCardsState = {
   cores: ReturnType<typeof listInit<Core>>
   extruders: ReturnType<typeof listInit<Extruder>>
   extrusionWasteFactors: ReturnType<typeof listInit<ExtrusionWasteFactor>>
+  materialsRetailBands: ReturnType<typeof listInit<MaterialsRetailBand>>
   inks: ReturnType<typeof listInit<Ink>>
   plates: ReturnType<typeof listInit<Plate>>
   printingPricingTiers: ReturnType<typeof listInit<PrintingPricingTier>>
@@ -63,11 +70,6 @@ type AdminRateCardsState = {
     status: Status
     error: string | null
     data: PackagingSettings | null
-  }
-  quoteDefaults: {
-    status: Status
-    error: string | null
-    data: QuoteDefaultsSettings | null
   }
   /** Used by mega AdminPage load (parallel). */
   hub: { status: Status; error: string | null }
@@ -91,13 +93,13 @@ const initialState: AdminRateCardsState = {
   cores: listInit(),
   extruders: listInit(),
   extrusionWasteFactors: listInit(),
+  materialsRetailBands: listInit(),
   inks: listInit(),
   plates: listInit(),
   printingPricingTiers: listInit(),
   conversionSpeeds: listInit(),
   conversionFactors: listInit(),
   packaging: { status: 'idle', error: null, data: null },
-  quoteDefaults: { status: 'idle', error: null, data: null },
   hub: { status: 'idle', error: null },
   printingBundle: { status: 'idle', error: null },
   resinsMaterials: { status: 'idle', error: null },
@@ -153,15 +155,27 @@ export const fetchAdminResinBlendsTab = createAsyncThunk('adminRateCards/resinBl
 })
 
 export const fetchAdminExtrusionTab = createAsyncThunk('adminRateCards/extrusionTab', async () => {
-  const [extruders, wasteFactors] = await Promise.all([
+  const [extruders, wasteFactors, materialsBands] = await Promise.all([
     apiFetch<Extruder[]>('/api/admin/rate-cards/extruders'),
     apiFetch<ExtrusionWasteFactor[]>('/api/admin/rate-cards/extrusion-waste-factors'),
+    apiFetch<MaterialsRetailBand[]>('/api/admin/rate-cards/materials-retail-bands'),
   ])
   return {
     extruders: Array.isArray(extruders) ? extruders : [],
     wasteFactors: Array.isArray(wasteFactors) ? wasteFactors : [],
+    materialsBands: Array.isArray(materialsBands) ? materialsBands : [],
   }
 })
+
+export const adminSaveMaterialsRetailBands = createAsyncThunk(
+  'adminRateCards/materialsRetailBands/save',
+  async (bands: Omit<MaterialsRetailBand, 'id'>[]) => {
+    return await apiFetch<MaterialsRetailBand[]>('/api/admin/rate-cards/materials-retail-bands', {
+      method: 'PUT',
+      body: JSON.stringify({ bands }),
+    })
+  },
+)
 
 export const fetchAdminConversionTab = createAsyncThunk('adminRateCards/conversionTab', async () => {
   const [speeds, factors] = await Promise.all([
@@ -456,20 +470,6 @@ export const adminSavePackagingSettings = createAsyncThunk(
   },
 )
 
-export const fetchAdminQuoteDefaults = createAsyncThunk('adminRateCards/quoteDefaults/fetch', async () => {
-  return await apiFetch<QuoteDefaultsSettings>('/api/admin/rate-cards/quote-defaults')
-})
-
-export const adminSaveQuoteDefaults = createAsyncThunk(
-  'adminRateCards/quoteDefaults/save',
-  async (payload: QuoteDefaultsSettings) => {
-    return await apiFetch<QuoteDefaultsSettings>('/api/admin/rate-cards/quote-defaults', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
-  },
-)
-
 function mergeBy<T>(items: T[], saved: T, match: (a: T, b: T) => boolean, sort?: (a: T, b: T) => number) {
   const idx = items.findIndex((x) => match(x, saved))
   let next: T[]
@@ -570,6 +570,8 @@ const slice = createSlice({
       s.extruders.status = 'succeeded'
       s.extrusionWasteFactors.items = a.payload.wasteFactors
       s.extrusionWasteFactors.status = 'succeeded'
+      s.materialsRetailBands.items = a.payload.materialsBands
+      s.materialsRetailBands.status = 'succeeded'
     })
     b.addCase(fetchAdminExtrusionTab.rejected, (s, a) => {
       s.extrusionTab.status = 'failed'
@@ -780,24 +782,10 @@ const slice = createSlice({
       s.packaging.error = null
     })
 
-    b.addCase(fetchAdminQuoteDefaults.pending, (s) => {
-      s.quoteDefaults.status = 'loading'
-      s.quoteDefaults.error = null
-    })
-    b.addCase(fetchAdminQuoteDefaults.fulfilled, (s, a) => {
-      s.quoteDefaults.status = 'succeeded'
-      s.quoteDefaults.data = a.payload
-      s.quoteDefaults.error = null
-    })
-    b.addCase(fetchAdminQuoteDefaults.rejected, (s, a) => {
-      s.quoteDefaults.status = 'failed'
-      s.quoteDefaults.error = a.error.message || 'Failed to load quote defaults'
-    })
-
-    b.addCase(adminSaveQuoteDefaults.fulfilled, (s, a) => {
-      s.quoteDefaults.data = a.payload
-      s.quoteDefaults.status = 'succeeded'
-      s.quoteDefaults.error = null
+    b.addCase(adminSaveMaterialsRetailBands.fulfilled, (s, a) => {
+      s.materialsRetailBands.items = a.payload
+      s.materialsRetailBands.status = 'succeeded'
+      s.materialsRetailBands.error = null
     })
   },
 })

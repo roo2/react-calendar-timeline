@@ -129,7 +129,7 @@ export function makeDefaultSpec(): SpecPayload {
     },
     packaging: {
       pack_mode: 'Rolls',
-      core_type: '7mm',
+      core_type: '13mm',
       core_policy: 'Include',
       bags_per_carton: null,
       pallet_type: 'Chep',
@@ -1507,8 +1507,8 @@ export function SpecPayloadForm(props: {
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
           <DefaultSelectField
             label="Core Type"
-            defaultValue="7mm"
-            value={packaging.core_type || '7mm'}
+            defaultValue="13mm"
+            value={packaging.core_type || '13mm'}
             onChange={(e) => update((d) => (d.packaging.core_type = e.target.value))}
           >
             {['7mm', '13mm', 'PVC', 'None'].map((v) => (

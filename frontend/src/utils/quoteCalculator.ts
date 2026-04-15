@@ -1,10 +1,20 @@
+export type MaterialsRetailBand = {
+  id?: number
+  product_group: 'tube' | 'centerfold' | 'sheet' | 'u_film' | 'bag' | string
+  width_min_mm: number
+  width_max_mm: number
+  moq_plain_kg: number | null
+  retail_price_per_kg: number | null
+  moq_printed_kg: number | null
+}
+
 export type QuoteRatebook = {
   resins: Record<string, { price_per_kg: number; density: number }>
   additives_price_per_kg: Record<string, number>
   colours: Record<string, { price_per_kg: number }>
   cores: Record<string, { cost_per_meter: number; kg_per_meter: number }>
-  /** Added to material $/kg for retail (materials + waste-at-retail) vs cost. */
-  extrusion_retail_addon_per_kg?: number
+  /** Width-band retail material $/kg + MOQs (replaces legacy single add-on). */
+  materials_retail_bands?: MaterialsRetailBand[]
   extruders?: Array<{
     extruder_code: string
     model: string | null
@@ -106,6 +116,9 @@ export type QuotePreview = {
   cartons?: number | null
   kg_per_carton?: number | null
   printing_unavailable_reason?: string | null
+  /** Single-line MOQ hint for the current plain/printed selection (product width band). */
+  materials_moq_summary_line?: string | null
+  materials_moq_warning?: string | null
   cost_breakdown: {
     material_cost: number
     extrusion_cost: number
@@ -371,6 +384,132 @@ function convFactor(ratebook: QuoteRatebook, slug: string, fallback = 0): number
   const v = (ratebook as any)?.conversion_factors?.[slug]
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
+}
+
+export function mapProductTypeToMaterialsRetailGroup(productType: string): NonNullable<MaterialsRetailBand['product_group']> | null {
+  const pt = String(productType || '').trim()
+  if (pt === 'Tube' || pt === 'Sleeve') return 'tube'
+  if (pt === 'Centerfold') return 'centerfold'
+  if (pt === 'Sheet') return 'sheet'
+  if (pt === 'U-Film') return 'u_film'
+  if (pt === 'Bag') return 'bag'
+  return null
+}
+
+export type MaterialsRetailBandResolution = {
+  band: MaterialsRetailBand | null
+  /** `exact` = width within a row; otherwise closest row was used (see UI warning). */
+  match: 'exact' | 'below_range' | 'above_range' | 'gap' | 'none'
+}
+
+/**
+ * Resolve the materials retail band for product width (mm).
+ * If width is outside all configured ranges for that product group, returns the **closest** band
+ * (`below_range` / `above_range` / `gap`) so pricing/MOQ still have a defined row.
+ */
+export function resolveMaterialsRetailBand(
+  ratebook: QuoteRatebook,
+  productType: string,
+  productWidthMm: number,
+): MaterialsRetailBandResolution {
+  const group = mapProductTypeToMaterialsRetailGroup(productType)
+  if (!group) return { band: null, match: 'none' }
+  const w = Math.round(Number(productWidthMm || 0))
+  if (!Number.isFinite(w) || w < 0) return { band: null, match: 'none' }
+  const bands = (Array.isArray(ratebook.materials_retail_bands) ? ratebook.materials_retail_bands : []).filter(
+    (b) => String(b.product_group) === group,
+  )
+  if (bands.length === 0) return { band: null, match: 'none' }
+
+  const rows = bands
+    .map((b) => ({
+      ...b,
+      width_min_mm: Number(b.width_min_mm),
+      width_max_mm: Number(b.width_max_mm),
+    }))
+    .sort((a, b) => a.width_min_mm - b.width_min_mm || a.width_max_mm - b.width_max_mm)
+
+  const exact = rows.find((b) => w >= b.width_min_mm && w <= b.width_max_mm)
+  if (exact) return { band: exact as MaterialsRetailBand, match: 'exact' }
+
+  const first = rows[0]
+  const last = rows[rows.length - 1]
+  if (w < first.width_min_mm) return { band: first as MaterialsRetailBand, match: 'below_range' }
+  if (w > last.width_max_mm) return { band: last as MaterialsRetailBand, match: 'above_range' }
+
+  for (let i = 0; i < rows.length - 1; i++) {
+    const a = rows[i]
+    const b = rows[i + 1]
+    if (w > a.width_max_mm && w < b.width_min_mm) {
+      const distA = w - a.width_max_mm
+      const distB = b.width_min_mm - w
+      const chosen = (distA <= distB ? a : b) as MaterialsRetailBand
+      return { band: chosen, match: 'gap' }
+    }
+  }
+
+  return { band: last as MaterialsRetailBand, match: 'above_range' }
+}
+
+export function buildMaterialsBandMatchWarning(
+  productType: string,
+  productWidthMm: number,
+  res: MaterialsRetailBandResolution,
+): string | null {
+  if (!res.band || res.match === 'exact' || res.match === 'none') return null
+  const pt = String(productType || '').trim() || 'This product'
+  const w = Math.round(Number(productWidthMm || 0))
+  const b = res.band
+  const bandRange = `${b.width_min_mm}–${b.width_max_mm}mm`
+  if (res.match === 'below_range') {
+    return `No materials retail band matches ${pt} at ${w}mm (below configured widths). Using closest band ${bandRange} for pricing and minimum order quantity.`
+  }
+  if (res.match === 'above_range') {
+    return `No materials retail band matches ${pt} at ${w}mm (above configured widths). Using closest band ${bandRange} for pricing and minimum order quantity.`
+  }
+  return `No materials retail band matches ${pt} at ${w}mm (between configured width ranges). Using closest band ${bandRange} for pricing and minimum order quantity.`
+}
+
+/** Returns the materials band for this width (exact match, or closest row if outside configured ranges). */
+export function pickMaterialsRetailBand(
+  ratebook: QuoteRatebook,
+  productType: string,
+  productWidthMm: number,
+): MaterialsRetailBand | null {
+  return resolveMaterialsRetailBand(ratebook, productType, productWidthMm).band
+}
+
+function materialsMoqEffectiveKg(band: MaterialsRetailBand | null, hasPrinting: boolean): number | null {
+  if (!band) return null
+  const plain = band.moq_plain_kg != null ? Number(band.moq_plain_kg) : null
+  const printed = band.moq_printed_kg != null ? Number(band.moq_printed_kg) : null
+  const pOk = plain != null && Number.isFinite(plain) && plain > 0
+  const prOk = printed != null && Number.isFinite(printed) && printed > 0
+  if (hasPrinting) {
+    if (prOk) return printed
+    if (pOk) return plain
+    return null
+  }
+  if (pOk) return plain
+  if (prOk) return printed
+  return null
+}
+
+/** One-line label + kg for the MOQ that applies to how the quote is set up (printed vs plain). */
+function buildMaterialsMoqSummaryLine(band: MaterialsRetailBand | null, hasPrinting: boolean): string | null {
+  if (!band) return null
+  const plain = band.moq_plain_kg != null && Number.isFinite(Number(band.moq_plain_kg)) ? Number(band.moq_plain_kg) : null
+  const printed = band.moq_printed_kg != null && Number.isFinite(Number(band.moq_printed_kg)) ? Number(band.moq_printed_kg) : null
+  const pOk = plain != null && plain > 0
+  const prOk = printed != null && printed > 0
+  if (hasPrinting) {
+    if (prOk && printed != null) return `Minimum order quantity (printed): ${roundMoney(printed)}kg`
+    if (pOk && plain != null) return `Minimum order quantity (plain): ${roundMoney(plain)}kg`
+    return null
+  }
+  if (pOk && plain != null) return `Minimum order quantity (plain): ${roundMoney(plain)}kg`
+  if (prOk && printed != null) return `Minimum order quantity (printed): ${roundMoney(printed)}kg`
+  return null
 }
 
 /** Conversion factor `roll_weight_avg` (kg) — admin Conversion → Production Factors (e.g. Average Roll Weight). */
@@ -674,7 +813,6 @@ export function computeRollMetrics(
 }
 
 export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): QuotePreview {
-  const retailAddonPerKg = Number(ratebook.extrusion_retail_addon_per_kg ?? 1.8)
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
   const units = d.units
   const rolls = d.rolls
@@ -737,8 +875,32 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const denom = 1 + colourExtraFrac + additivesExtraFrac
   const materialCostPerKg = denom > 0 ? (resinBaseCostPerKg + colourNumerator + additivesNumerator) / denom : 0
   const materialCost = materialCostPerKg * derivedTotalKg
-  const materialRetailPerKg = materialCostPerKg + (Number.isFinite(retailAddonPerKg) && retailAddonPerKg > 0 ? retailAddonPerKg : 0)
+
+  const hasPrintingForMaterials = String(inputs.print_method || 'None') !== 'None' && Math.max(0, Math.round(Number(inputs.num_colours || 0))) > 0
+  const materialsResolution = resolveMaterialsRetailBand(ratebook, inputs.product_type, Number(inputs.base_width_mm || 0))
+  const materialsBand = materialsResolution.band
+  const tableRetailPerKg =
+    materialsBand?.retail_price_per_kg != null && Number.isFinite(Number(materialsBand.retail_price_per_kg))
+      ? Number(materialsBand.retail_price_per_kg)
+      : null
+  const materialRetailPerKg =
+    tableRetailPerKg != null && tableRetailPerKg > 0 ? tableRetailPerKg : materialCostPerKg
   const materialPrice = materialRetailPerKg * derivedTotalKg
+
+  const moqEffective = materialsMoqEffectiveKg(materialsBand, hasPrintingForMaterials)
+  const compareKgForMoq = d.billedTotalsKg > 0 ? d.billedTotalsKg : d.derivedTotalKg
+  const materialsMoqWarning =
+    materialsBand &&
+    moqEffective != null &&
+    moqEffective > 0 &&
+    compareKgForMoq > 0 &&
+    compareKgForMoq + 1e-9 < moqEffective
+      ? `Below minimum order quantity: job is ${roundMoney(compareKgForMoq)}kg but this width needs at least ${roundMoney(moqEffective)}kg${
+          hasPrintingForMaterials ? ' (printed)' : ' (plain)'
+        }.`
+      : null
+
+  const materialsMoqSummaryLine = buildMaterialsMoqSummaryLine(materialsBand, hasPrintingForMaterials)
 
   const appliedExtrusionWasteFactors = computeAppliedExtrusionWasteFactors(inputs, ratebook)
   const extrusionExtraMinutes = computeExtrusionWasteMinutes(appliedExtrusionWasteFactors)
@@ -894,6 +1056,8 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     cartons,
     kg_per_carton: kgPerCarton,
     printing_unavailable_reason: printingUnavailableReason,
+    materials_moq_summary_line: materialsMoqSummaryLine,
+    materials_moq_warning: materialsMoqWarning,
     cost_breakdown: {
       material_cost: roundMoney(materialCost),
       extrusion_cost: roundMoney(extrusionCost),

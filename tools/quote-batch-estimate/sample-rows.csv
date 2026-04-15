@@ -12,4 +12,5 @@ customer,quoter,label,product_type,base_width_mm,gusset_mm,base_length_mm,thickn
 AZAPAK,Ross,Blue TINT LDPE bags on roll 510mm x 770mm x 30um 500/roll,Bag,510,,770,30,Rolls,None,0,RED,LD,,rolls_units,0,20,500,0,0,1090
 Gourmet Gardens,Ross,PBR 1000x1675x100 50/roll,Bag,1000,,1675,100,Rolls,None,0,RED,LD,,rolls_units,0,470,50,0,0,"30,163.56"
 Betta Blinds,Joe,LD Natural Poly Tubing 310 x 250um clear,Tube,310,,,250,Rolls,None,0,,LD,,rolls_kg,0,200,1,200,1,940
-QIS,Joe,Natural Poly Bags LD 610 910 30um,Bag,610,,910,30,Cartons,None,0,,LD,,Units,10000,,,,,1956
+Signet,Joe,Natural Poly Bags LD 610 910 30um,Bag,610,,910,30,Cartons,None,0,,LD,,units,10000,,,,,1956
+Signet,Joe,LD Poly Bags Green tint + UV ,Bag,150,,150,150,Cartons,None,0,,LD,,units,30000,,,,,2055

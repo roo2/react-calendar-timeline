@@ -143,7 +143,7 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
 
   const finishMode = p.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
   const packMode = finishMode
-  const coreType = (p.core_type as '7mm' | '13mm' | 'PVC' | 'None') || '7mm'
+  const coreType = (p.core_type as '7mm' | '13mm' | 'PVC' | 'None') || '13mm'
   const corePolicy = rollWeightBillingToCorePolicy(p.roll_weight_billing)
   const bagsPerCarton =
     finishMode === 'Cartons'
