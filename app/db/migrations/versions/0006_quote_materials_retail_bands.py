@@ -1,7 +1,11 @@
 """Quote materials retail bands (width-based MOQ + retail $/kg).
 
-Revision ID: 0006_quote_materials_retail_bands
+Revision ID: 0006_quote_mat_retail_bands
 Revises: 0005_drop_carton_options
+
+Note: keep `revision` ≤ 32 characters — Postgres stores it in
+`alembic_version.version_num` (VARCHAR(32) by default). The longer
+``0006_quote_materials_retail_bands`` id caused deploy failures on Heroku.
 """
 
 from __future__ import annotations
@@ -9,7 +13,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0006_quote_materials_retail_bands"
+revision = "0006_quote_mat_retail_bands"
 down_revision = "0005_drop_carton_options"
 branch_labels = None
 depends_on = None
