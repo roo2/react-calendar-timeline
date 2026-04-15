@@ -60,7 +60,7 @@ export type SpecQuantitySlice = {
 export function buildQuickQuoteInputsFromSpec(
   spec: SpecPayload,
   quantity: SpecQuantitySlice,
-  opts?: { extruderCode?: string | null },
+  opts?: { extruderCode?: string | null; ratebook?: QuoteRatebook | null },
 ): QuickQuoteInputs {
   const id = (spec as any).identity || {}
   const dim = (spec as any).dimensions || {}

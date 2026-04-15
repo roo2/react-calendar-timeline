@@ -6,8 +6,8 @@
  *   npm run estimate -- --ratebook ./ratebook.json --input ./rows.csv [--output ./out.csv]
  */
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 
 import { buildQuickQuoteInputsFromSpec } from '../../../frontend/src/utils/specToQuoteInputs'
@@ -15,26 +15,35 @@ import { computeQuickQuotePreview, type QuoteRatebook } from '../../../frontend/
 
 import { parseCsv } from './csv'
 import { buildSpecAndQuantityFromRow } from './buildSpecFromRow'
+import { parseResinBlendsJson, type ResinBlendPreset } from './resinBlends'
 
 function usage(): string {
   return `quote-batch-estimate
 
-  npm run estimate -- --ratebook <ratebook.json> --input <rows.csv> [--output <out.csv>]
+  npm run estimate -- --ratebook <ratebook.json> --input <rows.csv> [--output <out.csv>] [--resin-blends <resin-blends.json>]
 
   Export a real ratebook JSON from GET /api/rate-cards/ratebook (logged-in session) and pass it with --ratebook.
+  If ./resin-blends.json exists in the working directory (or pass --resin-blends), blend rows match the Quotes UI (default preset LD unless CSV resin_blend says otherwise).
   See README.md for CSV column definitions.
 `
 }
 
-function parseArgs(argv: string[]): { ratebook: string; input: string; output: string | null } {
+function parseArgs(argv: string[]): {
+  ratebook: string
+  input: string
+  output: string | null
+  resinBlendsPath: string | null
+} {
   let ratebook: string | null = null
   let input: string | null = null
   let output: string | null = null
+  let resinBlendsPath: string | null = null
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--ratebook' || a === '-r') ratebook = argv[++i] ?? null
     else if (a === '--input' || a === '-i' || a === '--csv') input = argv[++i] ?? null
     else if (a === '--output' || a === '-o') output = argv[++i] ?? null
+    else if (a === '--resin-blends' || a === '--resin-blends-json') resinBlendsPath = argv[++i] ?? null
     else if (a === '--help' || a === '-h') {
       console.log(usage())
       process.exit(0)
@@ -44,7 +53,34 @@ function parseArgs(argv: string[]): { ratebook: string; input: string; output: s
     console.error(usage())
     process.exit(1)
   }
-  return { ratebook: ratebook as string, input: input as string, output }
+  return { ratebook: ratebook as string, input: input as string, output, resinBlendsPath }
+}
+
+function loadResinBlendsForRun(
+  cwd: string,
+  inputPath: string,
+  explicitPath: string | null,
+): ResinBlendPreset[] | null {
+  if (explicitPath != null && String(explicitPath).trim() !== '') {
+    const p = resolve(cwd, explicitPath)
+    if (!existsSync(p)) {
+      console.error(`resin-blends file not found: ${p}`)
+      process.exit(1)
+    }
+    const raw = readFileSync(p, 'utf8')
+    return parseResinBlendsJson(raw)
+  }
+  const auto = resolve(cwd, 'resin-blends.json')
+  if (existsSync(auto)) {
+    const raw = readFileSync(auto, 'utf8')
+    return parseResinBlendsJson(raw)
+  }
+  const besideInput = resolve(dirname(resolve(cwd, inputPath)), 'resin-blends.json')
+  if (existsSync(besideInput)) {
+    const raw = readFileSync(besideInput, 'utf8')
+    return parseResinBlendsJson(raw)
+  }
+  return null
 }
 
 function pickDefaultExtruder(rb: QuoteRatebook): string | null {
@@ -109,17 +145,20 @@ function fmtDeltaPct(finalNum: number, existingNum: number | null): string {
 
 function main() {
   const cwd = process.cwd()
-  const { ratebook: ratebookPath, input: inputPath, output } = parseArgs(process.argv.slice(2))
+  const { ratebook: ratebookPath, input: inputPath, output, resinBlendsPath } = parseArgs(process.argv.slice(2))
 
   const ratebookRaw = readFileSync(resolve(cwd, ratebookPath), 'utf8')
   const ratebook = JSON.parse(ratebookRaw) as QuoteRatebook
+
+  const resinBlends = loadResinBlendsForRun(cwd, inputPath, resinBlendsPath)
+  if (resinBlends?.length) {
+    console.error(`Using ${resinBlends.length} resin blend preset(s) from resin-blends data (CSV resin_blend defaults to LD).`)
+  }
 
   const csvRaw = readFileSync(resolve(cwd, inputPath), 'utf8')
   const { rows } = parseCsv(csvRaw)
 
   const outCols = [
-    'customer',
-    'quoter',
     'label',
     'final_price',
     'price_per_kg',
@@ -128,8 +167,9 @@ function main() {
     'rolls',
     'printing_unavailable_reason',
     'existing_quote_price',
-    'price_delta',
     'price_delta_pct',
+    'customer',
+    'quoter',
   ]
 
   const lines: string[] = []
@@ -140,7 +180,7 @@ function main() {
     const row = rows[i]
     const lineNo = i + 1
     try {
-      const { spec, quantity } = buildSpecAndQuantityFromRow(row)
+      const { spec, quantity } = buildSpecAndQuantityFromRow(row, { resinBlends })
       const extruderCode = resolveExtruderCode(ratebook, row.extruder_code)
       const inputs = buildQuickQuoteInputsFromSpec(spec, quantity, { extruderCode: extruderCode, ratebook })
       const preview = computeQuickQuotePreview(inputs, ratebook)
@@ -149,10 +189,6 @@ function main() {
       const finalNum = Number(preview.final_price)
       const existingRaw = existingQuotePriceFromRow(row)
       const existingNum = parseMoney(existingRaw)
-      const deltaStr =
-        existingNum != null && Number.isFinite(finalNum)
-          ? fmtMoney2(finalNum - existingNum)
-          : ''
       const deltaPctStr =
         existingNum != null && Number.isFinite(finalNum) ? fmtDeltaPct(finalNum, existingNum) : ''
       const existingEcho = existingRaw != null ? String(existingRaw).trim() : ''
@@ -160,8 +196,6 @@ function main() {
       const quoter = quoterFromRow(row)
 
       const cells = [
-        customer,
-        quoter,
         String(row.label ?? ''),
         priceStr,
         preview.price_per_kg != null ? fmtMoney2(preview.price_per_kg) : '',
@@ -170,33 +204,28 @@ function main() {
         preview.rolls != null ? String(preview.rolls) : '',
         String(preview.printing_unavailable_reason ?? ''),
         existingEcho,
-        deltaStr,
         deltaPctStr !== '' ? `${deltaPctStr}%` : '',
+        customer,
+        quoter,
       ].map((c) => csvEscape(c))
       lines.push(cells.join(','))
 
-      const labelShort = String(row.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 64)
-      const custQuot =
-        customer || quoter
-          ? `[${[customer, quoter].filter(Boolean).join(' · ')}] `.slice(0, 48)
-          : ''
+      const labelShort = String(row.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 56)
+      const custQuotEnd =
+        customer || quoter ? `  (${[customer, quoter].filter(Boolean).join(' · ')})` : ''
       const dollars = priceStr ? `$${priceStr}` : '—'
       const pctFmt =
-        deltaPctStr !== '' ? ` (${Number(deltaPctStr) >= 0 ? '+' : ''}${deltaPctStr}%)` : ''
-      const deltaFmt =
-        deltaStr !== ''
-          ? ` Δ ${Number(deltaStr) >= 0 ? '+' : ''}$${deltaStr}${pctFmt}`
+        deltaPctStr !== ''
+          ? `  vs existing: ${Number(deltaPctStr) >= 0 ? '+' : ''}${deltaPctStr}%`
           : existingEcho
-            ? ' Δ —'
+            ? '  vs existing: —'
             : ''
-      summaryRows.push(`  #${String(lineNo).padEnd(4)} ${custQuot}${dollars.padStart(14)}${deltaFmt} ${labelShort}`)
+      summaryRows.push(`  #${String(lineNo).padEnd(4)} ${dollars.padStart(14)}${pctFmt}  ${labelShort}${custQuotEnd}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const existingRaw = existingQuotePriceFromRow(row)
       const existingEcho = existingRaw != null ? String(existingRaw).trim() : ''
       const cells = [
-        customerFromRow(row),
-        quoterFromRow(row),
         String(row.label ?? ''),
         '',
         '',
@@ -206,7 +235,8 @@ function main() {
         `ERROR: ${msg}`,
         existingEcho,
         '',
-        '',
+        customerFromRow(row),
+        quoterFromRow(row),
       ].map((c) => csvEscape(c))
       lines.push(cells.join(','))
       summaryRows.push(`  #${lineNo} ${'—'.padStart(14)}  ERROR: ${msg.replace(/\s+/g, ' ').slice(0, 100)}`)
@@ -224,9 +254,9 @@ function main() {
   if (summaryRows.length > 0) {
     console.error('')
     console.error(
-      'Final price (per CSV row):  Δ = estimate − existing_quote_price; % = (estimate − existing) / existing × 100 when existing is set and non-zero',
+      'Final price (per CSV row):  vs existing % = (estimate − existing_quote_price) / existing_quote_price × 100 when that column is set and non-zero',
     )
-    console.error('  #    final_price    (delta vs existing)  label')
+    console.error('  #    final_price    vs existing %  label  (customer · quoter)')
     for (const s of summaryRows) console.error(s)
     console.error('')
   }

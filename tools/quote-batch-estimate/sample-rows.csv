@@ -9,5 +9,7 @@ customer,quoter,label,product_type,base_width_mm,gusset_mm,base_length_mm,thickn
 ,,TUBE LDPE LF W360 150um WHITE 250KG,Tube,360,,0,150,Rolls,None,0,WHITE,LD,,kg,0,0,0,250,0,
 ,,TUBE LDPE LF W175 150um PRINT 1 COL 300KG,Tube,175,,0,150,Rolls,Inline,1,,LD,,kg,0,0,0,300,0,
 ,,TUBE LDPE LF W225 150um SILVER PRINT 4 COL 400KG,Tube,225,,0,150,Rolls,Inline,4,SILVER,LD,,kg,0,0,0,400,0,
-,,Blue TINT LDPE bags on roll 510mm x 770mm x 30um 500/roll,Bag,510,,770,30,Rolls,None,0,RED,LD,,rolls_units,0,20,500,0,0,
-Example Co,ross,PBR 1000x1675x100 50/roll,Bag,1000,,1675,100,Rolls,None,0,RED,LD,,rolls_units,0,470,50,0,0,"30,163.56"
+AZAPAK,Ross,Blue TINT LDPE bags on roll 510mm x 770mm x 30um 500/roll,Bag,510,,770,30,Rolls,None,0,RED,LD,,rolls_units,0,20,500,0,0,1090
+Gourmet Gardens,Ross,PBR 1000x1675x100 50/roll,Bag,1000,,1675,100,Rolls,None,0,RED,LD,,rolls_units,0,470,50,0,0,"30,163.56"
+Betta Blinds,Joe,LD Natural Poly Tubing 310 x 250um clear,Tube,310,,,250,Rolls,None,0,,LD,,rolls_kg,0,200,1,200,1,940
+QIS,Joe,Natural Poly Bags LD 610 910 30um,Bag,610,,910,30,Cartons,None,0,,LD,,Units,10000,,,,,1956

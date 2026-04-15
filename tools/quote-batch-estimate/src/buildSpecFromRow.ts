@@ -6,6 +6,7 @@
 import type { SpecQuantitySlice } from '../../../frontend/src/utils/specToQuoteInputs'
 import type { QtyType } from '../../../frontend/src/utils/quantityRollFields'
 import { productTypeCanHaveGusset } from '../../../frontend/src/utils/specCompat'
+import { blendComponentsForCode, type ResinBlendPreset } from './resinBlends'
 
 export type CsvRow = Record<string, string>
 
@@ -23,12 +24,18 @@ function strCell(v: string | undefined): string {
   return String(v ?? '').trim()
 }
 
-function mapQtyType(s: string | undefined): QtyType {
+function mapQtyType(s: string | undefined, row: CsvRow): QtyType {
   const x = String(s || '').trim().toLowerCase()
   if (x === 'units' || x === 'bags') return 'units'
   if (x === 'kg' || x === 'total_kg') return 'kg'
   if (x === 'total_rolls' || x === 'rolls') return 'total_rolls'
   if (x === 'rolls_units') return 'rolls_units'
+  /** Informal spreadsheet label: rolls × kg/roll → same as `total_rolls` when both are set. */
+  if (x === 'rolls_kg') {
+    const nr = Math.round(numCell(row.num_rolls, 0))
+    const wpr = numCell(row.weight_per_roll_kg, 0)
+    if (nr > 0 && wpr > 0) return 'total_rolls'
+  }
   return 'kg'
 }
 
@@ -58,7 +65,15 @@ function colourComponentsFromCell(v: string | undefined): Array<{ colour_code: s
   return [{ colour_code: code.toUpperCase(), strength_pct: strength }]
 }
 
-export function buildSpecAndQuantityFromRow(row: CsvRow): { spec: any; quantity: SpecQuantitySlice } {
+export type BuildSpecOptions = {
+  /** When set, `formulation.blend` is filled from preset `blend_code` matching CSV `resin_blend` (default LD). */
+  resinBlends?: ResinBlendPreset[] | null
+}
+
+export function buildSpecAndQuantityFromRow(
+  row: CsvRow,
+  opts?: BuildSpecOptions,
+): { spec: any; quantity: SpecQuantitySlice } {
   const productType = strCell(row.product_type) || 'Bag'
   const finishMode = strCell(row.finish_mode) === 'Cartons' ? 'Cartons' : 'Rolls'
   /** CSV length is always interpreted as mm; spec stores `mm` (Tube still uses continuous length in the calculator). */
@@ -100,7 +115,7 @@ export function buildSpecAndQuantityFromRow(row: CsvRow): { spec: any; quantity:
     },
     formulation: {
       blend_type: strCell(row.resin_blend) || 'LD',
-      blend: [],
+      blend: blendComponentsForCode(opts?.resinBlends ?? null, strCell(row.resin_blend) || 'LD'),
       colour_components,
       colour: null,
       additives: [],
@@ -134,7 +149,7 @@ export function buildSpecAndQuantityFromRow(row: CsvRow): { spec: any; quantity:
     tool_requirements: [],
   }
 
-  const qtyType = mapQtyType(row.qty_type)
+  const qtyType = mapQtyType(row.qty_type, row)
   const quantity: SpecQuantitySlice = {
     qtyType,
     totalKg: numCell(row.total_kg, 0),

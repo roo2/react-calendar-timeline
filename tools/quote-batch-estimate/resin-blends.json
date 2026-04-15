@@ -1,0 +1,34 @@
+[
+    {
+        "blend_code": "LD",
+        "name": "House Blend (LD)",
+        "components": [
+            {
+                "resin_code": "FD0270",
+                "pct": 50.0
+            },
+            {
+                "resin_code": "S199F",
+                "pct": 50.0
+            }
+        ]
+    },
+    {
+        "blend_code": "MD",
+        "name": "MD",
+        "components": [
+            {
+                "resin_code": "FD0270",
+                "pct": 30.0
+            },
+            {
+                "resin_code": "FE3000",
+                "pct": 40.0
+            },
+            {
+                "resin_code": "S199F",
+                "pct": 30.0
+            }
+        ]
+    }
+]
