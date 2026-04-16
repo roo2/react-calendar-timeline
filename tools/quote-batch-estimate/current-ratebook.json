@@ -1,674 +1,624 @@
 {
-  "resins": {
-    "Q1018H": {
-      "price_per_kg": 1.98,
-      "density": 0.001848
-    },
-    "FD0270": {
-      "price_per_kg": 2.26,
-      "density": 0.001848
-    },
-    "FD0274": {
-      "price_per_kg": 2.29,
-      "density": 0.001848
-    },
-    "FE8004": {
-      "price_per_kg": 2.28,
-      "density": 0.001848
-    },
-    "FE3000": {
-      "price_per_kg": 2.28,
-      "density": 0.001848
-    },
-    "S199F": {
-      "price_per_kg": 2.06,
-      "density": 0.001924
-    },
-    "1018RA": {
-      "price_per_kg": 2.21,
-      "density": 0.001848
-    }
-  },
-  "additives_price_per_kg": {
-    "ANTI_BLOCK": 3.5,
-    "ANTI_STATIC": 7.7,
-    "SLIP": 6.4,
-    "UV": 13.4
-  },
-  "colours": {
-    "WHITE": {
-      "price_per_kg": 5.8
-    },
-    "BLACK": {
-      "price_per_kg": 4.5
-    },
-    "SILVER": {
-      "price_per_kg": 19.88
-    },
-    "GREY": {
-      "price_per_kg": 14.5
-    },
-    "BLUE": {
-      "price_per_kg": 5.7
-    },
-    "PIPE_COVER_BLUE": {
-      "price_per_kg": 16.0
-    },
-    "PIPECOVER_PURPLE": {
-      "price_per_kg": 16.86
-    },
-    "PIPECOVER_BEIGE": {
-      "price_per_kg": 14.1
-    },
-    "YELLOW": {
-      "price_per_kg": 20.33
-    },
-    "SIGNET_YELLOW": {
-      "price_per_kg": 17.33
-    },
-    "GREEN": {
-      "price_per_kg": 14.69
-    },
-    "ORANGE": {
-      "price_per_kg": 19.55
-    },
-    "RED": {
-      "price_per_kg": 19.02
-    },
-    "PURPLE": {
-      "price_per_kg": 17.23
-    },
-    "BROWN": {
-      "price_per_kg": 19.42
-    },
-    "PINK": {
-      "price_per_kg": 32.29
-    },
-    "OTHER": {
-      "price_per_kg": 25.0
-    }
-  },
-  "cores": {
-    "13mm": {
-      "cost_per_meter": 4.6504,
-      "kg_per_meter": 2.9268
-    },
-    "7mm": {
-      "cost_per_meter": 2.1545,
-      "kg_per_meter": 1.4455
-    },
-    "PVC": {
-      "cost_per_meter": 3.6225,
-      "kg_per_meter": 0.7285
-    }
-  },
-  "extruders": [
-    {
-      "extruder_code": "#6",
-      "model": "KML-35",
-      "decision_width_mm": 300,
-      "average_kg_hr": 15,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#7",
-      "model": "KML-35",
-      "decision_width_mm": 380,
-      "average_kg_hr": 15,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#1",
-      "model": "KML-45",
-      "decision_width_mm": 475,
-      "average_kg_hr": 30,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#5",
-      "model": "KML-45",
-      "decision_width_mm": 510,
-      "average_kg_hr": 32,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#2",
-      "model": "KML-55",
-      "decision_width_mm": 600,
-      "average_kg_hr": 45,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#3",
-      "model": "KMTL-45",
-      "decision_width_mm": 775,
-      "average_kg_hr": 50,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#4",
-      "model": "KML-65",
-      "decision_width_mm": 1025,
-      "average_kg_hr": 70,
-      "cost_per_hr": 20.0
-    },
-    {
-      "extruder_code": "#8",
-      "model": "KML-65",
-      "decision_width_mm": 1400,
-      "average_kg_hr": 75,
-      "cost_per_hr": 20.0
-    }
-  ],
-  "printing_rates": {},
-  "printing_pricing_tiers": [
-    {
-      "method": "inline",
-      "max_print_width_mm": 1000,
-      "num_colours": 1,
-      "min_meters": 2000,
-      "min_charge": 350.0,
-      "setup_cost": 0.0,
-      "setup_price": 70.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 65.0,
-      "meters_per_min": null
-    },
-    {
-      "method": "inline",
-      "max_print_width_mm": 1000,
-      "num_colours": 2,
-      "min_meters": 2000,
-      "min_charge": 400.0,
-      "setup_cost": 0.0,
-      "setup_price": 140.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 75.0,
-      "meters_per_min": null
-    },
-    {
-      "method": "inline",
-      "max_print_width_mm": 1000,
-      "num_colours": 3,
-      "min_meters": 3000,
-      "min_charge": 450.0,
-      "setup_cost": 0.0,
-      "setup_price": 210.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 80.0,
-      "meters_per_min": null
-    },
-    {
-      "method": "inline",
-      "max_print_width_mm": 1000,
-      "num_colours": 4,
-      "min_meters": 4000,
-      "min_charge": 500.0,
-      "setup_cost": 0.0,
-      "setup_price": 280.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 85.0,
-      "meters_per_min": null
-    },
-    {
-      "method": "inline",
-      "max_print_width_mm": 1400,
-      "num_colours": 1,
-      "min_meters": 2000,
-      "min_charge": 350.0,
-      "setup_cost": 0.0,
-      "setup_price": 70.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 70.0,
-      "meters_per_min": null
-    },
-    {
-      "method": "uteco",
-      "max_print_width_mm": 1200,
-      "num_colours": 1,
-      "min_meters": 2000,
-      "min_charge": null,
-      "setup_cost": 0.0,
-      "setup_price": 65.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 70.0,
-      "meters_per_min": 20.0
-    },
-    {
-      "method": "uteco",
-      "max_print_width_mm": 1200,
-      "num_colours": 2,
-      "min_meters": 2000,
-      "min_charge": null,
-      "setup_cost": 0.0,
-      "setup_price": 130.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 75.0,
-      "meters_per_min": 20.0
-    },
-    {
-      "method": "uteco",
-      "max_print_width_mm": 1200,
-      "num_colours": 3,
-      "min_meters": 3000,
-      "min_charge": null,
-      "setup_cost": 0.0,
-      "setup_price": 195.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 80.0,
-      "meters_per_min": 20.0
-    },
-    {
-      "method": "uteco",
-      "max_print_width_mm": 1200,
-      "num_colours": 4,
-      "min_meters": 4000,
-      "min_charge": null,
-      "setup_cost": 0.0,
-      "setup_price": 260.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 85.0,
-      "meters_per_min": 20.0
-    },
-    {
-      "method": "uteco",
-      "max_print_width_mm": 1200,
-      "num_colours": 5,
-      "min_meters": 5000,
-      "min_charge": null,
-      "setup_cost": 0.0,
-      "setup_price": 325.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 90.0,
-      "meters_per_min": 20.0
-    },
-    {
-      "method": "uteco",
-      "max_print_width_mm": 1200,
-      "num_colours": 6,
-      "min_meters": 6000,
-      "min_charge": null,
-      "setup_cost": 0.0,
-      "setup_price": 390.0,
-      "cost_per_1000m": 0.0,
-      "price_per_1000m": 95.0,
-      "meters_per_min": 20.0
-    }
-  ],
-  "conversion_speeds": [
-    {
-      "min_gauge_um": 25,
-      "max_gauge_um": 49,
-      "min_length_mm": 200,
-      "max_length_mm": 399,
-      "bags_per_minute": 50.0
-    },
-    {
-      "min_gauge_um": 25,
-      "max_gauge_um": 49,
-      "min_length_mm": 400,
-      "max_length_mm": 599,
-      "bags_per_minute": 40.0
-    },
-    {
-      "min_gauge_um": 25,
-      "max_gauge_um": 49,
-      "min_length_mm": 600,
-      "max_length_mm": 799,
-      "bags_per_minute": 38.0
-    },
-    {
-      "min_gauge_um": 25,
-      "max_gauge_um": 49,
-      "min_length_mm": 800,
-      "max_length_mm": 1299,
-      "bags_per_minute": 35.0
-    },
-    {
-      "min_gauge_um": 25,
-      "max_gauge_um": 49,
-      "min_length_mm": 1300,
-      "max_length_mm": 2200,
-      "bags_per_minute": 30.0
-    },
-    {
-      "min_gauge_um": 50,
-      "max_gauge_um": 99,
-      "min_length_mm": 200,
-      "max_length_mm": 399,
-      "bags_per_minute": 48.0
-    },
-    {
-      "min_gauge_um": 50,
-      "max_gauge_um": 99,
-      "min_length_mm": 400,
-      "max_length_mm": 599,
-      "bags_per_minute": 35.0
-    },
-    {
-      "min_gauge_um": 50,
-      "max_gauge_um": 99,
-      "min_length_mm": 600,
-      "max_length_mm": 799,
-      "bags_per_minute": 33.0
-    },
-    {
-      "min_gauge_um": 50,
-      "max_gauge_um": 99,
-      "min_length_mm": 800,
-      "max_length_mm": 1299,
-      "bags_per_minute": 30.0
-    },
-    {
-      "min_gauge_um": 50,
-      "max_gauge_um": 99,
-      "min_length_mm": 1300,
-      "max_length_mm": 2200,
-      "bags_per_minute": 25.0
-    },
-    {
-      "min_gauge_um": 100,
-      "max_gauge_um": 139,
-      "min_length_mm": 200,
-      "max_length_mm": 399,
-      "bags_per_minute": 45.0
-    },
-    {
-      "min_gauge_um": 100,
-      "max_gauge_um": 139,
-      "min_length_mm": 400,
-      "max_length_mm": 599,
-      "bags_per_minute": 30.0
-    },
-    {
-      "min_gauge_um": 100,
-      "max_gauge_um": 139,
-      "min_length_mm": 600,
-      "max_length_mm": 799,
-      "bags_per_minute": 28.0
-    },
-    {
-      "min_gauge_um": 100,
-      "max_gauge_um": 139,
-      "min_length_mm": 800,
-      "max_length_mm": 1299,
-      "bags_per_minute": 25.0
-    },
-    {
-      "min_gauge_um": 100,
-      "max_gauge_um": 139,
-      "min_length_mm": 1300,
-      "max_length_mm": 2200,
-      "bags_per_minute": 20.0
-    },
-    {
-      "min_gauge_um": 140,
-      "max_gauge_um": 300,
-      "min_length_mm": 200,
-      "max_length_mm": 399,
-      "bags_per_minute": 35.0
-    },
-    {
-      "min_gauge_um": 140,
-      "max_gauge_um": 300,
-      "min_length_mm": 400,
-      "max_length_mm": 599,
-      "bags_per_minute": 25.0
-    },
-    {
-      "min_gauge_um": 140,
-      "max_gauge_um": 300,
-      "min_length_mm": 600,
-      "max_length_mm": 799,
-      "bags_per_minute": 23.0
-    },
-    {
-      "min_gauge_um": 140,
-      "max_gauge_um": 300,
-      "min_length_mm": 800,
-      "max_length_mm": 1299,
-      "bags_per_minute": 20.0
-    },
-    {
-      "min_gauge_um": 140,
-      "max_gauge_um": 300,
-      "min_length_mm": 1300,
-      "max_length_mm": 2200,
-      "bags_per_minute": 15.0
-    }
-  ],
-  "conversion_factors": {
-    "roll_change_minutes": 10.0,
-    "carton_cost": 1.0,
-    "roll_weight_avg": 80.0,
-    "conversion_cost_per_hr": 50.0
-  },
-  "carton_options": [
-    {
-      "slug": "110",
-      "name": "110",
-      "cost_per_unit": 0.8,
-      "is_default": false
-    },
-    {
-      "slug": "110_wide",
-      "name": "110 Wide",
-      "cost_per_unit": 1.06,
-      "is_default": true
-    },
-    {
-      "slug": "140",
-      "name": "140",
-      "cost_per_unit": 0.94,
-      "is_default": false
-    },
-    {
-      "slug": "150",
-      "name": "150",
-      "cost_per_unit": 0.874,
-      "is_default": false
-    },
-    {
-      "slug": "230",
-      "name": "230",
-      "cost_per_unit": 1.015,
-      "is_default": false
-    },
-    {
-      "slug": "80wide",
-      "name": "80wide",
-      "cost_per_unit": 1.404,
-      "is_default": false
-    },
-    {
-      "slug": "small",
-      "name": "Small",
-      "cost_per_unit": 0.474,
-      "is_default": false
-    },
-    {
-      "slug": "vdm_box",
-      "name": "VDM Box",
-      "cost_per_unit": 47.25,
-      "is_default": false
-    }
-  ],
-  "waste_adders": [],
-  "extrusion_waste_factors": [
-    {
-      "slug": "complex_set_up_print_or_perforation",
-      "minutes": 15
-    },
-    {
-      "slug": "gusset",
-      "minutes": 40
-    },
-    {
-      "slug": "non_standard_resin_or_colour",
-      "minutes": 10
-    },
-    {
-      "slug": "simple_job",
-      "minutes": 20
-    }
-  ],
-  "extrusion_throughput_kg_per_hr": 0,
-  "packing_factor_rolls": 0.7,
-  "packing_factor_cartons": 0.5,
-  "pallet_volume_m3": 1.0,
-  "materials_retail_bands": [
-    {
-      "id": 1,
-      "product_group": "tube",
-      "width_min_mm": 0,
-      "width_max_mm": 99,
-      "moq_plain_kg": 200,
-      "retail_price_per_kg": null,
-      "moq_printed_kg": 200
-    },
-    {
-      "id": 2,
-      "product_group": "tube",
-      "width_min_mm": 100,
-      "width_max_mm": 399,
-      "moq_plain_kg": 300,
-      "retail_price_per_kg": null,
-      "moq_printed_kg": 300
-    },
-    {
-      "id": 3,
-      "product_group": "tube",
-      "width_min_mm": 400,
-      "width_max_mm": 799,
-      "moq_plain_kg": 400,
-      "retail_price_per_kg": null,
-      "moq_printed_kg": 500
-    },
-    {
-      "id": 4,
-      "product_group": "tube",
-      "width_min_mm": 800,
-      "width_max_mm": 1800,
-      "moq_plain_kg": null,
-      "retail_price_per_kg": null,
-      "moq_printed_kg": null
-    },
-    {
-      "id": 5,
-      "product_group": "centerfold",
-      "width_min_mm": 200,
-      "width_max_mm": 399,
-      "moq_plain_kg": 200,
-      "retail_price_per_kg": 4.45,
-      "moq_printed_kg": 250
-    },
-    {
-      "id": 6,
-      "product_group": "centerfold",
-      "width_min_mm": 400,
-      "width_max_mm": 799,
-      "moq_plain_kg": 300,
-      "retail_price_per_kg": 4.4,
-      "moq_printed_kg": 300
-    },
-    {
-      "id": 7,
-      "product_group": "centerfold",
-      "width_min_mm": 800,
-      "width_max_mm": 1460,
-      "moq_plain_kg": 400,
-      "retail_price_per_kg": 4.35,
-      "moq_printed_kg": 400
-    },
-    {
-      "id": 8,
-      "product_group": "sheet",
-      "width_min_mm": 200,
-      "width_max_mm": 399,
-      "moq_plain_kg": 300,
-      "retail_price_per_kg": 5.0,
-      "moq_printed_kg": 300
-    },
-    {
-      "id": 9,
-      "product_group": "sheet",
-      "width_min_mm": 400,
-      "width_max_mm": 799,
-      "moq_plain_kg": 300,
-      "retail_price_per_kg": 4.85,
-      "moq_printed_kg": 400
-    },
-    {
-      "id": 10,
-      "product_group": "sheet",
-      "width_min_mm": 800,
-      "width_max_mm": 999,
-      "moq_plain_kg": 400,
-      "retail_price_per_kg": 4.75,
-      "moq_printed_kg": 500
-    },
-    {
-      "id": 11,
-      "product_group": "sheet",
-      "width_min_mm": 1000,
-      "width_max_mm": 1460,
-      "moq_plain_kg": 500,
-      "retail_price_per_kg": 4.75,
-      "moq_printed_kg": 600
-    },
-    {
-      "id": 12,
-      "product_group": "u_film",
-      "width_min_mm": 300,
-      "width_max_mm": 499,
-      "moq_plain_kg": 250,
-      "retail_price_per_kg": 4.5,
-      "moq_printed_kg": 300
-    },
-    {
-      "id": 13,
-      "product_group": "u_film",
-      "width_min_mm": 500,
-      "width_max_mm": 999,
-      "moq_plain_kg": 300,
-      "retail_price_per_kg": 4.4,
-      "moq_printed_kg": 300
-    },
-    {
-      "id": 14,
-      "product_group": "u_film",
-      "width_min_mm": 1000,
-      "width_max_mm": 1460,
-      "moq_plain_kg": 400,
-      "retail_price_per_kg": 4.35,
-      "moq_printed_kg": 500
-    },
-    {
-      "id": 15,
-      "product_group": "bag",
-      "width_min_mm": 350,
-      "width_max_mm": 499,
-      "moq_plain_kg": 250,
-      "retail_price_per_kg": 5.0,
-      "moq_printed_kg": 350
-    },
-    {
-      "id": 16,
-      "product_group": "bag",
-      "width_min_mm": 500,
-      "width_max_mm": 799,
-      "moq_plain_kg": 300,
-      "retail_price_per_kg": 4.65,
-      "moq_printed_kg": 400
-    },
-    {
-      "id": 17,
-      "product_group": "bag",
-      "width_min_mm": 800,
-      "width_max_mm": 1800,
-      "moq_plain_kg": 400,
-      "retail_price_per_kg": 4.5,
-      "moq_printed_kg": 500
-    }
-  ]
+    "resins": {
+        "Q1018H": {
+            "price_per_kg": 1.98,
+            "density": 0.001848
+        },
+        "FD0270": {
+            "price_per_kg": 2.26,
+            "density": 0.001848
+        },
+        "FD0274": {
+            "price_per_kg": 2.29,
+            "density": 0.001848
+        },
+        "FE8004": {
+            "price_per_kg": 2.28,
+            "density": 0.001848
+        },
+        "FE3000": {
+            "price_per_kg": 2.28,
+            "density": 0.001848
+        },
+        "S199F": {
+            "price_per_kg": 2.06,
+            "density": 0.001924
+        },
+        "1018RA": {
+            "price_per_kg": 2.21,
+            "density": 0.001848
+        }
+    },
+    "additives_price_per_kg": {
+        "ANTI_BLOCK": 3.5,
+        "ANTI_STATIC": 7.7,
+        "SLIP": 6.4,
+        "UV": 13.4
+    },
+    "colours": {
+        "WHITE": {
+            "price_per_kg": 5.8
+        },
+        "BLACK": {
+            "price_per_kg": 4.5
+        },
+        "SILVER": {
+            "price_per_kg": 19.88
+        },
+        "GREY": {
+            "price_per_kg": 14.5
+        },
+        "BLUE": {
+            "price_per_kg": 5.7
+        },
+        "PIPE_COVER_BLUE": {
+            "price_per_kg": 16.0
+        },
+        "PIPECOVER_PURPLE": {
+            "price_per_kg": 16.86
+        },
+        "PIPECOVER_BEIGE": {
+            "price_per_kg": 14.1
+        },
+        "YELLOW": {
+            "price_per_kg": 20.33
+        },
+        "SIGNET_YELLOW": {
+            "price_per_kg": 17.33
+        },
+        "GREEN": {
+            "price_per_kg": 14.69
+        },
+        "ORANGE": {
+            "price_per_kg": 19.55
+        },
+        "RED": {
+            "price_per_kg": 19.02
+        },
+        "PURPLE": {
+            "price_per_kg": 17.23
+        },
+        "BROWN": {
+            "price_per_kg": 19.42
+        },
+        "PINK": {
+            "price_per_kg": 32.29
+        },
+        "OTHER": {
+            "price_per_kg": 25.0
+        }
+    },
+    "cores": {
+        "13mm": {
+            "cost_per_meter": 4.6504,
+            "kg_per_meter": 2.9268
+        },
+        "7mm": {
+            "cost_per_meter": 2.1545,
+            "kg_per_meter": 1.4455
+        },
+        "PVC": {
+            "cost_per_meter": 3.6225,
+            "kg_per_meter": 0.7285
+        }
+    },
+    "extruders": [
+        {
+            "extruder_code": "#6",
+            "model": "KML-35",
+            "decision_width_mm": 300,
+            "average_kg_hr": 15,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#7",
+            "model": "KML-35",
+            "decision_width_mm": 380,
+            "average_kg_hr": 15,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#1",
+            "model": "KML-45",
+            "decision_width_mm": 475,
+            "average_kg_hr": 30,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#5",
+            "model": "KML-45",
+            "decision_width_mm": 510,
+            "average_kg_hr": 32,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#2",
+            "model": "KML-55",
+            "decision_width_mm": 600,
+            "average_kg_hr": 45,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#3",
+            "model": "KMTL-45",
+            "decision_width_mm": 775,
+            "average_kg_hr": 50,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#4",
+            "model": "KML-65",
+            "decision_width_mm": 1025,
+            "average_kg_hr": 70,
+            "cost_per_hr": 20.0
+        },
+        {
+            "extruder_code": "#8",
+            "model": "KML-65",
+            "decision_width_mm": 1400,
+            "average_kg_hr": 75,
+            "cost_per_hr": 20.0
+        }
+    ],
+    "printing_rates": {},
+    "printing_pricing_tiers": [
+        {
+            "method": "inline",
+            "max_print_width_mm": 1000,
+            "num_colours": 1,
+            "min_meters": 2000,
+            "min_charge": 350.0,
+            "setup_cost": 56.0,
+            "setup_price": 70.0,
+            "cost_per_1000m": 52.0,
+            "price_per_1000m": 65.0,
+            "meters_per_min": null
+        },
+        {
+            "method": "inline",
+            "max_print_width_mm": 1000,
+            "num_colours": 2,
+            "min_meters": 2000,
+            "min_charge": 400.0,
+            "setup_cost": 112.0,
+            "setup_price": 140.0,
+            "cost_per_1000m": 60.0,
+            "price_per_1000m": 75.0,
+            "meters_per_min": null
+        },
+        {
+            "method": "inline",
+            "max_print_width_mm": 1000,
+            "num_colours": 3,
+            "min_meters": 3000,
+            "min_charge": 450.0,
+            "setup_cost": 168.0,
+            "setup_price": 210.0,
+            "cost_per_1000m": 64.0,
+            "price_per_1000m": 80.0,
+            "meters_per_min": null
+        },
+        {
+            "method": "inline",
+            "max_print_width_mm": 1000,
+            "num_colours": 4,
+            "min_meters": 4000,
+            "min_charge": 500.0,
+            "setup_cost": 224.0,
+            "setup_price": 280.0,
+            "cost_per_1000m": 68.0,
+            "price_per_1000m": 85.0,
+            "meters_per_min": null
+        },
+        {
+            "method": "inline",
+            "max_print_width_mm": 1400,
+            "num_colours": 1,
+            "min_meters": 2000,
+            "min_charge": 350.0,
+            "setup_cost": 56.0,
+            "setup_price": 70.0,
+            "cost_per_1000m": 56.0,
+            "price_per_1000m": 70.0,
+            "meters_per_min": null
+        },
+        {
+            "method": "uteco",
+            "max_print_width_mm": 1200,
+            "num_colours": 1,
+            "min_meters": 2000,
+            "min_charge": null,
+            "setup_cost": 52.0,
+            "setup_price": 65.0,
+            "cost_per_1000m": 56.0,
+            "price_per_1000m": 70.0,
+            "meters_per_min": 20.0
+        },
+        {
+            "method": "uteco",
+            "max_print_width_mm": 1200,
+            "num_colours": 2,
+            "min_meters": 2000,
+            "min_charge": null,
+            "setup_cost": 104.0,
+            "setup_price": 130.0,
+            "cost_per_1000m": 60.0,
+            "price_per_1000m": 75.0,
+            "meters_per_min": 20.0
+        },
+        {
+            "method": "uteco",
+            "max_print_width_mm": 1200,
+            "num_colours": 3,
+            "min_meters": 3000,
+            "min_charge": null,
+            "setup_cost": 156.0,
+            "setup_price": 195.0,
+            "cost_per_1000m": 64.0,
+            "price_per_1000m": 80.0,
+            "meters_per_min": 20.0
+        },
+        {
+            "method": "uteco",
+            "max_print_width_mm": 1200,
+            "num_colours": 4,
+            "min_meters": 4000,
+            "min_charge": null,
+            "setup_cost": 208.0,
+            "setup_price": 260.0,
+            "cost_per_1000m": 68.0,
+            "price_per_1000m": 85.0,
+            "meters_per_min": 20.0
+        },
+        {
+            "method": "uteco",
+            "max_print_width_mm": 1200,
+            "num_colours": 5,
+            "min_meters": 5000,
+            "min_charge": null,
+            "setup_cost": 260.0,
+            "setup_price": 325.0,
+            "cost_per_1000m": 72.0,
+            "price_per_1000m": 90.0,
+            "meters_per_min": 20.0
+        },
+        {
+            "method": "uteco",
+            "max_print_width_mm": 1200,
+            "num_colours": 6,
+            "min_meters": 6000,
+            "min_charge": null,
+            "setup_cost": 312.0,
+            "setup_price": 390.0,
+            "cost_per_1000m": 76.0,
+            "price_per_1000m": 95.0,
+            "meters_per_min": 20.0
+        }
+    ],
+    "materials_retail_bands": [
+        {
+            "id": 52,
+            "product_group": "bag",
+            "width_min_mm": 350,
+            "width_max_mm": 499,
+            "moq_plain_kg": 250.0,
+            "retail_price_per_kg": 5.0,
+            "moq_printed_kg": 350.0
+        },
+        {
+            "id": 53,
+            "product_group": "bag",
+            "width_min_mm": 500,
+            "width_max_mm": 799,
+            "moq_plain_kg": 300.0,
+            "retail_price_per_kg": 4.65,
+            "moq_printed_kg": 400.0
+        },
+        {
+            "id": 54,
+            "product_group": "bag",
+            "width_min_mm": 800,
+            "width_max_mm": 1800,
+            "moq_plain_kg": 400.0,
+            "retail_price_per_kg": 4.5,
+            "moq_printed_kg": 500.0
+        },
+        {
+            "id": 55,
+            "product_group": "centerfold",
+            "width_min_mm": 200,
+            "width_max_mm": 399,
+            "moq_plain_kg": 200.0,
+            "retail_price_per_kg": 4.45,
+            "moq_printed_kg": 250.0
+        },
+        {
+            "id": 56,
+            "product_group": "centerfold",
+            "width_min_mm": 400,
+            "width_max_mm": 799,
+            "moq_plain_kg": 300.0,
+            "retail_price_per_kg": 4.4,
+            "moq_printed_kg": 300.0
+        },
+        {
+            "id": 57,
+            "product_group": "centerfold",
+            "width_min_mm": 800,
+            "width_max_mm": 1460,
+            "moq_plain_kg": 400.0,
+            "retail_price_per_kg": 4.35,
+            "moq_printed_kg": 400.0
+        },
+        {
+            "id": 58,
+            "product_group": "sheet",
+            "width_min_mm": 200,
+            "width_max_mm": 399,
+            "moq_plain_kg": 300.0,
+            "retail_price_per_kg": 5.0,
+            "moq_printed_kg": 300.0
+        },
+        {
+            "id": 59,
+            "product_group": "sheet",
+            "width_min_mm": 400,
+            "width_max_mm": 799,
+            "moq_plain_kg": 300.0,
+            "retail_price_per_kg": 4.85,
+            "moq_printed_kg": 400.0
+        },
+        {
+            "id": 60,
+            "product_group": "sheet",
+            "width_min_mm": 800,
+            "width_max_mm": 999,
+            "moq_plain_kg": 400.0,
+            "retail_price_per_kg": 4.75,
+            "moq_printed_kg": 500.0
+        },
+        {
+            "id": 61,
+            "product_group": "sheet",
+            "width_min_mm": 1000,
+            "width_max_mm": 1460,
+            "moq_plain_kg": 500.0,
+            "retail_price_per_kg": 4.75,
+            "moq_printed_kg": 600.0
+        },
+        {
+            "id": 62,
+            "product_group": "tube",
+            "width_min_mm": 0,
+            "width_max_mm": 99,
+            "moq_plain_kg": 200.0,
+            "retail_price_per_kg": 5.0,
+            "moq_printed_kg": 200.0
+        },
+        {
+            "id": 63,
+            "product_group": "tube",
+            "width_min_mm": 100,
+            "width_max_mm": 399,
+            "moq_plain_kg": 200.0,
+            "retail_price_per_kg": 4.7,
+            "moq_printed_kg": 200.0
+        },
+        {
+            "id": 64,
+            "product_group": "tube",
+            "width_min_mm": 400,
+            "width_max_mm": 799,
+            "moq_plain_kg": 300.0,
+            "retail_price_per_kg": 4.65,
+            "moq_printed_kg": 300.0
+        },
+        {
+            "id": 65,
+            "product_group": "tube",
+            "width_min_mm": 800,
+            "width_max_mm": 1800,
+            "moq_plain_kg": 400.0,
+            "retail_price_per_kg": 4.5,
+            "moq_printed_kg": 500.0
+        },
+        {
+            "id": 66,
+            "product_group": "u_film",
+            "width_min_mm": 300,
+            "width_max_mm": 499,
+            "moq_plain_kg": 250.0,
+            "retail_price_per_kg": 4.5,
+            "moq_printed_kg": 300.0
+        },
+        {
+            "id": 67,
+            "product_group": "u_film",
+            "width_min_mm": 500,
+            "width_max_mm": 999,
+            "moq_plain_kg": 300.0,
+            "retail_price_per_kg": 4.4,
+            "moq_printed_kg": 300.0
+        },
+        {
+            "id": 68,
+            "product_group": "u_film",
+            "width_min_mm": 1000,
+            "width_max_mm": 1460,
+            "moq_plain_kg": 400.0,
+            "retail_price_per_kg": 4.35,
+            "moq_printed_kg": 500.0
+        }
+    ],
+    "conversion_speeds": [
+        {
+            "min_gauge_um": 25,
+            "max_gauge_um": 49,
+            "min_length_mm": 200,
+            "max_length_mm": 399,
+            "bags_per_minute": 50.0
+        },
+        {
+            "min_gauge_um": 25,
+            "max_gauge_um": 49,
+            "min_length_mm": 400,
+            "max_length_mm": 599,
+            "bags_per_minute": 40.0
+        },
+        {
+            "min_gauge_um": 25,
+            "max_gauge_um": 49,
+            "min_length_mm": 600,
+            "max_length_mm": 799,
+            "bags_per_minute": 38.0
+        },
+        {
+            "min_gauge_um": 25,
+            "max_gauge_um": 49,
+            "min_length_mm": 800,
+            "max_length_mm": 1299,
+            "bags_per_minute": 35.0
+        },
+        {
+            "min_gauge_um": 25,
+            "max_gauge_um": 49,
+            "min_length_mm": 1300,
+            "max_length_mm": 2200,
+            "bags_per_minute": 30.0
+        },
+        {
+            "min_gauge_um": 50,
+            "max_gauge_um": 99,
+            "min_length_mm": 200,
+            "max_length_mm": 399,
+            "bags_per_minute": 48.0
+        },
+        {
+            "min_gauge_um": 50,
+            "max_gauge_um": 99,
+            "min_length_mm": 400,
+            "max_length_mm": 599,
+            "bags_per_minute": 35.0
+        },
+        {
+            "min_gauge_um": 50,
+            "max_gauge_um": 99,
+            "min_length_mm": 600,
+            "max_length_mm": 799,
+            "bags_per_minute": 33.0
+        },
+        {
+            "min_gauge_um": 50,
+            "max_gauge_um": 99,
+            "min_length_mm": 800,
+            "max_length_mm": 1299,
+            "bags_per_minute": 30.0
+        },
+        {
+            "min_gauge_um": 50,
+            "max_gauge_um": 99,
+            "min_length_mm": 1300,
+            "max_length_mm": 2200,
+            "bags_per_minute": 25.0
+        },
+        {
+            "min_gauge_um": 100,
+            "max_gauge_um": 139,
+            "min_length_mm": 200,
+            "max_length_mm": 399,
+            "bags_per_minute": 45.0
+        },
+        {
+            "min_gauge_um": 100,
+            "max_gauge_um": 139,
+            "min_length_mm": 400,
+            "max_length_mm": 599,
+            "bags_per_minute": 30.0
+        },
+        {
+            "min_gauge_um": 100,
+            "max_gauge_um": 139,
+            "min_length_mm": 600,
+            "max_length_mm": 799,
+            "bags_per_minute": 28.0
+        },
+        {
+            "min_gauge_um": 100,
+            "max_gauge_um": 139,
+            "min_length_mm": 800,
+            "max_length_mm": 1299,
+            "bags_per_minute": 25.0
+        },
+        {
+            "min_gauge_um": 100,
+            "max_gauge_um": 139,
+            "min_length_mm": 1300,
+            "max_length_mm": 2200,
+            "bags_per_minute": 20.0
+        },
+        {
+            "min_gauge_um": 140,
+            "max_gauge_um": 300,
+            "min_length_mm": 200,
+            "max_length_mm": 399,
+            "bags_per_minute": 35.0
+        },
+        {
+            "min_gauge_um": 140,
+            "max_gauge_um": 300,
+            "min_length_mm": 400,
+            "max_length_mm": 599,
+            "bags_per_minute": 25.0
+        },
+        {
+            "min_gauge_um": 140,
+            "max_gauge_um": 300,
+            "min_length_mm": 600,
+            "max_length_mm": 799,
+            "bags_per_minute": 23.0
+        },
+        {
+            "min_gauge_um": 140,
+            "max_gauge_um": 300,
+            "min_length_mm": 800,
+            "max_length_mm": 1299,
+            "bags_per_minute": 20.0
+        },
+        {
+            "min_gauge_um": 140,
+            "max_gauge_um": 300,
+            "min_length_mm": 1300,
+            "max_length_mm": 2200,
+            "bags_per_minute": 15.0
+        }
+    ],
+    "conversion_factors": {
+        "roll_change_minutes": 10.0,
+        "carton_cost": 1.0,
+        "roll_weight_avg": 80.0,
+        "conversion_cost_per_hr": 50.0
+    },
+    "waste_adders": [],
+    "extrusion_waste_factors": [
+        {
+            "slug": "complex_set_up_print_or_perforation",
+            "minutes": 15
+        },
+        {
+            "slug": "gusset",
+            "minutes": 40
+        },
+        {
+            "slug": "non_standard_resin_or_colour",
+            "minutes": 10
+        },
+        {
+            "slug": "simple_job",
+            "minutes": 20
+        }
+    ],
+    "extrusion_throughput_kg_per_hr": 0,
+    "packing_factor_rolls": 0.7,
+    "packing_factor_cartons": 0.5,
+    "pallet_volume_m3": 1.0
 }

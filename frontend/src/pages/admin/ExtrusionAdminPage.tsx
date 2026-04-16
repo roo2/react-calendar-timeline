@@ -302,7 +302,7 @@ export function ExtrusionAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Extrusion"
-        subtitle="Extruder rate cards (quotes & throughput), extrusion waste factors, and quote materials retail bands."
+        subtitle="Extruder properties, extrusion waste factors, and quote materials retail bands."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
@@ -433,7 +433,7 @@ export function ExtrusionAdminPage() {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Extruder rate cards (quotes & throughput)
+          Extruders
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 720 }}>
           Running costs (e.g. cost per hour) are intended to cover wages, maintenance, and electricity.

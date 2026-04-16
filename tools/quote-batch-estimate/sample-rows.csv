@@ -10,7 +10,18 @@ customer,quoter,label,product_type,base_width_mm,gusset_mm,base_length_mm,thickn
 ,,TUBE LDPE LF W175 150um PRINT 1 COL 300KG,Tube,175,,0,150,Rolls,Inline,1,,LD,,kg,0,0,0,300,0,
 ,,TUBE LDPE LF W225 150um SILVER PRINT 4 COL 400KG,Tube,225,,0,150,Rolls,Inline,4,SILVER,LD,,kg,0,0,0,400,0,
 AZAPAK,Ross,Blue TINT LDPE bags on roll 510mm x 770mm x 30um 500/roll,Bag,510,,770,30,Rolls,None,0,RED,LD,,rolls_units,0,20,500,0,0,1090
-Gourmet Gardens,Ross,PBR 1000x1675x100 50/roll,Bag,1000,,1675,100,Rolls,None,0,RED,LD,,rolls_units,0,470,50,0,0,"30,163.56"
+Gourmet Gardens,Ross,PBR 1000x1675x100 50/roll,Bag,1000,,1675,100,Rolls,None,0,RED,LD,,rolls_units,0,470,50,0,0,32430
 Betta Blinds,Joe,LD Natural Poly Tubing 310 x 250um clear,Tube,310,,,250,Rolls,None,0,,LD,,rolls_kg,0,200,1,200,1,940
 Signet,Joe,Natural Poly Bags LD 610 910 30um,Bag,610,,910,30,Cartons,None,0,,LD,,units,10000,,,,,1956
 Signet,Joe,LD Poly Bags Green tint + UV ,Bag,150,,150,150,Cartons,None,0,,LD,,units,30000,,,,,2055
+Morton Hire,Joe,Furniture Bags 760+600 x 1050 x 40,Bag,760,600,1050,40,Rolls,None,0,,LD,,rolls_units,0,20,100,0,0,1676
+Morton Hire,Joe,Cutlery Bags 140 x 360 x 50um,Bag,140,,360,50,Rolls,None,0,,LD,,rolls_units,0,10,1000,0,0,1690
+QIS,Joe,Gussetted Polly Tubing,Sleeve,1000,800,181000,50,Rolls,None,0,,LD,,units,20,20,1,0,0,1753.4
+QIS,Joe,LDPE Clear Poly Bags 1200 x 800 x 200um,Bag,1200,,800,200,Rolls,None,0,,LD,,rolls_units,1250,25,50,0,0,2342.25
+PacPlus,Lisa,Centerfold sheet 1mtr 30 um,Centerfold,1000,,,30,Rolls,None,0,,LD,,rolls_kg,,8,1,,18.5,672
+Mincon,Joe,NATURAL LDPE POLY TUBE 200MM X 100M X 200UM,Sleeve,200,,100000,200,Rolls,None,0,,LD,,rolls_units,10,10,1,0,0,408.9
+Emjay,Joe,LDPE NATURAL S.W.S 400MM X 200UM 15KGS/ROLL,Sheet,400,,,200,Rolls,None,0,,LD,,rolls_kg,,30,,,15,1510
+AZAPAK,Joe,LAYFLAT TUBING WHITE LDPE (VIRGIN) 250MM X 150UM,Tube,250,,,150,Rolls,None,0,,LD,,rolls_kg,,50,,,10,2375
+,,TUBE LDPE LF. W450mm X L78550mm X 150µm.,Sleeve,450,,78550,150,Rolls,None,0,,LD,,kg,,,,30,,177
+,,BAG LDPE G. W(550mm + 320mm) X L1780mm X 35µm. GREEN.,Bag,550,320,1780,35,Cartons,None,0,,LD,,units,9875,,,,,5451.49
+,,BAG LDPE LF. W420mm X L700mm X 100µm. WHITE. PRINTED 5 COLOURS X 1 SIDE.,Bag,420,,700,100,Cartons,Uteco,5,WHITE,LD,,units,5000,,,,,3375

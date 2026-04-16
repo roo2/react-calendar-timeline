@@ -60,10 +60,9 @@ def upgrade() -> None:
     )
     rows: list[dict] = [
         # Poly Tube (Tube / Sleeve in app)
-        dict(product_group="tube", width_min_mm=0, width_max_mm=99, moq_plain_kg=200, retail_price_per_kg=None, moq_printed_kg=200),
-        dict(product_group="tube", width_min_mm=100, width_max_mm=399, moq_plain_kg=300, retail_price_per_kg=None, moq_printed_kg=300),
-        dict(product_group="tube", width_min_mm=400, width_max_mm=799, moq_plain_kg=400, retail_price_per_kg=None, moq_printed_kg=500),
-        dict(product_group="tube", width_min_mm=800, width_max_mm=1800, moq_plain_kg=None, retail_price_per_kg=None, moq_printed_kg=None),
+        dict(product_group="tube", width_min_mm=100, width_max_mm=399, moq_plain_kg=200, retail_price_per_kg=4.7, moq_printed_kg=200),
+        dict(product_group="tube", width_min_mm=400, width_max_mm=799, moq_plain_kg=300, retail_price_per_kg=4.6, moq_printed_kg=300),
+        dict(product_group="tube", width_min_mm=800, width_max_mm=1800, moq_plain_kg=400, retail_price_per_kg=4.5, moq_printed_kg=500),
         # Poly C/Fold (Centerfold)
         dict(product_group="centerfold", width_min_mm=200, width_max_mm=399, moq_plain_kg=200, retail_price_per_kg=4.45, moq_printed_kg=250),
         dict(product_group="centerfold", width_min_mm=400, width_max_mm=799, moq_plain_kg=300, retail_price_per_kg=4.40, moq_printed_kg=300),

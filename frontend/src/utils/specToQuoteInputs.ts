@@ -3,7 +3,12 @@
  */
 
 import type { SpecPayload } from '../components/SpecPayloadForm'
-import { getDefaultResinCodeFromRatebook, type QuickQuoteInputs, type QuoteRatebook } from './quoteCalculator'
+import {
+  getDefaultResinCodeFromRatebook,
+  getRollWeightAvgKg,
+  type QuickQuoteInputs,
+  type QuoteRatebook,
+} from './quoteCalculator'
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
 import { productTypeCanHaveGusset } from './specCompat'
 
@@ -77,6 +82,9 @@ export function buildQuickQuoteInputsFromSpec(
   const finishMode: FinishMode = id.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
   const continuousRoll = dimensionsAreContinuous(dim, productType)
   const baseLengthMm = baseLengthMmFromDimensions(dim, productType)
+  /** Continuous products use 0 here for fixed-length fields, but quantity still needs mm for `total_m` (CSV/job tools). */
+  const rawLenMm = Math.round(Number(dim?.base_length_mm || 0))
+  const lengthMmForQuantity = continuousRoll && rawLenMm > 0 ? rawLenMm : baseLengthMm
   const widthMmNum = Math.round(Number(dim.base_width_mm || 0))
   const ufilmLeftWidthMmNum = Math.round(Number(dim.ufilm_left_width_mm || 0))
   const ufilmRightWidthMmNum = Math.round(Number(dim.ufilm_right_width_mm || 0))
@@ -124,11 +132,13 @@ export function buildQuickQuoteInputsFromSpec(
     quantity.numRolls,
     quantity.weightPerRoll,
     quantity.numUnits,
-    baseLengthMm,
+    lengthMmForQuantity,
     quantity.unitsPerRoll ?? 0,
     {
       continuousLength: continuousRoll,
       bagsPerCarton: bagsPerCartonNum > 0 ? bagsPerCartonNum : undefined,
+      /** Matches QuotesPage calcPayload when weight/roll is blank (Tube on continuous web). */
+      rollWeightAvgKg: getRollWeightAvgKg(opts?.ratebook ?? null),
     },
   )
 
