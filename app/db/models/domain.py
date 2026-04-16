@@ -45,6 +45,19 @@ from app.db.models.enums import (
 
 
 # Core parties and products
+class Brand(Base):
+    """Commercial brand (e.g. Crown Pack vs Dolphin) for reporting and customer grouping."""
+
+    __tablename__ = "brands"
+    __table_args__ = (UniqueConstraint("code", name="uq_brands_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    customers: Mapped[list["Customer"]] = relationship(back_populates="brand")
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
@@ -52,6 +65,11 @@ class Customer(Base):
     # 2-4 letter customer code used for job sheet numbering (manual entry).
     code: Mapped[str] = mapped_column(String(4), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
+    brand_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Lower number = higher priority (e.g. from sales spreadsheet); optional.
+    priority_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     abn: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="Active")
@@ -64,6 +82,7 @@ class Customer(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    brand: Mapped[Optional["Brand"]] = relationship(back_populates="customers")
     products: Mapped[list["Product"]] = relationship(back_populates="customer")
     orders: Mapped[list["Order"]] = relationship(back_populates="customer")
     quotes: Mapped[list["SavedQuote"]] = relationship(back_populates="customer")
@@ -671,5 +690,40 @@ class ProductionCalendarException(Base):
     open_time: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     close_time: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
+class MyobOAuthState(Base):
+    """Short-lived CSRF/state token for the MYOB OAuth authorize redirect."""
+
+    __tablename__ = "myob_oauth_states"
+
+    state: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[Optional[str]] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+    )
+    expires_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MyobConnection(Base):
+    """Singleton (id=1): stored MYOB OAuth tokens for the tenant."""
+
+    __tablename__ = "myob_connection"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_myob_connection_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token_expires_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
+    business_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    scope: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    myob_user_uid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    myob_username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    last_refreshed_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[Optional[str]] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
 
 

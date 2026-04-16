@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import SessionLocal
 from app.db.models.domain import Customer, Order, SavedQuote
@@ -16,8 +16,12 @@ def list_customers(query: Optional[str] = None) -> List[Customer]:
     Search matches customer name.
     """
     with SessionLocal() as db:  # type: Session
-        stmt = select(Customer).order_by(Customer.name.asc())
-        
+        stmt = (
+            select(Customer)
+            .options(joinedload(Customer.brand))
+            .order_by(Customer.priority_rank.asc().nulls_last(), Customer.name.asc())
+        )
+
         if query:
             search_term = f"%{query}%"
             stmt = stmt.where(Customer.name.ilike(search_term))
@@ -28,7 +32,11 @@ def list_customers(query: Optional[str] = None) -> List[Customer]:
 def get_customer(customer_id: str) -> Optional[Customer]:
     """Get customer by ID."""
     with SessionLocal() as db:  # type: Session
-        stmt = select(Customer).where(Customer.id == customer_id)
+        stmt = (
+            select(Customer)
+            .options(joinedload(Customer.brand))
+            .where(Customer.id == customer_id)
+        )
         return db.scalar(stmt)
 
 
@@ -55,6 +63,8 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
         customer = Customer(
             code=payload.code,
             name=payload.name,
+            brand_id=payload.brand_id,
+            priority_rank=payload.priority_rank,
             abn=payload.abn,
             contact_phone=payload.contact_phone,
             status=payload.status,
@@ -92,6 +102,8 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         
         # Update fields
         customer.name = payload.name
+        customer.brand_id = payload.brand_id
+        customer.priority_rank = payload.priority_rank
         customer.abn = payload.abn
         customer.contact_phone = payload.contact_phone
         customer.status = payload.status

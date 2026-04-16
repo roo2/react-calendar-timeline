@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProductListItem } from '../../../store/slices/productsSlice'
-import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
@@ -10,9 +9,7 @@ import {
   Box,
   Button,
   Dialog,
-  DialogActions,
   DialogContent,
-  DialogTitle,
   MenuItem,
   Paper,
   Stack,
@@ -25,9 +22,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { ProductVersionEditor } from '../../products/components/ProductVersionEditor'
-import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../../components/SpecPayloadForm'
-import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '../../../store/slices/productsSlice'
+import {
+  EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID,
+  type EmbeddedNewJobSheetFlow,
+  ProductVersionEditor,
+} from '../../products/components/ProductVersionEditor'
+import { fetchProducts } from '../../../store/slices/productsSlice'
 import {
   addOrderItem,
   createOrder,
@@ -37,14 +37,12 @@ import {
   patchOrder,
   publishOrderBare,
 } from '../../../store/slices/ordersSlice'
-import { checkProductCodeExists } from '../../../store/slices/productsSlice'
 import { updateJobSheet } from '../../../store/slices/jobSheetsSlice'
-import { computeProductCodeFromSpec } from '../../../utils/productDescription'
 
 type Mode = 'new' | 'edit'
 
 type Product = ProductListItem
-type QuantityUnit = 'kg' | 'rolls' | 'cartons'
+type QuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000'
 
 type OrderLine = {
   id: string // react key
@@ -76,8 +74,16 @@ function normalizeQuantityUnitFromApi(
   const x = String(raw || 'kg').toLowerCase()
   if (x === 'rolls') return 'rolls'
   if (x === 'cartons') return 'cartons'
+  if (x === '1000') return '1000'
   if (x === 'bags' && finish === 'Cartons') return 'cartons'
   return 'kg'
+}
+
+function jobSheetIdFromApi(raw: unknown): string {
+  if (raw == null || raw === '') return ''
+  const s = String(raw).trim()
+  if (s === 'undefined' || s === 'null') return ''
+  return s
 }
 
 function lineFromApiItem(it: any): OrderLine {
@@ -88,7 +94,7 @@ function lineFromApiItem(it: any): OrderLine {
   return {
     id: String(it.id),
     order_item_id: String(it.id),
-    job_sheet_id: String(it.job_sheet_id),
+    job_sheet_id: jobSheetIdFromApi(it.job_sheet_id ?? (it as { jobSheetId?: unknown }).jobSheetId),
     product_id: String(it.product_id),
     product_code: String(it.product_code || ''),
     product_name: (it.product_name as string | null | undefined) ?? null,
@@ -111,8 +117,16 @@ function finishModeForProduct(p: Product): 'Rolls' | 'Cartons' | null {
 /** When finish is unknown, treat as Rolls so we do not offer Carton until spec is known. */
 function unitChoices(finish: 'Rolls' | 'Cartons' | null | undefined): QuantityUnit[] {
   const f = finish === 'Cartons' ? 'Cartons' : 'Rolls'
-  if (f === 'Cartons') return ['kg', 'cartons']
-  return ['kg', 'rolls']
+  if (f === 'Cartons') return ['kg', 'cartons', '1000']
+  return ['kg', 'rolls', '1000']
+}
+
+function qtyTypeForSavedJobSheet(unit: QuantityUnit): string | undefined {
+  if (unit === '1000') return 'units'
+  if (unit === 'rolls') return 'total_rolls'
+  if (unit === 'cartons') return 'units'
+  if (unit === 'kg') return 'kg'
+  return undefined
 }
 
 /** Default due date: 4 weeks from today (YYYY-MM-DD). */
@@ -166,7 +180,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEditProduct = can(roles, 'PROD_MANAGER')
   const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
-  const createState = useAppSelector((s) => s.products.create)
   const productList = useAppSelector((s) => s.products.list)
   const ordersBootstrap = useAppSelector((s) => s.orders.bootstrap)
   const { setDirty } = useUnsavedChanges()
@@ -184,9 +197,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [pvJobSheetId, setPvJobSheetId] = useState<string | null>(null)
   const [pvTitle, setPvTitle] = useState<string>('')
 
-  const [newProductOpen, setNewProductOpen] = useState(false)
-  const [newProductSpec, setNewProductSpec] = useState<SpecPayload>(() => makeDefaultSpec())
-  const [newProductCodeExists, setNewProductCodeExists] = useState(false)
+  const [newJobSheetOpen, setNewJobSheetOpen] = useState(false)
 
   const initialDraftRef = useRef<OrderNewDraft | null>(mode === 'new' ? parseOrderNewDraftState(loc.state) : null)
   const initialDraft = initialDraftRef.current
@@ -205,6 +216,56 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const originalRef = useRef<{ lines: Record<string, OrderLine> } | null>(null)
 
+  const newJobSheetEmbeddedFlow = useMemo((): EmbeddedNewJobSheetFlow | null => {
+    if (!newJobSheetOpen || !String(customerId || '').trim()) return null
+    return {
+      customerId,
+      orderMode: mode,
+      orderId: mode === 'edit' ? orderId ?? null : null,
+      initialOrderDate: orderDate,
+      onCancel: () => setNewJobSheetOpen(false),
+      onFinished: () => {
+        setNewJobSheetOpen(false)
+        void dispatch(fetchProducts({ customer_id: customerId }))
+        if (mode === 'edit' && orderId) {
+          void (async () => {
+            try {
+              const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+              setOrderStatus(String(res?.status || 'draft'))
+              setInvoiceNumber(String(res?.code ?? ''))
+              setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
+              const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+              setItems(nextItems)
+              originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+            } catch {
+              /* ignore */
+            }
+          })()
+        }
+      },
+      onNewDraftLine:
+        mode === 'new'
+          ? (args) => {
+              setItems((prev) => [
+                ...prev,
+                {
+                  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                  product_id: args.product_id,
+                  product_code: args.product_code,
+                  product_name: args.product_name ?? null,
+                  due_date: args.due_date,
+                  finish_mode: args.finish_mode,
+                  quantity_unit: args.quantity_unit,
+                  quantity_value: String(args.quantity_value),
+                  rate: '',
+                  total_price: '',
+                },
+              ])
+            }
+          : undefined,
+    }
+  }, [newJobSheetOpen, customerId, mode, orderId, orderDate, dispatch])
+
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
 
   /** One-shot: open embedded job sheet dialog after quote → order (see `openJobSheetFor` in location state). */
@@ -219,11 +280,42 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const productListErr =
     customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
 
-  function openProductVersionModal(p: { product_id: string; product_code?: string | null; job_sheet_id?: string }) {
+  function openProductVersionModal(p: { product_id: string; product_code?: string | null; job_sheet_id?: string | null }) {
     setPvProductId(p.product_id)
-    setPvJobSheetId(p.job_sheet_id ? String(p.job_sheet_id) : null)
-    setPvTitle(p.product_code ? `Edit ${p.product_code}` : 'Edit product')
+    const js = jobSheetIdFromApi(p.job_sheet_id)
+    setPvJobSheetId(js || null)
+    setPvTitle(
+      js
+        ? p.product_code
+          ? `Edit job sheet — ${p.product_code}`
+          : 'Edit job sheet'
+        : p.product_code
+          ? `Edit ${p.product_code}`
+          : 'Edit product',
+    )
     setPvOpen(true)
+  }
+
+  /** Resolve job sheet id for persisted orders if local line state is missing it (enables quantity + spec modal). */
+  async function openProductVersionModalForLine(it: OrderLine) {
+    let js = jobSheetIdFromApi(it.job_sheet_id)
+    if (mode === 'edit' && orderId && !js) {
+      try {
+        const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+        const row = (res?.items || []).find((x: { id?: unknown }) => String(x.id) === String(it.order_item_id || it.id))
+        js = jobSheetIdFromApi(row?.job_sheet_id ?? (row as { jobSheetId?: unknown } | undefined)?.jobSheetId)
+        if (js) {
+          setItems((prev) => prev.map((l) => (l.id === it.id ? { ...l, job_sheet_id: js } : l)))
+        }
+      } catch {
+        /* keep js empty */
+      }
+    }
+    openProductVersionModal({
+      product_id: it.product_id,
+      product_code: it.product_code,
+      job_sheet_id: js || null,
+    })
   }
 
   function closeProductVersionModal() {
@@ -231,126 +323,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setPvProductId(null)
     setPvJobSheetId(null)
     setPvTitle('')
-  }
-
-  function openNewProductModal() {
-    if (!customerId) return
-    dispatch(clearCreateErrors())
-    setNewProductOpen(true)
-  }
-
-  function closeNewProductModal() {
-    setNewProductOpen(false)
-    setNewProductSpec(makeDefaultSpec())
-    setNewProductCodeExists(false)
-  }
-
-  const generatedProductCode = useMemo(() => (computeProductCodeFromSpec(newProductSpec) || '').trim(), [newProductSpec])
-
-  const codeExistsReq = useRef(0)
-  useEffect(() => {
-    const v = (generatedProductCode || '').trim()
-    if (!newProductOpen || !v) {
-      setNewProductCodeExists(false)
-      return
-    }
-    const t = window.setTimeout(() => {
-      const id = ++codeExistsReq.current
-      void dispatch(checkProductCodeExists(v))
-        .unwrap()
-        .then((r) => {
-          if (id !== codeExistsReq.current) return
-          setNewProductCodeExists(!!r.exists)
-        })
-        .catch(() => {
-          if (id !== codeExistsReq.current) return
-          setNewProductCodeExists(false)
-        })
-    }, 250)
-    return () => {
-      window.clearTimeout(t)
-    }
-  }, [dispatch, generatedProductCode, newProductOpen])
-
-  async function addProductFromSummary(p: Product) {
-    if (!p.active_version_id) {
-      setErr(`Product ${p.code} has no active version yet`)
-      return
-    }
-    if (mode === 'new') {
-      setItems((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          product_id: p.id,
-          product_code: p.code,
-          product_name: p.description || null,
-          due_date: defaultDueDate(),
-          finish_mode: finishModeForProduct(p),
-          quantity_unit: 'kg',
-          quantity_value: '1',
-          rate: '',
-          total_price: '',
-        },
-      ])
-      return
-    }
-    if (!orderId) return
-    try {
-      setErr(null)
-      setSaving(true)
-      await dispatch(
-        addOrderItem({
-          orderId,
-          body: {
-            product_id: p.id,
-            due_date: defaultDueDate(),
-            quantity_unit: 'kg',
-            quantity_value: 1,
-          },
-        }),
-      ).unwrap()
-      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
-      setItems(nextItems)
-      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to add order item')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function onCreateNewProduct(e: FormEvent) {
-    e.preventDefault()
-    if (!customerId) return
-    if (!generatedProductCode.trim() || newProductCodeExists) return
-    dispatch(clearCreateErrors())
-    try {
-      const res = await dispatch(
-        createProduct({
-          data: {
-            customer_id: customerId,
-            code: generatedProductCode.trim(),
-            spec: newProductSpec,
-          },
-        }),
-      ).unwrap()
-
-      const pid = res?.product?.id as string | undefined
-      if (!pid) return
-
-      // Fetch full product summary (incl active_version_id) and add it immediately.
-      const { data: pres } = await dispatch(fetchProduct(pid)).unwrap()
-      const p = pres?.product as Product | undefined
-      if (!p) return
-
-      await dispatch(fetchProducts({ customer_id: customerId })).unwrap()
-      closeNewProductModal()
-      await addProductFromSummary(p)
-    } catch {
-      // Errors are stored in products.create
-    }
   }
 
   useEffect(() => {
@@ -646,13 +618,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
       for (const it of updates) {
         if (!it.job_sheet_id) continue
+        const qv = Number(it.quantity_value || '0')
+        const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
         await dispatch(
           updateJobSheet({
             jobSheetId: it.job_sheet_id,
             body: {
               due_date: it.due_date || null,
-              quantity_value: Number(it.quantity_value || '0'),
+              quantity_value: qv,
               quantity_unit: it.quantity_unit,
+              ...(qt ? { qty_type: qt } : {}),
+              ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
               unit_rate: parseOptionalMoney(it.rate),
               line_total: computedLineTotal(it),
             },
@@ -796,45 +772,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           </Box>
 
           <Paper variant="outlined" sx={{ p: 1 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', px: 1, pt: 1 }}>
-              <Typography variant="subtitle2">Products</Typography>
-              <TextField
-                select
-                size="small"
-                label="Add product"
-                value={productId}
-                onChange={(e) => {
-                  const next = e.target.value
-                  if (next === '__new_product__') {
-                    setProductId('')
-                    openNewProductModal()
-                    return
-                  }
-                  setProductId(next)
-                  if (!next) return
-                  if (mode === 'new') addSelectedProductToItems(next)
-                  else void addSelectedProductToOrder(next)
-                }}
-                disabled={!customerId || loadingProducts || saving || publishing || orderLocked}
-                SelectProps={{
-                  onOpen: () => {
-                    if (customerId && products.length === 0) void loadProductsForCustomer(customerId)
-                  },
-                }}
-                sx={{ minWidth: 240 }}
-              >
-                <MenuItem value="" disabled>
-                  {loadingProducts ? 'Loading…' : products.length ? 'Select product' : 'No products found'}
-                </MenuItem>
-                {products.map((p) => (
-                  <MenuItem key={p.id} value={p.id}>
-                    {p.code}
-                  </MenuItem>
-                ))}
-                <MenuItem divider />
-                <MenuItem value="__new_product__">New Product…</MenuItem>
-              </TextField>
-            </Box>
+            <Typography variant="subtitle2" sx={{ px: 1, pt: 1, pb: 0.5 }}>
+              Products
+            </Typography>
             <Table size="small" sx={{ '& .MuiTableCell-root': { px: 1 } }}>
               <TableHead>
                 <TableRow>
@@ -896,7 +836,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                       >
                         {unitChoices(it.finish_mode).map((u) => (
                           <MenuItem key={u} value={u}>
-                            {u === 'kg' ? 'KG' : u === 'rolls' ? 'Roll' : 'Carton'}
+                            {u === 'kg' ? 'KG' : u === 'rolls' ? 'Roll' : u === '1000' ? '1000' : 'Carton'}
                           </MenuItem>
                         ))}
                       </TextField>
@@ -927,8 +867,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                           <Button
                             size="small"
                             variant="text"
-                            onClick={() => openProductVersionModal(it)}
-                            disabled={saving || publishing}
+                            onClick={() => void openProductVersionModalForLine(it)}
+                            disabled={
+                              saving ||
+                              publishing ||
+                              (mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id))
+                            }
+                            title={
+                              mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id)
+                                ? 'Save the order draft first to edit job sheet, quantity, and spec together.'
+                                : undefined
+                            }
                           >
                             Edit
                           </Button>
@@ -946,13 +895,52 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                     </TableCell>
                   </TableRow>
                 ))}
-                {items.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7}>
-                      <Typography color="text.secondary">No products added yet.</Typography>
-                    </TableCell>
-                  </TableRow>
-                )}
+                <TableRow>
+                  <TableCell colSpan={7} sx={{ borderBottom: 'none' }}>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} sx={{ py: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
+                        Add product
+                      </Typography>
+                      <TextField
+                        select
+                        size="small"
+                        label="Product"
+                        value={productId}
+                        onChange={(e) => {
+                          const next = e.target.value
+                          if (next === '__new_job_sheet__') {
+                            setProductId('')
+                            if (!customerId) return
+                            setNewJobSheetOpen(true)
+                            return
+                          }
+                          setProductId(next)
+                          if (!next) return
+                          if (mode === 'new') addSelectedProductToItems(next)
+                          else void addSelectedProductToOrder(next)
+                        }}
+                        disabled={!customerId || loadingProducts || saving || publishing || orderLocked}
+                        SelectProps={{
+                          onOpen: () => {
+                            if (customerId && products.length === 0) void loadProductsForCustomer(customerId)
+                          },
+                        }}
+                        sx={{ minWidth: { xs: '100%', sm: 280 }, maxWidth: 480 }}
+                      >
+                        <MenuItem value="" disabled>
+                          {loadingProducts ? 'Loading…' : products.length ? 'Select product' : 'No products found'}
+                        </MenuItem>
+                        {products.map((p) => (
+                          <MenuItem key={p.id} value={p.id}>
+                            {p.code}
+                          </MenuItem>
+                        ))}
+                        <MenuItem divider />
+                        <MenuItem value="__new_job_sheet__">New Job Sheet</MenuItem>
+                      </TextField>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
               </TableBody>
               <TableFooter>
                 <TableRow>
@@ -1007,6 +995,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         <DialogContent dividers>
           {pvProductId ? (
             <ProductVersionEditor
+              key={`${pvProductId}:${pvJobSheetId ?? 'none'}`}
               productId={pvProductId}
               jobSheetId={pvJobSheetId || undefined}
               onCancel={closeProductVersionModal}
@@ -1031,54 +1020,27 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={newProductOpen} onClose={() => closeNewProductModal()} maxWidth="lg" fullWidth>
-        <form onSubmit={onCreateNewProduct}>
-          <DialogTitle>New Product</DialogTitle>
-          <DialogContent dividers>
-            <Stack spacing={2}>
-              {createState.error ? <Alert severity="error">{createState.error}</Alert> : null}
-              <Paper variant="outlined" sx={{ p: 2 }}>
-                <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                  Spec
-                </Typography>
-                <SpecPayloadForm
-                  customerId={customerId || undefined}
-                  value={newProductSpec}
-                  onChange={(next) => setNewProductSpec(next)}
-                  fieldErrors={createState.fieldErrors}
-                />
-              </Paper>
-
-              <Box sx={{ mt: 0.5 }}>
-                <Typography variant="subtitle2" sx={{ color: 'text.secondary' }}>
-                  Generated product code
-                </Typography>
-                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                  {generatedProductCode.trim() ? generatedProductCode : '—'}
-                </Typography>
-                {newProductCodeExists ? (
-                  <Typography variant="caption" color="error">
-                    This code already exists; you may need to adjust the spec.
-                  </Typography>
-                ) : null}
-              </Box>
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button variant="text" color="primary" onClick={() => closeNewProductModal()}>Cancel</Button>
-            <Button
-              type="submit"
-              variant="contained"
-              disabled={
-                !generatedProductCode.trim() ||
-                newProductCodeExists ||
-                createState.status === 'loading'
-              }
-            >
-              {createState.status === 'loading' ? 'Creating…' : 'Create product'}
-            </Button>
-          </DialogActions>
-        </form>
+      <Dialog
+        open={newJobSheetOpen}
+        onClose={() => {
+          if (saving || publishing) return
+          setNewJobSheetOpen(false)
+        }}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogContent dividers sx={{ p: 0 }}>
+          {newJobSheetOpen && customerId && newJobSheetEmbeddedFlow ? (
+            <Box sx={{ p: 2 }}>
+              <ProductVersionEditor
+                productId={EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID}
+                embeddedNewJobSheetFlow={newJobSheetEmbeddedFlow}
+                title="New job sheet"
+                onCancel={() => setNewJobSheetOpen(false)}
+              />
+            </Box>
+          ) : null}
+        </DialogContent>
       </Dialog>
     </Box>
   )

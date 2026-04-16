@@ -35,7 +35,7 @@ export type QuotePayload = {
   /** Quotes UI checkbox; may appear without `hole_punched` on some payloads. */
   flagPunched?: boolean
   run_up?: number | null
-  qtyType?: 'kg' | 'units' | 'total_rolls' | 'rolls_units'
+  qtyType?: 'kg' | 'units' | 'units_per_1000' | 'total_rolls' | 'rolls_units'
   /** When qtyType is rolls_units: products (e.g. bags) per roll. */
   unitsPerRoll?: string | number
   totalKg?: string | number
@@ -227,13 +227,15 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
 
 export type OrderQuantity = {
   quantity_value: number
-  quantity_unit: 'kg' | 'rolls' | 'cartons'
+  quantity_unit: 'kg' | 'rolls' | 'cartons' | '1000'
 }
 
 export type OrderQuantityPreview = {
   totals_kg?: number | null
   rolls?: number | null
   cartons?: number | null
+  /** Product count from the calculator (used when qty type is total units → order line in `1000` units). */
+  totals_units?: number | null
 }
 
 function positiveOrOne(n: number): number {
@@ -274,7 +276,7 @@ export function resolveWeightPerRollKgForOrderConvert(
   if (rolls > 0 && Number.isFinite(tk) && tk > 0) {
     if (qtyTypeRaw === 'total_rolls') return tk / rolls
     // Continuous-length "total units": quantity carries implied rolls = units and total_kg for pricing geometry.
-    if (qtyTypeRaw === 'units' && quotePayloadUsesContinuousLength(p)) return tk / rolls
+    if ((qtyTypeRaw === 'units' || qtyTypeRaw === 'units_per_1000') && quotePayloadUsesContinuousLength(p)) return tk / rolls
   }
   return null
 }
@@ -289,23 +291,30 @@ export function getOrderQuantityFromQuotePayload(
 ): OrderQuantity {
   const p = payload
   const finish = p.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-  const qtyType = String(p.qtyType || (p as { qty_type?: string }).qty_type || 'kg').trim()
+  let qtyType = String(p.qtyType || (p as { qty_type?: string }).qty_type || 'kg').trim()
+  if (qtyType === 'units_per_1000') qtyType = 'units'
   const totalKg = Number(p.totalKg) || 0
   const numUnits = Math.round(Number(p.numUnits) || 0)
   const numRolls = Math.round(Number(p.numRolls) || 0)
-  const bagsPerCarton = Math.max(0, Math.round(Number(p.bags_per_carton) || 0))
 
   const pk = positiveOrOne
+
+  /** Total product count: order line uses unit `1000` and qty = count ÷ 1000 (legacy saved quotes may still have `units_per_1000`). */
+  if (qtyType === 'units') {
+    const n =
+      numUnits > 0
+        ? numUnits
+        : preview?.totals_units != null && Number(preview.totals_units) > 0
+          ? Math.round(Number(preview.totals_units))
+          : 0
+    if (n > 0) {
+      return { quantity_value: n / 1000, quantity_unit: '1000' }
+    }
+  }
 
   if (finish === 'Cartons') {
     if (qtyType === 'kg') {
       return { quantity_value: pk(totalKg), quantity_unit: 'kg' }
-    }
-    if (qtyType === 'units' && bagsPerCarton > 0 && numUnits > 0) {
-      return {
-        quantity_value: Math.max(1, Math.ceil(numUnits / bagsPerCarton)),
-        quantity_unit: 'cartons',
-      }
     }
     const pc = preview?.cartons != null ? Number(preview.cartons) : NaN
     if (Number.isFinite(pc) && pc > 0) {

@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 from app.products.schemas import SpecPayload
 
 
-QuantityUnit = Literal["kg", "rolls", "bags", "meters", "cartons"]
-QtyType = Literal["kg", "units", "total_rolls"]
+QuantityUnit = Literal["kg", "rolls", "bags", "meters", "cartons", "1000"]
+QtyType = Literal["kg", "units", "total_rolls", "rolls_units"]
 
 
 class JobSheetCreateRequest(BaseModel):

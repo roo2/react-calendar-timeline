@@ -656,8 +656,8 @@ def upgrade() -> None:
     # Replace components for these blends to match the presets.
     conn.execute(sa.text("DELETE FROM resin_blend_components WHERE blend_code IN ('LD','MD')"))
     comps_seed = [
-        ("LD", "FD0270", 50.0),
-        ("LD", "S199F", 50.0),
+        ("LD", "Q1018H", 50.0),
+        ("LD", "FE8004", 50.0),
         ("MD", "FD0270", 30.0),
         ("MD", "FE3000", 40.0),
         ("MD", "S199F", 30.0),

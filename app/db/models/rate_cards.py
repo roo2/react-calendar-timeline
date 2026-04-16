@@ -282,10 +282,17 @@ class QuoteDefaults(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     extrusion_retail_addon_per_kg: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=1.8)
+    # Decimal rates: sell-side formulation line += incremental job cost × rate (see quote calculator).
+    formulation_colours_markup: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.25)
+    formulation_additives_markup: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.25)
+    formulation_custom_blend_markup: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.25)
 
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_quote_defaults_singleton"),
         CheckConstraint("extrusion_retail_addon_per_kg >= 0", name="ck_quote_defaults_extrusion_addon_nonneg"),
+        CheckConstraint("formulation_colours_markup >= 0", name="ck_quote_defaults_form_colours_markup_nonneg"),
+        CheckConstraint("formulation_additives_markup >= 0", name="ck_quote_defaults_form_additives_markup_nonneg"),
+        CheckConstraint("formulation_custom_blend_markup >= 0", name="ck_quote_defaults_form_custom_blend_markup_nonneg"),
     )
 
 

@@ -32,6 +32,10 @@ try:
 except Exception:
     telemetry_router = None
 try:
+    from app.integrations.myob.routes import router as myob_router  # type: ignore
+except Exception:
+    myob_router = None
+try:
     # Test imports step by step
     try:
         from app.customers import service
@@ -251,6 +255,8 @@ app.include_router(health_partials_router)
 # from app.branding.routes import router as branding_router
 if telemetry_router is not None:
     app.include_router(telemetry_router)
+if myob_router is not None:
+    app.include_router(myob_router)
 
 
 @app.exception_handler(DomainError)

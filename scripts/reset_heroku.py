@@ -128,7 +128,8 @@ def main(argv: list[str]) -> int:
             "2. alembic upgrade head\n"
             "3. Seed from TSVs: extruders, waste factors, printing pricing, conversion (unless --skip-tsv-seeds)\n"
             "4. create_admin.py (admin user with SYS_ADMIN)\n"
-            "5. API import: plate customers + print plates from plate-db.tsv (unless --skip-plate-import)\n\n"
+            "5. Seed customers from scripts/priority-customers.md (seed_priority_customers.py)\n"
+            "6. Optional: API import of print plates from plate-db.tsv (unless --skip-plate-import)\n\n"
             "Use --skip-reset to re-run migrations/seeds without wiping the database."
         )
     )
@@ -160,7 +161,7 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--plate-db",
         default=str(Path("scripts") / "plate-db.tsv"),
-        help="Plate database file path relative to repo root (default: scripts/plate-db.tsv)",
+        help="TSV path for print-plate import only (default: scripts/plate-db.tsv); ignored with --skip-plate-import",
     )
     p.add_argument(
         "--skip-tsv-seeds",
@@ -175,7 +176,7 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--skip-plate-import",
         action="store_true",
-        help="Skip importing customers/plates via API.",
+        help="Skip API import of print plates from plate-db.tsv (customers always come from priority-customers.md).",
     )
 
     args = p.parse_args(argv)
@@ -186,7 +187,7 @@ def main(argv: list[str]) -> int:
     base_url = (args.base_url or _default_base_url(args.heroku_app)).rstrip("/")
 
     plate_db_path = (REPO_ROOT / args.plate_db).resolve()
-    if not plate_db_path.exists() and not args.skip_plate_import:
+    if not args.skip_plate_import and not plate_db_path.exists():
         raise SystemExit(f"ERROR: plate DB file not found: {plate_db_path}")
 
     if args.admin_password == "admin" and not os.getenv("SEED_ADMIN_PASSWORD"):
@@ -236,27 +237,15 @@ def main(argv: list[str]) -> int:
     if args.include_fixture_min_chain:
         _run(["heroku", "run", "-a", app_name, "--", "python", "scripts/fixture_min_chain.py"])
 
+    print("Seeding customers from scripts/priority-customers.md …", flush=True)
+    _run(["heroku", "run", "-a", app_name, "--", "python", "scripts/seed_priority_customers.py"])
+
     if args.skip_plate_import:
-        print("Done (skipped plate import).", flush=True)
+        print("Done (skipped print-plate import).", flush=True)
         return 0
 
-    # 3) Import customers + plates via API against the Heroku URL (runs locally).
+    # Import print plates via API against the Heroku URL (runs locally).
     py = sys.executable or "python"
-    _run(
-        [
-            py,
-            str(REPO_ROOT / "scripts" / "api_import_plate_customers.py"),
-            str(plate_db_path),
-            "--base-url",
-            base_url,
-            "--username",
-            args.admin_username,
-            "--password",
-            args.admin_password,
-            "--delimiter",
-            "\\t",
-        ]
-    )
     _run(
         [
             py,

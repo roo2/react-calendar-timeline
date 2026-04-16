@@ -17,6 +17,19 @@ export function BlendComponentsEditor(props: {
     <Stack spacing={1} sx={{ width: '100%' }}>
       {components.map((c, idx) => (
         <Stack key={idx} direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
+          <TextField
+            size="small"
+            label="%"
+            sx={{ width: 120, flexShrink: 0 }}
+            inputProps={{ inputMode: 'decimal' }}
+            value={c.pct}
+            onChange={(e) => {
+              const v = e.target.value
+              const copy = components.slice()
+              copy[idx] = { ...copy[idx], pct: v ? parseFloat(v) : '' }
+              onChange(copy)
+            }}
+          />
           <ResinSelect
             options={resinOptions}
             valueCode={c.resin_code}
@@ -27,20 +40,7 @@ export function BlendComponentsEditor(props: {
               onChange(copy)
             }}
             reserveHelperTextSpace={false}
-            sx={{ flex: 1, minWidth: 520 }}
-          />
-          <TextField
-            size="small"
-            label="%"
-            sx={{ width: 120 }}
-            inputProps={{ inputMode: 'decimal' }}
-            value={c.pct}
-            onChange={(e) => {
-              const v = e.target.value
-              const copy = components.slice()
-              copy[idx] = { ...copy[idx], pct: v ? parseFloat(v) : '' }
-              onChange(copy)
-            }}
+            sx={{ flex: 1, minWidth: 0 }}
           />
           <Button
             size="small"

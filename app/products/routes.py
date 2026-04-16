@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm.exc import DetachedInstanceError
+from starlette.responses import Response
 
 from app.auth.deps import require_roles, allow_roles_any, csrf_protect, current_identity
+from app.config import settings
 from app.exceptions import DomainError
 from app.products import service
+from app.storage import printing_artwork_service as printing_artwork_service
 from app.products.schemas import (
     CreateProductRequest,
     CreateProductVersionRequest,
@@ -15,6 +18,13 @@ from app.products.schemas import (
     SpecPayload,
 )
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+
+def _printing_artwork_http_error(e: DomainError) -> None:
+    m = (e.message or "").lower()
+    if "not configured" in m:
+        raise HTTPException(status_code=503, detail=e.message)
+    raise HTTPException(status_code=400, detail=e.message)
 
 
 def _product_version_count(p) -> int:
@@ -129,6 +139,58 @@ async def get_version(product_id: str, version_id: str):
     spec = SpecPayload(**v.spec_payload) if v.spec_payload else None
     routing = service.derive_operation_routing(spec) if spec else {"operations": [], "warnings": []}
     return {"version": _version_summary(v), "routing": routing}
+
+
+@router.post(
+    "/{product_id}/versions/{version_id}/printing-artwork",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def upload_product_printing_artwork(product_id: str, version_id: str, file: UploadFile = File(...)):
+    try:
+        data = await file.read()
+        out = printing_artwork_service.upload_product_printing_pdf(
+            product_id=product_id,
+            version_id=version_id,
+            filename=file.filename or "artwork.pdf",
+            data=data,
+        )
+        return {"ok": True, "file": out}
+    except DomainError as e:
+        _printing_artwork_http_error(e)
+
+
+@router.get(
+    "/{product_id}/versions/{version_id}/printing-artwork/{file_id}/download-url",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))],
+)
+async def product_printing_artwork_download_url(product_id: str, version_id: str, file_id: str):
+    try:
+        url = printing_artwork_service.presign_product_printing_pdf(
+            product_id=product_id,
+            version_id=version_id,
+            file_id=file_id,
+        )
+        return {"url": url, "expires_in": int(getattr(settings, "S3_PRINTING_ARTWORK_URL_TTL_SECONDS", 900) or 900)}
+    except DomainError as e:
+        _printing_artwork_http_error(e)
+
+
+@router.delete(
+    "/{product_id}/versions/{version_id}/printing-artwork/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def delete_product_printing_artwork(product_id: str, version_id: str, file_id: str):
+    try:
+        printing_artwork_service.delete_product_printing_pdf(
+            product_id=product_id,
+            version_id=version_id,
+            file_id=file_id,
+        )
+    except DomainError as e:
+        _printing_artwork_http_error(e)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{product_id}/versions", dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())])

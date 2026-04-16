@@ -161,7 +161,7 @@ export function ProductVersionPrintPage() {
                         <ul>
                           {spec.formulation.blend.map((c: any, idx: number) => (
                             <li key={idx}>
-                              {c.resin_code}: {c.pct}%
+                              {c.pct}% {c.resin_code}
                             </li>
                           ))}
                         </ul>
@@ -177,8 +177,8 @@ export function ProductVersionPrintPage() {
                         <ul>
                           {spec.formulation.colour_components.map((c: any, idx: number) => (
                             <li key={idx}>
+                              {c.strength_pct != null ? `${c.strength_pct}% ` : ''}
                               {c.colour_code || '-'}
-                              {c.strength_pct != null ? `: ${c.strength_pct}%` : ''}
                             </li>
                           ))}
                         </ul>
@@ -200,7 +200,7 @@ export function ProductVersionPrintPage() {
                         <ul>
                           {spec.formulation.additives.map((a: any, idx: number) => (
                             <li key={idx}>
-                              {a.additive_code}: {a.pct}%
+                              {a.pct}% {a.additive_code}
                             </li>
                           ))}
                         </ul>

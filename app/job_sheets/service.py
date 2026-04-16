@@ -276,6 +276,8 @@ def _infer_qty_fields_for_order_line(
         qt = "total_rolls"
     elif qu == "kg":
         qt = "kg"
+    elif qu == "1000":
+        qt = "units"
     elif qu in ("bags", "meters", "cartons"):
         qt = "units"
     else:
@@ -286,7 +288,12 @@ def _infer_qty_fields_for_order_line(
             nr = max(1, int(round(float(quantity_value))))
         else:
             nr = 1
-    npu: Optional[float] = float(quantity_value) if qt == "units" else None
+    npu: Optional[float]
+    if qt == "units":
+        # Order line unit "1000": quantity_value is thousands of products (same as legacy units_per_1000).
+        npu = float(quantity_value) * 1000.0 if qu == "1000" else float(quantity_value)
+    else:
+        npu = None
     return qt, npu, None, int(nr)
 
 

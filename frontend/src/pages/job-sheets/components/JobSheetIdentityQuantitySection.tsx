@@ -180,6 +180,8 @@ export type JobSheetIdentityQuantitySectionProps = JobSheetQuantityFieldsProps &
   customerSelectDisabled: boolean
   orderDate: string
   onOrderDateChange: (isoDate: string) => void
+  /** When true, order date follows the parent order and cannot be edited (e.g. new job sheet on order page). */
+  orderDateDisabled?: boolean
   dueDate: string
   onDueDateChange: (isoDate: string) => void
   orderDateInputRef: RefObject<HTMLInputElement | null>
@@ -206,6 +208,7 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
     customerSelectDisabled,
     orderDate,
     onOrderDateChange,
+    orderDateDisabled = false,
     dueDate,
     onDueDateChange,
     orderDateInputRef,
@@ -289,15 +292,18 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           value={orderDate}
           onChange={(e) => onOrderDateChange(e.target.value)}
           onClick={() => {
+            if (orderDateDisabled) return
             const el = orderDateInputRef.current as HTMLInputElement & { showPicker?: () => void }
             if (el && typeof el.showPicker === 'function') el.showPicker()
           }}
           onFocus={() => {
+            if (orderDateDisabled) return
             const el = orderDateInputRef.current as HTMLInputElement & { showPicker?: () => void }
             if (el && typeof el.showPicker === 'function') el.showPicker()
           }}
           inputRef={orderDateInputRef}
           InputLabelProps={{ shrink: true }}
+          disabled={orderDateDisabled}
         />
 
         <TextField

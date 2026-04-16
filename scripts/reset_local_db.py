@@ -13,7 +13,7 @@ from urllib.request import urlopen
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CREATE_ADMIN_SCRIPT = (REPO_ROOT / "scripts" / "create_admin.py").resolve()
-IMPORT_PLATE_CUSTOMERS_SCRIPT = (REPO_ROOT / "scripts" / "api_import_plate_customers.py").resolve()
+SEED_PRIORITY_CUSTOMERS_SCRIPT = (REPO_ROOT / "scripts" / "seed_priority_customers.py").resolve()
 IMPORT_PRINT_PLATES_SCRIPT = (REPO_ROOT / "scripts" / "api_import_print_plates.py").resolve()
 SEED_EXTRUDERS_SCRIPT = (REPO_ROOT / "scripts" / "seed_extruders_from_tsv.py").resolve()
 SEED_WASTE_FACTORS_SCRIPT = (REPO_ROOT / "scripts" / "seed_waste_factors_from_tsv.py").resolve()
@@ -89,7 +89,11 @@ def _wait_for_http(url: str, *, timeout_s: float = 20.0) -> None:
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
-        description="Reset local SQLite DB (production.db), create admin/admin, and import customers + print plates from plate-db.tsv."
+        description=(
+            "Reset local SQLite DB (production.db), create admin/admin, seed customers from "
+            "scripts/priority-customers.md (see seed_priority_customers.py), and optionally import "
+            "print plates from plate-db.tsv via the API."
+        )
     )
     p.add_argument(
         "--db-path",
@@ -105,17 +109,22 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--no-api",
         action="store_true",
-        help="Skip starting/pinging the API and skip importing plate DB data",
+        help="Skip starting the API and skip print-plate import (customers are still seeded from priority-customers.md)",
     )
     p.add_argument(
         "--plate-db",
         default=str(Path("scripts") / "plate-db.tsv"),
-        help="Plate database file path relative to repo root (default: scripts/plate-db.tsv)",
+        help="TSV path for print-plate import only (default: scripts/plate-db.tsv); ignored with --skip-plate-import",
     )
     p.add_argument(
         "--no-migrations",
         action="store_true",
         help="Skip alembic upgrade head (not recommended)",
+    )
+    p.add_argument(
+        "--skip-plate-import",
+        action="store_true",
+        help="Skip API import of print plates from plate-db.tsv (customers always come from priority-customers.md)",
     )
     args = p.parse_args(argv)
 
@@ -169,8 +178,12 @@ def main(argv: list[str]) -> int:
         env=env,
     )
 
+    print("Seeding customers from scripts/priority-customers.md …")
+    _run([py, str(SEED_PRIORITY_CUSTOMERS_SCRIPT)], env=env)
+
     if args.no_api:
-        print("Skipping API import (--no-api).")
+        print("Skipping API / print-plate import (--no-api).")
+        print("Done.")
         return 0
 
     base_url = f"http://127.0.0.1:{args.api_port}"
@@ -202,43 +215,29 @@ def main(argv: list[str]) -> int:
         )
         _wait_for_http(health_url, timeout_s=25.0)
 
-        plate_db_path = (REPO_ROOT / args.plate_db).resolve()
-        if not plate_db_path.exists():
-            raise RuntimeError(f"Plate DB file not found: {plate_db_path}")
+        if args.skip_plate_import:
+            print("Skipping print-plate import (--skip-plate-import).")
+        else:
+            plate_db_path = (REPO_ROOT / args.plate_db).resolve()
+            if not plate_db_path.exists():
+                raise RuntimeError(f"Plate DB file not found: {plate_db_path}")
 
-        # Import customers + plates via API (assumes admin/admin)
-        _run(
-            [
-                py,
-                str(IMPORT_PLATE_CUSTOMERS_SCRIPT),
-                str(plate_db_path),
-                "--base-url",
-                base_url,
-                "--username",
-                "admin",
-                "--password",
-                "admin",
-                "--delimiter",
-                "\\t",
-            ],
-            env=env,
-        )
-        _run(
-            [
-                py,
-                str(IMPORT_PRINT_PLATES_SCRIPT),
-                str(plate_db_path),
-                "--base-url",
-                base_url,
-                "--username",
-                "admin",
-                "--password",
-                "admin",
-                "--delimiter",
-                "\\t",
-            ],
-            env=env,
-        )
+            _run(
+                [
+                    py,
+                    str(IMPORT_PRINT_PLATES_SCRIPT),
+                    str(plate_db_path),
+                    "--base-url",
+                    base_url,
+                    "--username",
+                    "admin",
+                    "--password",
+                    "admin",
+                    "--delimiter",
+                    "\\t",
+                ],
+                env=env,
+            )
     finally:
         if proc is not None and proc.poll() is None:
             print("Stopping uvicorn…")

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Import customers from a plate TSV via the public API.
+
+Default DB resets use scripts/seed_priority_customers.py instead; keep this script for
+one-off imports from a legacy plate export when needed.
+"""
+
 import argparse
 import csv
 import getpass

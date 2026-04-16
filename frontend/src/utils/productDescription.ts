@@ -30,7 +30,9 @@ function deriveNumColours(printing: any): number {
     if (!Array.isArray(rows)) continue
     for (const r of rows) {
       const code = (r?.ink_code ?? '').toString().trim()
+      const txt = (r?.ink_text ?? '').toString().trim()
       if (code) inks.add(code.toUpperCase())
+      else if (txt) inks.add(txt.toUpperCase())
     }
   }
   const codes = printing?.ink_codes
@@ -47,7 +49,8 @@ function deriveNumColours(printing: any): number {
 function totalPrintInks(printing: any): number {
   const front = Array.isArray(printing?.front_ink_plate) ? printing.front_ink_plate : []
   const back = Array.isArray(printing?.back_ink_plate) ? printing.back_ink_plate : []
-  const count = (rows: any[]) => rows.filter((r) => (r?.ink_code ?? '').toString().trim()).length
+  const count = (rows: any[]) =>
+    rows.filter((r) => (r?.ink_code ?? '').toString().trim() || (r?.ink_text ?? '').toString().trim()).length
   const n = count(front) + count(back)
   if (n > 0) return n
   const explicit = intOrNull(printing?.num_colours)

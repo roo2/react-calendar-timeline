@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900" fill="none">
+  <title>Plastic roll with unwound sheet</title>
+  <desc>Clean production-style SVG of a plastic roll with a circular exposed end and the sheet peeling away from the right side of the roll.</desc>
+
+  <g stroke="#2F2940" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Unwound sheet -->
+    <path d="M120 174V820"/>
+    <path d="M772 122V820"/>
+    <path d="M120 820H772"/>
+
+    <!-- Roll body -->
+    <path d="M70 70H720"/>
+    <path d="M70 70C41.281 70 18 93.281 18 122S41.281 174 70 174"/>
+    <path d="M70 174H720"/>
+
+    <!-- Perfect circular exposed end -->
+    <circle cx="720" cy="122" r="52"/>
+    <circle cx="720" cy="122" r="18"/>
+  </g>
+</svg>

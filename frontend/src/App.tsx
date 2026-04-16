@@ -54,6 +54,7 @@ const ProductionCalendarAdminPage = lazy(async () => ({
   default: (await import('./pages/admin/ProductionCalendarAdminPage')).ProductionCalendarAdminPage,
 }))
 const ToolsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ToolsAdminPage')).ToolsAdminPage }))
+const MyobAdminPage = lazy(async () => ({ default: (await import('./pages/admin/MyobAdminPage')).MyobAdminPage }))
 
 function PageLoading() {
   return (
@@ -232,6 +233,14 @@ function App() {
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<Navigate to="resins" replace />} />
                 <Route path="defaults" element={<Navigate to="../resins" replace />} />
+                <Route
+                  path="myob"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <MyobAdminPage />
+                    </Suspense>
+                  }
+                />
                 <Route
                   path="resins"
                   element={

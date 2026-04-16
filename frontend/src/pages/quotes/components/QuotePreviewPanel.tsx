@@ -7,6 +7,7 @@ import {
   fmtHoursMinutesPreview,
   fmtQtyNumber,
 } from '../../../utils/quoteFormat'
+import type { QtyType } from '../../../utils/quantityRollFields'
 
 /** Brief yellow highlight when `watch` (serialized) changes — skips first paint. */
 function FlashSpan(props: { watch: unknown; children: ReactNode }) {
@@ -58,6 +59,8 @@ export function QuotePreviewPanel(props: {
   productDescription?: string
   /** Clears the optional Price per kg override (e.g. from the Adjustments row). */
   onClearPricePerKgOverride?: () => void
+  /** When `units` (total product count), show **per 1000** in the breakdown next to per Kg / per Roll / per Carton. */
+  qtyType?: QtyType
 }) {
   const {
     preview,
@@ -69,6 +72,7 @@ export function QuotePreviewPanel(props: {
     estimatedPallets,
     productDescription = '',
     onClearPricePerKgOverride,
+    qtyType,
   } = props
   const p = preview
   const dash = '—'
@@ -137,19 +141,14 @@ export function QuotePreviewPanel(props: {
                 {productUnitLabel} / Roll: {fmtQtyNumber(Number(p.units_per_roll), 2)}
               </Typography>
             )}
-            {p.unit_price != null && (
+            {p.unit_price != null &&
+            productType !== 'Bag' &&
+            productType !== 'Centerfold' &&
+            productType !== 'Sleeve' ? (
               <Typography variant="body2">
-                {productType === 'Bag' ? (
-                  <>Price per 1000 bags: {fmtDollarsLineItem(Number(p.unit_price) * 1000, 2)}</>
-                ) : productType === 'Centerfold' ? (
-                  <>Price per 1000 Centerfolds: {fmtDollarsLineItem(Number(p.unit_price) * 1000, 2)}</>
-                ) : productType === 'Sleeve' ? (
-                  <>Price per 1000 Sleeves: {fmtDollarsLineItem(Number(p.unit_price) * 1000, 2)}</>
-                ) : (
-                  <>Price per {productType}: {fmtDollarsLineItem(p.unit_price, 4)}</>
-                )}
+                Price per {productType}: {fmtDollarsLineItem(p.unit_price, 4)}
               </Typography>
-            )}
+            ) : null}
             {productType === 'Centerfold' ? (
               <Typography variant="body2">
                 Total Centerfolds:{' '}
@@ -214,6 +213,27 @@ export function QuotePreviewPanel(props: {
             <TableCell align="right">
               {p ? (
                 <FlashSpan watch={p.price_breakdown?.material_price}>{fmtDollarsLineItem(p.price_breakdown?.material_price)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell sx={{ pl: 2, color: 'text.secondary' }}>Colours / additives / blend</TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.cost_breakdown?.formulation_line_cost}>
+                  {fmtDollarsLineItem(p.cost_breakdown?.formulation_line_cost)}
+                </FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+            <TableCell align="right">
+              {p ? (
+                <FlashSpan watch={p.price_breakdown?.formulation_line_price}>
+                  {fmtDollarsLineItem(p.price_breakdown?.formulation_line_price)}
+                </FlashSpan>
               ) : (
                 dash
               )}
@@ -369,6 +389,28 @@ export function QuotePreviewPanel(props: {
                 <TableCell align="right">
                   <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
                     <FlashSpan watch={p.price_per_kg}>{fmtDollarsLineItem(Number(p.price_per_kg))}</FlashSpan>
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )
+          })()}
+          {(() => {
+            if (!p || qtyType !== 'units') return null
+            const u = Number(p.totals_units || 0)
+            if (!(u > 0)) return null
+            const per1000 = u / 1000
+            const c = Number(p.total_cost) / per1000
+            const pr = Number(p.final_price) / per1000
+            if (!Number.isFinite(c) || !Number.isFinite(pr)) return null
+            return (
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>per 1000</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 400 }}>
+                  <FlashSpan watch={`${p.total_cost}|${u}`}>{fmtDollarsLineItem(c)}</FlashSpan>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <FlashSpan watch={`${p.final_price}|${u}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
                   </Typography>
                 </TableCell>
               </TableRow>

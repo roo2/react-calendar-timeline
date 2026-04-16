@@ -42,6 +42,16 @@ class PrintSide(str, Enum):
 class InkPlatePair(BaseModel):
     ink_code: Optional[str] = None
     plate_code: Optional[str] = None
+    # Free-text colour label (e.g. handwritten job sheet); optional alongside ink_code.
+    ink_text: Optional[str] = None
+
+
+class PrintingArtworkFile(BaseModel):
+    """PDF artwork attached to printing; binary lives in S3 (see app/storage/printing_artwork_service)."""
+
+    id: str = Field(..., min_length=4, max_length=120)
+    filename: str = Field(..., min_length=1, max_length=255)
+    byte_size: Optional[int] = Field(None, ge=0)
 
 
 class TreatIO(str, Enum):
@@ -127,10 +137,19 @@ class PrintingSpec(BaseModel):
     plate_codes: List[str] = []
     side: Optional[PrintSide] = None
     artwork_refs: List[str] = []
+    artwork_files: List[PrintingArtworkFile] = []
     front_ink_plate: List[InkPlatePair] = []
     back_ink_plate: List[InkPlatePair] = []
     # Uteco-only: cylinder (width) in mm.
     cylinder_size_mm: Optional[float] = None
+    # Job sheet / printing production notes (optional).
+    barcode: Optional[str] = None
+    print_position_notes: Optional[str] = None
+    # Plate layout on cylinder (1–3 around × 1–3 across).
+    plates_around: Optional[int] = Field(None, ge=1, le=3)
+    plates_across: Optional[int] = Field(None, ge=1, le=3)
+    seal_type: Optional[Literal["side", "end"]] = None
+    eye_spot: Optional[Literal["yes", "no"]] = None
 
 
 class QualityExpectationsSpec(BaseModel):

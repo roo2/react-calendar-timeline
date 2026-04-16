@@ -221,7 +221,7 @@ export function ProductVersionSummary(props: { spec: any }) {
                   <Stack spacing={0.5}>
                     {spec.formulation.blend.map((c: any, idx: number) => (
                       <Typography key={idx} variant="body2">
-                        {c.resin_code}: {c.pct}%
+                        {c.pct}% {c.resin_code}
                       </Typography>
                     ))}
                   </Stack>
@@ -236,8 +236,8 @@ export function ProductVersionSummary(props: { spec: any }) {
                   <Stack spacing={0.5}>
                     {spec.formulation.colour_components.map((c: any, idx: number) => (
                       <Typography key={idx} variant="body2">
+                        {c.strength_pct != null ? `${c.strength_pct}% ` : ''}
                         {c.colour_code || '-'}
-                        {c.strength_pct != null ? `: ${c.strength_pct}%` : ''}
                       </Typography>
                     ))}
                   </Stack>
@@ -252,7 +252,7 @@ export function ProductVersionSummary(props: { spec: any }) {
                   <Stack spacing={0.5}>
                     {spec.formulation.additives.map((a: any, idx: number) => (
                       <Typography key={idx} variant="body2">
-                        {a.additive_code}: {a.pct}%
+                        {a.pct}% {a.additive_code}
                       </Typography>
                     ))}
                   </Stack>

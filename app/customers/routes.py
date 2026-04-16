@@ -13,11 +13,16 @@ router = APIRouter(prefix="/api/customers", tags=["customers"])
 
 
 def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int | None = None) -> dict:
+    b = getattr(c, "brand", None)
     d = {
         "id": c.id,
         "code": getattr(c, "code", None),
         "name": c.name,
         "status": c.status,
+        "brand_id": getattr(c, "brand_id", None),
+        "brand_code": b.code if b else None,
+        "brand_name": b.name if b else None,
+        "priority_rank": getattr(c, "priority_rank", None),
     }
     if orders_count is not None:
         d["orders_count"] = orders_count

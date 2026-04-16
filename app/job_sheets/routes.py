@@ -1,16 +1,30 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from starlette.responses import Response
 
 from app.auth.deps import allow_roles_any, csrf_protect, current_identity
-from app.db.session import SessionLocal
+from app.config import settings
 from app.db.models.domain import Order, OrderItem
+from app.db.session import SessionLocal
 from app.exceptions import DomainError
 from app.job_sheets import service
-from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest, JobSheetSummary, JobSheetDetail
-
+from app.job_sheets.schemas import (
+    JobSheetCreateRequest,
+    JobSheetDetail,
+    JobSheetSummary,
+    JobSheetUpdateRequest,
+)
+from app.storage import printing_artwork_service as printing_artwork_service
 
 router = APIRouter(prefix="/api/job-sheets", tags=["job_sheets"])
+
+
+def _printing_artwork_http_error(e: DomainError) -> None:
+    m = (e.message or "").lower()
+    if "not configured" in m:
+        raise HTTPException(status_code=503, detail=e.message)
+    raise HTTPException(status_code=400, detail=e.message)
 
 
 def _order_info_for_job_sheets(job_sheet_ids: list[str]) -> dict[str, tuple[str | None, str | None, str | None]]:
@@ -125,4 +139,47 @@ async def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, id
         return {"ok": True, "job_sheet": _to_summary(full, order_map.get(jid)).model_dump()}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.post(
+    "/{job_sheet_id}/printing-artwork",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def upload_job_sheet_printing_artwork(job_sheet_id: str, file: UploadFile = File(...)):
+    try:
+        data = await file.read()
+        out = printing_artwork_service.upload_job_sheet_printing_pdf(
+            job_sheet_id=job_sheet_id,
+            filename=file.filename or "artwork.pdf",
+            data=data,
+        )
+        return {"ok": True, "file": out}
+    except DomainError as e:
+        _printing_artwork_http_error(e)
+
+
+@router.get(
+    "/{job_sheet_id}/printing-artwork/{file_id}/download-url",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))],
+)
+async def job_sheet_printing_artwork_download_url(job_sheet_id: str, file_id: str):
+    try:
+        url = printing_artwork_service.presign_job_sheet_printing_pdf(job_sheet_id=job_sheet_id, file_id=file_id)
+        return {"url": url, "expires_in": int(getattr(settings, "S3_PRINTING_ARTWORK_URL_TTL_SECONDS", 900) or 900)}
+    except DomainError as e:
+        _printing_artwork_http_error(e)
+
+
+@router.delete(
+    "/{job_sheet_id}/printing-artwork/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def delete_job_sheet_printing_artwork(job_sheet_id: str, file_id: str):
+    try:
+        printing_artwork_service.delete_job_sheet_printing_pdf(job_sheet_id=job_sheet_id, file_id=file_id)
+    except DomainError as e:
+        _printing_artwork_http_error(e)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 

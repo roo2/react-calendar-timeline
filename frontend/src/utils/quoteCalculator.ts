@@ -1,3 +1,5 @@
+import type { QtyType } from './quantityRollFields'
+
 export type MaterialsRetailBand = {
   id?: number
   product_group: 'tube' | 'centerfold' | 'sheet' | 'u_film' | 'bag' | string
@@ -15,6 +17,15 @@ export type QuoteRatebook = {
   cores: Record<string, { cost_per_meter: number; kg_per_meter: number }>
   /** Width-band retail material $/kg + MOQs (replaces legacy single add-on). */
   materials_retail_bands?: MaterialsRetailBand[]
+  /**
+   * Markups on incremental formulation **cost** (job $) → extra sell line under Materials.
+   * Each value is a decimal rate (e.g. 0.25 → add 25% of that incremental cost to the quote).
+   */
+  quote_formulation_margins?: {
+    colours_markup?: number
+    additives_markup?: number
+    custom_resin_blend_markup?: number
+  }
   extruders?: Array<{
     extruder_code: string
     model: string | null
@@ -87,11 +98,20 @@ export type QuickQuoteInputs = {
   resin_code?: string | null
   quantity: { units?: number; total_kg?: number; total_m?: number; rolls?: number }
   /**
+   * How quantity was entered on the Quotes page (MOQ hint only; optional elsewhere).
+   */
+  qty_entry_type?: QtyType | null
+  /**
    * Rolls + continuous length: nominal billed kg per roll from the quote form.
    * Used when resolving reference mass per "product" if `quantity.total_kg` is missing or not yet wired.
    */
   nominal_weight_per_roll_kg?: number | null
 }
+
+export type MaterialsMoqMinimumHint =
+  | { kind: 'units'; nounPlural: string; minimumTotal: number }
+  | { kind: 'kg'; minimumTotalKg: number }
+  | { kind: 'rolls'; minimumTotalRolls: number }
 
 export type QuotePreview = {
   kg_per_unit: number | null
@@ -119,8 +139,12 @@ export type QuotePreview = {
   /** Single-line MOQ hint for the current plain/printed selection (product width band). */
   materials_moq_summary_line?: string | null
   materials_moq_warning?: string | null
+  /** When below materials MOQ: minimum total for the selected qty type (rolls / units / kg). */
+  materials_moq_minimum_hint?: MaterialsMoqMinimumHint | null
   cost_breakdown: {
     material_cost: number
+    /** Incremental material cost for colours + additives + non-LD resin uplift (subset of material_cost). */
+    formulation_line_cost: number
     extrusion_cost: number
     printing_cost: number
     conversion_cost: number
@@ -129,6 +153,8 @@ export type QuotePreview = {
   }
   price_breakdown: {
     material_price: number
+    /** Sell-side pass-through: incremental formulation cost × configured markups (not included in material_price). */
+    formulation_line_price: number
     extrusion_price: number
     printing_price: number
     conversion_price: number
@@ -243,6 +269,75 @@ function toNum(v: unknown): number | null {
 function roundMoney(n: number): number {
   // 2dp half-up-ish with float guard
   return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+const DEFAULT_FORMULATION_MARKUP = 0.25
+
+function readFormulationMargins(ratebook: QuoteRatebook): {
+  colours_markup: number
+  additives_markup: number
+  custom_resin_blend_markup: number
+} {
+  const m = ratebook.quote_formulation_margins
+  const num = (v: unknown, fallback: number) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : fallback
+  }
+  return {
+    colours_markup: num(m?.colours_markup, DEFAULT_FORMULATION_MARKUP),
+    additives_markup: num(m?.additives_markup, DEFAULT_FORMULATION_MARKUP),
+    custom_resin_blend_markup: num(m?.custom_resin_blend_markup, DEFAULT_FORMULATION_MARKUP),
+  }
+}
+
+function productUnitsNounPluralForMoq(productType: string): string {
+  const pt = String(productType || '').trim()
+  if (pt === 'Bag') return 'bags'
+  if (pt === 'U-Film') return 'U-films'
+  if (pt === 'Centerfold') return 'centerfolds'
+  if (pt === 'Sleeve') return 'sleeves'
+  return `${pt}s`.toLowerCase()
+}
+
+/**
+ * Minimum **total** quantity (same basis as the MOQ kg comparison) for the Quotes qty type,
+ * so users know how far to turn the dial they are using.
+ */
+function computeMaterialsMoqMinimumHint(
+  inputs: QuickQuoteInputs,
+  compareKgForMoq: number,
+  moqEffective: number,
+  units: number | null,
+  rolls: number | null,
+): MaterialsMoqMinimumHint | null {
+  const qt = inputs.qty_entry_type
+  if (!qt || !(moqEffective > 0) || !(compareKgForMoq > 0)) return null
+
+  if (qt === 'kg') {
+    return { kind: 'kg', minimumTotalKg: roundMoney(moqEffective) }
+  }
+
+  if (qt === 'units' || qt === 'units_per_1000') {
+    const u = units != null && units > 0 ? units : null
+    if (!u) return null
+    const kgEach = compareKgForMoq / u
+    if (!(kgEach > 0) || !Number.isFinite(kgEach)) return null
+    const minTotal = Math.ceil((moqEffective - 1e-9) / kgEach)
+    if (!Number.isFinite(minTotal) || minTotal < 1) return null
+    return { kind: 'units', nounPlural: productUnitsNounPluralForMoq(inputs.product_type), minimumTotal: minTotal }
+  }
+
+  if (qt === 'total_rolls' || qt === 'rolls_units') {
+    const r = rolls != null && rolls > 0 ? rolls : null
+    if (!r) return null
+    const kgPerRoll = compareKgForMoq / r
+    if (!(kgPerRoll > 0) || !Number.isFinite(kgPerRoll)) return null
+    const minRolls = Math.ceil((moqEffective - 1e-9) / kgPerRoll)
+    if (!Number.isFinite(minRolls) || minRolls < 1) return null
+    return { kind: 'rolls', minimumTotalRolls: minRolls }
+  }
+
+  return null
 }
 
 function mmToM(mm: number): number {
@@ -876,6 +971,23 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const materialCostPerKg = denom > 0 ? (resinBaseCostPerKg + colourNumerator + additivesNumerator) / denom : 0
   const materialCost = materialCostPerKg * derivedTotalKg
 
+  const blendCodeForFormulation = (inputs.resin_blend_code || '').trim()
+  const isNonStandardResinBlend = blendCodeForFormulation !== '' && blendCodeForFormulation !== 'LD'
+  const ldBaselineResinCode = getDefaultResinCodeFromRatebook(ratebook)
+  const ldBaselineCostPerKg = Number(ratebook.resins?.[ldBaselineResinCode]?.price_per_kg ?? 0)
+  const colourPortionPerKg = denom > 0 ? colourNumerator / denom : 0
+  const additivePortionPerKg = denom > 0 ? additivesNumerator / denom : 0
+  const resinExtraPerKg =
+    isNonStandardResinBlend && denom > 0 ? Math.max(0, resinBaseCostPerKg - ldBaselineCostPerKg) / denom : 0
+  const formulationLineCost = (colourPortionPerKg + additivePortionPerKg + resinExtraPerKg) * derivedTotalKg
+  const fm = readFormulationMargins(ratebook)
+  const formulationLinePrice =
+    colourPortionPerKg * derivedTotalKg * (1 + fm.colours_markup) +
+    additivePortionPerKg * derivedTotalKg * (1 + fm.additives_markup) +
+    resinExtraPerKg * derivedTotalKg * (1 + fm.custom_resin_blend_markup)
+  const formulationLineCostR = roundMoney(formulationLineCost)
+  const formulationLinePriceR = roundMoney(formulationLinePrice)
+
   const hasPrintingForMaterials = String(inputs.print_method || 'None') !== 'None' && Math.max(0, Math.round(Number(inputs.num_colours || 0))) > 0
   const materialsResolution = resolveMaterialsRetailBand(ratebook, inputs.product_type, Number(inputs.base_width_mm || 0))
   const materialsBand = materialsResolution.band
@@ -889,16 +1001,22 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
 
   const moqEffective = materialsMoqEffectiveKg(materialsBand, hasPrintingForMaterials)
   const compareKgForMoq = d.billedTotalsKg > 0 ? d.billedTotalsKg : d.derivedTotalKg
-  const materialsMoqWarning =
-    materialsBand &&
-    moqEffective != null &&
-    moqEffective > 0 &&
-    compareKgForMoq > 0 &&
-    compareKgForMoq + 1e-9 < moqEffective
-      ? `Below minimum order quantity: job is ${roundMoney(compareKgForMoq)}kg but this width needs at least ${roundMoney(moqEffective)}kg${
-          hasPrintingForMaterials ? ' (printed)' : ' (plain)'
-        }.`
-      : null
+  const materialsMoqBelow =
+    !!(
+      materialsBand &&
+      moqEffective != null &&
+      moqEffective > 0 &&
+      compareKgForMoq > 0 &&
+      compareKgForMoq + 1e-9 < moqEffective
+    )
+  const materialsMoqWarning = materialsMoqBelow
+    ? `Below minimum order quantity: job is ${roundMoney(compareKgForMoq)}kg but this width needs at least ${roundMoney(moqEffective)}kg${
+        hasPrintingForMaterials ? ' (printed)' : ' (plain)'
+      }.`
+    : null
+  const materialsMoqMinimumHint = materialsMoqBelow
+    ? computeMaterialsMoqMinimumHint(inputs, compareKgForMoq, moqEffective, units, rolls)
+    : null
 
   const materialsMoqSummaryLine = buildMaterialsMoqSummaryLine(materialsBand, hasPrintingForMaterials)
 
@@ -1011,7 +1129,14 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const corePrice = 0
 
   const totalCost = materialCost + extrusionCost + printingCost + conversionCost + coreCost + wasteCost
-  const totalPriceRetail = materialPrice + printingPrice + conversionPrice + extrusionPrice + corePrice + wastePrice
+  const totalPriceRetail =
+    materialPrice +
+    formulationLinePriceR +
+    printingPrice +
+    conversionPrice +
+    extrusionPrice +
+    corePrice +
+    wastePrice
 
   const billedTotalsKg = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
   const overridePk = toNum(inputs.override_price_per_kg)
@@ -1058,8 +1183,10 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     printing_unavailable_reason: printingUnavailableReason,
     materials_moq_summary_line: materialsMoqSummaryLine,
     materials_moq_warning: materialsMoqWarning,
+    materials_moq_minimum_hint: materialsMoqMinimumHint,
     cost_breakdown: {
       material_cost: roundMoney(materialCost),
+      formulation_line_cost: formulationLineCostR,
       extrusion_cost: roundMoney(extrusionCost),
       printing_cost: roundMoney(printingCost),
       conversion_cost: roundMoney(conversionCost),
@@ -1068,6 +1195,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     },
     price_breakdown: {
       material_price: roundMoney(materialPrice),
+      formulation_line_price: formulationLinePriceR,
       extrusion_price: roundMoney(extrusionPrice),
       printing_price: roundMoney(printingPrice),
       conversion_price: roundMoney(conversionPrice),

@@ -82,6 +82,8 @@ class DeliveryPreferencesInput(BaseModel):
 class CustomerCreateRequest(BaseModel):
     code: str = Field(..., min_length=2, max_length=4, description="2-4 letter customer code (e.g., CP)")
     name: str = Field(..., min_length=1, description="Customer name")
+    brand_id: Optional[str] = Field(None, description="Optional brand (brands.id)")
+    priority_rank: Optional[int] = Field(None, description="Optional sales priority (lower = higher priority)")
     abn: Optional[str] = Field(None, description="Business Registration/ABN")
     contact_phone: Optional[str] = Field(None, description="Main contact phone number (optional)")
     status: str = Field("Active", description="Status: Active, Inactive, or Archived")
@@ -164,6 +166,10 @@ class CustomerResponse(BaseModel):
     id: str
     code: str
     name: str
+    brand_id: Optional[str] = None
+    brand_code: Optional[str] = None
+    brand_name: Optional[str] = None
+    priority_rank: Optional[int] = None
     abn: Optional[str] = None
     contact_phone: Optional[str] = None
     status: str

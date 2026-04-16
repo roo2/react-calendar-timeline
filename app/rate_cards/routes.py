@@ -16,6 +16,7 @@ from app.db.models.rate_cards import (
     Plate,
     PrintingRate,
     PrintingPricingTier,
+    QuoteDefaults,
     QuoteMaterialsRetailBand,
     Resin,
     ResinBlend,
@@ -164,6 +165,7 @@ async def get_ratebook():
         packaging_row = db.execute(
             select(QuotePackagingSettings).where(QuotePackagingSettings.id == 1)
         ).scalar_one_or_none()
+        quote_defaults_row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
         packing_factor_rolls = float(packaging_row.packing_factor_rolls) if packaging_row else 0.7
         packing_factor_cartons = float(packaging_row.packing_factor_cartons) if packaging_row else 0.5
         pallet_volume_m3 = float(packaging_row.pallet_volume_m3) if packaging_row else 1.0
@@ -276,4 +278,15 @@ async def get_ratebook():
         "packing_factor_rolls": packing_factor_rolls,
         "packing_factor_cartons": packing_factor_cartons,
         "pallet_volume_m3": pallet_volume_m3,
+        "quote_formulation_margins": {
+            "colours_markup": float(quote_defaults_row.formulation_colours_markup)
+            if quote_defaults_row is not None
+            else 0.25,
+            "additives_markup": float(quote_defaults_row.formulation_additives_markup)
+            if quote_defaults_row is not None
+            else 0.25,
+            "custom_resin_blend_markup": float(quote_defaults_row.formulation_custom_blend_markup)
+            if quote_defaults_row is not None
+            else 0.25,
+        },
     }

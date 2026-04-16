@@ -77,3 +77,51 @@ export async function apiFetch<T>(
   return data as T
 }
 
+/**
+ * Multipart POST (no JSON Content-Type). CSRF header is applied for mutating requests.
+ */
+export async function apiUploadMultipart<T>(path: string, formData: FormData): Promise<T> {
+  const headers = new Headers()
+  headers.set('Accept', 'application/json')
+  const token = _csrfTokenGetter()
+  if (token) headers.set('x-csrf-token', token)
+
+  const resp = await fetch(path, {
+    method: 'POST',
+    body: formData,
+    headers,
+    credentials: 'include',
+  })
+
+  const contentType = resp.headers.get('content-type') || ''
+  const isJson = contentType.includes('application/json')
+  const hasBody = resp.status !== 204
+  const data = (isJson && hasBody ? await resp.json().catch(() => undefined) : undefined) as unknown
+
+  if (!resp.ok) {
+    const body = (data as ApiErrorBody | undefined) || undefined
+    const detail = body?.detail
+    let msg =
+      (typeof detail === 'string' ? detail : undefined) ||
+      body?.error ||
+      body?.message ||
+      resp.statusText ||
+      `HTTP ${resp.status}`
+    if (Array.isArray(detail)) {
+      const { messages: vm } = parseFastApiValidationDetail(detail)
+      if (vm.length) msg = vm.join(' · ')
+    }
+    throw new ApiError(resp.status, msg, body)
+  }
+
+  return data as T
+}
+
+export async function uploadPrintingArtworkPdf(
+  path: string,
+  file: File,
+): Promise<{ ok: boolean; file: { id: string; filename: string; byte_size?: number } }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return apiUploadMultipart(path, fd)
+}

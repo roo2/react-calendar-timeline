@@ -40,7 +40,12 @@ import { clearCreateErrors, createProduct, fetchProducts } from '../../../store/
 import { createJobSheet, fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { computeProductDescriptionFromSpec, computeProductCodeFromSpec } from '../../../utils/productDescription'
 import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
-import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../../components/SpecPayloadForm'
+import {
+  makeDefaultSpec,
+  SpecPayloadForm,
+  type JobSheetPrintingContext,
+  type SpecPayload,
+} from '../../../components/SpecPayloadForm'
 import { StickySideAside } from '../../../components/StickySideAside'
 import {
   JobSheetIdentityQuantitySection,
@@ -68,6 +73,7 @@ function inferQtyTypeFromUnit(u: string | undefined): QtyType {
   const x = (u || '').toLowerCase()
   if (x === 'rolls') return 'total_rolls'
   if (x === 'kg') return 'kg'
+  if (x === '1000') return 'units'
   if (x === 'cartons' || x === 'bags' || x === 'meters') return 'units'
   return 'units'
 }
@@ -200,7 +206,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     const continuousLength =
       pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
     const qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
-    setQtyType(qt)
+    setQtyType(qt === 'units_per_1000' ? 'units' : qt)
     const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
     const wpr =
       js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
@@ -209,6 +215,16 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (qt === 'kg') {
       setTotalKg(String(js?.quantity_value ?? ''))
       setNumUnits('')
+      setUnitsPerRoll('')
+      setNumRolls(String(nrStored))
+      setWeightPerRoll(wpr)
+    } else if (qt === 'units_per_1000') {
+      const abs =
+        js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))
+          ? Math.max(0, Math.round(Number(js.num_product_units)))
+          : Math.max(0, Math.round(Number(js?.quantity_value ?? 0) * 1000))
+      setNumUnits(abs > 0 ? String(abs) : '')
+      setTotalKg('')
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
@@ -310,6 +326,21 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     return `${Math.round(Number(m)).toLocaleString()} m`
   }, [ratebook, derivedForDisplay])
 
+  const jobSheetPrintingContext: JobSheetPrintingContext = useMemo(() => {
+    const c = customers.find((x) => x.id === customerId)
+    const customerLabel = (c?.name || c?.code || '').trim() || '—'
+    const productDescription =
+      previewDescription.trim() || (productInfo?.description && String(productInfo.description).trim()) || '—'
+    return {
+      customerLabel,
+      productDescription,
+      orderNumber: orderId.trim() || '—',
+      orderDateLabel: orderDate.trim() || '—',
+      dueDateLabel: dueDate.trim() || '—',
+      totalMetersLabel: totalMetersReadonly,
+    }
+  }, [customers, customerId, previewDescription, productInfo, orderId, orderDate, dueDate, totalMetersReadonly])
+
   const derivedDisplay = derivedForDisplay
     ? {
         derivedTotalKg: derivedForDisplay.derivedTotalKg ?? null,
@@ -354,7 +385,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           ? numRollsNum
           : null
     const totalProductsCountForPerRoll =
-      effectiveQtyType === 'units'
+      effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000'
         ? numUnitsNum > 0
           ? numUnitsNum
           : null
@@ -376,7 +407,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   }, [finishMode, rollsDisplay, numRollsNum, effectiveQtyType, numUnitsNum, unitsPerRollNum, derivedForDisplay?.units])
 
   const unitsDisplay = useMemo(() => {
-    if (effectiveQtyType === 'units') return numUnitsNum
+    if (effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000') return numUnitsNum
     if (effectiveQtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) return numRollsNum * unitsPerRollNum
     const u = derivedForDisplay?.units
     return u != null && Number.isFinite(Number(u)) ? Number(u) : null
@@ -389,14 +420,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const weightPerRollEditable = edit.weightPerRollEditable && finishMode !== 'Cartons'
 
   const haveDriverForTotalKg =
-    (effectiveQtyType === 'units' && numUnitsNum > 0) ||
+    ((effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000') && numUnitsNum > 0) ||
     (effectiveQtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) ||
     (effectiveQtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
   const haveDriverForWeightPerRoll =
     finishMode === 'Rolls' &&
     numRollsNum > 0 &&
     ((effectiveQtyType === 'kg' && totalKgNum > 0) ||
-      (effectiveQtyType === 'units' && numUnitsNum > 0) ||
+      ((effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000') && numUnitsNum > 0) ||
       (effectiveQtyType === 'rolls_units' && unitsPerRollNum > 0))
 
   useEffect(() => {
@@ -414,7 +445,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   }, [finishMode, ratebook])
 
   useEffect(() => {
-    if (effectiveQtyType === 'units' || effectiveQtyType === 'rolls_units') return
+    if (
+      effectiveQtyType === 'units' ||
+      effectiveQtyType === 'units_per_1000' ||
+      effectiveQtyType === 'rolls_units'
+    )
+      return
     if (derivedForDisplay?.units == null) return
     const fromKgOrRollsMode =
       (effectiveQtyType === 'kg' && totalKgNum > 0) ||
@@ -570,7 +606,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             quantity_unit: oq.quantity_unit,
             qty_type: effectiveQtyType,
             num_product_units:
-              effectiveQtyType === 'units'
+              effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000'
                 ? numUnitsNum
                 : derivedForDisplay?.units != null
                   ? Math.round(Number(derivedForDisplay.units))
@@ -598,7 +634,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           quantity_unit: oq.quantity_unit,
           qty_type: effectiveQtyType,
           num_product_units:
-            effectiveQtyType === 'units'
+            effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000'
               ? numUnitsNum
               : derivedForDisplay?.units != null
                 ? Math.round(Number(derivedForDisplay.units))
@@ -826,6 +862,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             <SpecPayloadForm
               customerId={customerId || undefined}
               printingSurface="job_sheet_summary"
+              printingArtworkScope={mode === 'edit' && jobSheetId ? { kind: 'job_sheet', jobSheetId } : null}
+              jobSheetPrintingContext={jobSheetPrintingContext}
               value={spec}
               fieldErrors={specFieldErrors}
               onChange={(next) => {

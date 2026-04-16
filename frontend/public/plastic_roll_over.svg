@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900" fill="none">
+  <title>Plastic roll unwinding from the top</title>
+  <desc>Production-style SVG with the artwork shifted across the canvas while preserving the existing geometry.</desc>
+
+  <g transform="translate(110 0)">
+    <!-- Roll (drawn first) -->
+    <g stroke="#2F2940" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M70 70H720"/>
+      <path d="M70 70C41.281 70 18 93.281 18 122S41.281 174 70 174"/>
+      <path d="M70 174H720"/>
+
+      <circle cx="720" cy="122" r="52"/>
+      <circle cx="720" cy="122" r="18"/>
+    </g>
+
+    <!-- Sheet (in front, occluding) -->
+    <g stroke="#2F2940" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 122L668 122L668 820L18 820Z" fill="white" stroke="none"/>
+      <path d="M18 122V820"/>
+      <path d="M668 122V820"/>
+      <path d="M18 820H668"/>
+    </g>
+  </g>
+</svg>

@@ -620,5 +620,10 @@
       "retail_price_per_kg": 4.5,
       "moq_printed_kg": 500
     }
-  ]
+  ],
+  "quote_formulation_margins": {
+    "colours_markup": 0.25,
+    "additives_markup": 0.25,
+    "custom_resin_blend_markup": 0.25
+  }
 }
