@@ -108,11 +108,19 @@ def _four_letter_code(brand_code: str, index_within_brand: int) -> str:
     return f"{prefix}{chr(65 + hi)}{chr(65 + lo)}"
 
 
-def _allocate_customer_code(db: Session, brand_code: str, start_index_within_brand: int) -> str:
+def _allocate_customer_code(
+    db: Session,
+    brand_code: str,
+    start_index_within_brand: int,
+    reserved_codes: set[str],
+) -> str:
     """Pick first unused 4-letter code for this brand, scanning forward from start_index."""
     for k in range(26 * 26):
         cand = _four_letter_code(brand_code, start_index_within_brand + k)
+        if cand in reserved_codes:
+            continue
         if not db.scalar(select(Customer.id).where(Customer.code == cand)):
+            reserved_codes.add(cand)
             return cand
     raise RuntimeError("Could not allocate a unique customer code")
 
@@ -157,6 +165,7 @@ def main() -> int:
 
     with SessionLocal() as db:
         brands = _ensure_brands(db)
+        reserved_codes = {c for (c,) in db.execute(select(Customer.code)).all() if c}
         for priority, company, name in parsed:
             name = (name or "").strip()
             if not name:
@@ -186,7 +195,7 @@ def main() -> int:
                 idx = dolphin_idx
                 dolphin_idx += 1
 
-            code = _allocate_customer_code(db, bcode, idx)
+            code = _allocate_customer_code(db, bcode, idx, reserved_codes)
             c = Customer(
                 id=str(uuid.uuid4()),
                 code=code,

@@ -56,6 +56,7 @@ export function PrintingArtworkUploadSection(props: {
       </Box>
     )
   }
+  const activeScope: PrintingArtworkScope = scope
 
   async function onPickFile(f: File | null) {
     setMsg(null)
@@ -66,7 +67,7 @@ export function PrintingArtworkUploadSection(props: {
     }
     setBusy(true)
     try {
-      const res = await uploadPrintingArtworkPdf(uploadPath(scope), f)
+      const res = await uploadPrintingArtworkPdf(uploadPath(activeScope), f)
       const row = res?.file
       if (!row?.id || !row?.filename) throw new Error('Unexpected response from server')
       onChangeFiles([...(files || []), { id: row.id, filename: row.filename, byte_size: row.byte_size ?? null }])
@@ -82,7 +83,7 @@ export function PrintingArtworkUploadSection(props: {
   async function onOpen(fileId: string) {
     setMsg(null)
     try {
-      const res = await apiFetch<{ url: string }>(downloadUrlPath(scope, fileId))
+      const res = await apiFetch<{ url: string }>(downloadUrlPath(activeScope, fileId))
       if (!res?.url) throw new Error('No download URL returned')
       window.open(res.url, '_blank', 'noopener,noreferrer')
     } catch (e: unknown) {
@@ -95,7 +96,7 @@ export function PrintingArtworkUploadSection(props: {
     setMsg(null)
     setBusy(true)
     try {
-      await apiFetch<void>(deletePath(scope, fileId), { method: 'DELETE' })
+      await apiFetch<void>(deletePath(activeScope, fileId), { method: 'DELETE' })
       onChangeFiles((files || []).filter((x) => x.id !== fileId))
     } catch (e: unknown) {
       if (e instanceof ApiError) setMsg(e.message)
