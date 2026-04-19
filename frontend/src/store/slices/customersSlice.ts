@@ -7,6 +7,10 @@ export type CustomerSummary = {
   code: string
   name: string
   status: string
+  brand_id?: string | null
+  brand_code?: string | null
+  brand_name?: string | null
+  priority_rank?: number | null
   orders_count?: number
   quotes_count?: number
 }
@@ -16,6 +20,10 @@ export type CustomerDetail = {
   code: string
   name: string
   status: string
+  brand_id?: string | null
+  brand_code?: string | null
+  brand_name?: string | null
+  priority_rank?: number | null
   abn?: string | null
   contact_phone?: string | null
   payment_terms?: string | null
@@ -33,6 +41,8 @@ export type CustomerDetail = {
 export type CustomerUpsertPayload = {
   code: string
   name: string
+  brand_id: string | null
+  priority_rank: number | null
   abn: string | null
   contact_phone: string | null
   status: string

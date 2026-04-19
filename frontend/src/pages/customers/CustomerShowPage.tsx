@@ -6,7 +6,7 @@ import { fetchCustomer } from '../../store/slices/customersSlice'
 import { fetchOrders } from '../../store/slices/ordersSlice'
 import { fetchProducts } from '../../store/slices/productsSlice'
 import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
-import { Alert, Box, Button, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
+import { Alert, Box, Button, Chip, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 
 const CUSTOMER_SECTION_HASHES = new Set(['quotes', 'orders'])
 
@@ -107,6 +107,14 @@ export function CustomerShowPage() {
           <Typography variant="h5">
             {customer.name}
           </Typography>
+          <Box sx={{ mt: 1 }}>
+            <Chip
+              color="primary"
+              variant="filled"
+              size="medium"
+              label={`Brand: ${customer.brand_name || customer.brand_code || 'Unassigned'}`}
+            />
+          </Box>
           <Typography variant="body2" color="text.secondary">
             Code: {customer.code} • Status: {customer.status}
           </Typography>
@@ -121,9 +129,9 @@ export function CustomerShowPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
         <Paper variant="outlined" sx={{ p: 2 }}>
           <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', color: '#6b7280', textTransform: 'uppercase' }}>
-            Status
+            Brand
           </h3>
-          <span>{customer.status}</span>
+          <span>{customer.brand_name || customer.brand_code || 'Unassigned'}</span>
         </Paper>
         <Paper variant="outlined" sx={{ p: 2 }}>
           <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', color: '#6b7280', textTransform: 'uppercase' }}>

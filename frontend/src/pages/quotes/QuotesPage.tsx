@@ -1035,13 +1035,22 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (!mapProductTypeToMaterialsRetailGroup(productType)) {
       return 'This product type does not use width-based material minimum order quantities.'
     }
-    if (!quickPreview) {
-      return 'Minimum order quantity will appear here once the quote can be calculated (add gauge, length, and quantity).'
-    }
     const res = resolveMaterialsRetailBand(ratebook, productType, widthMmNum)
     if (!res.band) return 'No materials retail bands are configured for this product type.'
+    const hasPrintingSelection = flagPrinted && printMethod !== 'None' && Number(numColours || desiredNumColours || 0) > 0
+    const plain = res.band.moq_plain_kg != null ? Number(res.band.moq_plain_kg) : null
+    const printed = res.band.moq_printed_kg != null ? Number(res.band.moq_printed_kg) : null
+    const plainOk = plain != null && Number.isFinite(plain) && plain > 0
+    const printedOk = printed != null && Number.isFinite(printed) && printed > 0
+    if (hasPrintingSelection) {
+      if (printedOk && printed != null) return `Minimum order quantity (printed): ${printed.toFixed(2)}kg`
+      if (plainOk && plain != null) return `Minimum order quantity (plain): ${plain.toFixed(2)}kg`
+      return 'No minimum order quantity is set for the band used for this width.'
+    }
+    if (plainOk && plain != null) return `Minimum order quantity (plain): ${plain.toFixed(2)}kg`
+    if (printedOk && printed != null) return `Minimum order quantity (printed): ${printed.toFixed(2)}kg`
     return 'No minimum order quantity is set for the band used for this width.'
-  }, [widthMmNum, ratebook, quickPreview, productType])
+  }, [widthMmNum, ratebook, quickPreview, productType, flagPrinted, printMethod, numColours, desiredNumColours])
 
   const materialsWidthBandWarning = useMemo(() => {
     if (!(widthMmNum > 0) || !ratebook) return null

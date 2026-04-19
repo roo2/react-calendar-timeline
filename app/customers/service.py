@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import SessionLocal
-from app.db.models.domain import Customer, Order, SavedQuote
+from app.db.models.domain import Brand, Customer, Order, SavedQuote
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
 
 
@@ -26,6 +26,13 @@ def list_customers(query: Optional[str] = None) -> List[Customer]:
             search_term = f"%{query}%"
             stmt = stmt.where(Customer.name.ilike(search_term))
         
+        return list(db.scalars(stmt).all())
+
+
+def list_brands() -> List[Brand]:
+    """List available customer brands."""
+    with SessionLocal() as db:  # type: Session
+        stmt = select(Brand).order_by(Brand.name.asc())
         return list(db.scalars(stmt).all())
 
 

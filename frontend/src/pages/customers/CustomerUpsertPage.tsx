@@ -16,6 +16,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import { apiFetch } from '../../api/client'
 
 const PAYMENT_TERMS_OPTIONS = [
   'Up Front',
@@ -63,6 +64,10 @@ type CustomerDetail = {
   id: string
   code: string
   name: string
+  brand_id?: string | null
+  brand_code?: string | null
+  brand_name?: string | null
+  priority_rank?: number | null
   status: string
   abn?: string | null
   contact_phone?: string | null
@@ -75,6 +80,12 @@ type CustomerDetail = {
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
+}
+
+type BrandOption = {
+  id: string
+  code: string
+  name: string
 }
 
 function coerceContact(x: any): Contact {
@@ -119,8 +130,11 @@ export function CustomerUpsertPage() {
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [abn, setAbn] = useState('')
+  const [brandId, setBrandId] = useState('')
+  const [priorityRank, setPriorityRank] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [status, setStatus] = useState<'Active' | 'Inactive' | 'Archived'>('Active')
+  const [brandOptions, setBrandOptions] = useState<BrandOption[]>([])
 
   const [contacts, setContacts] = useState<Contact[]>([
     {
@@ -191,6 +205,21 @@ export function CustomerUpsertPage() {
   }, [customerId, dispatch])
 
   useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await apiFetch<{ items: BrandOption[] }>('/api/customers/brands')
+        if (!cancelled) setBrandOptions(res.items || [])
+      } catch {
+        if (!cancelled) setBrandOptions([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     if (!customerId) return
     const c = detailEntry?.customer as CustomerDetail | undefined
     if (!c) return
@@ -198,6 +227,8 @@ export function CustomerUpsertPage() {
 
     setCode(c.code ?? '')
     setName(c.name ?? '')
+    setBrandId(c.brand_id ?? '')
+    setPriorityRank(c.priority_rank != null ? String(c.priority_rank) : '')
     setAbn(c.abn || '')
     setContactPhone(c.contact_phone || '')
     setStatus((c.status as any) || 'Active')
@@ -233,6 +264,8 @@ export function CustomerUpsertPage() {
       const payload = {
         code,
         name,
+        brand_id: brandId || null,
+        priority_rank: priorityRank ? Number(priorityRank) : null,
         abn: abn || null,
         contact_phone: contactPhone || null,
         status,
@@ -323,6 +356,36 @@ export function CustomerUpsertPage() {
               required
               error={!!fieldErrors['name']}
               helperText={fieldErrors['name'] || ''}
+            />
+            <TextField
+              select
+              label="Brand"
+              value={brandId}
+              onChange={(e) => {
+                setBrandId(e.target.value)
+                clearFieldError('brand_id')
+              }}
+              required
+              error={!!fieldErrors['brand_id']}
+              helperText={fieldErrors['brand_id'] || 'Required'}
+            >
+              {brandOptions.map((b) => (
+                <MenuItem key={b.id} value={b.id}>
+                  {b.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              label="Priority Rank"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={priorityRank}
+              onChange={(e) => {
+                setPriorityRank(e.target.value)
+                clearFieldError('priority_rank')
+              }}
+              helperText={fieldErrors['priority_rank'] || 'Lower number = higher priority (optional)'}
+              error={!!fieldErrors['priority_rank']}
             />
             <TextField label="ABN" value={abn} onChange={(e) => setAbn(e.target.value)} />
             <TextField label="Contact Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />

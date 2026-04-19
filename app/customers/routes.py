@@ -48,6 +48,12 @@ async def list_customers(q: Optional[str] = Query(default=None)):
     }
 
 
+@router.get("/brands", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
+async def list_customer_brands():
+    brands = service.list_brands()
+    return {"items": [{"id": b.id, "code": b.code, "name": b.name} for b in brands]}
+
+
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_customer(payload: CustomerCreateRequest):
     try:
