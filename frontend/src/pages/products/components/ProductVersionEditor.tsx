@@ -18,7 +18,7 @@ import {
 import { fetchCustomers } from '../../../store/slices/customersSlice'
 import { fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
-import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../../utils/productDescription'
+import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
 import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
 import { StickySideAside } from '../../../components/StickySideAside'
 import {
@@ -546,7 +546,10 @@ export function ProductVersionEditor(props: {
     showRollsUnitsQtyType: !isContinuousLength,
     finishMode,
     effectiveQtyType,
-    onQtyTypeChange: setQtyType,
+    onQtyTypeChange: (v) => {
+      setQtyType(v)
+      setDirty(true)
+    },
     totalMetersReadonly,
     totalKgField: {
       value:
@@ -557,7 +560,7 @@ export function ProductVersionEditor(props: {
             : totalKg !== '' && Number.isFinite(Number(totalKg))
               ? formatKgDisplay(Number(totalKg))
               : totalKg,
-      onChange: totalKgEditable ? (v) => setTotalKg(v) : undefined,
+      onChange: totalKgEditable ? (v) => { setTotalKg(v); setDirty(true) } : undefined,
       disabled: !totalKgEditable,
       required: effectiveQtyType === 'kg',
     },
@@ -569,7 +572,13 @@ export function ProductVersionEditor(props: {
           : productsPerRollDerived != null
             ? formatKgDisplay(productsPerRollDerived)
             : '',
-      rollsOnChange: effectiveQtyType === 'rolls_units' ? (v) => setUnitsPerRoll(v) : undefined,
+      rollsOnChange:
+        effectiveQtyType === 'rolls_units'
+          ? (v) => {
+              setUnitsPerRoll(v)
+              setDirty(true)
+            }
+          : undefined,
       rollsDisabled: effectiveQtyType !== 'rolls_units',
       rollsInputStep: effectiveQtyType === 'rolls_units' ? 1 : 'any',
       cartonsLabel: `${productUnitLabel} per Carton`,
@@ -582,6 +591,7 @@ export function ProductVersionEditor(props: {
             bags_per_carton: v.trim() === '' ? null : Math.max(1, Math.round(Number(v))),
           },
         }))
+        setDirty(true)
       },
     },
     weightPerRollField: {
@@ -599,7 +609,7 @@ export function ProductVersionEditor(props: {
                 : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
                   ? formatKgDisplay(Number(weightPerRoll))
                   : weightPerRoll,
-      onChange: weightPerRollEditable ? (v) => setWeightPerRoll(v) : undefined,
+      onChange: weightPerRollEditable ? (v) => { setWeightPerRoll(v); setDirty(true) } : undefined,
       disabled: !weightPerRollEditable,
       helperText: finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined,
     },
@@ -612,7 +622,7 @@ export function ProductVersionEditor(props: {
             : finishMode === 'Cartons'
               ? '—'
               : numRolls,
-      onChange: rollsEditable ? (v) => setNumRolls(v) : undefined,
+      onChange: rollsEditable ? (v) => { setNumRolls(v); setDirty(true) } : undefined,
       disabled: !rollsEditable,
       required: true,
     },
@@ -625,7 +635,7 @@ export function ProductVersionEditor(props: {
             : numUnits !== '' && Number.isFinite(Number(numUnits))
               ? String(Math.round(Number(numUnits)))
               : '',
-      onChange: unitsEditable ? (v) => setNumUnits(v) : undefined,
+      onChange: unitsEditable ? (v) => { setNumUnits(v); setDirty(true) } : undefined,
       disabled: !unitsEditable,
     },
   }
@@ -643,9 +653,9 @@ export function ProductVersionEditor(props: {
       const flow = embeddedNewJobSheetFlow
       setJobSaveErr(null)
       void dispatch(clearCreateErrors())
-      const code = computeProductCodeFromSpec(spec).trim()
+      const code = getDisplayProductCodeFromSpec(spec).trim()
       if (!code) {
-        setJobSaveErr('Generated product code is empty. Check dimensions and product type.')
+        setJobSaveErr('Product code is empty. Set a product code or complete dimensions and product type.')
         return
       }
       const missing: string[] = []
@@ -883,7 +893,7 @@ export function ProductVersionEditor(props: {
   }
 
   const previewDescription = useMemo(() => computeProductDescriptionFromSpec(spec), [spec])
-  const previewProductCode = useMemo(() => computeProductCodeFromSpec(spec), [spec])
+  const previewProductCode = useMemo(() => getDisplayProductCodeFromSpec(spec), [spec])
 
   const product =
     embedded && embeddedNewJobSheetFlow
@@ -965,13 +975,22 @@ export function ProductVersionEditor(props: {
                   customers={customers as any}
                   customersStatus={customersStatus}
                   customerId={customerId}
-                  onCustomerIdChange={setCustomerId}
+                  onCustomerIdChange={(id) => {
+                    setCustomerId(id)
+                    setDirty(true)
+                  }}
                   customerSelectDisabled
                   orderDate={orderDate}
-                  onOrderDateChange={setOrderDate}
+                  onOrderDateChange={(v) => {
+                    setOrderDate(v)
+                    setDirty(true)
+                  }}
                   orderDateDisabled={Boolean(embeddedNewJobSheetFlow)}
                   dueDate={dueDate}
-                  onDueDateChange={setDueDate}
+                  onDueDateChange={(v) => {
+                    setDueDate(v)
+                    setDirty(true)
+                  }}
                   orderDateInputRef={orderDateInputRef}
                   dueDateInputRef={dueDateInputRef}
                   includeQuantity={false}
@@ -1025,7 +1044,11 @@ export function ProductVersionEditor(props: {
                   </Box>
                   <SpecPayloadForm
                     value={spec}
-                    onChange={setSpec}
+                    onChange={(next) => {
+                      setSpec(next)
+                      setDirty(true)
+                      setJobSaveErr(null)
+                    }}
                     fieldErrors={mergedFieldErrors}
                     customerId={product?.customer_id || customerId || undefined}
                     printingSurface="job_sheet_summary"
@@ -1052,7 +1075,11 @@ export function ProductVersionEditor(props: {
                   </Box>
                   <SpecPayloadForm
                     value={spec}
-                    onChange={setSpec}
+                    onChange={(next) => {
+                      setSpec(next)
+                      setDirty(true)
+                      setJobSaveErr(null)
+                    }}
                     fieldErrors={mergedFieldErrors}
                     customerId={product?.customer_id || customerId || undefined}
                     printingSurface="full"

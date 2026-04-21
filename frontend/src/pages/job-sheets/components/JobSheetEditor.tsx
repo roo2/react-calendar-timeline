@@ -38,7 +38,7 @@ import type { UpsertError } from '../../../store/slices/productsSlice'
 import { fetchCustomers } from '../../../store/slices/customersSlice'
 import { clearCreateErrors, createProduct, fetchProducts } from '../../../store/slices/productsSlice'
 import { createJobSheet, fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
-import { computeProductDescriptionFromSpec, computeProductCodeFromSpec } from '../../../utils/productDescription'
+import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
 import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
 import {
   makeDefaultSpec,
@@ -50,6 +50,7 @@ import { StickySideAside } from '../../../components/StickySideAside'
 import {
   JobSheetIdentityQuantitySection,
   JobSheetQuantityPaper,
+  productionStatusShowsDatetimeFields,
   type JobSheetQuantityFieldsProps,
 } from './JobSheetIdentityQuantitySection'
 
@@ -67,6 +68,24 @@ function roundTo2Decimals(s: string): string {
   if (s.trim() === '') return s
   const n = Number(s)
   return Number.isFinite(n) ? n.toFixed(2) : s
+}
+
+/** ISO instant → value for `input type="datetime-local"` (browser local). */
+function isoToDatetimeLocalValue(iso: string | null | undefined): string {
+  if (iso == null || String(iso).trim() === '') return ''
+  const d = new Date(String(iso))
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** `datetime-local` (interpreted as local) → ISO UTC string, or null if empty. */
+function datetimeLocalToIsoUtc(s: string): string | null {
+  const t = s.trim()
+  if (!t) return null
+  const d = new Date(t)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toISOString()
 }
 
 function inferQtyTypeFromUnit(u: string | undefined): QtyType {
@@ -122,6 +141,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [invoiceNo, setInvoiceNo] = useState('')
   const [orderDate, setOrderDate] = useState('')
   const [orderId, setOrderId] = useState('')
+  /** Linked production Job.status (edit only). */
+  const [productionStatus, setProductionStatus] = useState('planned')
+  const [productionStartedLocal, setProductionStartedLocal] = useState('')
+  const [productionFinishedLocal, setProductionFinishedLocal] = useState('')
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
   const orderDateInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -197,6 +220,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setInvoiceNo(js?.invoice_no ?? '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setOrderId(js?.order_id ? String(js.order_id) : '')
+    const rawPs =
+      js?.production_status != null && String(js.production_status).trim() !== ''
+        ? String(js.production_status).trim().toLowerCase()
+        : 'planned'
+    const normalizedPs = rawPs === 'paused' || rawPs === 'completed' ? 'running' : rawPs
+    setProductionStatus(normalizedPs)
+    setProductionStartedLocal(isoToDatetimeLocalValue(js?.production_started_at as string | null | undefined))
+    setProductionFinishedLocal(isoToDatetimeLocalValue(js?.production_finished_at as string | null | undefined))
     const loadedSpec = ensureSpec(res?.spec_payload)
     setSpec(loadedSpec)
     const fm: FinishMode = loadedSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
@@ -273,13 +304,16 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setWeightPerRoll('')
     setNumUnits('')
     setUnitsPerRoll('')
+    setProductionStatus('planned')
+    setProductionStartedLocal('')
+    setProductionFinishedLocal('')
     prevFinishModeForCartonWprRef.current = 'Rolls'
   }, [customerId, mode])
 
   const theme = useTheme()
   const isNarrow = useMediaQuery(theme.breakpoints.down('md'))
   const previewDescription = useMemo(() => computeProductDescriptionFromSpec(spec), [spec])
-  const previewProductCode = useMemo(() => computeProductCodeFromSpec(spec), [spec])
+  const previewProductCode = useMemo(() => getDisplayProductCodeFromSpec(spec), [spec])
 
   const finishMode: FinishMode = spec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
   const productType = (spec.identity?.product_type as string) || 'Bag'
@@ -515,6 +549,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     }
     if (savingJobSheet) return
 
+    const sendProdDates = productionStatusShowsDatetimeFields(productionStatus)
+
     try {
       setSavingJobSheet(true)
 
@@ -614,6 +650,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             weight_per_roll_kg: persistedWpr,
             num_rolls: persistedRolls,
             spec,
+            production_status: productionStatus,
+            production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
+            production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
           }),
         ).unwrap()
         const id = res?.job_sheet?.id
@@ -641,6 +680,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 : null,
           weight_per_roll_kg: persistedWpr,
           num_rolls: persistedRolls,
+          production_status: productionStatus,
+          production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
+          production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
         }
         if (specDirty) body.spec = spec
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
@@ -685,7 +727,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     showRollsUnitsQtyType: !isContinuousLength,
     finishMode,
     effectiveQtyType,
-    onQtyTypeChange: setQtyType,
+    onQtyTypeChange: (v) => {
+      setQtyType(v)
+      setDirty(true)
+    },
     totalMetersReadonly,
     totalKgField: {
       value:
@@ -708,7 +753,13 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           : productsPerRollDerived != null
             ? formatKgDisplay(productsPerRollDerived)
             : '',
-      rollsOnChange: effectiveQtyType === 'rolls_units' ? (v) => setUnitsPerRoll(v) : undefined,
+      rollsOnChange:
+        effectiveQtyType === 'rolls_units'
+          ? (v) => {
+              setUnitsPerRoll(v)
+              setDirty(true)
+            }
+          : undefined,
       rollsDisabled: effectiveQtyType !== 'rolls_units',
       rollsInputStep: effectiveQtyType === 'rolls_units' ? 1 : 'any',
       cartonsLabel: `${productUnitLabel} per Carton`,
@@ -722,6 +773,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           },
         }))
         if (mode === 'edit') setSpecDirty(true)
+        setDirty(true)
       },
     },
     weightPerRollField: {
@@ -739,7 +791,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
                   ? formatKgDisplay(Number(weightPerRoll))
                   : weightPerRoll,
-      onChange: weightPerRollEditable ? (v) => setWeightPerRoll(v) : undefined,
+      onChange: weightPerRollEditable ? (v) => { setWeightPerRoll(v); setDirty(true) } : undefined,
       disabled: !weightPerRollEditable,
       helperText: finishMode === 'Cartons' ? 'Derived from total KG ÷ rolls (scheduling).' : undefined,
     },
@@ -752,7 +804,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             : finishMode === 'Cartons'
               ? '—'
               : numRolls,
-      onChange: rollsEditable ? (v) => setNumRolls(v) : undefined,
+      onChange: rollsEditable ? (v) => { setNumRolls(v); setDirty(true) } : undefined,
       disabled: !rollsEditable,
       required: true,
     },
@@ -765,7 +817,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             : numUnits !== '' && Number.isFinite(Number(numUnits))
               ? String(Math.round(Number(numUnits)))
               : '',
-      onChange: unitsEditable ? (v) => setNumUnits(v) : undefined,
+      onChange: unitsEditable ? (v) => { setNumUnits(v); setDirty(true) } : undefined,
       disabled: !unitsEditable,
     },
   }
@@ -802,15 +854,39 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           customers={customers as any}
           customersStatus={customersStatus}
           customerId={customerId}
-          onCustomerIdChange={setCustomerId}
+          onCustomerIdChange={(id) => {
+            setCustomerId(id)
+            setDirty(true)
+          }}
           customerSelectDisabled={disableIdentity}
           orderDate={orderDate}
-          onOrderDateChange={setOrderDate}
+          onOrderDateChange={(v) => {
+            setOrderDate(v)
+            setDirty(true)
+          }}
           dueDate={dueDate}
-          onDueDateChange={setDueDate}
+          onDueDateChange={(v) => {
+            setDueDate(v)
+            setDirty(true)
+          }}
           orderDateInputRef={orderDateInputRef}
           dueDateInputRef={dueDateInputRef}
           includeQuantity={includeQuantityInHeader}
+          productionStatus={productionStatus}
+          onProductionStatusChange={(v) => {
+            setProductionStatus(v)
+            setDirty(true)
+          }}
+          productionStartedLocal={productionStartedLocal}
+          onProductionStartedLocalChange={(v) => {
+            setProductionStartedLocal(v)
+            setDirty(true)
+          }}
+          productionFinishedLocal={productionFinishedLocal}
+          onProductionFinishedLocalChange={(v) => {
+            setProductionFinishedLocal(v)
+            setDirty(true)
+          }}
           {...jobSheetQuantityFieldsProps}
           productRow={
             <Box>
@@ -870,8 +946,18 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 setSpec(next)
                 setSpecDirty(true)
                 setSpecFieldErrors({})
+                setDirty(true)
               }}
-              afterDimensionsSlot={<JobSheetQuantityPaper {...jobSheetQuantityFieldsProps} />}
+              afterDimensionsSlot={
+                <JobSheetQuantityPaper
+                  {...jobSheetQuantityFieldsProps}
+                  orderViewHref={
+                    mode === 'edit' && orderId.trim()
+                      ? `/orders/${encodeURIComponent(orderId)}`
+                      : undefined
+                  }
+                />
+              }
             />
           </Paper>
         ) : null}

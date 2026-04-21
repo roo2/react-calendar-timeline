@@ -10,7 +10,7 @@ from sqlalchemy.engine import Result
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.db.models.enums import InventoryCategory, OperationType, RunStatus, JobStatus
+from app.db.models.enums import InventoryCategory, OperationType, RunStatus
 from app.dashboard.schemas import DashboardWindow, InventorySnapshot, ThroughputWeekly
 
 

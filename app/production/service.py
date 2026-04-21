@@ -39,6 +39,7 @@ from app.db.models.enums import (
     PrintingMethod,
 )
 from app.exceptions import DomainError
+from app.job_production_timestamps import apply_job_production_timestamps
 from app.machines.service import validate_capability_dict, validate_extruder_for_spec
 from app.scheduling.lane_context import resolve_schedule_lane, ScheduleLane
 from app.scheduling.service import _lane_reservation_match
@@ -140,7 +141,7 @@ def start_run(job_id: uuid.UUID, machine_id: str, operation_type: OperationType)
     with SessionLocal.begin() as session:
         lane = resolve_schedule_lane(session, str(machine_id))
         job, order, product_version = resolve_job_context(session, job_id)
-        if job.status not in (JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED, JobStatus.RUNNING):
+        if job.status not in (JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.RUNNING):
             raise DomainError("Job not in a runnable state")
 
         if lane.kind == "extrusion" and lane.extruder:
@@ -224,8 +225,9 @@ def start_run(job_id: uuid.UUID, machine_id: str, operation_type: OperationType)
             my_item.status = QueueStatus.RUNNING
 
         # Update job status
-        if job.status in (JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED):
+        if job.status in (JobStatus.PLANNED, JobStatus.SCHEDULED):
             job.status = JobStatus.RUNNING
+        apply_job_production_timestamps(job, job.status)
 
         session.flush()
         return run
@@ -243,9 +245,11 @@ def pause_run(run_id: uuid.UUID) -> OperationRun:
         q_other = select(func.count()).select_from(OperationRun).where(
             OperationRun.job_id == run.job_id, OperationRun.status == RunStatus.RUNNING
         )
+        job: Job = session.get(Job, run.job_id)
         if session.execute(q_other).scalar_one() == 0:
-            job: Job = session.get(Job, run.job_id)
-            job.status = JobStatus.PAUSED
+            # No `paused` job status: production is still in progress until dispatch/cancel.
+            job.status = JobStatus.RUNNING
+        apply_job_production_timestamps(job, job.status)
         session.flush()
         return run
 
@@ -259,8 +263,8 @@ def resume_run(run_id: uuid.UUID) -> OperationRun:
             raise DomainError("Run is not paused")
         run.status = RunStatus.RUNNING
         job: Job = session.get(Job, run.job_id)
-        if job.status in (JobStatus.PAUSED, JobStatus.SCHEDULED, JobStatus.PLANNED):
-            job.status = JobStatus.RUNNING
+        job.status = JobStatus.RUNNING
+        apply_job_production_timestamps(job, JobStatus.RUNNING)
         session.flush()
         return run
 
@@ -547,7 +551,9 @@ def complete_run(run_id: uuid.UUID) -> OperationRun:
         )
         if session.execute(q_active).scalar_one() == 0:
             job: Job = session.get(Job, run.job_id)
-            job.status = JobStatus.COMPLETED
+            # Manufacturing complete but not yet dispatched: remain `running` until dispatch/cancel.
+            job.status = JobStatus.RUNNING
+            apply_job_production_timestamps(job, JobStatus.RUNNING)
 
         session.flush()
         return run

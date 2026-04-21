@@ -101,8 +101,11 @@ export function computeProductDescriptionFromSpec(spec: any): string {
     const side = String(printing?.side || '').trim().toLowerCase()
     const numSides = side === 'both' ? 2 : 1
     const colourWord = numColours === '1' ? 'COLOUR' : 'COLOURS'
-    const sideWord = numSides === 1 ? 'SIDE' : 'SIDES'
-    printedSeg = `PRINTED ${numColours} ${colourWord} X ${numSides} ${sideWord}`
+    // Single-sided: no "sides" clause. Two-sided: append "on 2 SIDES" only.
+    printedSeg =
+      numSides === 2
+        ? `PRINTED ${numColours} ${colourWord} on 2 SIDES`
+        : `PRINTED ${numColours} ${colourWord}`
   }
 
   const geometry = up(dims?.geometry)
@@ -139,6 +142,16 @@ const PRODUCT_TYPE_PREFIX: Record<string, string> = {
   CENTERFOLD: 'CF',
   'U-FILM': 'UF',
   UFILM: 'UF',
+}
+
+/**
+ * Product code for UI and persistence: optional manual `identity.customer_code`, else generated.
+ * Use {@link computeProductCodeFromSpec} when you need the algorithmic code only (e.g. placeholder).
+ */
+export function getDisplayProductCodeFromSpec(spec: any): string {
+  const manual = String(spec?.identity?.customer_code ?? '').trim()
+  if (manual) return manual
+  return computeProductCodeFromSpec(spec)
 }
 
 /**

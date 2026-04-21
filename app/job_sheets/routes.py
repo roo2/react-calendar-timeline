@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from starlette.responses import Response
 
@@ -27,36 +29,99 @@ def _printing_artwork_http_error(e: DomainError) -> None:
     raise HTTPException(status_code=400, detail=e.message)
 
 
-def _order_info_for_job_sheets(job_sheet_ids: list[str]) -> dict[str, tuple[str | None, str | None, str | None]]:
-    """Return map job_sheet_id -> (order_id, order_code, order_date). Prefer most recently created order if multiple."""
+def _order_info_for_job_sheets(
+    job_sheet_ids: list[str],
+) -> dict[str, tuple[str | None, str | None, str | None, str | None]]:
+    """Return map job_sheet_id -> (order_id, order_code, order_date, order_status). Prefer most recently created order if multiple."""
     if not job_sheet_ids:
         return {}
-    out: dict[str, tuple[str | None, str | None, str | None]] = {}
+    out: dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
     with SessionLocal() as db:
         rows = (
-            db.query(OrderItem.job_sheet_id, Order.id, Order.code, Order.order_date)
+            db.query(OrderItem.job_sheet_id, Order.id, Order.code, Order.order_date, Order.status)
             .join(Order, Order.id == OrderItem.order_id)
             .filter(OrderItem.job_sheet_id.in_(job_sheet_ids))
             .order_by(Order.created_at.desc())
             .all()
         )
-        for jid, oid, code, order_date in rows:
+        for jid, oid, code, order_date, ost in rows:
             jid_s = str(jid)
             if jid_s in out:
                 continue
-            out[jid_s] = (str(oid), code, str(order_date) if order_date is not None else None)
+            st_s: str | None = None
+            if ost is not None:
+                st_s = str(getattr(ost, "value", ost))
+            out[jid_s] = (str(oid), code, str(order_date) if order_date is not None else None, st_s)
     return out
 
 
-def _to_summary(js, order_info: tuple[str | None, str | None, str | None] | None = None) -> JobSheetSummary:
+def _pretty_status_token(s: str | None) -> str | None:
+    if not s:
+        return None
+    t = str(s).strip()
+    if not t:
+        return None
+    return t.replace("_", " ").title()
+
+
+def _status_label(order_status: str | None, production_status: str | None) -> str | None:
+    parts: list[str] = []
+    o = _pretty_status_token(order_status)
+    p = _pretty_status_token(production_status)
+    if o:
+        parts.append(f"Order: {o}")
+    if p:
+        parts.append(f"Production: {p}")
+    return " · ".join(parts) if parts else None
+
+
+def _totals_kg_for_price(js, spec: dict) -> float | None:
+    """Prefer calculator snapshot on the version spec; fall back to quantity when unit is kg."""
+    qtk = spec.get("quoted_totals_kg")
+    if isinstance(qtk, (int, float)) and float(qtk) > 0:
+        return float(qtk)
+    qu = str(getattr(js, "quantity_unit", "") or "").lower()
+    if qu == "kg":
+        v = float(getattr(js, "quantity_value", 0) or 0)
+        return v if v > 0 else None
+    return None
+
+
+def _price_per_kg(line_total: float | None, totals_kg: float | None) -> float | None:
+    if line_total is None or totals_kg is None or totals_kg <= 0:
+        return None
+    return float(line_total) / float(totals_kg)
+
+
+def _to_summary(
+    js,
+    order_info: tuple[str | None, str | None, str | None, str | None] | None = None,
+    *,
+    production_snapshot: dict | None = None,
+) -> JobSheetSummary:
     product = getattr(js, "product", None)
     customer = getattr(js, "customer", None)
     version = getattr(js, "version", None)
+    spec: dict = {}
+    if version and isinstance(getattr(version, "spec_payload", None), dict):
+        spec = version.spec_payload  # type: ignore[assignment]
     order_id = None
     invoice_no = None
     order_date = None
+    order_status = None
     if order_info:
-        order_id, invoice_no, order_date = order_info
+        order_id, invoice_no, order_date, order_status = order_info
+    lt = float(js.line_total) if getattr(js, "line_total", None) is not None else None
+    ur = float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None
+    tkg = _totals_kg_for_price(js, spec)
+    ppk = _price_per_kg(lt, tkg)
+    snap = production_snapshot or {}
+    ps_raw = snap.get("status")
+    production_status = None if ps_raw is None else str(ps_raw)
+    psa = snap.get("production_started_at")
+    pfa = snap.get("production_finished_at")
+    production_started_at = None if psa is None else str(psa)
+    production_finished_at = None if pfa is None else str(pfa)
     return JobSheetSummary(
         id=js.id,
         job_no=js.job_no,
@@ -81,15 +146,95 @@ def _to_summary(js, order_info: tuple[str | None, str | None, str | None] | None
         order_id=order_id,
         invoice_no=invoice_no,
         order_date=order_date,
+        order_status=order_status,
+        production_status=production_status,
+        production_started_at=production_started_at,
+        production_finished_at=production_finished_at,
+        status_label=_status_label(order_status, production_status),
+        unit_rate=ur,
+        line_total=lt,
+        price_per_kg=ppk,
     )
 
 
 @router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def list_job_sheets(customer_id: str | None = Query(default=None)):
-    rows = service.list_job_sheets(customer_id=customer_id)
-    ids = [r.id for r in rows]
-    order_map = _order_info_for_job_sheets(ids)
-    return {"items": [_to_summary(r, order_map.get(r.id)).model_dump() for r in rows]}
+async def list_job_sheets(
+    customer_id: str | None = Query(default=None),
+    product_type: str | None = Query(default=None),
+    printed: str | None = Query(default=None),
+    finish_mode: str | None = Query(default=None),
+    width_min_mm: float | None = Query(default=None),
+    width_max_mm: float | None = Query(default=None),
+    length_min_mm: float | None = Query(default=None),
+    length_max_mm: float | None = Query(default=None),
+    gauge_min_um: float | None = Query(default=None),
+    gauge_max_um: float | None = Query(default=None),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    order_status: str | None = Query(default=None),
+    production_status: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+):
+    rows, total = service.list_job_sheets(
+        customer_id=customer_id,
+        product_type=product_type,
+        printed=printed,
+        finish_mode=finish_mode,
+        width_min_mm=width_min_mm,
+        width_max_mm=width_max_mm,
+        length_min_mm=length_min_mm,
+        length_max_mm=length_max_mm,
+        gauge_min_um=gauge_min_um,
+        gauge_max_um=gauge_max_um,
+        search=search,
+    )
+    ids_all = [r.id for r in rows]
+    order_map_all = _order_info_for_job_sheets(ids_all)
+    os_f = (order_status or "").strip().casefold()
+    ps_f = (production_status or "").strip().casefold()
+    if from_date is not None or to_date is not None or os_f or ps_f:
+        prod_map_all = service.production_job_status_by_job_sheet_ids([str(i) for i in ids_all]) if ps_f else {}
+        filtered_rows = []
+        for r in rows:
+            _, _, od_s, os_s = order_map_all.get(str(r.id), (None, None, None, None))
+            if from_date is not None or to_date is not None:
+                if not od_s:
+                    continue
+                try:
+                    od = date.fromisoformat(str(od_s))
+                except Exception:
+                    continue
+                if from_date is not None and od < from_date:
+                    continue
+                if to_date is not None and od > to_date:
+                    continue
+            if os_f:
+                if str(os_s or "").strip().casefold() != os_f:
+                    continue
+            if ps_f:
+                ps_s = str(prod_map_all.get(str(r.id), "") or "").strip().casefold()
+                if ps_s != ps_f:
+                    continue
+            filtered_rows.append(r)
+        rows = filtered_rows
+        total = len(filtered_rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_rows = rows[start:end]
+    ids = [r.id for r in page_rows]
+    order_map = {str(i): order_map_all.get(str(i), (None, None, None, None)) for i in ids}
+    snap_map = service.production_job_snapshots_by_job_sheet_ids([str(i) for i in ids])
+    return {
+        "items": [
+            _to_summary(r, order_map.get(str(r.id)), production_snapshot=snap_map.get(str(r.id))).model_dump()
+            for r in page_rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/next-job-no", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
@@ -109,8 +254,14 @@ async def create_job_sheet(payload: JobSheetCreateRequest, identity=Depends(curr
         job_sheet_id = service.create_job_sheet_with_new_version(payload, created_by=created_by)
         full = service.get_job_sheet(job_sheet_id)
         assert full is not None
-        order_map = _order_info_for_job_sheets([full.id])
-        return {"ok": True, "job_sheet": _to_summary(full, order_map.get(full.id)).model_dump()}
+        order_map = _order_info_for_job_sheets([str(full.id)])
+        prod_map = service.production_job_status_by_job_sheet_ids([str(full.id)])
+        return {
+            "ok": True,
+            "job_sheet": _to_summary(
+                full, order_map.get(str(full.id)), production_status=prod_map.get(str(full.id))
+            ).model_dump(),
+        }
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 
@@ -120,10 +271,14 @@ async def get_job_sheet(job_sheet_id: str):
     js = service.get_job_sheet(job_sheet_id)
     if not js:
         raise HTTPException(status_code=404, detail="Job sheet not found")
-    order_map = _order_info_for_job_sheets([js.id])
-    order_info = order_map.get(js.id)
+    order_map = _order_info_for_job_sheets([str(js.id)])
+    snap_map = service.production_job_snapshots_by_job_sheet_ids([str(js.id)])
+    order_info = order_map.get(str(js.id))
     spec = getattr(getattr(js, "version", None), "spec_payload", None) or {}
-    out = JobSheetDetail(job_sheet=_to_summary(js, order_info), spec_payload=spec)
+    out = JobSheetDetail(
+        job_sheet=_to_summary(js, order_info, production_snapshot=snap_map.get(str(js.id))),
+        spec_payload=spec,
+    )
     return out.model_dump()
 
 
@@ -135,8 +290,14 @@ async def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, id
         jid = service.update_job_sheet(job_sheet_id, payload, updated_by=updated_by)
         full = service.get_job_sheet(jid)
         assert full is not None
-        order_map = _order_info_for_job_sheets([jid])
-        return {"ok": True, "job_sheet": _to_summary(full, order_map.get(jid)).model_dump()}
+        order_map = _order_info_for_job_sheets([str(jid)])
+        snap_map = service.production_job_snapshots_by_job_sheet_ids([str(jid)])
+        return {
+            "ok": True,
+            "job_sheet": _to_summary(
+                full, order_map.get(str(jid)), production_snapshot=snap_map.get(str(jid))
+            ).model_dump(),
+        }
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 

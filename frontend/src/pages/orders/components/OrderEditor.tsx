@@ -700,6 +700,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   async function removeLine(it: OrderLine) {
     if (mode === 'new') {
       setItems((prev) => prev.filter((x) => x.id !== it.id))
+      setDirty(true)
       return
     }
     if (orderLocked) return
@@ -739,7 +740,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             select
             label="Customer"
             value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
+            onChange={(e) => {
+              setCustomerId(e.target.value)
+              setDirty(true)
+            }}
             disabled={mode === 'edit'}
           >
             <MenuItem value="" disabled>
@@ -802,6 +806,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         onChange={(e) => {
                           const v = e.currentTarget.value
                           setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, due_date: v } : x)))
+                          setDirty(true)
                         }}
                         InputLabelProps={{ shrink: true }}
                         disabled={saving || publishing || orderLocked}
@@ -830,6 +835,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                           const allowed = unitChoices(it.finish_mode)
                           const next = allowed.includes(v) ? v : allowed[0]
                           setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: next } : x)))
+                          setDirty(true)
                         }}
                         sx={{ minWidth: 120 }}
                         disabled={saving || publishing || orderLocked}
@@ -912,9 +918,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                             setProductId('')
                             if (!customerId) return
                             setNewJobSheetOpen(true)
+                            setDirty(true)
                             return
                           }
                           setProductId(next)
+                          setDirty(true)
                           if (!next) return
                           if (mode === 'new') addSelectedProductToItems(next)
                           else void addSelectedProductToOrder(next)

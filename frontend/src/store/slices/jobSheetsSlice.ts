@@ -24,6 +24,62 @@ export type JobSheetSummary = {
   order_id?: string | null
   invoice_no?: string | null
   order_date?: string | null
+  order_status?: string | null
+  production_status?: string | null
+  production_started_at?: string | null
+  production_finished_at?: string | null
+  status_label?: string | null
+  unit_rate?: number | null
+  line_total?: number | null
+  price_per_kg?: number | null
+}
+
+/** Query params for GET /api/job-sheets (match-style filters). */
+export type JobSheetListQuery = {
+  customer_id?: string
+  product_type?: string
+  printed?: string
+  finish_mode?: string
+  width_min_mm?: number
+  width_max_mm?: number
+  length_min_mm?: number
+  length_max_mm?: number
+  gauge_min_um?: number
+  gauge_max_um?: number
+  from_date?: string
+  to_date?: string
+  order_status?: string
+  production_status?: string
+  search?: string
+  page?: number
+  page_size?: number
+}
+
+function jobSheetListQueryToSearchParams(q: JobSheetListQuery): URLSearchParams {
+  const qs = new URLSearchParams()
+  const set = (k: string, v: string | number | undefined) => {
+    if (v === undefined || v === null) return
+    const s = typeof v === 'number' ? String(v) : String(v).trim()
+    if (s !== '') qs.set(k, s)
+  }
+  set('customer_id', q.customer_id)
+  set('product_type', q.product_type)
+  set('printed', q.printed)
+  set('finish_mode', q.finish_mode)
+  set('width_min_mm', q.width_min_mm)
+  set('width_max_mm', q.width_max_mm)
+  set('length_min_mm', q.length_min_mm)
+  set('length_max_mm', q.length_max_mm)
+  set('gauge_min_um', q.gauge_min_um)
+  set('gauge_max_um', q.gauge_max_um)
+  set('from_date', q.from_date)
+  set('to_date', q.to_date)
+  set('order_status', q.order_status)
+  set('production_status', q.production_status)
+  set('search', q.search)
+  set('page', q.page)
+  set('page_size', q.page_size)
+  return qs
 }
 
 type JobSheetsState = {
@@ -31,6 +87,9 @@ type JobSheetsState = {
     status: Status
     error: string | null
     items: JobSheetSummary[]
+    total: number
+    page: number
+    pageSize: number
   }
   detail: {
     byId: Record<
@@ -45,14 +104,26 @@ type JobSheetsState = {
 }
 
 const initialState: JobSheetsState = {
-  list: { status: 'idle', error: null, items: [] },
+  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 50 },
   detail: { byId: {} },
 }
 
-export const fetchJobSheets = createAsyncThunk('jobSheets/list', async () => {
-  const res = await apiFetch<{ items: JobSheetSummary[] }>('/api/job-sheets')
-  return res.items || []
-})
+export const fetchJobSheets = createAsyncThunk(
+  'jobSheets/list',
+  async (query?: JobSheetListQuery) => {
+    const qs = query ? jobSheetListQueryToSearchParams(query) : new URLSearchParams()
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    const res = await apiFetch<{ items: JobSheetSummary[]; total?: number; page?: number; page_size?: number }>(
+      `/api/job-sheets${suffix}`,
+    )
+    return {
+      items: res.items || [],
+      total: Number(res.total) || 0,
+      page: Number(res.page) || Number(query?.page) || 1,
+      pageSize: Number(res.page_size) || Number(query?.page_size) || 50,
+    }
+  },
+)
 
 export const fetchJobSheet = createAsyncThunk('jobSheets/detail', async (jobSheetId: string) => {
   const data = await apiFetch<any>(`/api/job-sheets/${encodeURIComponent(jobSheetId)}`)
@@ -88,7 +159,10 @@ const slice = createSlice({
     })
     b.addCase(fetchJobSheets.fulfilled, (s, a) => {
       s.list.status = 'succeeded'
-      s.list.items = a.payload
+      s.list.items = a.payload.items
+      s.list.total = a.payload.total
+      s.list.page = a.payload.page
+      s.list.pageSize = a.payload.pageSize
       s.list.error = null
     })
     b.addCase(fetchJobSheets.rejected, (s, a) => {
@@ -121,8 +195,14 @@ const slice = createSlice({
     })
     b.addCase(updateJobSheet.fulfilled, (s, a) => {
       const id = a.meta.arg.jobSheetId
-      if (a.payload?.job_sheet?.id) {
-        s.detail.byId[id] = s.detail.byId[id] || { status: 'idle', error: null, data: null }
+      if (!a.payload?.job_sheet?.id) return
+      const prev = s.detail.byId[id]
+      s.detail.byId[id] = prev || { status: 'succeeded', error: null, data: null }
+      s.detail.byId[id].status = 'succeeded'
+      s.detail.byId[id].error = null
+      const prevData = s.detail.byId[id].data
+      if (prevData && typeof prevData === 'object' && prevData !== null) {
+        s.detail.byId[id].data = { ...prevData, job_sheet: a.payload.job_sheet }
       }
     })
   },

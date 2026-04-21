@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.db.models.enums import JobStatus
 from app.products.schemas import SpecPayload
 
 
@@ -25,6 +26,10 @@ class JobSheetCreateRequest(BaseModel):
     weight_per_roll_kg: Optional[float] = None
     num_rolls: int = Field(..., ge=1, description="Roll count for scheduling (required for production Gantt).")
     spec: SpecPayload
+    production_status: Optional[JobStatus] = None
+    """Initial linked production `Job.status` after create (job row is ensured server-side)."""
+    production_started_at: Optional[datetime] = None
+    production_finished_at: Optional[datetime] = None
 
 
 class JobSheetSummary(BaseModel):
@@ -53,6 +58,19 @@ class JobSheetSummary(BaseModel):
     order_id: Optional[str] = None
     invoice_no: Optional[str] = None
     order_date: Optional[str] = None
+    order_status: Optional[str] = None
+    """Commercial order lifecycle (draft → confirmed → …). From linked Order when present."""
+    production_status: Optional[str] = None
+    """Manufacturing Job status for this line (planned → … → dispatched) when a Job row exists."""
+    production_started_at: Optional[str] = None
+    """When manufacturing entered the running state (first transition to `running`)."""
+    production_finished_at: Optional[str] = None
+    """When manufacturing ended (`dispatched` or `cancelled` after production started)."""
+    status_label: Optional[str] = None
+    """Single-line summary for lists: order + production."""
+    unit_rate: Optional[float] = None
+    line_total: Optional[float] = None
+    price_per_kg: Optional[float] = None
 
 
 class JobSheetDetail(BaseModel):
@@ -80,4 +98,10 @@ class JobSheetUpdateRequest(BaseModel):
     spec: Optional[SpecPayload] = None
     unit_rate: Optional[float] = None
     line_total: Optional[float] = None
+    """When set, updates the linked production `Job.status` (job is created if missing)."""
+    production_status: Optional[JobStatus] = None
+    production_started_at: Optional[datetime] = None
+    """Explicit start instant (UTC). Send `null` to clear. Applied after status-driven defaults."""
+    production_finished_at: Optional[datetime] = None
+    """Explicit finish instant (UTC). Send `null` to clear. Applied after status-driven defaults."""
 

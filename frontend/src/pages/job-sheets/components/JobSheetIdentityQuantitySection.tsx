@@ -1,5 +1,6 @@
 import type { ReactNode, RefObject } from 'react'
-import { Box, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Link } from 'react-router-dom'
+import { Box, Link as MuiLink, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import type { FinishMode, QtyType } from '../../../utils/quantityRollFields'
 
 export type JobSheetCustomerOption = { id: string; name: string; code?: string | null }
@@ -153,17 +154,45 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
 }
 
 /** Standalone quantity section (e.g. after Dimensions in SpecPayloadForm). */
-export function JobSheetQuantityPaper(props: JobSheetQuantityFieldsProps) {
+export function JobSheetQuantityPaper(
+  props: JobSheetQuantityFieldsProps & {
+    /** When set (e.g. job sheet on an order line), show a link next to the section title. */
+    orderViewHref?: string | null
+  },
+) {
+  const { orderViewHref, ...quantityProps } = props
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>
-        Quantity
-      </Typography>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 2,
+          flexWrap: 'wrap',
+          mb: 2,
+        }}
+      >
+        <Typography variant="h6">Quantity</Typography>
+        {orderViewHref ? (
+          <MuiLink component={Link} to={orderViewHref} underline="hover" variant="body2" sx={{ flexShrink: 0 }}>
+            View order
+          </MuiLink>
+        ) : null}
+      </Box>
       <Stack spacing={0}>
-        <JobSheetQuantityFields {...props} />
+        <JobSheetQuantityFields {...quantityProps} />
       </Stack>
     </Paper>
   )
+}
+
+/** Show Production started/finished when status is running or a terminal/hand-off state. */
+export const PRODUCTION_STATUSES_WITH_DATETIME_FIELDS = ['running', 'dispatched', 'cancelled'] as const
+
+export function productionStatusShowsDatetimeFields(status: string | undefined): boolean {
+  const s = (status ?? '').trim().toLowerCase()
+  return (PRODUCTION_STATUSES_WITH_DATETIME_FIELDS as readonly string[]).includes(s)
 }
 
 export type JobSheetIdentityQuantitySectionProps = JobSheetQuantityFieldsProps & {
@@ -190,6 +219,14 @@ export type JobSheetIdentityQuantitySectionProps = JobSheetQuantityFieldsProps &
   includeQuantity?: boolean
   /** Optional read-only product row (full job sheet edit) */
   productRow?: ReactNode
+  /** Full job sheet edit: linked production Job status */
+  productionStatus?: string
+  onProductionStatusChange?: (value: string) => void
+  /** `datetime-local` value (local) or '' */
+  productionStartedLocal?: string
+  onProductionStartedLocalChange?: (value: string) => void
+  productionFinishedLocal?: string
+  onProductionFinishedLocalChange?: (value: string) => void
 }
 
 /**
@@ -227,7 +264,17 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
     totalProductsField,
     includeQuantity = true,
     productRow,
+    productionStatus,
+    onProductionStatusChange,
+    productionStartedLocal,
+    onProductionStartedLocalChange,
+    productionFinishedLocal,
+    onProductionFinishedLocalChange,
   } = props
+
+  const showProdDatetimeFields =
+    Boolean(onProductionStartedLocalChange && onProductionFinishedLocalChange) &&
+    productionStatusShowsDatetimeFields(productionStatus)
 
   const quantityProps: JobSheetQuantityFieldsProps = {
     productUnitLabel,
@@ -324,6 +371,66 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           required
         />
       </Box>
+
+      {onProductionStatusChange ? (
+        <Box
+          sx={{
+            mt: 2,
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              sm: showProdDatetimeFields ? 'repeat(2, minmax(0, 1fr))' : '1fr',
+              md: showProdDatetimeFields ? 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)' : '1fr',
+            },
+            gap: 2,
+            alignItems: 'flex-start',
+            columnGap: 2,
+          }}
+        >
+          <TextField
+            select
+            label="Production status"
+            value={productionStatus ?? ''}
+            onChange={(e) => onProductionStatusChange(e.target.value)}
+            fullWidth
+            sx={{
+              gridColumn: {
+                xs: 'span 1',
+                sm: showProdDatetimeFields ? 'span 2' : 'span 1',
+                md: showProdDatetimeFields ? 'span 1' : '1 / -1',
+              },
+            }}
+          >
+            <MenuItem value="planned">Planned</MenuItem>
+            <MenuItem value="scheduled">Scheduled</MenuItem>
+            <MenuItem value="running">Running</MenuItem>
+            <MenuItem value="dispatched">Dispatched</MenuItem>
+            <MenuItem value="cancelled">Cancelled</MenuItem>
+          </TextField>
+          {showProdDatetimeFields && onProductionStartedLocalChange && onProductionFinishedLocalChange ? (
+            <>
+              <TextField
+                label="Production started"
+                type="datetime-local"
+                value={productionStartedLocal ?? ''}
+                onChange={(e) => onProductionStartedLocalChange(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ step: 60 }}
+                fullWidth
+              />
+              <TextField
+                label="Production finished"
+                type="datetime-local"
+                value={productionFinishedLocal ?? ''}
+                onChange={(e) => onProductionFinishedLocalChange(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ step: 60 }}
+                fullWidth
+              />
+            </>
+          ) : null}
+        </Box>
+      ) : null}
 
       {includeQuantity ? (
         <Box sx={{ mt: 2 }}>

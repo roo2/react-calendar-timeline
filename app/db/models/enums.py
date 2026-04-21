@@ -15,8 +15,6 @@ class JobStatus(str, Enum):
     PLANNED = "planned"
     SCHEDULED = "scheduled"
     RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
     DISPATCHED = "dispatched"
     CANCELLED = "cancelled"
 

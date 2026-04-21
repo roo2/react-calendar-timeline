@@ -273,6 +273,8 @@ class Job(Base):
     status: Mapped[JobStatus] = mapped_column(
         SAEnum(JobStatus, name="job_status", native_enum=False, values_callable=enum_db_values)
     )
+    production_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    production_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     order: Mapped[Optional["Order"]] = relationship(back_populates="jobs", foreign_keys=[order_id])

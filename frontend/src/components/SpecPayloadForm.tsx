@@ -10,7 +10,6 @@ import {
   DialogTitle,
   FormControlLabel,
   FormGroup,
-  Link as MuiLink,
   MenuItem,
   Paper,
   Stack,
@@ -40,6 +39,7 @@ import type { AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
 import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type PrintingArtworkScope } from './PrintingArtworkUploadSection'
+import { computeProductCodeFromSpec } from '../utils/productDescription'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -258,6 +258,14 @@ export function SpecPayloadForm(props: {
 
   const filmSuppliedReadonly = useMemo(() => formatJobSheetFilmSupplied(spec), [spec])
   const finishedBagSizeReadonly = useMemo(() => formatJobSheetFinishedBagSize(spec), [spec])
+  const generatedProductCodePlaceholder = useMemo(() => {
+    try {
+      const c = computeProductCodeFromSpec(spec).trim()
+      return c || '—'
+    } catch {
+      return '—'
+    }
+  }, [spec])
 
   const industryFlags = new Set<string>(Array.isArray(identity.industry_flags) ? identity.industry_flags : [])
   const qualityFlags = new Set<string>(Array.isArray(quality.flags) ? quality.flags : [])
@@ -427,12 +435,18 @@ export function SpecPayloadForm(props: {
     return rows
   }, [additives])
 
+  function parseOptionalPercent(raw: string): number | null {
+    if (raw === '' || raw == null) return null
+    const n = parseFloat(String(raw).trim())
+    return Number.isFinite(n) ? n : null
+  }
+
   function handleMaterialsColourRowsChange(rows: MaterialsColourRow[]) {
     update((d) => {
       if (!Array.isArray(d.formulation.colour_components)) d.formulation.colour_components = []
       d.formulation.colour_components = rows.map((r) => ({
         colour_code: r.colour_code,
-        strength_pct: r.strength_pct === '' ? null : parseFloat(r.strength_pct),
+        strength_pct: parseOptionalPercent(r.strength_pct),
       }))
       syncLegacyColourFromComponents(d)
     })
@@ -443,7 +457,7 @@ export function SpecPayloadForm(props: {
       if (!Array.isArray(d.formulation.additives)) d.formulation.additives = []
       d.formulation.additives = rows.map((r) => ({
         additive_code: r.additive_code,
-        pct: r.pct === '' ? null : parseFloat(r.pct),
+        pct: parseOptionalPercent(r.pct),
       }))
     })
   }
@@ -598,6 +612,22 @@ export function SpecPayloadForm(props: {
       <MenuItem value="back">Back</MenuItem>
       <MenuItem value="both">Both</MenuItem>
     </DefaultSelectField>
+  )
+
+  /** Same binding as Run Requirements — duplicated in the job-sheet printing dialog for convenience. */
+  const printingTreatField = (
+    <TextField
+      select
+      label="Treat Inside/Outside"
+      value={run.treat_inside_outside || 'none'}
+      onChange={(e) => update((d) => (d.run_requirements.treat_inside_outside = e.target.value))}
+      error={!!errorFor('spec.run_requirements.treat_inside_outside')}
+      helperText={errorFor('spec.run_requirements.treat_inside_outside') || ''}
+    >
+      <MenuItem value="none">none</MenuItem>
+      <MenuItem value="inside">inside</MenuItem>
+      <MenuItem value="outside">outside</MenuItem>
+    </TextField>
   )
 
   const showPlateColumn = printing.method === 'Inline'
@@ -1157,7 +1187,8 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ mb: 2, maxWidth: { xs: '100%', sm: '50%' } }}>
           <TextField
-            label="Customer Code"
+            label="Product Code"
+            placeholder={generatedProductCodePlaceholder}
             value={identity.customer_code ?? ''}
             onChange={(e) =>
               update((d) => {
@@ -1168,7 +1199,12 @@ export function SpecPayloadForm(props: {
             fullWidth
             inputProps={{ maxLength: 64 }}
             error={!!errorFor('spec.identity.customer_code')}
-            helperText={errorFor('spec.identity.customer_code') || ''}
+            helperText={
+              errorFor('spec.identity.customer_code') ||
+              (!(identity.customer_code ?? '').trim()
+                ? 'Optional. Uses the generated code when empty.'
+                : 'Shown to customers instead of the generated code.')
+            }
           />
         </Box>
 
@@ -1756,29 +1792,10 @@ export function SpecPayloadForm(props: {
         </Box>
 
         {printingSurface === 'job_sheet_summary' && printingEnabled ? (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Printed:{' '}
-            {printing.num_colours != null && Number.isFinite(Number(printing.num_colours)) ? (
-              <>
-                {Math.round(Number(printing.num_colours))} colour{Number(printing.num_colours) === 1 ? '' : 's'}
-              </>
-            ) : (
-              <>— colours</>
-            )}
-            , {printing.side === 'both' ? '2 sides' : '1 side'}
-          </Typography>
-        ) : null}
-
-        {printingSurface === 'job_sheet_summary' && printingEnabled ? (
           <Box sx={{ mt: 1.5 }}>
-            <MuiLink
-              component="button"
-              type="button"
-              onClick={() => setPrintingDetailsOpen(true)}
-              sx={{ cursor: 'pointer', verticalAlign: 'baseline', fontSize: '0.875rem' }}
-            >
-              Edit printing specification…
-            </MuiLink>
+            <Button variant="outlined" type="button" onClick={() => setPrintingDetailsOpen(true)}>
+              Edit printing specification
+            </Button>
           </Box>
         ) : null}
 
@@ -1818,39 +1835,62 @@ export function SpecPayloadForm(props: {
                   return (
                     <Box
                       sx={{
-                        display: 'grid',
-                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-                        gap: 1.5,
                         pb: 1,
                         borderBottom: 1,
                         borderColor: 'divider',
                       }}
                     >
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Customer
-                        </Typography>
-                        <Typography variant="body2">{hdr.customerLabel}</Typography>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                          gap: 1.5,
+                          mb: 1.5,
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Customer
+                          </Typography>
+                          <Typography variant="body2">{hdr.customerLabel}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Product description
+                          </Typography>
+                          <Typography variant="body2">{hdr.productDescription}</Typography>
+                        </Box>
                       </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Product description
-                        </Typography>
-                        <Typography variant="body2">{hdr.productDescription}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Order number
-                        </Typography>
-                        <Typography variant="body2">{hdr.orderNumber}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Dates
-                        </Typography>
-                        <Typography variant="body2">
-                          Order: {hdr.orderDateLabel} · Due: {hdr.dueDateLabel}
-                        </Typography>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+                          gap: 1.5,
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Order number
+                          </Typography>
+                          <Typography variant="body2">{hdr.orderNumber}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Dates
+                          </Typography>
+                          <Typography variant="body2">
+                            Order: {hdr.orderDateLabel} · Due: {hdr.dueDateLabel}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Total metres
+                          </Typography>
+                          <Typography variant="body2">{hdr.totalMetersLabel}</Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            From job sheet quantity and product dimensions.
+                          </Typography>
+                        </Box>
                       </Box>
                     </Box>
                   )
@@ -1875,46 +1915,6 @@ export function SpecPayloadForm(props: {
                       helperText="Optional: barcode value when the print includes a barcode."
                     />
 
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-                      <TextField
-                        label="Cylinder (mm)"
-                        type="number"
-                        value={printing.cylinder_size_mm ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value
-                          update((d) => {
-                            d.printing.cylinder_size_mm = v === '' ? null : Number(v)
-                          })
-                        }}
-                        inputProps={{ min: 0, step: 'any' }}
-                        helperText="Cylinder dimension (e.g. repeat length)."
-                      />
-                      <TextField
-                        label="Around"
-                        type="number"
-                        value={printing.plates_around ?? ''}
-                        onChange={(e) =>
-                          update((d) => {
-                            d.printing.plates_around = clampPlateLayoutInt(e.target.value)
-                          })
-                        }
-                        inputProps={{ min: 1, max: 3, step: 1 }}
-                        helperText="Copies of the plate around the cylinder (1–3)."
-                      />
-                      <TextField
-                        label="Across"
-                        type="number"
-                        value={printing.plates_across ?? ''}
-                        onChange={(e) =>
-                          update((d) => {
-                            d.printing.plates_across = clampPlateLayoutInt(e.target.value)
-                          })
-                        }
-                        inputProps={{ min: 1, max: 3, step: 1 }}
-                        helperText="Copies side by side (1–3)."
-                      />
-                    </Box>
-
                     <Box>
                       <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
                         Printer
@@ -1933,21 +1933,10 @@ export function SpecPayloadForm(props: {
                       </ToggleButtonGroup>
                     </Box>
 
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
                       {printingNumColoursField}
                       {printingPrintSideField}
-                    </Box>
-
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        Total metres
-                      </Typography>
-                      <Typography variant="body1">
-                        {(jobSheetPrintingContext || { totalMetersLabel: '—' }).totalMetersLabel}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                        From job sheet quantity and product dimensions.
-                      </Typography>
+                      {printingTreatField}
                     </Box>
 
                     <TextField
@@ -2024,6 +2013,46 @@ export function SpecPayloadForm(props: {
                     />
 
                     {jobSheetPrintingInkTables}
+
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+                      <TextField
+                        label="Cylinder (mm)"
+                        type="number"
+                        value={printing.cylinder_size_mm ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          update((d) => {
+                            d.printing.cylinder_size_mm = v === '' ? null : Number(v)
+                          })
+                        }}
+                        inputProps={{ min: 0, step: 'any' }}
+                        helperText="Cylinder dimension (e.g. repeat length)."
+                      />
+                      <TextField
+                        label="Around"
+                        type="number"
+                        value={printing.plates_around ?? ''}
+                        onChange={(e) =>
+                          update((d) => {
+                            d.printing.plates_around = clampPlateLayoutInt(e.target.value)
+                          })
+                        }
+                        inputProps={{ min: 1, max: 3, step: 1 }}
+                        helperText="Copies of the plate around the cylinder (1–3)."
+                      />
+                      <TextField
+                        label="Across"
+                        type="number"
+                        value={printing.plates_across ?? ''}
+                        onChange={(e) =>
+                          update((d) => {
+                            d.printing.plates_across = clampPlateLayoutInt(e.target.value)
+                          })
+                        }
+                        inputProps={{ min: 1, max: 3, step: 1 }}
+                        helperText="Copies side by side (1–3)."
+                      />
+                    </Box>
                   </>
                 ) : (
                   <Typography variant="body2" color="text.secondary">

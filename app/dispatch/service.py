@@ -36,6 +36,7 @@ from app.dispatch.schemas import (
 	ConfirmDispatchRequest,
 )
 from app.exceptions import DomainError
+from app.job_production_timestamps import apply_job_production_timestamps
 
 
 _logger = logging.getLogger("dispatch")
@@ -166,7 +167,7 @@ def list_ready() -> list[JobDispatchListItem]:
 			.outerjoin(DispatchRecord, DispatchRecord.job_id == Job.id)
 			.outerjoin(JobQCSummary, JobQCSummary.job_id == Job.id)
 			.where(
-				Job.status == JobStatus.COMPLETED,
+				Job.status == JobStatus.RUNNING,
 				(JobQCSummary.status.in_([JobQCSummaryStatus.FINAL_PASS, JobQCSummaryStatus.FINAL_PASS_WITH_DEVIATION])),
 				((DispatchRecord.id.is_(None)) | (DispatchRecord.dispatch_status != DispatchStatus.DISPATCHED)),
 			)
@@ -264,8 +265,8 @@ def get(job_id: uuid.UUID) -> DispatchDetailDTO:
 def mark_ready(job_id: uuid.UUID, payload: MarkReadyRequest, *, actor: str) -> DispatchRecordDTO:
 	with SessionLocal.begin() as session:
 		job, order, pv, _ = _get_job_ctx(session, job_id)
-		if job.status != JobStatus.COMPLETED:
-			raise DomainError("Job is not in a completed state")
+		if job.status != JobStatus.RUNNING:
+			raise DomainError("Job is not in a running state (manufacturing must be complete before dispatch)")
 
 		# Preconditions
 		if not _required_runs_completed(session, job.id, pv):
@@ -373,6 +374,7 @@ def confirm_dispatch(job_id: uuid.UUID, payload: ConfirmDispatchRequest, *, acto
 
 		# Job status transition
 		job.status = JobStatus.DISPATCHED
+		apply_job_production_timestamps(job, JobStatus.DISPATCHED, at=dispatched_at)
 
 		session.flush()
 

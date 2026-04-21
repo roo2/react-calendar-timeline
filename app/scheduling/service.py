@@ -1594,7 +1594,7 @@ def add_job(
 			raise DomainError("job_id or job_sheet_id is required")
 
 		_, order, product_version = resolve_job_context(session, job_id)
-		if job.status not in (JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED):
+		if job.status not in (JobStatus.PLANNED, JobStatus.SCHEDULED):
 			raise DomainError("Job not in a schedulable state")
 
 		items = _load_lane_items_for_update(session, lane)
@@ -2360,7 +2360,7 @@ def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
 		q = (
 			select(Job)
 			.where(
-				Job.status.in_([JobStatus.PLANNED, JobStatus.SCHEDULED, JobStatus.PAUSED]),
+				Job.status.in_([JobStatus.PLANNED, JobStatus.SCHEDULED]),
 				~extruder_queued,
 			)
 		)

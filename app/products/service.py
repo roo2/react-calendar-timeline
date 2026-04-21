@@ -283,6 +283,8 @@ def compute_product_code_base(spec_payload: Any) -> str:
     """
     Compute product code from spec only (no customer prefix).
 
+    If ``identity.customer_code`` is set, it is returned as the product code (customer-visible override).
+
     Matches the frontend algorithm:
     - single dashes between segments (missing segments are omitted)
     - xP suffix where P = number of ink_code rows across both sides
@@ -291,6 +293,10 @@ def compute_product_code_base(spec_payload: Any) -> str:
         return ""
 
     identity = spec_payload.get("identity") if isinstance(spec_payload.get("identity"), dict) else {}
+    manual = str(identity.get("customer_code") or "").strip()
+    if manual:
+        return manual
+
     dims = spec_payload.get("dimensions") if isinstance(spec_payload.get("dimensions"), dict) else {}
     formulation = spec_payload.get("formulation") if isinstance(spec_payload.get("formulation"), dict) else {}
     printing = spec_payload.get("printing") if isinstance(spec_payload.get("printing"), dict) else {}
@@ -368,6 +374,7 @@ def compute_product_code_base(spec_payload: Any) -> str:
 def compute_product_code_full(product: Product, spec_payload: Any) -> str:
     """
     Product code shown/stored from spec (no customer prefix).
+    Manual ``identity.customer_code`` wins when present; else generated from dimensions/printing.
     `product` is kept for call-site compatibility; code is derived only from spec_payload.
     """
     _ = product  # unused; signature preserved for callers

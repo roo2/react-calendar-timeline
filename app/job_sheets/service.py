@@ -1,19 +1,32 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, time
-from typing import Optional, List
+from datetime import date, datetime, time, timezone
+from typing import Optional, List, Any, Dict
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
-from app.db.models.domain import Customer, Product, ProductVersion, JobSheet, Order, OrderItem
+from app.db.models.domain import Customer, Product, ProductVersion, JobSheet, Job, Order, OrderItem
 from app.db.models.enums import OrderStatus
 from app.exceptions import DomainError
 from app.job_context import ensure_scheduling_job_for_job_sheet
-from app.products.service import _next_version_number, compute_product_code_full  # reuse version numbering helper
+from app.job_production_timestamps import apply_job_production_timestamps
+
+
+def _utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+from app.products.service import (
+    _next_version_number,
+    compute_product_code_full,
+    compute_product_description,
+)  # reuse version numbering helper
 from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest
 
 
@@ -167,7 +180,17 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
             raise DomainError("Failed to allocate job number") from last_err
 
         _ensure_draft_order_for_job_sheet_in_db(db, str(js.id), new_order_date=payload.order_date)
-        ensure_scheduling_job_for_job_sheet(db, str(js.id))
+        job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
+        upd = payload.model_dump(exclude_unset=True)
+        if "production_status" in upd and payload.production_status is not None:
+            job.status = payload.production_status
+            apply_job_production_timestamps(job, job.status)
+        if "production_started_at" in upd:
+            job.production_started_at = _utc_aware(payload.production_started_at)
+        if "production_finished_at" in upd:
+            job.production_finished_at = _utc_aware(payload.production_finished_at)
+        db.add(job)
+        db.flush()
 
         # IMPORTANT: capture ID before session closes/attributes expire
         return str(js.id)
@@ -297,7 +320,32 @@ def _infer_qty_fields_for_order_line(
     return qt, npu, None, int(nr)
 
 
-def list_job_sheets(customer_id: Optional[str] = None) -> List[JobSheet]:
+def _spec_identity_dimensions(spec: Any) -> tuple[dict, dict]:
+    if not isinstance(spec, dict):
+        return {}, {}
+    ident = spec.get("identity") if isinstance(spec.get("identity"), dict) else {}
+    dims = spec.get("dimensions") if isinstance(spec.get("dimensions"), dict) else {}
+    return ident, dims
+
+
+def list_job_sheets(
+    customer_id: Optional[str] = None,
+    *,
+    product_type: Optional[str] = None,
+    printed: Optional[str] = None,
+    finish_mode: Optional[str] = None,
+    width_min_mm: Optional[float] = None,
+    width_max_mm: Optional[float] = None,
+    length_min_mm: Optional[float] = None,
+    length_max_mm: Optional[float] = None,
+    gauge_min_um: Optional[float] = None,
+    gauge_max_um: Optional[float] = None,
+    search: Optional[str] = None,
+) -> tuple[List[JobSheet], int]:
+    pt_f = (product_type or "").strip().casefold()
+    printed_f = (printed or "").strip().casefold()
+    finish_mode_f = (finish_mode or "").strip().casefold()
+    q_f = (search or "").strip().casefold()
     with SessionLocal() as db:
         stmt = (
             select(JobSheet)
@@ -335,7 +383,150 @@ def list_job_sheets(customer_id: Optional[str] = None) -> List[JobSheet]:
                 db.commit()
             except IntegrityError:
                 db.rollback()
-        return rows
+
+        # Optional filters (product geometry / quote-style match) — applied in Python using version spec.
+        if not (
+            pt_f
+            or printed_f
+            or finish_mode_f
+            or q_f
+            or width_min_mm is not None
+            or width_max_mm is not None
+            or length_min_mm is not None
+            or length_max_mm is not None
+            or gauge_min_um is not None
+            or gauge_max_um is not None
+        ):
+            return rows, len(rows)
+
+        filtered: List[JobSheet] = []
+        for js in rows:
+            v = getattr(js, "version", None)
+            spec = getattr(v, "spec_payload", None) if v else None
+            ident, dims = _spec_identity_dimensions(spec)
+            if pt_f:
+                spt = str(ident.get("product_type") or "").strip().casefold()
+                if spt != pt_f:
+                    continue
+            if finish_mode_f:
+                s_finish = str(ident.get("finish_mode") or "").strip().casefold()
+                if s_finish != finish_mode_f:
+                    continue
+            if printed_f:
+                pr = spec.get("printing") if isinstance(spec, dict) and isinstance(spec.get("printing"), dict) else {}
+                method = str(pr.get("method") or "").strip().casefold()
+                if printed_f == "none":
+                    if method not in ("", "none"):
+                        continue
+                elif method != printed_f:
+                    continue
+            w_raw = dims.get("base_width_mm")
+            try:
+                wn = float(w_raw) if w_raw is not None else None
+            except (TypeError, ValueError):
+                wn = None
+            if width_min_mm is not None and wn is not None and wn < float(width_min_mm):
+                continue
+            if width_max_mm is not None and wn is not None and wn > float(width_max_mm):
+                continue
+            l_raw = dims.get("base_length_mm")
+            try:
+                ln = float(l_raw) if l_raw is not None else None
+            except (TypeError, ValueError):
+                ln = None
+            if length_min_mm is not None and ln is not None and ln < float(length_min_mm):
+                continue
+            if length_max_mm is not None and ln is not None and ln > float(length_max_mm):
+                continue
+            g_raw = dims.get("thickness_um")
+            try:
+                gn = float(g_raw) if g_raw is not None else None
+            except (TypeError, ValueError):
+                gn = None
+            if gauge_min_um is not None and gn is not None and gn < float(gauge_min_um):
+                continue
+            if gauge_max_um is not None and gn is not None and gn > float(gauge_max_um):
+                continue
+            if q_f:
+                p = getattr(js, "product", None)
+                c = getattr(js, "customer", None)
+                v = getattr(js, "version", None)
+                spec = getattr(v, "spec_payload", None) if v else None
+                code = str(getattr(p, "code", "") or "").casefold()
+                desc = str(getattr(p, "description", "") or "").casefold()
+                customer_name = str(getattr(c, "name", "") or "").casefold()
+                jno = str(getattr(js, "job_no", "") or "").casefold()
+                long_desc = ""
+                print_desc = ""
+                if isinstance(spec, dict):
+                    computed = compute_product_description(spec, max_len=None)
+                    if computed:
+                        long_desc = str(computed).casefold()
+                    pr = spec.get("printing") if isinstance(spec.get("printing"), dict) else {}
+                    print_desc = str(pr.get("print_description") or "").casefold()
+                blob = f"{code} {desc} {customer_name} {jno} {long_desc} {print_desc}"
+                if q_f not in blob:
+                    continue
+            filtered.append(js)
+        return filtered, len(filtered)
+
+
+def _snap_from_job(job: Job) -> Dict[str, Any]:
+    st = job.status
+    sv = getattr(st, "value", st)
+    ps = job.production_started_at
+    pf = job.production_finished_at
+    return {
+        "status": str(sv),
+        "production_started_at": ps.isoformat() if ps is not None else None,
+        "production_finished_at": pf.isoformat() if pf is not None else None,
+    }
+
+
+def production_job_snapshots_by_job_sheet_ids(job_sheet_ids: list[str]) -> dict[str, Dict[str, Any]]:
+    """
+    Map job_sheet_id -> { status, production_started_at, production_finished_at } from the linked Job row.
+    Order-backed Jobs use (order_id, job_code); standalone Jobs use job_sheet_id.
+    """
+    if not job_sheet_ids:
+        return {}
+    out: dict[str, Dict[str, Any]] = {}
+    with SessionLocal() as db:
+        for job in db.execute(select(Job).where(Job.job_sheet_id.in_(job_sheet_ids))).scalars().all():
+            jsid = getattr(job, "job_sheet_id", None)
+            if not jsid:
+                continue
+            sid = str(jsid)
+            if sid not in out:
+                out[sid] = _snap_from_job(job)
+
+        ois = list(db.execute(select(OrderItem).where(OrderItem.job_sheet_id.in_(job_sheet_ids))).scalars().all())
+        for oi in ois:
+            sid = str(oi.job_sheet_id)
+            if sid in out:
+                continue
+            order = db.get(Order, oi.order_id)
+            if not order:
+                continue
+            items = list(
+                db.execute(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id.asc())).scalars().all()
+            )
+            job_code: Optional[int] = None
+            for i, row in enumerate(items):
+                if str(row.job_sheet_id) == sid:
+                    job_code = i + 1
+                    break
+            if job_code is None:
+                continue
+            job = db.execute(select(Job).where(Job.order_id == order.id, Job.job_code == job_code)).scalars().first()
+            if job:
+                out[sid] = _snap_from_job(job)
+    return out
+
+
+def production_job_status_by_job_sheet_ids(job_sheet_ids: list[str]) -> dict[str, str]:
+    snap = production_job_snapshots_by_job_sheet_ids(job_sheet_ids)
+    return {k: str(v.get("status") or "") for k, v in snap.items()}
 
 
 def get_job_sheet(job_sheet_id: str) -> Optional[JobSheet]:
@@ -440,5 +631,23 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
                 o.order_date = payload.order_date
                 db.add(o)
                 db.flush()
+
+        prod_touch = (
+            ("production_status" in upd and payload.production_status is not None)
+            or "production_started_at" in upd
+            or "production_finished_at" in upd
+        )
+        if prod_touch:
+            job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
+            if "production_status" in upd and payload.production_status is not None:
+                job.status = payload.production_status
+                apply_job_production_timestamps(job, job.status)
+            if "production_started_at" in upd:
+                job.production_started_at = _utc_aware(payload.production_started_at)
+            if "production_finished_at" in upd:
+                job.production_finished_at = _utc_aware(payload.production_finished_at)
+            db.add(job)
+            db.flush()
+
         return str(js.id)
 

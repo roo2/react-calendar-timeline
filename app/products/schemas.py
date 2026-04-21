@@ -66,6 +66,8 @@ class IdentitySpec(BaseModel):
     trim_pct: Optional[float] = Field(None, ge=0, le=100)
     industry_flags: List[Literal["food_contact", "non_food", "medical", "chemical_industrial"]] = []
     notes: Optional[str] = None
+    # Customer-visible product code override (UI: "Product Code"); persisted on the version spec.
+    customer_code: Optional[str] = Field(None, max_length=64)
 
 
 class DimensionsSpec(BaseModel):
@@ -110,7 +112,8 @@ class ColourComponentSpec(BaseModel):
 
 class AdditiveComponent(BaseModel):
     additive_code: str
-    pct: float = Field(..., ge=0)
+    # Optional: operators often know an additive is required (e.g. UV) without a dosage %.
+    pct: Optional[float] = Field(default=None, ge=0)
 
 
 class FormulationSpec(BaseModel):

@@ -39,7 +39,7 @@ import { DefaultSelectField } from '../../components/DefaultSelectField'
 import { productTypeCanHaveGusset } from '../../utils/specCompat'
 import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
 import { computeWeightPerRollDisplay } from '../../utils/quantityRollFields'
-import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import { getDisplayProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   computeAppliedExtrusionWasteFactors,
   computeDerivedGeometryAndTotals,
@@ -1320,7 +1320,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       }
 
       const spec = buildSpecFromQuotePayload(qpLive)
-      const fromSpec = (computeProductCodeFromSpec(spec) || '').trim()
+      const fromSpec = (getDisplayProductCodeFromSpec(spec) || '').trim()
       const productCode = fromSpec || `Q-${suffix}`
       let createProductRes: { ok?: boolean; product?: { id: string }; version?: { id: string } }
       try {
