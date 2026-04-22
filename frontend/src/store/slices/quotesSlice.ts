@@ -4,7 +4,7 @@ import type { QuoteRatebook } from '../../utils/quoteCalculator'
 
 export type QuotesBootstrap = {
   product_versions?: Array<{ version_id: string; display_name: string; product_code: string; version_number: number }>
-  customers: Array<{ id: string; code?: string | null; name: string }>
+  customers: Array<{ id: string; name: string }>
   resins?: Array<{ code: string; name: string }>
   colours?: Array<{ code: string; name: string }>
   additives?: Array<{ code: string; name: string }>

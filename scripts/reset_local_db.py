@@ -2,19 +2,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
-from urllib.request import urlopen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CREATE_ADMIN_SCRIPT = (REPO_ROOT / "scripts" / "create_admin.py").resolve()
-SEED_PRIORITY_CUSTOMERS_SCRIPT = (REPO_ROOT / "scripts" / "seed_priority_customers.py").resolve()
-IMPORT_PRINT_PLATES_SCRIPT = (REPO_ROOT / "scripts" / "api_import_print_plates.py").resolve()
 SEED_EXTRUDERS_SCRIPT = (REPO_ROOT / "scripts" / "seed_extruders_from_tsv.py").resolve()
 SEED_WASTE_FACTORS_SCRIPT = (REPO_ROOT / "scripts" / "seed_waste_factors_from_tsv.py").resolve()
 SEED_PRINTING_PRICING_SCRIPT = (REPO_ROOT / "scripts" / "seed_printing_pricing_from_tsv.py").resolve()
@@ -51,10 +46,6 @@ def _choose_python() -> str:
             candidates.append(str(p))
 
     for py in candidates:
-        if _can_import("alembic", py) and _can_import("uvicorn", py):
-            return py
-
-    for py in candidates:
         if _can_import("alembic", py):
             return py
 
@@ -70,29 +61,11 @@ def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.check_call(cmd, cwd=str(REPO_ROOT), env=env)
 
 
-def _http_get_ok(url: str, timeout_s: float = 2.0) -> bool:
-    try:
-        with urlopen(url, timeout=timeout_s) as resp:
-            return 200 <= getattr(resp, "status", 0) < 300
-    except Exception:
-        return False
-
-
-def _wait_for_http(url: str, *, timeout_s: float = 20.0) -> None:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        if _http_get_ok(url, timeout_s=2.0):
-            return
-        time.sleep(0.25)
-    raise RuntimeError(f"Timed out waiting for {url}")
-
-
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         description=(
-            "Reset local SQLite DB (production.db), create admin/admin, seed customers from "
-            "scripts/priority-customers.md (see seed_priority_customers.py), and optionally import "
-            "print plates from plate-db.tsv via the API."
+            "Reset local SQLite DB (production.db), create admin/admin, and seed rate-card TSV data. "
+            "Customers are not bulk-seeded here—use MYOB sync or the app UI."
         )
     )
     p.add_argument(
@@ -101,30 +74,9 @@ def main(argv: list[str]) -> int:
         help="SQLite DB file path relative to repo root (default: production.db)",
     )
     p.add_argument(
-        "--api-port",
-        type=int,
-        default=int(os.getenv("API_PORT", "8001")),
-        help="Port to run the temporary API server on (default: 8001)",
-    )
-    p.add_argument(
-        "--no-api",
-        action="store_true",
-        help="Skip starting the API and skip print-plate import (customers are still seeded from priority-customers.md)",
-    )
-    p.add_argument(
-        "--plate-db",
-        default=str(Path("scripts") / "plate-db.tsv"),
-        help="TSV path for print-plate import only (default: scripts/plate-db.tsv); ignored with --skip-plate-import",
-    )
-    p.add_argument(
         "--no-migrations",
         action="store_true",
         help="Skip alembic upgrade head (not recommended)",
-    )
-    p.add_argument(
-        "--skip-plate-import",
-        action="store_true",
-        help="Skip API import of print plates from plate-db.tsv (customers always come from priority-customers.md)",
     )
     args = p.parse_args(argv)
 
@@ -160,7 +112,7 @@ def main(argv: list[str]) -> int:
         _run([py, str(SEED_PRINTING_PRICING_SCRIPT)], env=env)
         _run([py, str(SEED_CONVERSION_SCRIPT)], env=env)
     else:
-        print("Skipping TSV seeds (--no-migrations).")
+        print("Skipping alembic and TSV seeders (--no-migrations).")
 
     # Create/update admin user (admin/admin)
     _run(
@@ -178,79 +130,9 @@ def main(argv: list[str]) -> int:
         env=env,
     )
 
-    print("Seeding customers from scripts/priority-customers.md …")
-    _run([py, str(SEED_PRIORITY_CUSTOMERS_SCRIPT)], env=env)
-
-    if args.no_api:
-        print("Skipping API / print-plate import (--no-api).")
-        print("Done.")
-        return 0
-
-    base_url = f"http://127.0.0.1:{args.api_port}"
-    health_url = base_url.rstrip("/") + "/health"
-
-    proc: subprocess.Popen[str] | None = None
-    try:
-        # Always start an isolated API instance so we control its DATABASE_URL and avoid
-        # interacting with any already-running dev server that might have a stale DB handle.
-        print(f"Starting temporary API on {base_url}…")
-        proc = subprocess.Popen(
-            [
-                py,
-                "-m",
-                "uvicorn",
-                "app.main:app",
-                "--port",
-                str(args.api_port),
-                "--host",
-                "127.0.0.1",
-                "--log-level",
-                "warning",
-            ],
-            cwd=str(REPO_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        _wait_for_http(health_url, timeout_s=25.0)
-
-        if args.skip_plate_import:
-            print("Skipping print-plate import (--skip-plate-import).")
-        else:
-            plate_db_path = (REPO_ROOT / args.plate_db).resolve()
-            if not plate_db_path.exists():
-                raise RuntimeError(f"Plate DB file not found: {plate_db_path}")
-
-            _run(
-                [
-                    py,
-                    str(IMPORT_PRINT_PLATES_SCRIPT),
-                    str(plate_db_path),
-                    "--base-url",
-                    base_url,
-                    "--username",
-                    "admin",
-                    "--password",
-                    "admin",
-                    "--delimiter",
-                    "\\t",
-                ],
-                env=env,
-            )
-    finally:
-        if proc is not None and proc.poll() is None:
-            print("Stopping uvicorn…")
-            try:
-                proc.send_signal(signal.SIGINT)
-                proc.wait(timeout=10)
-            except Exception:
-                proc.kill()
-
     print("Done.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

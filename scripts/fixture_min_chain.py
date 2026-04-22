@@ -49,16 +49,18 @@ def main() -> None:
             raise RuntimeError("Seed machine EX01 not found. Run migrations with seeds first.")
         machine_id = mrow[0]
 
-        # Customer
+        # Customer (stable id for idempotent fixture runs)
+        fixture_customer_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "fixture_min_chain/customer"))
         customer_id = insert_or_get_id(
             conn,
             "customers",
-            "code",
-            "CUST-FIXTURE",
+            "id",
+            fixture_customer_id,
             {
                 "name": "Fixture Customer",
-                "contacts": json.dumps({}),
-                "delivery_addresses": json.dumps({}),
+                "contacts": json.dumps({"items": []}),
+                "delivery_addresses": json.dumps({"items": []}),
+                "delivery_preferences": json.dumps({}),
                 "created_at": now,
             },
         )

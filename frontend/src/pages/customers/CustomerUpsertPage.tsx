@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { clearUpsertErrors, clearUpsertFieldError, createCustomer, fetchCustomer, updateCustomer } from '../../store/slices/customersSlice'
@@ -17,17 +17,43 @@ import {
   Typography,
 } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import {
+  PAYMENT_IS_DUE_OPTIONS,
+  PAYMENT_IS_DUE_LABELS,
+  describePaymentTerms,
+  paymentTermNumericLabels,
+} from '../../utils/paymentTermsDisplay'
 
-const PAYMENT_TERMS_OPTIONS = [
-  'Up Front',
-  '7 days',
-  '14 days',
-  '21 days',
-  '31 days',
-  'EoM + 30 days',
-  'EoM + 45 days',
-  'EoM + 60 days',
-] as const
+type PaymentTermsForm = {
+  payment_is_due: string
+  balance_due_date: string
+}
+
+function emptyPaymentTermsForm(): PaymentTermsForm {
+  return { payment_is_due: '', balance_due_date: '' }
+}
+
+function paymentTermsFromApi(raw: unknown): PaymentTermsForm {
+  if (raw == null) return emptyPaymentTermsForm()
+  if (typeof raw === 'string') return emptyPaymentTermsForm()
+  if (typeof raw !== 'object' || Array.isArray(raw)) return emptyPaymentTermsForm()
+  const o = raw as Record<string, unknown>
+  return {
+    payment_is_due: typeof o.payment_is_due === 'string' ? o.payment_is_due : '',
+    balance_due_date: o.balance_due_date != null && o.balance_due_date !== '' ? String(o.balance_due_date) : '',
+  }
+}
+
+function paymentTermsToPayload(form: PaymentTermsForm): Record<string, unknown> | null {
+  const due = (form.payment_is_due || '').trim()
+  if (!due) return null
+  const out: Record<string, unknown> = { payment_is_due: due }
+  if (form.balance_due_date.trim() !== '') {
+    const n = Number(form.balance_due_date)
+    if (Number.isFinite(n)) out.balance_due_date = n
+  }
+  return out
+}
 
 type Contact = {
   type: string
@@ -62,7 +88,6 @@ type DeliveryPrefs = {
 
 type CustomerDetail = {
   id: string
-  code: string
   name: string
   brand_id?: string | null
   brand_code?: string | null
@@ -71,9 +96,7 @@ type CustomerDetail = {
   status: string
   abn?: string | null
   contact_phone?: string | null
-  payment_terms?: string | null
-  deposit_required?: boolean
-  deposit_pct?: number | null
+  payment_terms?: Record<string, unknown> | string | null
   credit_limit?: number | null
   notes?: string | null
   internal_notes?: string | null
@@ -127,7 +150,6 @@ export function CustomerUpsertPage() {
   const upsert = useAppSelector((s) => s.customers.upsert)
   const loading = isEdit ? detailEntry?.status === 'loading' : false
 
-  const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [abn, setAbn] = useState('')
   const [brandId, setBrandId] = useState('')
@@ -168,9 +190,7 @@ export function CustomerUpsertPage() {
   const [preferredTransportCompany, setPreferredTransportCompany] = useState('')
   const [specialInstructions, setSpecialInstructions] = useState('')
 
-  const [paymentTerms, setPaymentTerms] = useState('')
-  const [depositRequired, setDepositRequired] = useState(false)
-  const [depositPct, setDepositPct] = useState('')
+  const [paymentTerms, setPaymentTerms] = useState<PaymentTermsForm>(() => emptyPaymentTermsForm())
   const [notes, setNotes] = useState('')
 
   const [localErr, setLocalErr] = useState<string | null>(null)
@@ -180,6 +200,16 @@ export function CustomerUpsertPage() {
   const err = upsert.error
   const saving = upsert.status === 'loading'
   const { setDirty } = useUnsavedChanges()
+
+  const ptNumericLabels = useMemo(
+    () => paymentTermNumericLabels(paymentTerms.payment_is_due),
+    [paymentTerms.payment_is_due],
+  )
+
+  const paymentTermsPreview = useMemo(() => {
+    const payload = paymentTermsToPayload(paymentTerms)
+    return describePaymentTerms(payload as Record<string, unknown> | null)
+  }, [paymentTerms])
 
   function clearFieldError(key: string) {
     dispatch(clearUpsertFieldError(key))
@@ -225,7 +255,6 @@ export function CustomerUpsertPage() {
     if (!c) return
     if (hydratedId === customerId) return
 
-    setCode(c.code ?? '')
     setName(c.name ?? '')
     setBrandId(c.brand_id ?? '')
     setPriorityRank(c.priority_rank != null ? String(c.priority_rank) : '')
@@ -250,9 +279,7 @@ export function CustomerUpsertPage() {
     setPreferredTransportCompany(String(p.preferred_transport_company ?? ''))
     setSpecialInstructions(String(p.special_instructions ?? ''))
 
-    setPaymentTerms(c.payment_terms || '')
-    setDepositRequired(Boolean(c.deposit_required ?? false))
-    setDepositPct(c.deposit_pct != null ? String(c.deposit_pct) : '')
+    setPaymentTerms(paymentTermsFromApi(c.payment_terms))
     setNotes(c.notes || '')
 
     setHydratedId(customerId)
@@ -262,7 +289,6 @@ export function CustomerUpsertPage() {
   async function submit() {
     try {
       const payload = {
-        code,
         name,
         brand_id: brandId || null,
         priority_rank: priorityRank ? Number(priorityRank) : null,
@@ -272,6 +298,7 @@ export function CustomerUpsertPage() {
         contacts: contacts.map((c) => ({
           ...c,
           title: c.title || null,
+          email: c.email?.trim() || null,
           phone: c.phone || null,
           phone_alt: c.phone_alt || null,
           notes: c.notes || null,
@@ -288,9 +315,7 @@ export function CustomerUpsertPage() {
           preferred_transport_company: preferredTransportCompany || null,
           special_instructions: specialInstructions || null,
         } satisfies DeliveryPrefs,
-        payment_terms: paymentTerms || null,
-        deposit_required: !!depositRequired,
-        deposit_pct: depositRequired ? (depositPct ? Number(depositPct) : null) : null,
+        payment_terms: paymentTermsToPayload(paymentTerms),
         notes: notes || null,
       }
 
@@ -328,24 +353,6 @@ export function CustomerUpsertPage() {
             Basic Information
           </Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-            <TextField
-              label="Customer Code"
-              value={code}
-              onChange={(e) => {
-                setCode(e.currentTarget.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4))
-                clearFieldError('code')
-              }}
-              required
-              inputProps={{ maxLength: 4 }}
-              disabled={isEdit}
-              error={!!fieldErrors['code']}
-              helperText={
-                fieldErrors['code'] ||
-                (isEdit
-                  ? 'Customer code cannot be changed after creation.'
-                  : '2–4 letters (A–Z). Used for job sheet numbering.')
-              }
-            />
             <TextField
               label="Company Name"
               value={name}
@@ -402,7 +409,7 @@ export function CustomerUpsertPage() {
             <Box>
               <Typography variant="h6">Contacts</Typography>
               <Typography variant="body2" color="text.secondary">
-                At least one contact is required.
+                Contacts are optional; add as needed.
               </Typography>
             </Box>
             <Button
@@ -432,7 +439,6 @@ export function CustomerUpsertPage() {
                     size="small"
                     type="button"
                     onClick={() => {
-                      if (contacts.length <= 1) return setLocalErr('At least one contact is required')
                       setContacts((prev) => prev.filter((_, i) => i !== idx))
                     }}
                   >
@@ -506,7 +512,7 @@ export function CustomerUpsertPage() {
             <Box>
               <Typography variant="h6">Delivery Addresses</Typography>
               <Typography variant="body2" color="text.secondary">
-                At least one address is required. Mark one as default.
+                Addresses are optional; mark one as default when you add more than one.
               </Typography>
             </Box>
             <Button
@@ -554,7 +560,6 @@ export function CustomerUpsertPage() {
                       size="small"
                       type="button"
                       onClick={() => {
-                        if (addresses.length <= 1) return setLocalErr('At least one address is required')
                         setAddresses((prev) => prev.filter((_, i) => i !== idx))
                         setTimeout(() => setDefaultAddress(0), 0)
                       }}
@@ -698,38 +703,44 @@ export function CustomerUpsertPage() {
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, alignItems: 'center' }}>
             <TextField
               select
-              label="Payment Terms"
-              value={paymentTerms}
-              onChange={(e) => setPaymentTerms(e.target.value)}
+              label="Payment is due"
+              value={paymentTerms.payment_is_due}
+              onChange={(e) =>
+                setPaymentTerms((p) => ({
+                  ...p,
+                  payment_is_due: e.target.value,
+                }))
+              }
+              helperText="MYOB selling terms (PaymentIsDue). Leave unset to clear payment terms."
             >
-              <MenuItem value="">—</MenuItem>
-              {PAYMENT_TERMS_OPTIONS.map((t) => (
+              <MenuItem value="">— None —</MenuItem>
+              {PAYMENT_IS_DUE_OPTIONS.map((t) => (
                 <MenuItem key={t} value={t}>
-                  {t}
+                  {PAYMENT_IS_DUE_LABELS[t] ?? t}
                 </MenuItem>
               ))}
             </TextField>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={depositRequired}
-                  onChange={(e) => {
-                    setDepositRequired(e.target.checked)
-                    if (!e.target.checked) setDepositPct('')
-                  }}
-                />
-              }
-              label="Deposit Required"
-            />
-            <TextField
-              label="Deposit %"
-              type="number"
-              inputProps={{ min: 0, max: 100, step: 0.5 }}
-              value={depositPct}
-              onChange={(e) => setDepositPct(e.target.value)}
-              disabled={!depositRequired}
-            />
+            {ptNumericLabels.showBalanceField ? (
+              <TextField
+                label={ptNumericLabels.balanceLabel}
+                value={paymentTerms.balance_due_date}
+                onChange={(e) =>
+                  setPaymentTerms((p) => ({
+                    ...p,
+                    balance_due_date: e.target.value.replace(/[^\d-]/g, ''),
+                  }))
+                }
+                type="number"
+                inputProps={{ min: 0, max: 366 }}
+                helperText={ptNumericLabels.balanceHelper}
+              />
+            ) : null}
           </Box>
+          {paymentTermsPreview ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              <strong>Summary:</strong> {paymentTermsPreview}
+            </Typography>
+          ) : null}
           <Box sx={{ mt: 2 }}>
             <TextField
               label="Notes"

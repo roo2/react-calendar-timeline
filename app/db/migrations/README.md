@@ -18,20 +18,22 @@ Each migration file’s `revision = "..."` string is written into that column wh
 
 ### Renaming a revision id after it was applied (dev DB)
 
-If you shorten a `revision =` string but your local DB’s `alembic_version` row still has the **old** id, Alembic will error (`Can't locate revision identified by '…'`). Fix by updating that row to the **new** id (no need to re-run the migration body).
+If you change a migration’s `revision =` string but your DB’s `alembic_version` row still has the **old** id, Alembic will error (`Can't locate revision identified by '…'`). Fix by updating that row to the **new** id (no need to re-run the migration body).
+
+Current linear head: **`0010_cust_myob_json_nocode`** (see `versions/*.py` for the full chain `0001_initial_schema` → … → `0010_cust_myob_json_nocode`).
 
 Example (Postgres / Heroku `psql`):
 
 ```sql
 UPDATE alembic_version
-SET version_num = '0006_quote_mat_retail_bands'
-WHERE version_num = '0006_quote_materials_retail_bands';
+SET version_num = '0010_cust_myob_json_nocode'
+WHERE version_num = '<old_revision_here>';
 ```
 
 Example (SQLite):
 
 ```bash
-sqlite3 production.db "UPDATE alembic_version SET version_num = '0006_quote_mat_retail_bands' WHERE version_num = '0006_quote_materials_retail_bands';"
+sqlite3 production.db "UPDATE alembic_version SET version_num = '0010_cust_myob_json_nocode' WHERE version_num = '<old_revision_here>';"
 ```
 
-**Heroku:** if deploy failed on the `UPDATE alembic_version …` step, the DB usually never left the previous head (e.g. `0005_drop_carton_options`) — then you only deploy the shortened revision and run `alembic upgrade head` again. If somehow a truncated or inconsistent value exists, inspect with `SELECT * FROM alembic_version;` and fix manually.
+If the stored value looks wrong or truncated, inspect with `SELECT * FROM alembic_version;` and fix manually, then run `alembic upgrade head` again.

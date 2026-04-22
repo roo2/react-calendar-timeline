@@ -16,7 +16,7 @@ export type OrderRow = {
   order_date?: string | null
 }
 
-export type OrdersBootstrapCustomer = { id: string; name: string; code?: string | null }
+export type OrdersBootstrapCustomer = { id: string; name: string }
 
 export type OrdersBootstrapResellProduct = { id: string; description: string; unit_price: number }
 

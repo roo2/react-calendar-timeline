@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
-import { fetchCustomers } from '../../store/slices/customersSlice'
+import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
 import {
   adminDeleteInk,
   adminDeletePlate,
@@ -96,7 +96,7 @@ export function PrintingAdminPage() {
 
   useEffect(() => {
     void dispatch(fetchAdminPrintingBundle())
-    void dispatch(fetchCustomers(undefined))
+    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
   }, [dispatch])
 
   const displayErr = err || bundleErr
@@ -154,7 +154,7 @@ export function PrintingAdminPage() {
     const code = plateCode.trim()
     const key = `plate:${cid}__${code}`
     if (!cid || !code) return
-    if (!confirmDelete(`plate '${code}' for customer '${customersById.get(cid)?.code || cid}'`)) return
+    if (!confirmDelete(`plate '${code}' for customer '${customersById.get(cid)?.name || cid}'`)) return
     try {
       setErr(null)
       setSavingKey(key)
@@ -223,8 +223,8 @@ export function PrintingAdminPage() {
 
   const platesSorted = useMemo(() => {
     return (plates || []).slice().sort((a, b) => {
-      const ak = `${customersById.get(a.customer_id)?.code || ''}__${a.plate_code}`
-      const bk = `${customersById.get(b.customer_id)?.code || ''}__${b.plate_code}`
+      const ak = `${(customersById.get(a.customer_id)?.name || '').toLowerCase()}__${a.plate_code}`
+      const bk = `${(customersById.get(b.customer_id)?.name || '').toLowerCase()}__${b.plate_code}`
       return ak.localeCompare(bk)
     })
   }, [customersById, plates])
@@ -748,7 +748,7 @@ function PlateRow(props: {
   const dirty = desc !== (row.description || '')
   return (
     <TableRow hover>
-      <TableCell>{cust?.code ? `${cust.code} — ${cust.name}` : cust?.name || row.customer_id}</TableCell>
+      <TableCell>{cust?.name || row.customer_id}</TableCell>
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.plate_code}</TableCell>
       <TableCell>
         <TextField size="small" fullWidth value={desc} onChange={(e) => setDesc(e.target.value)} />

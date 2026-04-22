@@ -24,10 +24,6 @@ class Settings(BaseSettings):
     MYOB_REDIRECT_URI: str = "http://localhost:5173/api/myob/oauth/callback"
     # Space-separated scopes. Default allows reading customers via Contact/Customer (see MYOB scope docs).
     MYOB_SCOPES: str = "sme-contacts-customer"
-    # Company file login (for x-myobapi-cftoken on API calls). Not your my.MYOB password.
-    # Required for online API reads per MYOB headers documentation.
-    MYOB_COMPANY_FILE_USER: str | None = None
-    MYOB_COMPANY_FILE_PASSWORD: str | None = None
     # AccountRight company file GUID used in https://api.myob.com/accountright/{id}/...
     # If set, overrides any id stored in the database (OAuth / admin save).
     MYOB_COMPANY_FILE_ID: str | None = None

@@ -6,7 +6,7 @@ import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../components/SpecPayloadForm'
 import { Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import { FormErrorAlert } from '../../components/FormErrorAlert'
-import { fetchCustomers } from '../../store/slices/customersSlice'
+import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
 import { checkProductCodeExists, clearCreateErrors, clearCreateFieldError, createProduct } from '../../store/slices/productsSlice'
 
 export function ProductNewPage() {
@@ -40,7 +40,7 @@ export function ProductNewPage() {
 
   useEffect(() => {
     if (customersStatus !== 'idle') return
-    void dispatch(fetchCustomers(undefined))
+    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
   }, [customersStatus, dispatch])
 
   useEffect(() => {

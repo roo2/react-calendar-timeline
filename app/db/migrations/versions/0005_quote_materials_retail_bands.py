@@ -1,7 +1,7 @@
 """Quote materials retail bands (width-based MOQ + retail $/kg).
 
-Revision ID: 0006_quote_mat_retail_bands
-Revises: 0005_drop_carton_options
+Revision ID: 0005_quote_mat_retail_bands
+Revises: 0004_retail_conv_defaults
 
 Note: keep `revision` ≤ 32 characters — Postgres stores it in
 `alembic_version.version_num` (VARCHAR(32) by default). The longer
@@ -13,8 +13,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0006_quote_mat_retail_bands"
-down_revision = "0005_drop_carton_options"
+revision = "0005_quote_mat_retail_bands"
+down_revision = "0004_retail_conv_defaults"
 branch_labels = None
 depends_on = None
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.auth.deps import csrf_protect, require_roles
 from app.config import settings
 from app.db.session import SessionLocal
+from app.integrations.myob.customer_import import import_customers_from_myob
 from app.integrations.myob.service import (
     MyobApiError,
     MyobConfigError,
@@ -182,6 +183,29 @@ async def myob_disconnect(_identity: SysAdminIdentity):
     with SessionLocal() as db:
         disconnect_myob(db)
     return {"ok": True, "message": "MYOB disconnected on this server."}
+
+
+@router.post("/customers/sync", dependencies=[Depends(csrf_protect())])
+async def myob_customers_sync(_identity: SysAdminIdentity):
+    """
+    One-way import: upsert local customers from MYOB Contact/Customer (GET-only fetch).
+    Matches on myob_customer_uid; repeated runs update existing rows.
+    """
+    del _identity
+    if not myob_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MYOB is not configured (set MYOB_APP_KEY and MYOB_APP_SECRET).",
+        )
+    with SessionLocal() as db:
+        try:
+            return import_customers_from_myob(db)
+        except MyobConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except MyobOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+        except MyobApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
 
 @router.post("/customers/preview", dependencies=[Depends(csrf_protect())])

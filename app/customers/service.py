@@ -10,23 +10,46 @@ from app.db.models.domain import Brand, Customer, Order, SavedQuote
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
 
 
-def list_customers(query: Optional[str] = None) -> List[Customer]:
+def _payment_terms_to_store(payload: CustomerCreateRequest) -> dict | None:
+    if payload.payment_terms is None:
+        return None
+    return payload.payment_terms.model_dump(exclude_none=True)
+
+
+def list_customers(
+    query: Optional[str] = None,
+    *,
+    page: int = 1,
+    page_size: int = 25,
+) -> tuple[List[Customer], int]:
     """
-    List all customers, optionally filtered by search query.
-    Search matches customer name.
+    List customers with optional name search, ordered by priority then name.
+    Returns (rows_for_page, total_matching_filters).
     """
+    page = max(1, page)
+    page_size = min(max(1, page_size), 500)
+
     with SessionLocal() as db:  # type: Session
+        filters = []
+        if query:
+            search_term = f"%{query}%"
+            filters.append(Customer.name.ilike(search_term))
+
+        count_stmt = select(func.count()).select_from(Customer)
+        for f in filters:
+            count_stmt = count_stmt.where(f)
+        total = int(db.scalar(count_stmt) or 0)
+
         stmt = (
             select(Customer)
             .options(joinedload(Customer.brand))
             .order_by(Customer.priority_rank.asc().nulls_last(), Customer.name.asc())
         )
+        for f in filters:
+            stmt = stmt.where(f)
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
-        if query:
-            search_term = f"%{query}%"
-            stmt = stmt.where(Customer.name.ilike(search_term))
-        
-        return list(db.scalars(stmt).all())
+        return list(db.scalars(stmt).all()), total
 
 
 def list_brands() -> List[Brand]:
@@ -47,28 +70,14 @@ def get_customer(customer_id: str) -> Optional[Customer]:
         return db.scalar(stmt)
 
 
-class DuplicateCustomerCodeError(ValueError):
-    """Raised when creating a customer with a code that already exists."""
-
-
 def create_customer(payload: CustomerCreateRequest) -> Customer:
-    """
-    Create a new customer.
-    Validates that at least one contact and one address are provided.
-    Raises DuplicateCustomerCodeError if a customer with the same code already exists.
-    """
+    """Create a new customer."""
     with SessionLocal() as db:  # type: Session
-        existing = db.scalar(select(Customer).where(Customer.code == payload.code))
-        if existing:
-            raise DuplicateCustomerCodeError(f"A customer with code '{payload.code}' already exists.")
-
-        # Convert contacts and addresses to JSON-compatible format
-        contacts_list = [contact.model_dump() for contact in payload.contacts]
-        addresses_list = [address.model_dump() for address in payload.delivery_addresses]
+        contacts_list = [contact.model_dump(exclude_none=True) for contact in payload.contacts]
+        addresses_list = [address.model_dump(exclude_none=True) for address in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
         customer = Customer(
-            code=payload.code,
             name=payload.name,
             brand_id=payload.brand_id,
             priority_rank=payload.priority_rank,
@@ -78,33 +87,32 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             contacts={"items": contacts_list},  # Store as dict with 'items' key for consistency
             delivery_addresses={"items": addresses_list},  # Store as dict with 'items' key
             delivery_preferences=delivery_prefs,
-            payment_terms=payload.payment_terms,
-            deposit_required=payload.deposit_required,
-            deposit_pct=payload.deposit_pct,
+            payment_terms=_payment_terms_to_store(payload),
             notes=payload.notes,
         )
         
         db.add(customer)
         db.commit()
-        db.refresh(customer)
-        return customer
+        # Re-load with brand so the instance is safe to use after the session closes (routes call _customer_summary).
+        out = db.scalars(
+            select(Customer).options(joinedload(Customer.brand)).where(Customer.id == customer.id)
+        ).unique().one()
+        return out
 
 
 def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Customer:
-    """
-    Update an existing customer.
-    Validates that at least one contact and one address are provided.
-    """
+    """Update an existing customer."""
     with SessionLocal() as db:  # type: Session
         # IMPORTANT: load within the same SessionLocal; using get_customer() would
         # create a different session and return a detached instance.
-        customer = db.scalar(select(Customer).where(Customer.id == customer_id))
+        customer = db.scalar(
+            select(Customer).options(joinedload(Customer.brand)).where(Customer.id == customer_id)
+        )
         if not customer:
             raise ValueError(f"Customer with id {customer_id} not found")
         
-        # Convert contacts and addresses to JSON-compatible format
-        contacts_list = [contact.model_dump() for contact in payload.contacts]
-        addresses_list = [address.model_dump() for address in payload.delivery_addresses]
+        contacts_list = [contact.model_dump(exclude_none=True) for contact in payload.contacts]
+        addresses_list = [address.model_dump(exclude_none=True) for address in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
         # Update fields
@@ -117,14 +125,14 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         customer.contacts = {"items": contacts_list}
         customer.delivery_addresses = {"items": addresses_list}
         customer.delivery_preferences = delivery_prefs
-        customer.payment_terms = payload.payment_terms
-        customer.deposit_required = payload.deposit_required
-        customer.deposit_pct = payload.deposit_pct
+        customer.payment_terms = _payment_terms_to_store(payload)
         customer.notes = payload.notes
         
         db.commit()
-        db.refresh(customer)
-        return customer
+        out = db.scalars(
+            select(Customer).options(joinedload(Customer.brand)).where(Customer.id == customer_id)
+        ).unique().one()
+        return out
 
 
 def get_customer_products_count(customer_id: str) -> int:

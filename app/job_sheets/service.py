@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, time, timezone
 from typing import Optional, List, Any, Dict
@@ -50,11 +51,17 @@ def _ensure_product_exists(db, product_id: str) -> str:
     return pid
 
 
-def _require_customer_code(customer: Customer) -> str:
-    code = (getattr(customer, "code", None) or "").strip().upper()
-    if not code:
-        raise DomainError("Customer code is required to generate a job number")
-    return code
+def _job_no_prefix_for_customer(customer: Customer) -> str:
+    """
+    Prefix for job_no (globally unique). Uses a short slug from the customer name plus
+    part of the customer UUID so two customers with similar names do not collide.
+    """
+    name = (getattr(customer, "name", None) or "").strip().upper()
+    alnum = re.sub(r"[^A-Z0-9]+", "", name)
+    base = (alnum[:12] if alnum else "CUST")[:12]
+    uid_s = str(getattr(customer, "id", "") or "").replace("-", "")
+    suffix = (uid_s[:4] or "0000").upper()
+    return f"{base}-{suffix}"
 
 
 def _next_job_seq(db, customer_id: str) -> int:
@@ -96,15 +103,15 @@ def suggest_next_job_no(customer_id: str) -> str:
     """
     Suggest the next job number for a customer.
 
-    Format: {CUSTOMER_CODE}_{seq}, where seq is 1 + max existing seq for that customer.
+    Format: {NAME_SLUG}-{UUID4}_{seq}, where seq is 1 + max existing seq for that customer.
     """
     with SessionLocal() as db:
         cid = _ensure_customer_exists(db, customer_id)
         cust = db.get(Customer, cid)
         assert cust is not None
-        code = _require_customer_code(cust)
+        prefix = _job_no_prefix_for_customer(cust)
         seq = _next_job_seq(db, cid)
-        return f"{code}_{seq}"
+        return f"{prefix}_{seq}"
 
 
 def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by: str) -> str:
@@ -114,7 +121,7 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
 
         cust = db.get(Customer, cid)
         assert cust is not None
-        code = _require_customer_code(cust)
+        prefix = _job_no_prefix_for_customer(cust)
 
         product = db.get(Product, pid)
         assert product is not None
@@ -150,7 +157,7 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
         last_err: Optional[Exception] = None
         for _ in range(5):
             seq = _next_job_seq(db, cid)
-            job_no = f"{code}_{seq}"
+            job_no = f"{prefix}_{seq}"
             try:
                 with db.begin_nested():
                     js = JobSheet(
@@ -221,7 +228,7 @@ def create_job_sheet_from_product_latest_version(
 
     cust = db.get(Customer, cid)
     assert cust is not None
-    code = _require_customer_code(cust)
+    prefix = _job_no_prefix_for_customer(cust)
 
     product = db.get(Product, pid)
     assert product is not None
@@ -252,7 +259,7 @@ def create_job_sheet_from_product_latest_version(
     last_err: Optional[Exception] = None
     for _ in range(5):
         seq = _next_job_seq(db, cid)
-        job_no = f"{code}_{seq}"
+        job_no = f"{prefix}_{seq}"
         try:
             with db.begin_nested():
                 js = JobSheet(

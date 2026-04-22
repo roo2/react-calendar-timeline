@@ -7,6 +7,7 @@ import { fetchOrders } from '../../store/slices/ordersSlice'
 import { fetchProducts } from '../../store/slices/productsSlice'
 import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { Alert, Box, Button, Chip, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
+import { describePaymentTerms } from '../../utils/paymentTermsDisplay'
 
 const CUSTOMER_SECTION_HASHES = new Set(['quotes', 'orders'])
 
@@ -116,7 +117,7 @@ export function CustomerShowPage() {
             />
           </Box>
           <Typography variant="body2" color="text.secondary">
-            Code: {customer.code} • Status: {customer.status}
+            Status: {customer.status}
           </Typography>
         </Box>
         {canEdit && (
@@ -170,19 +171,47 @@ export function CustomerShowPage() {
               <p style={{ margin: '4px 0 0' }}>{customer.contact_phone}</p>
             </div>
           )}
-          {customer.payment_terms && (
+          {(() => {
+            const summary =
+              (customer.payment_terms_summary && String(customer.payment_terms_summary).trim()) ||
+              describePaymentTerms(customer.payment_terms as Record<string, unknown> | string | null | undefined)
+            if (!summary) return null
+            return (
+              <div>
+                <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Payment Terms</strong>
+                <p style={{ margin: '4px 0 0' }}>{summary}</p>
+              </div>
+            )
+          })()}
+          {customer.myob_last_modified && (
             <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Payment Terms</strong>
-              <p style={{ margin: '4px 0 0' }}>{customer.payment_terms}</p>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Last modified in MYOB</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                {new Date(customer.myob_last_modified).toLocaleString(undefined, {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                })}
+              </p>
             </div>
           )}
-          {customer.deposit_required && (
+          {customer.myob_synced_at && (
             <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Deposit Required</strong>
-              <p style={{ margin: '4px 0 0' }}>{customer.deposit_pct != null ? `${customer.deposit_pct}%` : 'Yes'}</p>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Last synced from MYOB</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                {new Date(customer.myob_synced_at).toLocaleString(undefined, {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                })}
+              </p>
             </div>
           )}
         </div>
+        {customer.myob_notes && (
+          <div style={{ marginTop: 16 }}>
+            <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Notes (MYOB)</strong>
+            <p style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{customer.myob_notes}</p>
+          </div>
+        )}
         {customer.notes && (
           <div style={{ marginTop: 16 }}>
             <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Notes</strong>
@@ -205,12 +234,14 @@ export function CustomerShowPage() {
                 </div>
                 {c.title && <p style={{ margin: '4px 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.title}</p>}
                 <div style={{ marginTop: 8 }}>
-                  <p style={{ margin: '4px 0' }}>
-                    <strong>Email:</strong>{' '}
-                    <MuiLink href={`mailto:${c.email}`} underline="hover">
-                      {c.email}
-                    </MuiLink>
-                  </p>
+                  {c.email ? (
+                    <p style={{ margin: '4px 0' }}>
+                      <strong>Email:</strong>{' '}
+                      <MuiLink href={`mailto:${c.email}`} underline="hover">
+                        {c.email}
+                      </MuiLink>
+                    </p>
+                  ) : null}
                   {c.phone && (
                     <p style={{ margin: '4px 0' }}>
                       <strong>Phone:</strong> {c.phone}
@@ -434,13 +465,15 @@ export function CustomerShowPage() {
                   </div>
                 </div>
                 <div style={{ marginTop: 8 }}>
-                  <p style={{ margin: '4px 0' }}>
-                    {a.street1}
-                    {a.street2 ? `, ${a.street2}` : ''}
-                    <br />
-                    {a.suburb}, {a.state} {a.postcode}
-                    <br />
-                    {a.country}
+                  <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap' }}>
+                    {[a.street1, a.street2].filter(Boolean).join('\n')}
+                    {(a.suburb || a.state || a.postcode) && (
+                      <>
+                        {'\n'}
+                        {[a.suburb, a.state, a.postcode].filter(Boolean).join(' ')}
+                      </>
+                    )}
+                    {a.country ? `\n${a.country}` : ''}
                   </p>
                   {(a.contact_name || a.contact_phone) && (
                     <p style={{ margin: '8px 0 4px', color: '#6b7280', fontSize: '0.875rem' }}>

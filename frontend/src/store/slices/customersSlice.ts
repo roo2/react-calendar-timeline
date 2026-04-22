@@ -4,7 +4,6 @@ import { parseFastApiValidationDetail } from '../../api/validation'
 
 export type CustomerSummary = {
   id: string
-  code: string
   name: string
   status: string
   brand_id?: string | null
@@ -17,7 +16,6 @@ export type CustomerSummary = {
 
 export type CustomerDetail = {
   id: string
-  code: string
   name: string
   status: string
   brand_id?: string | null
@@ -26,10 +24,14 @@ export type CustomerDetail = {
   priority_rank?: number | null
   abn?: string | null
   contact_phone?: string | null
-  payment_terms?: string | null
-  deposit_required?: boolean
-  deposit_pct?: number | null
+  payment_terms?: Record<string, unknown> | null
+  payment_terms_summary?: string | null
   notes?: string | null
+  myob_customer_uid?: string | null
+  myob_display_id?: string | null
+  myob_last_modified?: string | null
+  myob_synced_at?: string | null
+  myob_notes?: string | null
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
@@ -39,7 +41,6 @@ export type CustomerDetail = {
 }
 
 export type CustomerUpsertPayload = {
-  code: string
   name: string
   brand_id: string | null
   priority_rank: number | null
@@ -49,9 +50,7 @@ export type CustomerUpsertPayload = {
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
-  payment_terms: string | null
-  deposit_required: boolean
-  deposit_pct: number | null
+  payment_terms: Record<string, unknown> | null
   notes: string | null
 }
 
@@ -69,6 +68,9 @@ type CustomersState = {
     error: string | null
     items: CustomerSummary[]
     lastQuery: string
+    total: number
+    page: number
+    pageSize: number
   }
   detail: {
     byId: Record<
@@ -89,7 +91,7 @@ type CustomersState = {
 }
 
 const initialState: CustomersState = {
-  list: { status: 'idle', error: null, items: [], lastQuery: '' },
+  list: { status: 'idle', error: null, items: [], lastQuery: '', total: 0, page: 1, pageSize: 100 },
   detail: { byId: {} },
   upsert: { status: 'idle', error: null, fieldErrors: {}, messages: [] },
 }
@@ -97,9 +99,7 @@ const initialState: CustomersState = {
 function toUpsertError(e: unknown): UpsertError | null {
   if (!(e instanceof ApiError)) return null
   let { fieldErrors, messages } = parseFastApiValidationDetail(e.body?.detail)
-  // 409 Conflict (e.g. duplicate customer code): if detail is a string, map it to the code field
   if (e.status === 409 && Object.keys(fieldErrors).length === 0 && typeof e.body?.detail === 'string') {
-    fieldErrors = { code: e.body.detail }
     messages = [e.body.detail]
   }
   const hasFieldErrors = Object.keys(fieldErrors).length > 0
@@ -110,12 +110,32 @@ function toUpsertError(e: unknown): UpsertError | null {
   }
 }
 
+/** Default page size for customer pickers (dropdowns); list view uses 25 via CustomersPage. */
+export const CUSTOMER_PICKER_PAGE_SIZE = 500
+
 export const fetchCustomers = createAsyncThunk(
   'customers/list',
-  async (payload: { q?: string } | undefined) => {
+  async (payload: { q?: string; page?: number; page_size?: number } | undefined) => {
     const q = payload?.q?.trim() || ''
-    const res = await apiFetch<{ items: CustomerSummary[] }>(`/api/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`)
-    return { q, items: res.items }
+    const page = payload?.page ?? 1
+    const page_size = payload?.page_size ?? 100
+    const qs = new URLSearchParams()
+    if (q) qs.set('q', q)
+    qs.set('page', String(page))
+    qs.set('page_size', String(page_size))
+    const res = await apiFetch<{
+      items: CustomerSummary[]
+      total: number
+      page: number
+      page_size: number
+    }>(`/api/customers?${qs.toString()}`)
+    return {
+      q,
+      items: res.items,
+      total: res.total,
+      page: res.page,
+      page_size: res.page_size,
+    }
   },
 )
 
@@ -192,6 +212,9 @@ const slice = createSlice({
       s.list.status = 'succeeded'
       s.list.items = a.payload.items
       s.list.lastQuery = a.payload.q
+      s.list.total = a.payload.total
+      s.list.page = a.payload.page
+      s.list.pageSize = a.payload.page_size
     })
     b.addCase(fetchCustomers.rejected, (s, a) => {
       s.list.status = 'failed'

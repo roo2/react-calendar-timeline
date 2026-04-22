@@ -10,7 +10,6 @@ export type JobSheetSummary = {
   product_id?: string
   product_version_id?: string
   customer_name?: string | null
-  customer_code?: string | null
   product_code: string
   product_description?: string | null
   due_date?: string | null
@@ -104,7 +103,7 @@ type JobSheetsState = {
 }
 
 const initialState: JobSheetsState = {
-  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 50 },
+  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 100 },
   detail: { byId: {} },
 }
 
@@ -120,7 +119,7 @@ export const fetchJobSheets = createAsyncThunk(
       items: res.items || [],
       total: Number(res.total) || 0,
       page: Number(res.page) || Number(query?.page) || 1,
-      pageSize: Number(res.page_size) || Number(query?.page_size) || 50,
+      pageSize: Number(res.page_size) || Number(query?.page_size) || 100,
     }
   },
 )

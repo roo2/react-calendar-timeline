@@ -1,7 +1,7 @@
 """Quote formulation pass-through markups (colours / additives / non-LD blend).
 
-Revision ID: 0009_quote_form_margins
-Revises: 0008_brands_customer
+Revision ID: 0007_quote_form_margins
+Revises: 0006_myob_oauth
 
 Stored as decimal rates applied to incremental formulation **cost** (job $)
 to compute an extra sell line under Materials in the quote preview.
@@ -12,8 +12,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0009_quote_form_margins"
-down_revision = "0008_brands_customer"
+revision = "0007_quote_form_margins"
+down_revision = "0006_myob_oauth"
 branch_labels = None
 depends_on = None
 

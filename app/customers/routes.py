@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.deps import allow_roles_any, csrf_protect
 from app.customers import service
+from app.customers.payment_terms_display import describe_payment_terms
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
-from app.customers.service import DuplicateCustomerCodeError
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -16,7 +16,6 @@ def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int |
     b = getattr(c, "brand", None)
     d = {
         "id": c.id,
-        "code": getattr(c, "code", None),
         "name": c.name,
         "status": c.status,
         "brand_id": getattr(c, "brand_id", None),
@@ -32,8 +31,12 @@ def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int |
 
 
 @router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def list_customers(q: Optional[str] = Query(default=None)):
-    customers = service.list_customers(query=q)
+async def list_customers(
+    q: Optional[str] = Query(default=None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=500),
+):
+    customers, total = service.list_customers(query=q, page=page, page_size=page_size)
     ids = [str(c.id) for c in customers]
     orders_by_c, quotes_by_c = service.get_orders_and_quotes_counts_by_customer_ids(ids)
     return {
@@ -44,7 +47,10 @@ async def list_customers(q: Optional[str] = Query(default=None)):
                 quotes_count=quotes_by_c.get(str(c.id), 0),
             )
             for c in customers
-        ]
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -56,14 +62,7 @@ async def list_customer_brands():
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_customer(payload: CustomerCreateRequest):
-    try:
-        c = service.create_customer(payload)
-    except DuplicateCustomerCodeError as e:
-        # Return 409 with validation-style detail so the frontend can highlight the code field.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=[{"loc": ["body", "code"], "msg": str(e)}],
-        ) from e
+    c = service.create_customer(payload)
     return {"ok": True, "customer": _customer_summary(c)}
 
 
@@ -84,9 +83,15 @@ async def get_customer(customer_id: str):
             "delivery_addresses": c.delivery_addresses.get("items", []) if isinstance(c.delivery_addresses, dict) else [],
             "delivery_preferences": c.delivery_preferences if isinstance(c.delivery_preferences, dict) else {},
             "payment_terms": c.payment_terms,
-            "deposit_required": bool(getattr(c, "deposit_required", False)),
-            "deposit_pct": float(c.deposit_pct) if getattr(c, "deposit_pct", None) is not None else None,
+            "payment_terms_summary": describe_payment_terms(c.payment_terms)
+            if isinstance(getattr(c, "payment_terms", None), dict)
+            else None,
             "notes": c.notes,
+            "myob_customer_uid": getattr(c, "myob_customer_uid", None),
+            "myob_display_id": getattr(c, "myob_display_id", None),
+            "myob_last_modified": c.myob_last_modified.isoformat() if getattr(c, "myob_last_modified", None) else None,
+            "myob_synced_at": c.myob_synced_at.isoformat() if getattr(c, "myob_synced_at", None) else None,
+            "myob_notes": getattr(c, "myob_notes", None),
             "products_count": products_count,
             "orders_count": orders_count,
             "quotes_count": quotes_count,
@@ -97,12 +102,9 @@ async def get_customer(customer_id: str):
 @router.put("/{customer_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def update_customer(customer_id: str, payload: CustomerUpdateRequest):
     try:
-        # Customer codes are immutable once created.
         existing = service.get_customer(customer_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
-        if payload.code != getattr(existing, "code", None):
-            raise HTTPException(status_code=400, detail="Customer code cannot be changed after creation")
         c = service.update_customer(customer_id, payload)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

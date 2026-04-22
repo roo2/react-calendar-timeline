@@ -1,7 +1,7 @@
 """Resell / supplies catalog and order lines (cores, pallets, etc.).
 
-Revision ID: 0011_resell_products
-Revises: 0010_job_production_timestamps
+Revision ID: 0009_resell_products
+Revises: 0008_job_production_timestamps
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0011_resell_products"
-down_revision = "0010_job_production_timestamps"
+revision = "0009_resell_products"
+down_revision = "0008_job_production_timestamps"
 branch_labels = None
 depends_on = None
 

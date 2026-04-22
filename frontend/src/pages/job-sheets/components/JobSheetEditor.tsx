@@ -35,7 +35,7 @@ import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { isRejectedWithValue } from '@reduxjs/toolkit'
 import type { UpsertError } from '../../../store/slices/productsSlice'
-import { fetchCustomers } from '../../../store/slices/customersSlice'
+import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../../store/slices/customersSlice'
 import { clearCreateErrors, createProduct, fetchProducts } from '../../../store/slices/productsSlice'
 import { createJobSheet, fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
@@ -160,7 +160,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   useEffect(() => {
     if (customersStatus !== 'idle') return
-    void dispatch(fetchCustomers(undefined))
+    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
   }, [customersStatus, dispatch])
 
   const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
@@ -362,7 +362,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const jobSheetPrintingContext: JobSheetPrintingContext = useMemo(() => {
     const c = customers.find((x) => x.id === customerId)
-    const customerLabel = (c?.name || c?.code || '').trim() || '—'
+    const customerLabel = (c?.name || '').trim() || '—'
     const productDescription =
       previewDescription.trim() || (productInfo?.description && String(productInfo.description).trim()) || '—'
     return {

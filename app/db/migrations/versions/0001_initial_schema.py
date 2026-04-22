@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -76,14 +78,40 @@ def upgrade() -> None:
         _create_pg_enum("queue_status", ["queued", "running", "completed", "removed"])
         _create_pg_enum("printing_method", ["none", "inline", "uteco"])
 
-    _false_default = sa.text("false") if _is_postgres(conn) else sa.text("0")
+    # Brands (customer grouping); referenced by customers.brand_id (merged from former 0008_brands_customer).
+    op.create_table(
+        "brands",
+        sa.Column("id", sa.String(length=36), primary_key=True),
+        sa.Column("code", sa.String(length=32), nullable=False),
+        sa.Column("name", sa.String(length=128), nullable=False),
+        sa.UniqueConstraint("code", name="uq_brands_code"),
+    )
+    op.create_index("ix_brands_code", "brands", ["code"], unique=True)
+    # Default rows for MYOB customer import (`customer_import` looks up by code).
+    _crown_brand_id = str(uuid.uuid4())
+    _dolphin_brand_id = str(uuid.uuid4())
+    op.execute(
+        sa.text(
+            "INSERT INTO brands (id, code, name) VALUES (:crown_id, 'CROWN_PACK', 'Crown Pack'), (:dolphin_id, 'DOLPHIN', 'Dolphin')"
+        ).bindparams(
+            sa.bindparam("crown_id", value=_crown_brand_id, type_=sa.String(36)),
+            sa.bindparam("dolphin_id", value=_dolphin_brand_id, type_=sa.String(36)),
+        )
+    )
 
-    # Customers (consolidated: contact_phone, deposit_required, deposit_pct; no tax_id, credit_limit, internal_notes)
+    # Customers (consolidated: contact_phone, brand_id, priority_rank; no tax_id, credit_limit, internal_notes)
     op.create_table(
         "customers",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("code", sa.String(length=4), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column(
+            "brand_id",
+            sa.String(length=36),
+            sa.ForeignKey("brands.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column("priority_rank", sa.Integer(), nullable=True),
         sa.Column("abn", sa.String(length=50), nullable=True),
         sa.Column("contact_phone", sa.String(length=50), nullable=True),
         sa.Column("status", sa.String(length=50), nullable=False, server_default=sa.text("'Active'")),
@@ -102,8 +130,6 @@ def upgrade() -> None:
         ),
         sa.Column("delivery_preferences", sa.JSON, nullable=False, server_default=sa.text("'{}'")),
         sa.Column("payment_terms", sa.String(length=255), nullable=True),
-        sa.Column("deposit_required", sa.Boolean(), nullable=False, server_default=_false_default),
-        sa.Column("deposit_pct", sa.Numeric(5, 2), nullable=True),
         sa.Column("notes", sa.Text, nullable=True),
         sa.Column(
             "created_at",
@@ -114,6 +140,8 @@ def upgrade() -> None:
         sa.UniqueConstraint("code", name="uq_customer_code"),
     )
     op.create_index("ix_customers_code", "customers", ["code"], unique=True)
+    op.create_index("ix_customers_brand_id", "customers", ["brand_id"], unique=False)
+    op.create_index("ix_customers_priority_rank", "customers", ["priority_rank"], unique=False)
 
     # Products
     op.create_table(
@@ -1007,16 +1035,6 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        "carton_options",
-        sa.Column("slug", sa.String(length=64), primary_key=True),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("cost_per_unit", sa.Numeric(12, 4), nullable=False),
-        sa.Column("is_default", sa.Boolean(), nullable=False, server_default="0"),
-        sa.CheckConstraint("length(slug) > 0", name="ck_carton_options_slug_nonempty"),
-        sa.CheckConstraint("cost_per_unit >= 0", name="ck_carton_options_cost_nonneg"),
-    )
-
-    op.create_table(
         "waste_adders",
         sa.Column("id", sa.String(length=36), primary_key=True),
         sa.Column("condition", sa.Text, nullable=False, unique=True),
@@ -1066,7 +1084,6 @@ def downgrade() -> None:
     op.drop_table("quote_defaults")
     op.drop_table("quote_packaging_settings")
     op.drop_table("waste_adders")
-    op.drop_table("carton_options")
     op.drop_table("conversion_factors")
     op.drop_table("conversion_speeds")
     op.drop_table("conversion_rates")
@@ -1191,9 +1208,13 @@ def downgrade() -> None:
     op.drop_index("ix_products_code", table_name="products")
     op.drop_table("products")
 
-    # Customers
+    # Customers + brands
+    op.drop_index("ix_customers_priority_rank", table_name="customers")
+    op.drop_index("ix_customers_brand_id", table_name="customers")
     op.drop_index("ix_customers_code", table_name="customers")
     op.drop_table("customers")
+    op.drop_index("ix_brands_code", table_name="brands")
+    op.drop_table("brands")
 
     # Drop enum types (PostgreSQL only)
     if _is_postgres(conn):

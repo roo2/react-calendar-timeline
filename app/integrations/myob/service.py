@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import secrets
 import sys
 from datetime import UTC, datetime, timedelta
@@ -55,27 +54,13 @@ def effective_company_file_id(db: Session) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _company_file_cftoken() -> str | None:
-    """Base64(username:password) for x-myobapi-cftoken (company file credentials, not OAuth)."""
-    u = (settings.MYOB_COMPANY_FILE_USER or "").strip()
-    if not u:
-        return None
-    p = settings.MYOB_COMPANY_FILE_PASSWORD if settings.MYOB_COMPANY_FILE_PASSWORD is not None else ""
-    raw = f"{u}:{p}".encode("utf-8")
-    return base64.b64encode(raw).decode("ascii")
-
-
 def _myob_api_headers(*, access_token: str) -> dict[str, str]:
-    h: dict[str, str] = {
+    return {
         "Authorization": f"Bearer {access_token}",
         "x-myobapi-key": settings.MYOB_APP_KEY or "",
         "x-myobapi-version": "v2",
         "Accept": "application/json",
     }
-    cf = _company_file_cftoken()
-    if cf:
-        h["x-myobapi-cftoken"] = cf
-    return h
 
 
 def _access_token_usable(row: MyobConnection) -> bool:

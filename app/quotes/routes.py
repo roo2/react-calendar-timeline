@@ -90,7 +90,7 @@ async def quotes_bootstrap(_identity=Depends(current_identity)):
                 }
             )
         customers = [
-            {"id": str(c.id), "code": getattr(c, "code", None), "name": c.name}
+            {"id": str(c.id), "name": c.name}
             for c in db.execute(select(Customer).order_by(Customer.name)).scalars().all()
         ]
 

@@ -1601,9 +1601,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
             sx={{ minWidth: 220 }}
           >
             <MenuItem value="">— Select customer —</MenuItem>
-            {customers.map((c: { id: string; code?: string | null; name: string }) => (
+            {customers.map((c: { id: string; name: string }) => (
               <MenuItem key={c.id} value={c.id}>
-                {c.code ? `${c.code} – ${c.name}` : c.name}
+                {c.name}
               </MenuItem>
             ))}
           </TextField>

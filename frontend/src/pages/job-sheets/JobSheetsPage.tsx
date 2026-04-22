@@ -6,17 +6,14 @@ import {
   type JobSheetListQuery,
   type JobSheetSummary,
 } from '../../store/slices/jobSheetsSlice'
-import { fetchCustomers } from '../../store/slices/customersSlice'
 import { fmtDollarsLineItem, fmtDollarsPreview } from '../../utils/quoteFormat'
 import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   FormControl,
   InputLabel,
   MenuItem,
-  Paper,
   Select,
   Stack,
   Table,
@@ -24,19 +21,18 @@ import {
   TableCell,
   TableContainer,
   TableHead,
-  TablePagination,
   TableRow,
   TextField,
   Typography,
 } from '@mui/material'
+import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
+import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
 
 const PRODUCT_TYPES = ['Bag', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'] as const
 const PRINT_METHODS = ['None', 'Inline', 'Uteco'] as const
 const FINISH_MODES = ['Rolls', 'Cartons'] as const
 const ORDER_STATUSES = ['Draft', 'Confirmed', 'Dispatched', 'Closed', 'Cancelled'] as const
 const PRODUCTION_STATUSES = ['Planned', 'Scheduled', 'Running', 'Dispatched', 'Cancelled'] as const
-const PAGE_SIZE = 50
-
 function fmtQty(v: number, u: string) {
   const unit =
     u === 'kg' ? 'kg' : u === 'rolls' ? 'rolls' : u === 'bags' ? 'bags' : u === 'meters' ? 'm' : u
@@ -74,7 +70,7 @@ export function JobSheetsPage() {
   const dispatch = useAppDispatch()
   const loc = useLocation()
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
-  const { items, status, error, total, pageSize } = useAppSelector((s) => s.jobSheets.list)
+  const { items, status, error, total } = useAppSelector((s) => s.jobSheets.list)
   const customers = useAppSelector((s) => s.customers.list.items)
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
@@ -122,12 +118,12 @@ export function JobSheetsPage() {
     if (orderStatus) q.order_status = orderStatus
     if (productionStatus) q.production_status = productionStatus
     q.page = pageIdx + 1
-    q.page_size = PAGE_SIZE
+    q.page_size = LIST_PAGE_SIZE
     return q
   }, [customerId, search, productType, printed, finishMode, widthMin, widthMax, lengthMin, lengthMax, gaugeMin, gaugeMax, fromDate, toDate, orderStatus, productionStatus, pageIdx])
 
   useEffect(() => {
-    void dispatch(fetchCustomers(undefined))
+    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
   }, [dispatch])
 
   useEffect(() => {
@@ -178,23 +174,17 @@ export function JobSheetsPage() {
         </Button>
       </Box>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-          Match past orders
-        </Typography>
-        <Stack spacing={2}>
-          <TextField
-            size="small"
-            fullWidth
-            label="Search"
-            value={search}
-            onChange={(e) => {
-              setPageIdx(0)
-              setSearch(e.target.value)
-            }}
-          />
-          {showAdvancedFilters ? (
-            <Box>
+      <ListFiltersCard
+        title="Match past orders"
+        search={{
+          value: search,
+          onChange: (v) => {
+            setPageIdx(0)
+            setSearch(v)
+          },
+        }}
+        advanced={
+          <Box>
               <Box
                 sx={{
                   display: 'grid',
@@ -439,54 +429,21 @@ export function JobSheetsPage() {
                 />
               </Box>
             </Box>
-          ) : null}
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            <Button
-              variant="text"
-              onClick={() => setShowAdvancedFilters((v) => !v)}
-              sx={{ p: 0, minWidth: 0, textTransform: 'none' }}
-            >
-              {showAdvancedFilters ? 'Hide advanced filters' : 'Show advanced filters'}
-            </Button>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                {total.toLocaleString()} results
-              </Typography>
-              <Button variant="outlined" onClick={handleClearFilters} disabled={loading}>
-                Clear filters
-              </Button>
-            </Box>
-          </Box>
-        </Stack>
-      </Paper>
+        }
+        advancedOpen={showAdvancedFilters}
+        onToggleAdvanced={() => setShowAdvancedFilters((v) => !v)}
+        resultCount={total}
+        onClearFilters={handleClearFilters}
+        clearDisabled={loading}
+      />
 
       {error && <Alert severity="error">{error}</Alert>}
 
-      <Paper variant="outlined" sx={{ position: 'relative' }}>
-        {searching && (
-          <Box
-            sx={{
-              position: 'absolute',
-              inset: 0,
-              zIndex: 2,
-              bgcolor: 'rgba(255, 255, 255, 0.6)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 1,
-            }}
-          >
-            <CircularProgress size={20} />
-            <Typography variant="body2" color="text.secondary">
-              Searching...
-            </Typography>
-          </Box>
-        )}
-        {loading && items.length === 0 ? (
-          <Typography sx={{ p: 2 }} color="text.secondary">
-            Loading…
-          </Typography>
-        ) : (
+      <ListTableSurface
+        loadingOverlay={searching}
+        loadingOverlayMessage="Searching…"
+        initialLoading={loading && items.length === 0}
+      >
           <TableContainer sx={{ overflowX: 'auto' }}>
             <Table size="small">
               <TableHead>
@@ -517,12 +474,10 @@ export function JobSheetsPage() {
                     <TableRow key={r.id} hover>
                       <TableCell sx={{ fontFamily: 'monospace' }}>{r.invoice_no ?? ''}</TableCell>
                       <TableCell
-                        sx={{ width: 88, maxWidth: 100, whiteSpace: 'nowrap', fontFamily: 'monospace' }}
-                        title={
-                          (r.customer_code || '').trim() && r.customer_name ? r.customer_name : undefined
-                        }
+                        sx={{ width: 140, maxWidth: 200, whiteSpace: 'normal', wordBreak: 'break-word' }}
+                        title={r.customer_name || undefined}
                       >
-                        {(r.customer_code || '').trim().toUpperCase() || r.customer_name || '—'}
+                        {r.customer_name || '—'}
                       </TableCell>
                       <TableCell sx={{ minWidth: 220, verticalAlign: 'top' }}>
                         <Typography variant="body2" component="div" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
@@ -583,19 +538,12 @@ export function JobSheetsPage() {
               </TableBody>
             </Table>
           </TableContainer>
-        )}
-      </Paper>
-      <Paper variant="outlined">
-        <TablePagination
-          component="div"
-          count={total}
-          page={Math.min(pageIdx, Math.max(0, Math.ceil(total / PAGE_SIZE) - 1))}
-          rowsPerPage={pageSize || PAGE_SIZE}
-          onPageChange={(_, nextPage) => setPageIdx(nextPage)}
-          rowsPerPageOptions={[PAGE_SIZE]}
-          labelRowsPerPage="Rows"
-        />
-      </Paper>
+      </ListTableSurface>
+      <ListPaginationBar
+        total={total}
+        page={Math.min(pageIdx, Math.max(0, Math.ceil(total / LIST_PAGE_SIZE) - 1))}
+        onPageChange={(p) => setPageIdx(p)}
+      />
     </Stack>
   )
 }

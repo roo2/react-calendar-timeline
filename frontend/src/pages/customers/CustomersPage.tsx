@@ -1,24 +1,12 @@
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppSelector } from '../../store/hooks'
 import { useAppDispatch } from '../../store/hooks'
 import { can } from '../../auth/permissions'
 import { fetchCustomers } from '../../store/slices/customersSlice'
-import {
-  Alert,
-  Box,
-  Button,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography,
-  Link as MuiLink,
-} from '@mui/material'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
+import { Alert, Box, Button, Table, TableBody, TableCell, TableHead, TableRow, Typography, Link as MuiLink } from '@mui/material'
 
 export function CustomersPage() {
   const dispatch = useAppDispatch()
@@ -26,22 +14,47 @@ export function CustomersPage() {
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const canCreateOrder = can(roles, 'SALES', 'PROD_MANAGER')
 
-  const [q, setQ] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const debouncedQ = useDebouncedValue(searchInput, 300)
+  const [pageIdx, setPageIdx] = useState(0)
+
   const items = useAppSelector((s) => s.customers.list.items)
+  const total = useAppSelector((s) => s.customers.list.total)
+  const status = useAppSelector((s) => s.customers.list.status)
   const err = useAppSelector((s) => s.customers.list.error)
 
-  useEffect(() => {
-    void dispatch(fetchCustomers({ q: '' }))
-  }, [dispatch])
+  const loading = status === 'loading'
+  const debouncing = searchInput.trim() !== debouncedQ.trim()
+  const searching = debouncing || loading
+  const showInitialLoading = loading && items.length === 0 && !debouncing
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    await dispatch(fetchCustomers({ q }))
+  useLayoutEffect(() => {
+    setPageIdx(0)
+  }, [debouncedQ])
+
+  useEffect(() => {
+    void dispatch(
+      fetchCustomers({
+        q: debouncedQ.trim(),
+        page: pageIdx + 1,
+        page_size: LIST_PAGE_SIZE,
+      }),
+    )
+  }, [dispatch, debouncedQ, pageIdx])
+
+  function handleClearFilters() {
+    setSearchInput('')
+    setPageIdx(0)
   }
+
+  const maxPage = Math.max(0, Math.ceil(total / LIST_PAGE_SIZE) - 1)
+  const safePageIdx = Math.min(pageIdx, maxPage)
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+      <Box
+        sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 2, flexWrap: 'wrap', mb: 2 }}
+      >
         <Typography variant="h5">Customers</Typography>
         {canEdit && (
           <Button variant="contained" component={Link} to="/customers/new">
@@ -50,23 +63,19 @@ export function CustomersPage() {
         )}
       </Box>
 
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <form onSubmit={onSubmit}>
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <TextField
-              size="small"
-              label="Search"
-              placeholder="Search by name..."
-              value={q}
-              onChange={(e) => setQ(e.currentTarget.value)}
-              sx={{ minWidth: 240 }}
-            />
-            <Button type="submit" variant="outlined" size="small" sx={{ px: 2, py: 1 }}>
-              Search
-            </Button>
-          </Box>
-        </form>
-      </Paper>
+      <Box sx={{ mb: 2 }}>
+        <ListFiltersCard
+          search={{
+            label: 'Search',
+            placeholder: 'Search by name…',
+            value: searchInput,
+            onChange: (v) => setSearchInput(v),
+          }}
+          resultCount={total}
+          onClearFilters={handleClearFilters}
+          clearDisabled={loading}
+        />
+      </Box>
 
       {err && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -74,28 +83,29 @@ export function CustomersPage() {
         </Alert>
       )}
 
-      {items.length > 0 ? (
-        <Paper variant="outlined">
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Code</TableCell>
-                <TableCell>Name</TableCell>
-                <TableCell>Quotes</TableCell>
-                <TableCell>Orders</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {items.map((c) => {
-                const quoteCount = Number(c.quotes_count ?? 0)
-                const orderCount = Number(c.orders_count ?? 0)
-                const quotesLinkLabel = quoteCount > 0 ? `quotes(${quoteCount})` : 'quotes'
-                const ordersLinkLabel = orderCount > 0 ? `orders(${orderCount})` : 'orders'
-                return (
+      <ListTableSurface
+        loadingOverlay={searching && !showInitialLoading}
+        loadingOverlayMessage="Searching…"
+        initialLoading={showInitialLoading}
+      >
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Name</TableCell>
+              <TableCell>Quotes</TableCell>
+              <TableCell>Orders</TableCell>
+              <TableCell>Status</TableCell>
+              <TableCell>Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {items.map((c) => {
+              const quoteCount = Number(c.quotes_count ?? 0)
+              const orderCount = Number(c.orders_count ?? 0)
+              const quotesLinkLabel = quoteCount > 0 ? `quotes(${quoteCount})` : 'quotes'
+              const ordersLinkLabel = orderCount > 0 ? `orders(${orderCount})` : 'orders'
+              return (
                 <TableRow key={c.id} hover>
-                  <TableCell sx={{ width: 90, fontFamily: 'monospace' }}>{c.code}</TableCell>
                   <TableCell>
                     <MuiLink component={Link} to={`/customers/${c.id}`} underline="hover">
                       {c.name}
@@ -133,31 +143,39 @@ export function CustomersPage() {
                         </Button>
                       )}
                       {canCreateOrder && (
-                        <Button size="small" variant="contained" component={Link} to={`/orders/new?customerId=${encodeURIComponent(c.id)}`}>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          component={Link}
+                          to={`/orders/new?customerId=${encodeURIComponent(c.id)}`}
+                        >
                           New Order
                         </Button>
                       )}
                     </Box>
                   </TableCell>
                 </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </Paper>
-      ) : (
-        <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
-          <Typography color="text.secondary">
-            No customers found{q ? '. Try a different search term.' : '.'}{' '}
-            {canEdit && (
-              <MuiLink component={Link} to="/customers/new" underline="hover">
-                Create your first customer
-              </MuiLink>
+              )
+            })}
+            {items.length === 0 && !loading && (
+              <TableRow>
+                <TableCell colSpan={6} sx={{ color: 'text.secondary' }}>
+                  No customers found{debouncedQ.trim() ? '. Try a different search term.' : '.'}{' '}
+                  {canEdit && (
+                    <MuiLink component={Link} to="/customers/new" underline="hover">
+                      Create your first customer
+                    </MuiLink>
+                  )}
+                </TableCell>
+              </TableRow>
             )}
-          </Typography>
-        </Paper>
-      )}
+          </TableBody>
+        </Table>
+      </ListTableSurface>
+
+      <Box sx={{ mt: 2 }}>
+        <ListPaginationBar total={total} page={safePageIdx} onPageChange={(p) => setPageIdx(p)} />
+      </Box>
     </Box>
   )
 }
-

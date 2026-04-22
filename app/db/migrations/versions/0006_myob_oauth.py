@@ -2,8 +2,8 @@
 
 Timestamp column defaults use CURRENT_TIMESTAMP (portable; SQLite has no now()).
 
-Revision ID: 0007_myob_oauth
-Revises: 0006_quote_mat_retail_bands
+Revision ID: 0006_myob_oauth
+Revises: 0005_quote_mat_retail_bands
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0007_myob_oauth"
-down_revision = "0006_quote_mat_retail_bands"
+revision = "0006_myob_oauth"
+down_revision = "0005_quote_mat_retail_bands"
 branch_labels = None
 depends_on = None
 

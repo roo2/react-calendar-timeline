@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -81,44 +80,6 @@ def _heroku_app_name(heroku_app: str) -> str:
     return heroku_app
 
 
-def _heroku_web_url(app: str) -> str | None:
-    """
-    Ask Heroku for the canonical web URL of the app (e.g. pipeline/review apps
-    use URLs like https://crownpack-production-38f4b529d3b6.herokuapp.com/).
-    """
-    app_name = _heroku_app_name(app) if _looks_like_url(app) else app
-    try:
-        out = subprocess.check_output(
-            ["heroku", "apps:info", "-a", app_name, "--json"],
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        info = json.loads(out)
-        if not isinstance(info, dict):
-            return None
-        # web_url is under the "app" key in heroku apps:info --json
-        app_info = info.get("app")
-        web = app_info.get("web_url") if isinstance(app_info, dict) else info.get("web_url")
-        if isinstance(web, str) and web.strip():
-            return web.strip().rstrip("/")
-    except Exception:
-        return None
-    return None
-
-
-def _default_base_url(app_or_url: str) -> str:
-    # Accept either an app name or a full URL; if it looks like a URL, keep it.
-    if _looks_like_url(app_or_url):
-        return app_or_url.rstrip("/")
-
-    web = _heroku_web_url(app_or_url)
-    if web:
-        return web
-
-    # Fallback (common default)
-    return f"https://{app_or_url}.herokuapp.com"
-
-
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         description=(
@@ -127,9 +88,7 @@ def main(argv: list[str]) -> int:
             "1. heroku pg:reset DATABASE (unless --skip-reset)\n"
             "2. alembic upgrade head\n"
             "3. Seed from TSVs: extruders, waste factors, printing pricing, conversion (unless --skip-tsv-seeds)\n"
-            "4. create_admin.py (admin user with SYS_ADMIN)\n"
-            "5. Seed customers from scripts/priority-customers.md (seed_priority_customers.py)\n"
-            "6. Optional: API import of print plates from plate-db.tsv (unless --skip-plate-import)\n\n"
+            "4. create_admin.py (admin user with SYS_ADMIN)\n\n"
             "Use --skip-reset to re-run migrations/seeds without wiping the database."
         )
     )
@@ -137,11 +96,6 @@ def main(argv: list[str]) -> int:
         "--heroku-app",
         default="crownpack-production",
         help="Heroku app name (default: crownpack-production) OR full base URL",
-    )
-    p.add_argument(
-        "--base-url",
-        default=None,
-        help="API base URL (optional). If omitted, uses Heroku app web_url.",
     )
     p.add_argument(
         "--skip-reset",
@@ -159,11 +113,6 @@ def main(argv: list[str]) -> int:
         help="Admin password to set (default: 'admin' or SEED_ADMIN_PASSWORD)",
     )
     p.add_argument(
-        "--plate-db",
-        default=str(Path("scripts") / "plate-db.tsv"),
-        help="TSV path for print-plate import only (default: scripts/plate-db.tsv); ignored with --skip-plate-import",
-    )
-    p.add_argument(
         "--skip-tsv-seeds",
         action="store_true",
         help="Skip seeding TSV-backed admin data (extruders/waste/printing pricing/conversion).",
@@ -173,22 +122,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Also run scripts/fixture_min_chain.py on Heroku (DB-level fixture insert)",
     )
-    p.add_argument(
-        "--skip-plate-import",
-        action="store_true",
-        help="Skip API import of print plates from plate-db.tsv (customers always come from priority-customers.md).",
-    )
-
     args = p.parse_args(argv)
 
     _require_heroku_cli()
 
     app_name = _heroku_app_name(args.heroku_app)
-    base_url = (args.base_url or _default_base_url(args.heroku_app)).rstrip("/")
-
-    plate_db_path = (REPO_ROOT / args.plate_db).resolve()
-    if not args.skip_plate_import and not plate_db_path.exists():
-        raise SystemExit(f"ERROR: plate DB file not found: {plate_db_path}")
 
     if args.admin_password == "admin" and not os.getenv("SEED_ADMIN_PASSWORD"):
         print("WARNING: using default admin password 'admin' (set SEED_ADMIN_PASSWORD to override).", flush=True)
@@ -236,31 +174,6 @@ def main(argv: list[str]) -> int:
 
     if args.include_fixture_min_chain:
         _run(["heroku", "run", "-a", app_name, "--", "python", "scripts/fixture_min_chain.py"])
-
-    print("Seeding customers from scripts/priority-customers.md …", flush=True)
-    _run(["heroku", "run", "-a", app_name, "--", "python", "scripts/seed_priority_customers.py"])
-
-    if args.skip_plate_import:
-        print("Done (skipped print-plate import).", flush=True)
-        return 0
-
-    # Import print plates via API against the Heroku URL (runs locally).
-    py = sys.executable or "python"
-    _run(
-        [
-            py,
-            str(REPO_ROOT / "scripts" / "api_import_print_plates.py"),
-            str(plate_db_path),
-            "--base-url",
-            base_url,
-            "--username",
-            args.admin_username,
-            "--password",
-            args.admin_password,
-            "--delimiter",
-            "\\t",
-        ]
-    )
 
     print("Done.", flush=True)
     return 0

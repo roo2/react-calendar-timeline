@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 import re
 
 try:
@@ -11,47 +11,82 @@ except Exception:  # pragma: no cover
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-_PAYMENT_TERMS_OPTIONS = [
-    "Up Front",
-    "7 days",
-    "14 days",
-    "21 days",
-    "31 days",
-    "EoM + 30 days",
-    "EoM + 45 days",
-    "EoM + 60 days",
-]
+_MYOB_PAYMENT_IS_DUE = frozenset(
+    {
+        "CashOnDelivery",
+        "PrePaid",
+        "InAGivenNumberOfDays",
+        "OnADayOfTheMonth",
+        "NumberOfDaysAfterEOM",
+        "DayOfMonthAfterEOM",
+    }
+)
+
+
+class PaymentTermsInput(BaseModel):
+    """
+    MYOB AccountRight SellingDetails.Terms subset (API uses snake_case).
+    Payment due type plus balance due only (no discount date).
+    """
+
+    payment_is_due: str = Field(..., description="MYOB PaymentIsDue")
+    balance_due_date: Optional[int] = Field(None, description="MYOB BalanceDueDate (day or days, per MYOB rules)")
+
+    @field_validator("payment_is_due")
+    @classmethod
+    def validate_payment_is_due(cls, v: str) -> str:
+        s = (v or "").strip()
+        if s not in _MYOB_PAYMENT_IS_DUE:
+            raise ValueError("Invalid payment_is_due")
+        return s
+
+    @field_validator("balance_due_date")
+    @classmethod
+    def validate_balance_due_date(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return None
+        if int(v) < 0 or int(v) > 366:
+            raise ValueError("Balance due date must be between 0 and 366")
+        return int(v)
 
 
 class ContactInput(BaseModel):
     type: str = Field(..., description="Contact type: Primary Contact, Accounts, Purchasing, Operations, Other")
     name: str = Field(..., min_length=1, description="Full name")
     title: Optional[str] = Field(None, description="Job title/position")
-    email: _EmailType = Field(..., description="Email address")
+    email: Optional[_EmailType] = Field(None, description="Email address (optional)")
     phone: Optional[str] = Field(None, description="Phone number (optional)")
     phone_alt: Optional[str] = Field(None, description="Alternate phone number (optional)")
     notes: Optional[str] = Field(None, description="Additional notes about this contact")
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def empty_email_to_none(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @field_validator("email")
     @classmethod
-    def validate_email(cls, v: str) -> str:
-        # If email-validator is installed, Pydantic's EmailStr already validated it.
-        # Otherwise fall back to a lightweight sanity check so the app can run.
-        if isinstance(v, str):
-            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
-                raise ValueError("Invalid email address")
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str) and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Invalid email address")
         return v
 
 
 class AddressInput(BaseModel):
-    label: str = Field(..., min_length=1, description="Address label/name (e.g., 'Head Office')")
+    label: str = Field(default="", description="Address label/name (optional)")
     type: str = Field(..., description="Address type: Billing, Delivery, or Both")
-    street1: str = Field(..., min_length=1, description="Street address line 1")
+    street1: str = Field(default="", description="Street address line 1 (optional)")
     street2: Optional[str] = Field(None, description="Street address line 2")
-    suburb: str = Field(..., min_length=1, description="Suburb/City")
-    state: str = Field(..., min_length=1, description="State/Province")
-    postcode: str = Field(..., min_length=1, description="Postcode/ZIP")
-    country: str = Field("Australia", description="Country")
+    suburb: str = Field(default="", description="Suburb/City (optional)")
+    state: str = Field(default="", description="State/Province (optional)")
+    postcode: str = Field(default="", description="Postcode/ZIP (optional)")
+    country: str = Field(default="", description="Country (optional)")
     contact_name: Optional[str] = Field(None, description="Contact name at this address")
     contact_phone: Optional[str] = Field(None, description="Contact phone at this address")
     delivery_instructions: Optional[str] = Field(None, description="Delivery instructions")
@@ -80,7 +115,6 @@ class DeliveryPreferencesInput(BaseModel):
 
 
 class CustomerCreateRequest(BaseModel):
-    code: str = Field(..., min_length=2, max_length=4, description="2-4 letter customer code (e.g., CP)")
     name: str = Field(..., min_length=1, description="Customer name")
     brand_id: Optional[str] = Field(None, description="Optional brand (brands.id)")
     priority_rank: Optional[int] = Field(None, description="Optional sales priority (lower = higher priority)")
@@ -90,9 +124,7 @@ class CustomerCreateRequest(BaseModel):
     contacts: List[ContactInput] = Field(default_factory=list, description="List of contacts")
     delivery_addresses: List[AddressInput] = Field(default_factory=list, description="List of delivery addresses")
     delivery_preferences: Optional[DeliveryPreferencesInput] = Field(None, description="Delivery preferences")
-    payment_terms: Optional[str] = Field(None, description="Payment terms")
-    deposit_required: bool = Field(False, description="Whether a deposit is required")
-    deposit_pct: Optional[float] = Field(None, ge=0, le=100, description="Deposit percentage required (0-100)")
+    payment_terms: Optional[PaymentTermsInput] = Field(None, description="MYOB-style payment terms (JSON in DB)")
     notes: Optional[str] = Field(None, description="General notes about the customer")
 
     @field_validator("status")
@@ -102,45 +134,9 @@ class CustomerCreateRequest(BaseModel):
             raise ValueError("Status must be 'Active', 'Inactive', or 'Archived'")
         return v
 
-    @field_validator("code")
-    @classmethod
-    def validate_code(cls, v: str) -> str:
-        s = (v or "").strip().upper()
-        if not re.match(r"^[A-Z]{2,4}$", s):
-            raise ValueError("Customer code must be 2-4 letters (A-Z)")
-        return s
-
-    @field_validator("payment_terms")
-    @classmethod
-    def validate_payment_terms(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        s = (v or "").strip()
-        if not s:
-            return None
-        if s not in _PAYMENT_TERMS_OPTIONS:
-            raise ValueError("Invalid payment terms")
-        return s
-
-    @field_validator("deposit_pct")
-    @classmethod
-    def validate_deposit_pct(cls, v: Optional[float], info) -> Optional[float]:
-        # If a deposit is required, a percentage must be provided (>0).
-        data = info.data or {}
-        required = bool(data.get("deposit_required"))
-        if not required:
-            return None if v is None else v
-        if v is None:
-            raise ValueError("Deposit percentage is required when deposit is required")
-        if float(v) <= 0:
-            raise ValueError("Deposit percentage must be greater than 0")
-        return v
-
     @field_validator("delivery_addresses")
     @classmethod
     def validate_addresses(cls, v: List[AddressInput]) -> List[AddressInput]:
-        if len(v) == 0:
-            raise ValueError("At least one delivery address is required")
         default_count = sum(1 for addr in v if addr.is_default)
         if default_count > 1:
             raise ValueError("Only one address can be marked as default")
@@ -152,8 +148,6 @@ class CustomerCreateRequest(BaseModel):
     @field_validator("contacts")
     @classmethod
     def validate_contacts(cls, v: List[ContactInput]) -> List[ContactInput]:
-        if len(v) == 0:
-            raise ValueError("At least one contact is required")
         return v
 
 
@@ -164,7 +158,6 @@ class CustomerUpdateRequest(CustomerCreateRequest):
 
 class CustomerResponse(BaseModel):
     id: str
-    code: str
     name: str
     brand_id: Optional[str] = None
     brand_code: Optional[str] = None
@@ -176,10 +169,13 @@ class CustomerResponse(BaseModel):
     contacts: List[dict]
     delivery_addresses: List[dict]
     delivery_preferences: dict
-    payment_terms: Optional[str] = None
-    deposit_required: bool = False
-    deposit_pct: Optional[float] = None
+    payment_terms: Optional[dict] = None
     notes: Optional[str] = None
     created_at: Optional[str] = None
+    myob_customer_uid: Optional[str] = None
+    myob_display_id: Optional[str] = None
+    myob_last_modified: Optional[str] = None
+    myob_synced_at: Optional[str] = None
+    myob_notes: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

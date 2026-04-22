@@ -224,8 +224,8 @@ def main(argv: list[str]) -> int:
     if missing_customers:
         raise SystemExit(
             "ERROR: some customers referenced by the plate file do not exist yet. "
-            "Ensure those customer names exist in the app (e.g. run scripts/seed_priority_customers.py "
-            "or create them via the API). Missing: "
+            "Ensure those customer names exist in the app (MYOB customer sync, UI, or POST /api/customers). "
+            "Missing: "
             + ", ".join(missing_customers[:20])
             + (" ..." if len(missing_customers) > 20 else "")
         )

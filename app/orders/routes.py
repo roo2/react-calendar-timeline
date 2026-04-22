@@ -215,7 +215,7 @@ async def orders_bootstrap():
             .all()
         )
     return {
-        "customers": [{"id": str(c.id), "name": c.name, "code": getattr(c, "code", None)} for c in customers],
+        "customers": [{"id": str(c.id), "name": c.name} for c in customers],
         "resell_products": [
             {
                 "id": str(r.id),

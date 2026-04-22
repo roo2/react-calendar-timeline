@@ -15,7 +15,7 @@ import {
   fetchProduct,
   fetchProducts,
 } from '../../../store/slices/productsSlice'
-import { fetchCustomers } from '../../../store/slices/customersSlice'
+import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../../store/slices/customersSlice'
 import { fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
@@ -233,7 +233,7 @@ export function ProductVersionEditor(props: {
   useEffect(() => {
     if (!jobSheetId && !embedded) return
     if (customersStatus !== 'idle') return
-    void dispatch(fetchCustomers(undefined))
+    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
   }, [dispatch, jobSheetId, embedded, customersStatus])
 
   useEffect(() => {

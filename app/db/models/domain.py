@@ -62,8 +62,6 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    # 2-4 letter customer code used for job sheet numbering (manual entry).
-    code: Mapped[str] = mapped_column(String(4), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     brand_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True
@@ -76,11 +74,17 @@ class Customer(Base):
     contacts: Mapped[dict] = mapped_column(JSON, default=dict)
     delivery_addresses: Mapped[dict] = mapped_column(JSON, default=dict)
     delivery_preferences: Mapped[dict] = mapped_column(JSON, default=dict)
-    payment_terms: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    deposit_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    deposit_pct: Mapped[Optional[float]] = mapped_column(Numeric(5, 2), nullable=True)
+    # MYOB-style: { "payment_is_due": str, "balance_due_date"?: int } (legacy rows may still have discount_date)
+    payment_terms: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # MYOB AccountRight Contact/Customer (UID). Unique when set; used for idempotent one-way import.
+    myob_customer_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True, index=True)
+    myob_display_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    myob_last_modified: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    myob_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # MYOB Notes field only; app-edited free-text stays in `notes`.
+    myob_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     brand: Mapped[Optional["Brand"]] = relationship(back_populates="customers")
     products: Mapped[list["Product"]] = relationship(back_populates="customer")

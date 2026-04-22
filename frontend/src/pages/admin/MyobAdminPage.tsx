@@ -24,6 +24,18 @@ type MyobCustomersPreview = {
   items: unknown[]
 }
 
+type MyobSyncResult = {
+  ok: boolean
+  business_id?: string
+  source_count: number
+  truncated: boolean
+  created: number
+  updated: number
+  errors: string[]
+  /** Aggregated MYOB GET response (business_id, count, pages_fetched, truncated, items) used for this import. */
+  myob_json?: MyobCustomersPreview
+}
+
 export function MyobAdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<MyobStatus | null>(null)
@@ -33,6 +45,7 @@ export function MyobAdminPage() {
   const [banner, setBanner] = useState<'success' | 'error' | null>(null)
   const [bannerDetail, setBannerDetail] = useState<string | null>(null)
   const [preview, setPreview] = useState<MyobCustomersPreview | null>(null)
+  const [syncResult, setSyncResult] = useState<MyobSyncResult | null>(null)
   const [companyFileId, setCompanyFileId] = useState('')
 
   const load = useCallback(async () => {
@@ -126,6 +139,27 @@ export function MyobAdminPage() {
       setPreview(data)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to fetch MYOB customers')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doSyncCustomers() {
+    if (
+      !window.confirm(
+        'Import / update customers from MYOB into Production Software? Existing rows with the same MYOB UID will be updated; new MYOB customers will be created. Brand is set on each sync: a leading “D -” on the individual last name or company name maps to the Dolphin brand (code DOLPHIN); otherwise Crown Pack (CROWN_PACK). Default brand rows are created by the database migration (and ensured at sync if missing). Other app-only fields (priority, delivery preferences, notes) are preserved where the sync does not overwrite them.',
+      )
+    ) {
+      return
+    }
+    setBusy('sync')
+    setErr(null)
+    setSyncResult(null)
+    try {
+      const data = await apiFetch<MyobSyncResult>('/api/myob/customers/sync', { method: 'POST' })
+      setSyncResult(data)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'MYOB customer sync failed')
     } finally {
       setBusy(null)
     }
@@ -226,6 +260,14 @@ export function MyobAdminPage() {
                 {busy === 'preview' ? 'Fetching customers…' : 'Test: fetch customers from MYOB (read-only)'}
               </Button>
               <Button
+                variant="contained"
+                color="secondary"
+                onClick={() => void doSyncCustomers()}
+                disabled={!status?.connected || busy !== null}
+              >
+                {busy === 'sync' ? 'Syncing customers…' : 'Import / sync customers from MYOB'}
+              </Button>
+              <Button
                 variant="outlined"
                 color="warning"
                 onClick={() => void doDisconnect()}
@@ -266,9 +308,46 @@ export function MyobAdminPage() {
 
             <Typography variant="body2" color="text.secondary">
               <strong>Test: fetch customers</strong> runs GET-only requests to MYOB&apos;s API (no changes to your MYOB
-              file). Set <code>MYOB_COMPANY_FILE_USER</code> and <code>MYOB_COMPANY_FILE_PASSWORD</code> on the server
-              (company file login) if MYOB returns 401 — see MYOB API headers documentation.
+              file). If MYOB returns 401, reconnect OAuth, confirm <code>MYOB_APP_KEY</code> / scopes, and that the
+              company file id is correct.
             </Typography>
+
+            {syncResult ? (
+              <>
+                <Alert severity={syncResult.ok && syncResult.errors.length === 0 ? 'success' : 'warning'} sx={{ mt: 1 }}>
+                  Sync finished: {syncResult.created} created, {syncResult.updated} updated (MYOB rows:{' '}
+                  {syncResult.source_count}
+                  {syncResult.truncated ? ', truncated fetch' : ''}).
+                  {syncResult.errors.length > 0 ? (
+                    <Typography component="span" variant="body2" display="block" sx={{ mt: 1, fontFamily: 'monospace' }}>
+                      {syncResult.errors.slice(0, 8).join(' · ')}
+                      {syncResult.errors.length > 8 ? ` … (+${syncResult.errors.length - 8} more)` : ''}
+                    </Typography>
+                  ) : null}
+                </Alert>
+                {syncResult.myob_json != null ? (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                      MYOB JSON used for this import (debug)
+                    </Typography>
+                    <Paper
+                      variant="outlined"
+                      sx={{
+                        p: 1,
+                        maxHeight: 480,
+                        overflow: 'auto',
+                        bgcolor: 'action.hover',
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                        fontSize: 12,
+                      }}
+                      component="pre"
+                    >
+                      {JSON.stringify(syncResult.myob_json, null, 2)}
+                    </Paper>
+                  </Box>
+                ) : null}
+              </>
+            ) : null}
 
             {preview ? (
               <Box sx={{ mt: 1 }}>

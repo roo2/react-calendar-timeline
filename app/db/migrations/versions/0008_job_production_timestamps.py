@@ -1,7 +1,7 @@
 """Job production start/finish timestamps; retire paused/completed job statuses.
 
-Revision ID: 0010_job_production_timestamps
-Revises: 0009_quote_form_margins
+Revision ID: 0008_job_production_timestamps
+Revises: 0007_quote_form_margins
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0010_job_production_timestamps"
-down_revision = "0009_quote_form_margins"
+revision = "0008_job_production_timestamps"
+down_revision = "0007_quote_form_margins"
 branch_labels = None
 depends_on = None
 
