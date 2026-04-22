@@ -9,7 +9,9 @@ from app.orders.schemas import (
     CreateOrderRequest,
     CreateOrderItemRequest,
     CreateJobRequest,
+    CreateResellOrderLineRequest,
     UpdateOrderRequest,
+    UpdateResellOrderLineRequest,
     OrderListItemDTO,
     OrderDetailDTO,
     JobDTO,
@@ -17,7 +19,7 @@ from app.orders.schemas import (
 from app.orders import service
 from app.exceptions import DomainError
 from app.db.session import SessionLocal
-from app.db.models.domain import ProductVersion, Product, Customer, OrderItem, JobSheet
+from app.db.models.domain import ProductVersion, Product, Customer, OrderItem, JobSheet, OrderResellLine, ResellProduct
 from app.products.service import compute_product_code_full
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -42,7 +44,7 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
         customer_id=o.customer_id,
         product_version_id=o.product_version_id,
         customer_name=(o.customer.name if getattr(o, "customer", None) else None),
-        item_count=len(getattr(o, "items", []) or []),
+        item_count=len(getattr(o, "items", []) or []) + len(getattr(o, "resell_lines", []) or []),
         created_at=str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None,
         order_date=str(getattr(o, "order_date", None)) if getattr(o, "order_date", None) else None,
     )
@@ -139,6 +141,41 @@ async def remove_order_item(order_id: str, order_item_id: str):
         raise HTTPException(status_code=400, detail=e.message)
 
 
+@router.post("/{order_id}/resell-items", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def add_order_resell_item(order_id: str, payload: CreateResellOrderLineRequest, identity=Depends(current_identity)):
+    try:
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
+        ln = service.add_order_resell_line(order_id, payload, created_by=created_by)
+        return {"ok": True, "resell_line_id": str(ln.id)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.patch(
+    "/{order_id}/resell-items/{line_id}",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def patch_order_resell_item(order_id: str, line_id: str, payload: UpdateResellOrderLineRequest):
+    try:
+        service.update_order_resell_line(order_id, line_id, payload)
+        return {"ok": True}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.delete(
+    "/{order_id}/resell-items/{line_id}",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def remove_order_resell_item(order_id: str, line_id: str):
+    try:
+        service.remove_order_resell_line(order_id, line_id)
+        return {"ok": True}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
 @router.get("/bootstrap", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
 async def orders_bootstrap():
     """
@@ -171,8 +208,22 @@ async def orders_bootstrap():
                     changed = True
             if changed:
                 db.commit()
+        resell_products = (
+            db.query(ResellProduct)
+            .filter(ResellProduct.active.is_(True))
+            .order_by(ResellProduct.description.asc())
+            .all()
+        )
     return {
         "customers": [{"id": str(c.id), "name": c.name, "code": getattr(c, "code", None)} for c in customers],
+        "resell_products": [
+            {
+                "id": str(r.id),
+                "description": str(r.description),
+                "unit_price": float(r.unit_price) if r.unit_price is not None else 0.0,
+            }
+            for r in resell_products
+        ],
         # legacy field (kept so older clients can still render a version dropdown)
         "versions": [
             {
@@ -244,6 +295,7 @@ async def show_order(order_id: str):
             item_finish_mode = iden.get("finish_mode")
             dto.items.append(
                 {
+                    "line_kind": "product",
                     "id": str(oi.id),
                     "job_sheet_id": str(js.id),
                     "job_no": js.job_no,
@@ -258,6 +310,34 @@ async def show_order(order_id: str):
                     "quantity_unit": js.quantity_unit,
                     "rate": float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None,
                     "total_price": float(js.line_total) if getattr(js, "line_total", None) is not None else None,
+                }
+            )
+        resell_rows = (
+            db.query(OrderResellLine)
+            .filter(OrderResellLine.order_id == str(o.id))
+            .order_by(OrderResellLine.id.asc())
+            .all()
+        )
+        for ln in resell_rows:
+            dto.items.append(
+                {
+                    "line_kind": "resell",
+                    "id": str(ln.id),
+                    "resell_line_id": str(ln.id),
+                    "resell_product_id": str(ln.resell_product_id),
+                    "job_sheet_id": None,
+                    "job_no": None,
+                    "product_id": str(ln.resell_product_id),
+                    "product_code": "Resell",
+                    "product_name": str(ln.description_snapshot),
+                    "product_version_id": None,
+                    "version_number": None,
+                    "finish_mode": None,
+                    "due_date": (str(ln.due_date) if getattr(ln, "due_date", None) is not None else None),
+                    "quantity_value": float(ln.quantity_value),
+                    "quantity_unit": str(ln.quantity_unit or "ea"),
+                    "rate": float(ln.unit_rate) if getattr(ln, "unit_rate", None) is not None else None,
+                    "total_price": float(ln.line_total) if getattr(ln, "line_total", None) is not None else None,
                 }
             )
         if changed_items:

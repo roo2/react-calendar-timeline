@@ -214,6 +214,7 @@ class Order(Base):
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order")
+    resell_lines: Mapped[list["OrderResellLine"]] = relationship(back_populates="order")
 
 
 class SavedQuote(Base):
@@ -244,6 +245,41 @@ class OrderItem(Base):
     job_sheet_id: Mapped[str] = mapped_column(ForeignKey("job_sheets.id", ondelete="RESTRICT"), index=True)
 
     order: Mapped["Order"] = relationship(back_populates="items")
+
+
+class ResellProduct(Base):
+    """Catalog of non-manufactured lines resold on orders (e.g. cores, pallets)."""
+
+    __tablename__ = "resell_products"
+    __table_args__ = (Index("ix_resell_products_active", "active"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    lines: Mapped[list["OrderResellLine"]] = relationship(back_populates="resell_product")
+
+
+class OrderResellLine(Base):
+    """Order line for a resell / supplies catalog item (no job sheet)."""
+
+    __tablename__ = "order_resell_lines"
+    __table_args__ = (Index("ix_order_resell_lines_order", "order_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
+    resell_product_id: Mapped[str] = mapped_column(ForeignKey("resell_products.id", ondelete="RESTRICT"), nullable=False)
+    description_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity_value: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    quantity_unit: Mapped[str] = mapped_column(String(16), nullable=False, default="ea")
+    unit_rate: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    order: Mapped["Order"] = relationship(back_populates="resell_lines")
+    resell_product: Mapped["ResellProduct"] = relationship(back_populates="lines")
 
 
 class Job(Base):

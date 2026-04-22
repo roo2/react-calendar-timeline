@@ -18,6 +18,8 @@ export type OrderRow = {
 
 export type OrdersBootstrapCustomer = { id: string; name: string; code?: string | null }
 
+export type OrdersBootstrapResellProduct = { id: string; description: string; unit_price: number }
+
 type OrdersState = {
   list: {
     status: Status
@@ -39,13 +41,14 @@ type OrdersState = {
     status: Status
     error: string | null
     customers: OrdersBootstrapCustomer[] | null
+    resell_products: OrdersBootstrapResellProduct[] | null
   }
 }
 
 const initialState: OrdersState = {
   list: { status: 'idle', error: null, items: [], lastCustomerId: null },
   detail: { byId: {} },
-  bootstrap: { status: 'idle', error: null, customers: null },
+  bootstrap: { status: 'idle', error: null, customers: null, resell_products: null },
 }
 
 export const fetchOrders = createAsyncThunk(
@@ -64,8 +67,14 @@ export const fetchOrder = createAsyncThunk('orders/detail', async (orderId: stri
 })
 
 export const fetchOrdersBootstrap = createAsyncThunk('orders/bootstrap', async () => {
-  const res = await apiFetch<{ customers: OrdersBootstrapCustomer[] }>('/api/orders/bootstrap')
-  return { customers: Array.isArray(res.customers) ? res.customers : [] }
+  const res = await apiFetch<{
+    customers: OrdersBootstrapCustomer[]
+    resell_products?: OrdersBootstrapResellProduct[]
+  }>('/api/orders/bootstrap')
+  return {
+    customers: Array.isArray(res.customers) ? res.customers : [],
+    resell_products: Array.isArray(res.resell_products) ? res.resell_products : [],
+  }
 })
 
 export const publishOrder = createAsyncThunk('orders/publish', async (orderId: string) => {
@@ -81,6 +90,14 @@ export type CreateOrderBody = {
   status: string
   order_date?: string | null
   invoice_number?: string | null
+  resell_items?: Array<{
+    resell_product_id: string
+    quantity_value: number
+    quantity_unit?: string
+    due_date?: string | null
+    rate?: number | null
+    total_price?: number | null
+  }>
   items: Array<{
     product_id: string
     quantity_value: number
@@ -133,6 +150,41 @@ export const deleteOrderItem = createAsyncThunk(
   async (payload: { orderId: string; orderItemId: string }) => {
     const { orderId, orderItemId } = payload
     await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(orderItemId)}`, {
+      method: 'DELETE',
+    })
+    return { orderId }
+  },
+)
+
+export const addOrderResellItem = createAsyncThunk(
+  'orders/addResellItem',
+  async (payload: { orderId: string; body: Record<string, unknown> }) => {
+    const { orderId, body } = payload
+    await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/resell-items`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    return { orderId }
+  },
+)
+
+export const patchOrderResellItem = createAsyncThunk(
+  'orders/patchResellItem',
+  async (payload: { orderId: string; lineId: string; body: Record<string, unknown> }) => {
+    const { orderId, lineId, body } = payload
+    await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/resell-items/${encodeURIComponent(lineId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+    return { orderId }
+  },
+)
+
+export const deleteOrderResellItem = createAsyncThunk(
+  'orders/deleteResellItem',
+  async (payload: { orderId: string; lineId: string }) => {
+    const { orderId, lineId } = payload
+    await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/resell-items/${encodeURIComponent(lineId)}`, {
       method: 'DELETE',
     })
     return { orderId }
@@ -213,12 +265,14 @@ const slice = createSlice({
     b.addCase(fetchOrdersBootstrap.fulfilled, (s, a) => {
       s.bootstrap.status = 'succeeded'
       s.bootstrap.customers = a.payload.customers
+      s.bootstrap.resell_products = a.payload.resell_products
       s.bootstrap.error = null
     })
     b.addCase(fetchOrdersBootstrap.rejected, (s, a) => {
       s.bootstrap.status = 'failed'
       s.bootstrap.error = a.error.message || 'Failed to load order form data'
       s.bootstrap.customers = null
+      s.bootstrap.resell_products = null
     })
 
     b.addCase(publishOrder.fulfilled, (s, a) => {

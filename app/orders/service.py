@@ -11,15 +11,24 @@ from app.db.session import SessionLocal
 from app.db.models.domain import (
     Order as OrderModel,
     OrderItem as OrderItemModel,
+    OrderResellLine,
     Job as JobModel,
     Customer,
     ProductVersion,
     JobSheet,
+    ResellProduct,
 )
 from app.db.models.enums import OrderStatus, JobStatus
 from app.exceptions import DomainError
 from app.job_context import ensure_scheduling_job_for_job_sheet
-from app.orders.schemas import CreateOrderRequest, CreateJobRequest, CreateOrderItemRequest, UpdateOrderRequest
+from app.orders.schemas import (
+    CreateOrderRequest,
+    CreateJobRequest,
+    CreateOrderItemRequest,
+    CreateResellOrderLineRequest,
+    UpdateOrderRequest,
+    UpdateResellOrderLineRequest,
+)
 from app.job_sheets import service as job_sheets_service
 
 
@@ -64,6 +73,33 @@ def _job_sheet_extras_from_order_item(it: Any) -> dict[str, Any]:
     return extra
 
 
+def _add_resell_line_core(db, order_id: str, item: CreateResellOrderLineRequest) -> OrderResellLine:
+    rp = db.get(ResellProduct, str(item.resell_product_id))
+    if not rp or not bool(rp.active):
+        raise DomainError("Resell product not found or inactive")
+    qty = float(item.quantity_value)
+    rate = float(item.rate) if item.rate is not None else float(rp.unit_price)
+    if item.total_price is not None:
+        total = float(item.total_price)
+    else:
+        total = qty * rate
+    line = OrderResellLine(
+        id=str(uuid.uuid4()),
+        order_id=str(order_id),
+        resell_product_id=str(rp.id),
+        description_snapshot=str(rp.description),
+        quantity_value=qty,
+        quantity_unit=str(item.quantity_unit or "ea"),
+        unit_rate=rate,
+        line_total=total,
+        due_date=item.due_date,
+    )
+    db.add(line)
+    db.flush()
+    db.refresh(line)
+    return line
+
+
 def _next_job_code(db, order_id: str) -> int:
     current = db.scalar(select(func.max(JobModel.job_code)).where(JobModel.order_id == str(order_id)))
     return int(current or 0) + 1
@@ -92,8 +128,9 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
         customer_id = str(payload.customer_id)
         quote_id = str(payload.quote_id) if payload.quote_id else None
 
-        if not payload.items:
-            raise DomainError("At least one order line (job sheet) is required")
+        resell_items = list(payload.resell_items or [])
+        if not payload.items and not resell_items:
+            raise DomainError("At least one order line is required")
 
         _ensure_customer_exists(db, customer_id)
 
@@ -141,6 +178,10 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
             db.add(oi)
 
         db.flush()
+        for rit in resell_items:
+            _add_resell_line_core(db, str(order.id), rit)
+
+        db.flush()
         for js in created_job_sheets:
             ensure_scheduling_job_for_job_sheet(db, str(js.id))
         db.refresh(order)
@@ -158,6 +199,7 @@ def get_detail(order_id: str) -> Optional[OrderModel]:
             select(OrderModel)
             .options(joinedload(OrderModel.jobs))
             .options(joinedload(OrderModel.items))
+            .options(joinedload(OrderModel.resell_lines))
             .options(joinedload(OrderModel.customer))
             .where(OrderModel.id == str(order_id))
         )
@@ -309,4 +351,76 @@ def remove_order_item(order_id: str, order_item_id: str) -> None:
             o.product_version_id = None
         db.add(o)
         db.flush()
+
+
+def add_order_resell_line(order_id: str, item: CreateResellOrderLineRequest, *, created_by: str) -> OrderResellLine:
+    _ = created_by
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be edited")
+        return _add_resell_line_core(db, str(o.id), item)
+
+
+def remove_order_resell_line(order_id: str, line_id: str) -> None:
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+            uuid.UUID(str(line_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be edited")
+        ln = db.get(OrderResellLine, str(line_id))
+        if not ln or str(ln.order_id) != str(o.id):
+            raise DomainError("Order line not found")
+        db.delete(ln)
+        db.flush()
+
+
+def update_order_resell_line(order_id: str, line_id: str, payload: UpdateResellOrderLineRequest) -> OrderResellLine:
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+            uuid.UUID(str(line_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        if o.status != OrderStatus.DRAFT:
+            raise DomainError("Only draft orders can be edited")
+        ln = db.get(OrderResellLine, str(line_id))
+        if not ln or str(ln.order_id) != str(o.id):
+            raise DomainError("Order line not found")
+        data = payload.model_dump(exclude_unset=True)
+        if "quantity_value" in data and data["quantity_value"] is not None:
+            ln.quantity_value = float(data["quantity_value"])
+        if "quantity_unit" in data and data["quantity_unit"] is not None:
+            ln.quantity_unit = str(data["quantity_unit"])
+        if "due_date" in data:
+            ln.due_date = data["due_date"]
+        if "rate" in data:
+            ln.unit_rate = float(data["rate"]) if data["rate"] is not None else None
+        if "total_price" in data and data["total_price"] is not None:
+            ln.line_total = float(data["total_price"])
+        elif "total_price" in data and data.get("total_price") is None:
+            ln.line_total = None
+        if "total_price" not in data:
+            ur = ln.unit_rate
+            if ur is not None:
+                ln.line_total = float(ln.quantity_value) * float(ur)
+        db.add(ln)
+        db.flush()
+        db.refresh(ln)
+        return ln
 

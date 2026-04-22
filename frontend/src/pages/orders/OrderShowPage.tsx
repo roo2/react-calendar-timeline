@@ -86,7 +86,7 @@ export function OrderShowPage() {
       setPublishing(true)
       await dispatch(publishOrder(orderId)).unwrap()
     } catch (e) {
-      setPublishErr(e instanceof Error ? e.message : 'Failed to publish order')
+      setPublishErr(e instanceof Error ? e.message : 'Failed to confirm order')
     } finally {
       setPublishing(false)
     }
@@ -119,7 +119,7 @@ export function OrderShowPage() {
         )}
         {canPublish && order.status === 'draft' && (
           <Button variant="contained" onClick={onPublish} disabled={publishing}>
-            {publishing ? 'Publishing…' : 'Publish Order'}
+            {publishing ? 'Confirming…' : 'Confirm Order'}
           </Button>
         )}
       </Box>

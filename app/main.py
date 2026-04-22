@@ -230,6 +230,16 @@ if job_sheets_router is not None:
 
 app.include_router(quotes_router)
 app.include_router(admin_ratecards_api_router)
+try:
+    from app.resell_products.routes import router as resell_admin_router
+    from app.resell_products.routes import public_router as resell_public_router
+except Exception:  # pragma: no cover
+    resell_admin_router = None
+    resell_public_router = None
+if resell_admin_router is not None:
+    app.include_router(resell_admin_router)
+if resell_public_router is not None:
+    app.include_router(resell_public_router)
 app.include_router(rate_cards_router)
 if orders_router is not None:
     app.include_router(orders_router)

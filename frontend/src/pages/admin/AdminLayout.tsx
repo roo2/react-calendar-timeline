@@ -11,6 +11,7 @@ const items = [
   { to: '/admin/tools', label: 'Tools' },
   { to: '/admin/conversion', label: 'Packing / Conversion' },
   { to: '/admin/packaging', label: 'Shipping / Pallets' },
+  { to: '/admin/resell-products', label: 'Resell / supplies' },
   { to: '/admin/production-calendar', label: 'Production hours' },
 ]
 

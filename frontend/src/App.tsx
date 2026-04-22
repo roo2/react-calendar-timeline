@@ -50,6 +50,9 @@ const ConversionAdminPage = lazy(async () => ({ default: (await import('./pages/
 const PrintingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PrintingAdminPage')).PrintingAdminPage }))
 const CoresAdminPage = lazy(async () => ({ default: (await import('./pages/admin/CoresAdminPage')).CoresAdminPage }))
 const PackagingAdminPage = lazy(async () => ({ default: (await import('./pages/admin/PackagingAdminPage')).PackagingAdminPage }))
+const ResellProductsAdminPage = lazy(async () => ({
+  default: (await import('./pages/admin/ResellProductsAdminPage')).ResellProductsAdminPage,
+}))
 const ProductionCalendarAdminPage = lazy(async () => ({
   default: (await import('./pages/admin/ProductionCalendarAdminPage')).ProductionCalendarAdminPage,
 }))
@@ -297,6 +300,14 @@ function App() {
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <PackagingAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="resell-products"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <ResellProductsAdminPage />
                     </Suspense>
                   }
                 />

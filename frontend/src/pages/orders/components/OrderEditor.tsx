@@ -10,6 +10,7 @@ import {
   Button,
   Dialog,
   DialogContent,
+  ListSubheader,
   MenuItem,
   Paper,
   Stack,
@@ -30,11 +31,14 @@ import {
 import { fetchProducts } from '../../../store/slices/productsSlice'
 import {
   addOrderItem,
+  addOrderResellItem,
   createOrder,
   deleteOrderItem,
+  deleteOrderResellItem,
   fetchOrder,
   fetchOrdersBootstrap,
   patchOrder,
+  patchOrderResellItem,
   publishOrderBare,
 } from '../../../store/slices/ordersSlice'
 import { updateJobSheet } from '../../../store/slices/jobSheetsSlice'
@@ -42,10 +46,11 @@ import { updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 type Mode = 'new' | 'edit'
 
 type Product = ProductListItem
-type QuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000'
+type QuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000' | 'ea'
 
 type OrderLine = {
   id: string // react key
+  line_kind?: 'product' | 'resell'
   product_id: string
   product_code: string
   product_name?: string | null
@@ -59,6 +64,8 @@ type OrderLine = {
   // edit-mode only
   order_item_id?: string
   job_sheet_id?: string
+  resell_line_id?: string
+  resell_product_id?: string
 }
 
 function normalizeFinishFromApi(v: unknown): 'Rolls' | 'Cartons' | null {
@@ -87,12 +94,32 @@ function jobSheetIdFromApi(raw: unknown): string {
 }
 
 function lineFromApiItem(it: any): OrderLine {
+  if (it.line_kind === 'resell') {
+    return {
+      id: String(it.id),
+      line_kind: 'resell',
+      order_item_id: String(it.id),
+      resell_line_id: String(it.resell_line_id || it.id),
+      resell_product_id: String(it.resell_product_id || ''),
+      job_sheet_id: '',
+      product_id: String(it.resell_product_id || it.product_id || ''),
+      product_code: String(it.product_code || 'Resell'),
+      product_name: (it.product_name as string | null | undefined) ?? null,
+      due_date: String(it.due_date || ''),
+      finish_mode: null,
+      quantity_unit: normalizeQuantityUnitFromApi(it.quantity_unit as string | undefined, null),
+      quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
+      rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
+      total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
+    }
+  }
   let finish = normalizeFinishFromApi(it.finish_mode)
   const rawU = String(it.quantity_unit || '').toLowerCase()
   if (!finish && rawU === 'cartons') finish = 'Cartons'
   if (!finish && rawU === 'rolls') finish = 'Rolls'
   return {
     id: String(it.id),
+    line_kind: 'product',
     order_item_id: String(it.id),
     job_sheet_id: jobSheetIdFromApi(it.job_sheet_id ?? (it as { jobSheetId?: unknown }).jobSheetId),
     product_id: String(it.product_id),
@@ -115,7 +142,8 @@ function finishModeForProduct(p: Product): 'Rolls' | 'Cartons' | null {
 }
 
 /** When finish is unknown, treat as Rolls so we do not offer Carton until spec is known. */
-function unitChoices(finish: 'Rolls' | 'Cartons' | null | undefined): QuantityUnit[] {
+function unitChoices(finish: 'Rolls' | 'Cartons' | null | undefined, lineKind?: 'product' | 'resell'): QuantityUnit[] {
+  if (lineKind === 'resell') return ['ea']
   const f = finish === 'Cartons' ? 'Cartons' : 'Rolls'
   if (f === 'Cartons') return ['kg', 'cartons', '1000']
   return ['kg', 'rolls', '1000']
@@ -250,6 +278,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 ...prev,
                 {
                   id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                  line_kind: 'product',
                   product_id: args.product_id,
                   product_code: args.product_code,
                   product_name: args.product_name ?? null,
@@ -275,6 +304,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (!customerId || productList.lastCustomerId !== customerId) return []
     return productList.items as Product[]
   }, [customerId, productList.items, productList.lastCustomerId])
+  const resellCatalog = ordersBootstrap.resell_products || []
   const loadingProducts = Boolean(customerId && productList.status === 'loading')
   const bootstrapErr = ordersBootstrap.status === 'failed' ? ordersBootstrap.error : null
   const productListErr =
@@ -427,6 +457,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setItems((prev) => {
       let changed = false
       const next = prev.map((l) => {
+        if (l.line_kind === 'resell') return l
         if (l.finish_mode) return l
         const p = plist.find((x) => x.id === l.product_id)
         const fm = finishModeForProduct(p as Product)
@@ -462,6 +493,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       ...prev,
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        line_kind: 'product',
         product_id: p.id,
         product_code: p.code,
         product_name: p.description || null,
@@ -474,6 +506,57 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       },
     ])
     setProductId('')
+  }
+
+  function addResellToItemsLocal(rp: { id: string; description: string; unit_price: number }) {
+    const rate = Number.isFinite(rp.unit_price) ? String(rp.unit_price) : ''
+    setItems((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        line_kind: 'resell',
+        resell_product_id: rp.id,
+        product_id: rp.id,
+        product_code: 'Resell',
+        product_name: rp.description,
+        due_date: defaultDueDate(),
+        finish_mode: null,
+        quantity_unit: 'ea',
+        quantity_value: '1',
+        rate,
+        total_price: '',
+      },
+    ])
+    setProductId('')
+  }
+
+  async function addResellToOrder(rp: { id: string; description: string; unit_price: number }) {
+    if (!orderId) return
+    try {
+      setErr(null)
+      setSaving(true)
+      await dispatch(
+        addOrderResellItem({
+          orderId,
+          body: {
+            resell_product_id: rp.id,
+            quantity_value: 1,
+            quantity_unit: 'ea',
+            due_date: defaultDueDate(),
+            rate: Number.isFinite(rp.unit_price) ? rp.unit_price : undefined,
+          },
+        }),
+      ).unwrap()
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
+      setItems(nextItems)
+      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to add resell line')
+    } finally {
+      setSaving(false)
+      setProductId('')
+    }
   }
 
   async function addSelectedProductToOrder(nextProductId: string) {
@@ -528,9 +611,12 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (saving || publishing) return false
     if (items.length === 0) return false
     return items.every((it) => {
-      if (!it.product_id) return false
       const q = Number(it.quantity_value || '0')
-      return Number.isFinite(q) && q > 0 && !!it.quantity_unit
+      if (!Number.isFinite(q) || q <= 0 || !it.quantity_unit) return false
+      if (it.line_kind === 'resell') {
+        return !!it.resell_product_id?.trim()
+      }
+      return !!it.product_id
     })
   }, [customerId, items, saving, publishing])
 
@@ -552,13 +638,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setErr(null)
     setSaving(true)
     try {
+      const productLines = items.filter((it) => it.line_kind !== 'resell')
+      const resellLines = items.filter((it) => it.line_kind === 'resell')
       const res = await dispatch(
         createOrder({
           customer_id: customerId,
           status: 'draft',
           ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
           ...(orderDate ? { order_date: orderDate } : {}),
-          items: items.map((it) => {
+          items: productLines.map((it) => {
             const rate = parseOptionalMoney(it.rate)
             const totalPrice = computedLineTotal(it)
             return {
@@ -570,6 +658,22 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               ...(totalPrice != null ? { total_price: totalPrice } : {}),
             }
           }),
+          ...(resellLines.length
+            ? {
+                resell_items: resellLines.map((it) => {
+                  const rate = parseOptionalMoney(it.rate)
+                  const totalPrice = computedLineTotal(it)
+                  return {
+                    resell_product_id: String(it.resell_product_id || ''),
+                    due_date: it.due_date || null,
+                    quantity_unit: 'ea',
+                    quantity_value: Number(it.quantity_value || '0'),
+                    ...(rate != null ? { rate } : {}),
+                    ...(totalPrice != null ? { total_price: totalPrice } : {}),
+                  }
+                }),
+              }
+            : {}),
         }),
       ).unwrap()
       setDirty(false)
@@ -617,6 +721,24 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       })
 
       for (const it of updates) {
+        if (it.line_kind === 'resell') {
+          const rid = it.resell_line_id || it.order_item_id
+          if (!rid) continue
+          await dispatch(
+            patchOrderResellItem({
+              orderId,
+              lineId: rid,
+              body: {
+                quantity_value: Number(it.quantity_value || '0'),
+                quantity_unit: 'ea',
+                due_date: it.due_date || null,
+                rate: parseOptionalMoney(it.rate),
+                total_price: computedLineTotal(it),
+              },
+            }),
+          ).unwrap()
+          continue
+        }
         if (!it.job_sheet_id) continue
         const qv = Number(it.quantity_value || '0')
         const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
@@ -660,13 +782,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setPublishing(true)
     try {
       if (mode === 'new') {
+        const productLines = items.filter((it) => it.line_kind !== 'resell')
+        const resellLines = items.filter((it) => it.line_kind === 'resell')
         const res = await dispatch(
           createOrder({
             customer_id: customerId,
             status: 'draft',
             ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
             ...(orderDate ? { order_date: orderDate } : {}),
-            items: items.map((it) => {
+            items: productLines.map((it) => {
               const rate = parseOptionalMoney(it.rate)
               const totalPrice = computedLineTotal(it)
               return {
@@ -678,6 +802,22 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 ...(totalPrice != null ? { total_price: totalPrice } : {}),
               }
             }),
+            ...(resellLines.length
+              ? {
+                  resell_items: resellLines.map((it) => {
+                    const rate = parseOptionalMoney(it.rate)
+                    const totalPrice = computedLineTotal(it)
+                    return {
+                      resell_product_id: String(it.resell_product_id || ''),
+                      due_date: it.due_date || null,
+                      quantity_unit: 'ea',
+                      quantity_value: Number(it.quantity_value || '0'),
+                      ...(rate != null ? { rate } : {}),
+                      ...(totalPrice != null ? { total_price: totalPrice } : {}),
+                    }
+                  }),
+                }
+              : {}),
           }),
         ).unwrap()
         await dispatch(publishOrderBare(res.order_id)).unwrap()
@@ -691,7 +831,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       setDirty(false)
       nav('/orders')
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to publish order')
+      setErr(e instanceof Error ? e.message : 'Failed to confirm order')
     } finally {
       setPublishing(false)
     }
@@ -704,7 +844,26 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       return
     }
     if (orderLocked) return
-    if (!orderId || !it.order_item_id) return
+    if (!orderId) return
+    if (it.line_kind === 'resell') {
+      const rid = it.resell_line_id || it.order_item_id
+      if (!rid) return
+      try {
+        setErr(null)
+        setSaving(true)
+        await dispatch(deleteOrderResellItem({ orderId, lineId: rid })).unwrap()
+        const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+        const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+        setItems(nextItems)
+        originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : 'Failed to remove line')
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
+    if (!it.order_item_id) return
     try {
       setErr(null)
       setSaving(true)
@@ -832,7 +991,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         value={it.quantity_unit}
                         onChange={(e) => {
                           const v = e.target.value as QuantityUnit
-                          const allowed = unitChoices(it.finish_mode)
+                          const allowed = unitChoices(it.finish_mode, it.line_kind)
                           const next = allowed.includes(v) ? v : allowed[0]
                           setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: next } : x)))
                           setDirty(true)
@@ -840,9 +999,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         sx={{ minWidth: 120 }}
                         disabled={saving || publishing || orderLocked}
                       >
-                        {unitChoices(it.finish_mode).map((u) => (
+                        {unitChoices(it.finish_mode, it.line_kind).map((u) => (
                           <MenuItem key={u} value={u}>
-                            {u === 'kg' ? 'KG' : u === 'rolls' ? 'Roll' : u === '1000' ? '1000' : 'Carton'}
+                            {u === 'kg'
+                              ? 'KG'
+                              : u === 'rolls'
+                                ? 'Roll'
+                                : u === '1000'
+                                  ? '1000'
+                                  : u === 'ea'
+                                    ? 'Each'
+                                    : 'Carton'}
                           </MenuItem>
                         ))}
                       </TextField>
@@ -869,7 +1036,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                     </TableCell>
                     <TableCell align="right">
                       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                        {canEditProduct && (
+                        {canEditProduct && it.line_kind !== 'resell' && (
                           <Button
                             size="small"
                             variant="text"
@@ -921,6 +1088,16 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                             setDirty(true)
                             return
                           }
+                          if (next.startsWith('resell:')) {
+                            const rid = next.slice('resell:'.length)
+                            const rp = resellCatalog.find((x) => x.id === rid)
+                            setProductId('')
+                            setDirty(true)
+                            if (!rp) return
+                            if (mode === 'new') addResellToItemsLocal(rp)
+                            else void addResellToOrder(rp)
+                            return
+                          }
                           setProductId(next)
                           setDirty(true)
                           if (!next) return
@@ -936,8 +1113,13 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         sx={{ minWidth: { xs: '100%', sm: 280 }, maxWidth: 480 }}
                       >
                         <MenuItem value="" disabled>
-                          {loadingProducts ? 'Loading…' : products.length ? 'Select product' : 'No products found'}
+                          {loadingProducts ? 'Loading…' : products.length || resellCatalog.length ? 'Select…' : 'No products found'}
                         </MenuItem>
+                        {products.length > 0 ? (
+                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
+                            Manufactured products
+                          </ListSubheader>
+                        ) : null}
                         {products.map((p) => (
                           <MenuItem key={p.id} value={p.id}>
                             {p.code}
@@ -945,6 +1127,16 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         ))}
                         <MenuItem divider />
                         <MenuItem value="__new_job_sheet__">New Job Sheet</MenuItem>
+                        {resellCatalog.length > 0 ? (
+                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
+                            Resell / supplies
+                          </ListSubheader>
+                        ) : null}
+                        {resellCatalog.map((rp) => (
+                          <MenuItem key={rp.id} value={`resell:${rp.id}`}>
+                            {rp.description}
+                          </MenuItem>
+                        ))}
                       </TextField>
                     </Stack>
                   </TableCell>
@@ -984,7 +1176,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             )}
             {canPublish && (mode === 'new' || orderStatus === 'draft') && (
               <Button variant="contained" color="success" onClick={publishOrder} disabled={!canPublishNow}>
-                {publishing ? 'Publishing…' : 'Publish Order'}
+                {publishing ? 'Confirming…' : 'Confirm Order'}
               </Button>
             )}
           </Box>

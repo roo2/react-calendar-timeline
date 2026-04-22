@@ -10,6 +10,23 @@ from app.job_sheets.schemas import QuantityUnit
 from pydantic import BaseModel, Field
 
 
+class CreateResellOrderLineRequest(BaseModel):
+    resell_product_id: uuid.UUID
+    quantity_value: Decimal = Field(gt=0)
+    quantity_unit: str = Field(default="ea", max_length=16)
+    due_date: Optional[date] = None
+    rate: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+
+
+class UpdateResellOrderLineRequest(BaseModel):
+    quantity_value: Optional[Decimal] = Field(default=None, gt=0)
+    quantity_unit: Optional[str] = Field(default=None, max_length=16)
+    due_date: Optional[date] = None
+    rate: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
+
+
 class CreateOrderItemRequest(BaseModel):
     product_id: uuid.UUID
     due_date: Optional[date] = None
@@ -27,6 +44,7 @@ class CreateOrderItemRequest(BaseModel):
 class CreateOrderRequest(BaseModel):
     customer_id: uuid.UUID
     items: List[CreateOrderItemRequest] = []
+    resell_items: List[CreateResellOrderLineRequest] = []
     quote_id: Optional[uuid.UUID] = None  # optional for MVP creation from approved quote
     # Orders are always created as DRAFT; publishing is a separate action.
     status: str = "draft"
