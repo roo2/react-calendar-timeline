@@ -9,6 +9,7 @@ import { buildQuickQuoteInputsFromSpec } from '../../utils/specToQuoteInputs'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 import {
   coerceQtyTypeForFinishMode,
+  qtyTypeFromPersisted,
   type FinishMode,
   type QtyType,
 } from '../../utils/quantityRollFields'
@@ -129,7 +130,10 @@ export function JobSheetShowPage() {
       const spec = ensureSpec(data.spec_payload)
       const js = data.job_sheet
       const fm: FinishMode = spec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-      const rawQt = (js.qty_type as QtyType) || inferQtyTypeFromUnit(js.quantity_unit)
+      const rawQt =
+        js.qty_type != null && String(js.qty_type).trim()
+          ? qtyTypeFromPersisted(String(js.qty_type))
+          : inferQtyTypeFromUnit(js.quantity_unit)
       const pt = String(spec.identity?.product_type || 'Bag')
       const lenRaw = String(spec.dimensions?.length_units || '')
       const continuousLength =

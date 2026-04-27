@@ -18,7 +18,7 @@ from app.integrations.myob.item_selling_uom_cache import (
     rebuild_myob_item_selling_uom_cache,
 )
 from app.integrations.myob.order_import import import_one_myob_sale_order
-from app.integrations.myob.order_import_batch import import_myob_sale_orders_list_page
+from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
 from app.integrations.myob.service import (
     MyobApiError,
     MyobConfigError,
@@ -207,6 +207,17 @@ class MyobImportOrdersBatchBody(BaseModel):
 
     top: int = Field(50, ge=1, le=1000, description="Number of orders to list and import from this page (default 50).")
     skip: int = Field(0, ge=0, le=10_000_000, description="OData $skip — offset into MYOB’s ordered list (0 = first page).")
+
+
+class MyobImportAllOrdersBody(BaseModel):
+    """Page through ``GET …/Sale/Order`` and import every row (OData ``NextPageLink`` or ``$skip`` when next link is absent)."""
+
+    top: int = Field(
+        200,
+        ge=1,
+        le=1000,
+        description="List page size ($top) while walking all sale orders; MYOB caps at 1000.",
+    )
 
 
 class MyobSaleOrderFetchBody(BaseModel):
@@ -408,6 +419,32 @@ async def myob_import_orders_from_list(_identity: SysAdminIdentity, body: MyobIm
     with SessionLocal() as db:
         try:
             return import_myob_sale_orders_list_page(db, top=body.top, skip=body.skip)
+        except MyobConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except MyobOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+        except MyobApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.post("/orders/import-all", dependencies=[Depends(csrf_protect())])
+async def myob_import_all_orders(_identity: SysAdminIdentity, body: MyobImportAllOrdersBody):
+    """
+    Import every MYOB sale order: list ``Sale/Order`` with OData paging until no more rows, then import
+    each (same behaviour as ``/orders/import-from-list`` per page).
+
+    Customers must already be synced from MYOB. Per-order failures are returned in ``errors``; successful
+    imports commit individually. If ``truncated`` is true, raise the page cap or re-run later.
+    """
+    del _identity
+    if not myob_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MYOB is not configured (set MYOB_APP_KEY and MYOB_APP_SECRET).",
+        )
+    with SessionLocal() as db:
+        try:
+            return import_all_myob_sale_orders(db, top=body.top)
         except MyobConfigError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
         except MyobOAuthError as e:

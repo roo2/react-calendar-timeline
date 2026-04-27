@@ -394,7 +394,7 @@ def _infer_qty_fields_for_order_line(
             nr = 1
     npu: Optional[float]
     if qt == "units":
-        # Order line unit "1000": quantity_value is thousands of products (same as legacy units_per_1000).
+        # Order line unit "1000": quantity_value is thousands of products.
         npu = float(quantity_value) * 1000.0 if qu == "1000" else float(quantity_value)
     else:
         npu = None

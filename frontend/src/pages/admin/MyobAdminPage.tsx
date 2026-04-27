@@ -75,6 +75,21 @@ type MyobImportFromListResult = {
   errors: Array<{ order_uid?: string | null; order_uri?: string | null; error: string }>
 }
 
+type MyobImportAllResult = {
+  ok: boolean
+  pages_fetched: number
+  truncated: boolean
+  top: number
+  first_list_request_url: string | null
+  last_list_request_url: string | null
+  imported: number
+  skipped: number
+  failed: number
+  results: MyobImportOneResult[]
+  skipped_results: unknown[]
+  errors: Array<{ order_uid?: string | null; order_uri?: string | null; error: string }>
+}
+
 type MyobItemUomSummary = {
   row_count: number
   by_selling_unit_of_measure: Array<{ selling_unit_of_measure: string | null; count: number }>
@@ -110,6 +125,8 @@ export function MyobAdminPage() {
   const [invoiceItemsPreview, setInvoiceItemsPreview] = useState<MyobSaleInvoiceItemsListPreview | null>(null)
   const [importOneResult, setImportOneResult] = useState<MyobImportOneResult | null>(null)
   const [importBatchResult, setImportBatchResult] = useState<MyobImportFromListResult | null>(null)
+  const [importAllResult, setImportAllResult] = useState<MyobImportAllResult | null>(null)
+  const [importAllTop, setImportAllTop] = useState(200)
   const [arbitraryGetUrl, setArbitraryGetUrl] = useState('')
   const [arbitraryGetResult, setArbitraryGetResult] = useState<{ request_url: string; myob: unknown } | null>(null)
   const [itemUomSummary, setItemUomSummary] = useState<MyobItemUomSummary | null>(null)
@@ -191,6 +208,7 @@ export function MyobAdminPage() {
     setInvoiceItemsPreview(null)
     setImportOneResult(null)
     setImportBatchResult(null)
+    setImportAllResult(null)
     setArbitraryGetResult(null)
     setItemUomSummary(null)
     setItemUomRebuildResult(null)
@@ -381,6 +399,7 @@ export function MyobAdminPage() {
     setBusy('import-batch-50')
     setErr(null)
     setImportBatchResult(null)
+    setImportAllResult(null)
     try {
       const data = await apiFetch<MyobImportFromListResult>('/api/myob/orders/import-from-list', {
         method: 'POST',
@@ -389,6 +408,32 @@ export function MyobAdminPage() {
       setImportBatchResult(data)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'MYOB batch order import failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doImportAllSaleOrders() {
+    if (
+      !window.confirm(
+        'Import every MYOB sale order? The server will page through GET …/Sale/Order (OData) until there are no more rows, importing each order the same way as a single import. Customers must already be synced from MYOB. This can take many minutes and perform a large number of API calls. Continue?',
+      )
+    ) {
+      return
+    }
+    setBusy('import-all-orders')
+    setErr(null)
+    setImportAllResult(null)
+    setImportBatchResult(null)
+    try {
+      const top = Number.isFinite(importAllTop) ? Math.min(1000, Math.max(1, importAllTop)) : 200
+      const data = await apiFetch<MyobImportAllResult>('/api/myob/orders/import-all', {
+        method: 'POST',
+        body: JSON.stringify({ top }),
+      })
+      setImportAllResult(data)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'MYOB import all orders failed')
     } finally {
       setBusy(null)
     }
@@ -415,6 +460,7 @@ export function MyobAdminPage() {
     setBusy('import-one-order')
     setErr(null)
     setImportOneResult(null)
+    setImportAllResult(null)
     try {
       const body: { order_uri?: string; order_uid?: string } = {}
       if (uri) body.order_uri = uri
@@ -503,6 +549,52 @@ export function MyobAdminPage() {
               }}
             >
               {JSON.stringify(importBatchResult.errors, null, 2)}
+            </Box>
+          ) : null}
+        </Alert>
+      ) : null}
+      {importAllResult ? (
+        <Alert
+          severity={
+            importAllResult.truncated || importAllResult.failed > 0 || !importAllResult.ok ? 'warning' : 'success'
+          }
+          sx={{ mb: 2 }}
+        >
+          Import all: {importAllResult.imported} imported, {importAllResult.skipped} skipped, {importAllResult.failed}{' '}
+          failed — {importAllResult.pages_fetched} MYOB list page(s), $top={importAllResult.top}.
+          {importAllResult.truncated ? (
+            <Typography component="span" variant="body2" display="block" sx={{ mt: 0.5 }}>
+              Stopped at the server&apos;s maximum page count; run again or raise the cap in code if more orders remain.
+            </Typography>
+          ) : null}
+          {importAllResult.results[0] ? (
+            <>
+              {' '}
+              <Button
+                size="small"
+                component={RouterLink}
+                to={`/orders/${encodeURIComponent(importAllResult.results[0].order_id)}`}
+                variant="outlined"
+                sx={{ ml: 1 }}
+              >
+                Open first imported order
+              </Button>
+            </>
+          ) : null}
+          {importAllResult.errors.length > 0 ? (
+            <Box
+              component="pre"
+              sx={{
+                mt: 1,
+                p: 1,
+                maxHeight: 200,
+                overflow: 'auto',
+                bgcolor: 'action.hover',
+                fontSize: 12,
+                borderRadius: 0.5,
+              }}
+            >
+              {JSON.stringify(importAllResult.errors, null, 2)}
             </Box>
           ) : null}
         </Alert>
@@ -632,6 +724,31 @@ export function MyobAdminPage() {
               >
                 {busy === 'import-batch-50' ? 'Importing orders…' : 'Import first 50 sale orders'}
               </Button>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
+                <TextField
+                  label="Import-all $top"
+                  type="number"
+                  size="small"
+                  value={importAllTop}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10)
+                    if (Number.isNaN(n)) return
+                    setImportAllTop(Math.min(1000, Math.max(1, n)))
+                  }}
+                  inputProps={{ min: 1, max: 1000 }}
+                  sx={{ width: 140 }}
+                  helperText="1–1000 per list page"
+                />
+                <Button
+                  variant="contained"
+                  color="warning"
+                  onClick={() => void doImportAllSaleOrders()}
+                  disabled={!status?.connected || busy !== null}
+                  sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}
+                >
+                  {busy === 'import-all-orders' ? 'Importing all orders…' : 'Import all sale orders from MYOB'}
+                </Button>
+              </Stack>
               <Button
                 variant="outlined"
                 color="warning"

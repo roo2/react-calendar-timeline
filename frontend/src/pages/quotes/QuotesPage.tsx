@@ -38,7 +38,7 @@ import { MaterialsColoursAndAdditives } from '../../components/MaterialsColoursA
 import { DefaultSelectField } from '../../components/DefaultSelectField'
 import { productTypeCanHaveGusset } from '../../utils/specCompat'
 import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
-import { computeWeightPerRollDisplay } from '../../utils/quantityRollFields'
+import { computeWeightPerRollDisplay, qtyTypeFromPersisted } from '../../utils/quantityRollFields'
 import { getDisplayProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   computeAppliedExtrusionWasteFactors,
@@ -306,10 +306,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.core_type != null) setCoreType(p.core_type)
     if (p.roll_weight_billing != null) setRollWeightBilling(p.roll_weight_billing)
     if (p.pallet_type != null) setPalletType(p.pallet_type)
-    const qtyTypeHydrated = (p.qtyType ?? (p as { qty_type?: QtyType }).qty_type) as QtyType | undefined
-    if (qtyTypeHydrated != null) {
-      // Legacy "1000 (X)" mode: same calculator as total units; order line still uses ×1000 on convert.
-      setQtyType(qtyTypeHydrated === 'units_per_1000' ? 'units' : qtyTypeHydrated)
+    const qtyRaw = p.qtyType ?? (p as { qty_type?: string }).qty_type
+    if (qtyRaw != null && String(qtyRaw).trim()) {
+      setQtyType(qtyTypeFromPersisted(String(qtyRaw)))
     }
     if (p.length != null) setLength(p.length)
     const luRaw = p.lengthUnits ?? (p as { length_units?: string }).length_units
@@ -511,7 +510,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
   const calcPayload = useMemo(() => {
     const qty: any = {}
-    if (qtyType === 'units' || qtyType === 'units_per_1000') qty.units = numUnitsNum
+    if (qtyType === 'units') qty.units = numUnitsNum
     if (qtyType === 'kg') {
       qty.total_kg = totalKgNum
       if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
@@ -533,14 +532,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       qty.rolls = numRollsNum
     }
 
-    if ((qtyType === 'units' || qtyType === 'units_per_1000') && numUnitsNum > 0 && baseLengthMm > 0) {
+    if ((qtyType === 'units') && numUnitsNum > 0 && baseLengthMm > 0) {
       // Provide total_m so printing/core costing can work for bag-style quotes.
       qty.total_m = (numUnitsNum * baseLengthMm) / 1000
     }
 
     // Continuous length + "total units": one counted unit = one roll (Rolls) or one carton worth of web (Cartons).
     // Populate rolls + total_kg so the calculator's reference mass is not null (avoids the 1m stub for kg/product).
-    if (isContinuousLength && (qtyType === 'units' || qtyType === 'units_per_1000') && numUnitsNum > 0) {
+    if (isContinuousLength && (qtyType === 'units') && numUnitsNum > 0) {
       if (finishMode === 'Rolls') {
         qty.rolls = numUnitsNum
         const perRollKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
@@ -693,24 +692,24 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const totalKgDisplay =
     qtyType === 'kg'
       ? totalKgNum
-      : qtyType === 'units' || qtyType === 'units_per_1000' || qtyType === 'rolls_units'
+      : qtyType === 'units' || qtyType === 'rolls_units'
         ? (derivedForDisplay?.derivedTotalKg ?? null)
         : qtyType === 'total_rolls'
           ? (numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : null)
           : null
   const unitsDisplay =
-    qtyType === 'units' || qtyType === 'units_per_1000'
+    qtyType === 'units'
       ? numUnitsNum
       : qtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0
         ? numRollsNum * unitsPerRollNum
         : (derivedForDisplay?.units != null ? derivedForDisplay.units : null)
   const rollsDisplay =
     finishMode === 'Rolls'
-      ? isContinuousLength && (qtyType === 'units' || qtyType === 'units_per_1000') && numUnitsNum > 0
+      ? isContinuousLength && (qtyType === 'units') && numUnitsNum > 0
         ? numUnitsNum
         : qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
           ? Math.round(totalKgNum / weightPerRollNum)
-          : (qtyType === 'units' || qtyType === 'units_per_1000') && derivedForDisplay?.derivedTotalKg != null && weightPerRollNum > 0
+          : (qtyType === 'units') && derivedForDisplay?.derivedTotalKg != null && weightPerRollNum > 0
             ? Math.round(derivedForDisplay.derivedTotalKg / weightPerRollNum)
             : numRollsNum
       : null
@@ -742,7 +741,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         ? numRollsNum
         : null
   const totalProductsCountForPerRoll =
-    qtyType === 'units' || qtyType === 'units_per_1000'
+    qtyType === 'units'
       ? numUnitsNum > 0
         ? numUnitsNum
         : null
@@ -759,28 +758,28 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       : totalProductsCountForPerRoll / rollCountForProductsPerRoll
 
   const totalKgEditable = qtyType === 'kg'
-  const unitsEditable = qtyType === 'units' || qtyType === 'units_per_1000'
+  const unitsEditable = qtyType === 'units'
   const rollsEditable = finishMode === 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')
   const weightPerRollEditable =
     finishMode === 'Rolls' &&
-    (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'units_per_1000' || qtyType === 'kg')
+    (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'kg')
 
   // Only show computed value when the inputs that drive it are set; otherwise keep showing the field's stored value (so changing Qty Type doesn't wipe the display).
   const haveDriverForTotalKg =
-    ((qtyType === 'units' || qtyType === 'units_per_1000') && numUnitsNum > 0) ||
+    ((qtyType === 'units') && numUnitsNum > 0) ||
     (qtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) ||
     (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
   const haveDriverForWeightPerRoll =
     finishMode === 'Rolls' &&
-    (numRollsNum > 0 || (isContinuousLength && (qtyType === 'units' || qtyType === 'units_per_1000') && numUnitsNum > 0)) &&
+    (numRollsNum > 0 || (isContinuousLength && (qtyType === 'units') && numUnitsNum > 0)) &&
     ((qtyType === 'kg' && totalKgNum > 0) ||
-      ((qtyType === 'units' || qtyType === 'units_per_1000') && numUnitsNum > 0) ||
+      ((qtyType === 'units') && numUnitsNum > 0) ||
       (qtyType === 'rolls_units' && unitsPerRollNum > 0))
 
   // Keep No. of units state in sync when it's computed (Total KG or Total Rolls mode), so switching to Units/Bags shows the value that was displayed instead of clearing it.
   // Continuous length on Rolls: total products = roll count from the calculator.
   useEffect(() => {
-    if (qtyType === 'units' || qtyType === 'units_per_1000' || qtyType === 'rolls_units') return
+    if (qtyType === 'units' || qtyType === 'rolls_units') return
     if (derivedForDisplay?.units == null) return
     const fromKgOrRollsMode =
       (qtyType === 'kg' && totalKgNum > 0) ||
@@ -1063,7 +1062,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       ? numRollsNum > 0 && weightPerRollNum > 0
       : qtyType === 'rolls_units'
         ? numRollsNum > 0 && unitsPerRollNum > 0
-        : qtyType === 'units' || qtyType === 'units_per_1000'
+        : qtyType === 'units'
           ? numUnitsNum > 0 &&
             (!isContinuousLength ||
               (finishMode === 'Rolls' && (weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)) ||
@@ -1084,12 +1083,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const missingForCalc = useMemo(() => {
     const missing: string[] = []
     if (!ratebook) missing.push('Pricing rates')
-    if ((qtyType === 'units' || qtyType === 'units_per_1000') && !(numUnitsNum > 0))
+    if ((qtyType === 'units') && !(numUnitsNum > 0))
       missing.push(
         `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
       )
     else if (
-      (qtyType === 'units' || qtyType === 'units_per_1000') &&
+      (qtyType === 'units') &&
       isContinuousLength &&
       finishMode === 'Rolls' &&
       numUnitsNum > 0 &&

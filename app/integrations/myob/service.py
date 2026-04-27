@@ -22,6 +22,8 @@ STATE_TTL = timedelta(minutes=10)
 MYOB_CUSTOMER_FETCH_MAX_PAGES = 5000
 # OData $top cap for MYOB list previews (Sale/Order, Sale/Invoice/Item, etc.); full import will paginate separately.
 MYOB_SALE_ORDER_LIST_MAX_TOP = 1000
+# Safety cap when paging Sale/Order for bulk import (GET-only).
+MYOB_SALE_ORDER_IMPORT_MAX_PAGES = 5000
 
 
 def _myob_accountright_api_host_ok(host: str) -> bool:

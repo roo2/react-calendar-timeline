@@ -40,6 +40,7 @@ import {
   resolveNumRollsForPersistence,
   resolveWeightPerRollForPersistence,
   validateJobSheetQuantityInputs,
+  qtyTypeFromPersisted,
   type FinishMode,
   type QtyType,
 } from '../../../utils/quantityRollFields'
@@ -283,8 +284,11 @@ export function ProductVersionEditor(props: {
     const isImportDraft = Boolean(js?.is_import_draft)
     let loadedSpec0 = ensureSpec(res.spec_payload)
     const rawQu = String(js?.quantity_unit || '').toLowerCase()
-    const rawQtHint = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
-    if (isImportDraft && (rawQu === 'rolls' || String(rawQtHint || '') === 'total_rolls')) {
+    const rawQt =
+      js?.qty_type != null && String(js.qty_type).trim()
+        ? qtyTypeFromPersisted(String(js.qty_type))
+        : inferQtyTypeFromUnit(js?.quantity_unit)
+    if (isImportDraft && (rawQu === 'rolls' || String(rawQt || '') === 'total_rolls')) {
       loadedSpec0 = {
         ...loadedSpec0,
         identity: { ...loadedSpec0.identity, finish_mode: 'Rolls' },
@@ -295,23 +299,21 @@ export function ProductVersionEditor(props: {
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setDueDate(js?.due_date || '')
     const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-    const rawQt = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
     const pt = String(loadedSpec0.identity?.product_type || 'Bag')
     const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
     const continuousLength =
       pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
     let qt: QtyType
     if (isImportDraft) {
-      const base = (rawQt && String(rawQt).trim() ? String(rawQt) : inferQtyTypeFromUnit(js?.quantity_unit)) as QtyType
-      if (continuousLength && base === 'rolls_units') {
+      if (continuousLength && rawQt === 'rolls_units') {
         qt = 'kg'
       } else {
-        qt = base === 'units_per_1000' ? 'units' : base
+        qt = rawQt
       }
     } else {
       qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
     }
-    let qtResolved: QtyType = qt === 'units_per_1000' ? 'units' : qt
+    let qtResolved: QtyType = qt
     if (isImportDraft && rawQu === 'rolls' && qtResolved === 'total_rolls') {
       qtResolved = 'rolls_units'
     }
@@ -324,16 +326,6 @@ export function ProductVersionEditor(props: {
     if (qtResolved === 'kg') {
       setTotalKg(String(js?.quantity_value ?? ''))
       setNumUnits('')
-      setUnitsPerRoll('')
-      setNumRolls(String(nrStored))
-      setWeightPerRoll(wpr)
-    } else if (qtResolved === 'units_per_1000') {
-      const abs =
-        js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))
-          ? Math.max(0, Math.round(Number(js.num_product_units)))
-          : Math.max(0, Math.round(Number(js?.quantity_value ?? 0) * 1000))
-      setNumUnits(abs > 0 ? String(abs) : '')
-      setTotalKg('')
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
@@ -463,7 +455,7 @@ export function ProductVersionEditor(props: {
           ? numRollsNum
           : null
     const totalProductsCountForPerRoll =
-      effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000'
+      effectiveQtyType === 'units'
         ? numUnitsNum > 0
           ? numUnitsNum
           : null
@@ -485,7 +477,7 @@ export function ProductVersionEditor(props: {
   }, [finishMode, rollsDisplay, numRollsNum, effectiveQtyType, numUnitsNum, unitsPerRollNum, derivedForDisplay?.units])
 
   const unitsDisplay = useMemo(() => {
-    if (effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000') return numUnitsNum
+    if (effectiveQtyType === 'units') return numUnitsNum
     if (effectiveQtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) return numRollsNum * unitsPerRollNum
     const u = derivedForDisplay?.units
     return u != null && Number.isFinite(Number(u)) ? Number(u) : null
@@ -498,14 +490,14 @@ export function ProductVersionEditor(props: {
   const weightPerRollEditable = edit.weightPerRollEditable && finishMode !== 'Cartons'
 
   const haveDriverForTotalKg =
-    ((effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000') && numUnitsNum > 0) ||
+    ((effectiveQtyType === 'units') && numUnitsNum > 0) ||
     (effectiveQtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) ||
     (effectiveQtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0)
   const haveDriverForWeightPerRoll =
     finishMode === 'Rolls' &&
     numRollsNum > 0 &&
     ((effectiveQtyType === 'kg' && totalKgNum > 0) ||
-      ((effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000') && numUnitsNum > 0) ||
+      ((effectiveQtyType === 'units') && numUnitsNum > 0) ||
       (effectiveQtyType === 'rolls_units' && unitsPerRollNum > 0))
 
   useEffect(() => {
@@ -524,11 +516,7 @@ export function ProductVersionEditor(props: {
 
   useEffect(() => {
     if (!jobSheetId && !embedded) return
-    if (
-      effectiveQtyType === 'units' ||
-      effectiveQtyType === 'units_per_1000' ||
-      effectiveQtyType === 'rolls_units'
-    )
+    if (effectiveQtyType === 'units' || effectiveQtyType === 'rolls_units')
       return
     if (derivedForDisplay?.units == null) return
     const fromKgOrRollsMode =
@@ -777,7 +765,7 @@ export function ProductVersionEditor(props: {
                 quantity_unit: oq.quantity_unit,
                 qty_type: effectiveQtyType,
                 num_product_units:
-                  effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000'
+                  effectiveQtyType === 'units'
                     ? numUnitsNum
                     : derivedForDisplay?.units != null
                       ? Math.round(Number(derivedForDisplay.units))
@@ -878,7 +866,7 @@ export function ProductVersionEditor(props: {
               quantity_unit: oq.quantity_unit,
               qty_type: effectiveQtyType,
               num_product_units:
-                effectiveQtyType === 'units' || effectiveQtyType === 'units_per_1000'
+                effectiveQtyType === 'units'
                   ? numUnitsNum
                   : derivedForDisplay?.units != null
                     ? Math.round(Number(derivedForDisplay.units))

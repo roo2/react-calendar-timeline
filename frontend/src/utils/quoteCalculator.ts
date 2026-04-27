@@ -317,7 +317,7 @@ function computeMaterialsMoqMinimumHint(
     return { kind: 'kg', minimumTotalKg: roundMoney(moqEffective) }
   }
 
-  if (qt === 'units' || qt === 'units_per_1000') {
+  if (qt === 'units') {
     const u = units != null && units > 0 ? units : null
     if (!u) return null
     const kgEach = compareKgForMoq / u
