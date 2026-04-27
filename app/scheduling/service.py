@@ -1585,6 +1585,8 @@ def add_job(
 
 		if job_sheet_id is not None:
 			job = ensure_scheduling_job_for_job_sheet(session, str(job_sheet_id))
+			if job is None:
+				raise DomainError("This job sheet is an import draft; complete the job sheet before scheduling")
 			job_id = uuid.UUID(str(job.id))
 		elif job_id is not None:
 			job = session.get(Job, str(job_id))

@@ -406,6 +406,67 @@ def product_code_exists(code: str) -> bool:
         return existing > 0
 
 
+def product_code_taken_in_session(db: Session, code: str) -> bool:
+    code_in = (code or "").strip()
+    if not code_in:
+        return True
+    n = (
+        db.scalar(
+            select(func.count()).select_from(Product).where(func.lower(Product.code) == code_in.lower())
+        )
+        or 0
+    )
+    return int(n) > 0
+
+
+def create_product_v1_in_session(
+    db: Session, *, customer_id: str, spec: SpecPayload, created_by: str
+) -> tuple[Product, ProductVersion]:
+    """
+    Create a customer product + v1 in the current transaction (no commit).
+
+    Used when completing a MYOB import draft: the first saved spec should attach to a *new* product,
+    not a new version of the global MYOB placeholder product.
+    """
+    _ensure_customer_exists(db, customer_id)
+    cid = str(uuid.UUID(customer_id))
+    spec_dict = spec.model_dump() if hasattr(spec, "model_dump") else spec.dict()
+    base = (compute_product_code_base(spec_dict) or "").strip()[:32]
+    code = base
+    if not code:
+        code = f"IMP-{str(uuid.uuid4())[:8].upper()}"[:32]
+    n = 0
+    while product_code_taken_in_session(db, code) and n < 32:
+        n += 1
+        suffix = f"-{n}"
+        code = f"{(base or 'IMP')[: 32 - len(suffix)]}{suffix}" if base else f"IMP-{str(uuid.uuid4())[:6]}-{n}"[:32]
+    if product_code_taken_in_session(db, code):
+        raise DomainError("Could not allocate a unique customer-facing product code for this spec.")
+
+    product = Product(
+        code=code,
+        description=compute_product_description(spec_dict, max_len=255),
+        customer_id=cid,
+    )
+    db.add(product)
+    db.flush()
+    version = ProductVersion(
+        product_id=product.id,
+        version_number=1,
+        created_by=created_by or "system",
+        spec_payload=spec_dict,
+    )
+    db.add(version)
+    db.flush()
+    new_code = compute_product_code_full(product, spec_dict)
+    if new_code and new_code != product.code and len(new_code) <= 32 and not product_code_taken_in_session(db, new_code):
+        _try_update_product_code(db, product, new_code)
+    product.active_version_id = version.id
+    db.add(product)
+    db.flush()
+    return product, version
+
+
 def _ensure_customer_exists(db: Session, customer_id: str) -> None:
     # IDs are stored as String(36) in the DB. We still validate UUID format,
     # but comparisons/PK lookups must use the string value.
@@ -432,7 +493,7 @@ def create_product_with_version(payload: CreateProductRequest, created_by: str) 
         code_in = (payload.code or "").strip()
         # Ensure unique product code
         if product_code_exists(code_in):
-            raise DomainError("Product code already exists")
+            raise DomainError("Customer-facing product code already exists")
         spec_dict = payload.spec.dict()
         product = Product(
             code=code_in,

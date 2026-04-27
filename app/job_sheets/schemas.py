@@ -40,6 +40,8 @@ class JobSheetSummary(BaseModel):
     product_id: str
     product_version_id: str
     version_number: int
+    is_import_draft: bool = False
+    """True when this sheet is a MYOB import placeholder (no production job yet)."""
     due_date: Optional[str] = None
     quantity_value: float
     quantity_unit: str
@@ -75,6 +77,8 @@ class JobSheetSummary(BaseModel):
 class JobSheetDetail(BaseModel):
     job_sheet: JobSheetSummary
     spec_payload: dict
+    myob_import_line_description: Optional[str] = None
+    """Original MYOB line description when this job sheet is linked from a MYOB import order line."""
 
 
 class JobSheetUpdateRequest(BaseModel):

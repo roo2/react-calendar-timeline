@@ -51,10 +51,13 @@ export function OrdersPage() {
             <TableHead>
               <TableRow>
                 <TableCell>Invoice Number</TableCell>
+                <TableCell>Customer PO</TableCell>
                 <TableCell>Customer</TableCell>
                 <TableCell>Product</TableCell>
+                <TableCell align="right">Order total</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Order Date</TableCell>
+                <TableCell>MYOB</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -66,11 +69,17 @@ export function OrdersPage() {
                       {o.code}
                     </MuiLink>
                   </TableCell>
+                  <TableCell>{o.customer_purchase_order_number || '—'}</TableCell>
                   <TableCell>{o.customer_name || '-'}</TableCell>
                   <TableCell>
                     {o.product_code
                       ? `${o.product_code}${o.version_number != null ? ` v${o.version_number}` : ''}${o.item_count && o.item_count > 1 ? ` (+${o.item_count - 1})` : ''}`
                       : '-'}
+                  </TableCell>
+                  <TableCell align="right">
+                    {o.order_total != null && Number.isFinite(Number(o.order_total))
+                      ? `$${Number(o.order_total).toFixed(2)}`
+                      : '—'}
                   </TableCell>
                   <TableCell>{o.status}</TableCell>
                   <TableCell>{o.order_date || o.created_at?.slice(0, 10) || ''}</TableCell>

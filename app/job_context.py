@@ -32,15 +32,19 @@ def resolve_job_context(
 			raise DomainError("Order not found for job")
 		items = list(
 			session.execute(
-				select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id.asc())
+				select(OrderItem)
+				.where(OrderItem.order_id == order.id)
+				.order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
 			).scalars().all()
 		)
 		idx = int(job.job_code) - 1
 		pv: Optional[ProductVersion] = None
 		if 0 <= idx < len(items):
-			js = session.get(JobSheet, items[idx].job_sheet_id)
-			if js:
-				pv = session.get(ProductVersion, js.product_version_id)
+			js_id = items[idx].job_sheet_id
+			if js_id:
+				js = session.get(JobSheet, str(js_id))
+				if js:
+					pv = session.get(ProductVersion, js.product_version_id)
 		if pv is None and order.product_version_id:
 			pv = session.get(ProductVersion, order.product_version_id)
 		return job, order, pv
@@ -60,7 +64,9 @@ def ensure_scheduling_job_for_job_sheet(session: Session, job_sheet_id: str) -> 
 			raise DomainError("Order not found")
 		items = list(
 			session.execute(
-				select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id.asc())
+				select(OrderItem)
+				.where(OrderItem.order_id == order.id)
+				.order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
 			).scalars().all()
 		)
 		job_code: Optional[int] = None
@@ -126,7 +132,7 @@ def ensure_jobs_for_orphan_standalone_sheets(session: Session, *, limit: int = 5
 		.limit(limit)
 	)
 	for (sid,) in session.execute(q).all():
-		ensure_scheduling_job_for_job_sheet(session, str(sid))
+		_ = ensure_scheduling_job_for_job_sheet(session, str(sid))
 
 
 def ensure_jobs_for_order_line_job_sheets_missing_production_job(
@@ -151,9 +157,14 @@ def ensure_jobs_for_order_line_job_sheets_missing_production_job(
 		order = session.get(Order, oi.order_id)
 		if not order:
 			continue
+		js0 = session.get(JobSheet, sid)
+		if not js0 or bool(getattr(js0, "is_import_draft", False)):
+			continue
 		items = list(
 			session.execute(
-				select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id.asc())
+				select(OrderItem)
+				.where(OrderItem.order_id == order.id)
+				.order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
 			).scalars().all()
 		)
 		job_code: Optional[int] = None
@@ -168,7 +179,9 @@ def ensure_jobs_for_order_line_job_sheets_missing_production_job(
 		).scalars().first()
 		if existing:
 			continue
-		ensure_scheduling_job_for_job_sheet(session, sid)
+		created = ensure_scheduling_job_for_job_sheet(session, sid)
+		if created is None:
+			continue
 		seen_sheet.add(sid)
 		fixed += 1
 		if fixed >= limit:

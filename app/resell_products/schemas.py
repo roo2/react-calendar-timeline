@@ -11,6 +11,11 @@ class ResellProductDTO(BaseModel):
     description: str
     unit_price: Decimal
     active: bool = True
+    catalog_kind: str = "supply"
+    myob_item_uid: Optional[str] = None
+    myob_income_account_uid: Optional[str] = None
+    income_account_display_id: Optional[str] = None
+    income_account_name: Optional[str] = None
 
 
 class ResellProductCreate(BaseModel):

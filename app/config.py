@@ -22,8 +22,6 @@ class Settings(BaseSettings):
     # Must match the redirect URI registered with MYOB exactly (Vite proxies /api to the backend).
     # Use `.../api/myob/oauth/callback` if you registered that URL in the MYOB portal instead.
     MYOB_REDIRECT_URI: str = "http://localhost:5173/api/myob/oauth/callback"
-    # Space-separated scopes. Default allows reading customers via Contact/Customer (see MYOB scope docs).
-    MYOB_SCOPES: str = "sme-contacts-customer"
     # AccountRight company file GUID used in https://api.myob.com/accountright/{id}/...
     # If set, overrides any id stored in the database (OAuth / admin save).
     MYOB_COMPANY_FILE_ID: str | None = None
@@ -32,5 +30,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# OAuth scopes for MYOB authorize / token exchange (not read from .env — edit here to change consent).
+# sme-contacts-customer: Contact/Customer. sme-sales: /Sale/*. sme-inventory: GET Inventory/Item (line UOM mapping).
+MYOB_SCOPES = "sme-contacts-customer sme-sales sme-inventory"
 
 

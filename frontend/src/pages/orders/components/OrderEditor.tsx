@@ -9,7 +9,9 @@ import {
   Box,
   Button,
   Dialog,
+  DialogActions,
   DialogContent,
+  DialogTitle,
   ListSubheader,
   MenuItem,
   Paper,
@@ -37,6 +39,7 @@ import {
   deleteOrderResellItem,
   fetchOrder,
   fetchOrdersBootstrap,
+  linkMyobImportLine,
   patchOrder,
   patchOrderResellItem,
   publishOrderBare,
@@ -46,7 +49,28 @@ import { updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 type Mode = 'new' | 'edit'
 
 type Product = ProductListItem
-type QuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000' | 'ea'
+type QuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000' | 'ea' | 'meters'
+
+type ResellCatalogKind = 'supply' | 'outsourced_manufacturing'
+
+type MyobImportLineRow = {
+  id: string
+  line_index: number
+  description: string
+  ship_quantity: number
+  quantity_unit: string
+  qty_type: string
+  unit_price: number | null
+  line_total: number | null
+  myob_item_number?: string | null
+  myob_item_name?: string | null
+  myob_item_sales_unit_raw?: string | null
+  requires_job_sheet: boolean
+  job_sheet_id?: string | null
+  linked_product_id?: string | null
+  job_no?: string | null
+  is_import_draft?: boolean
+}
 
 type OrderLine = {
   id: string // react key
@@ -66,6 +90,8 @@ type OrderLine = {
   job_sheet_id?: string
   resell_line_id?: string
   resell_product_id?: string
+  /** From linked resell catalog row; drives quantity unit choices for outsourced MYOB lines. */
+  resell_catalog_kind?: ResellCatalogKind
 }
 
 function normalizeFinishFromApi(v: unknown): 'Rolls' | 'Cartons' | null {
@@ -79,6 +105,7 @@ function normalizeQuantityUnitFromApi(
   finish: 'Rolls' | 'Cartons' | null,
 ): QuantityUnit {
   const x = String(raw || 'kg').toLowerCase()
+  if (x === 'ea' || x === 'each') return 'ea'
   if (x === 'rolls') return 'rolls'
   if (x === 'cartons') return 'cartons'
   if (x === '1000') return '1000'
@@ -93,6 +120,12 @@ function jobSheetIdFromApi(raw: unknown): string {
   return s
 }
 
+function orderLinesFromApiItems(items: unknown): OrderLine[] {
+  return (Array.isArray(items) ? items : [])
+    .filter((x: any) => x && x.line_kind !== 'myob_import')
+    .map((x: any) => lineFromApiItem(x))
+}
+
 function lineFromApiItem(it: any): OrderLine {
   if (it.line_kind === 'resell') {
     return {
@@ -101,6 +134,8 @@ function lineFromApiItem(it: any): OrderLine {
       order_item_id: String(it.id),
       resell_line_id: String(it.resell_line_id || it.id),
       resell_product_id: String(it.resell_product_id || ''),
+      resell_catalog_kind:
+        it.resell_catalog_kind === 'outsourced_manufacturing' ? 'outsourced_manufacturing' : 'supply',
       job_sheet_id: '',
       product_id: String(it.resell_product_id || it.product_id || ''),
       product_code: String(it.product_code || 'Resell'),
@@ -142,8 +177,17 @@ function finishModeForProduct(p: Product): 'Rolls' | 'Cartons' | null {
 }
 
 /** When finish is unknown, treat as Rolls so we do not offer Carton until spec is known. */
-function unitChoices(finish: 'Rolls' | 'Cartons' | null | undefined, lineKind?: 'product' | 'resell'): QuantityUnit[] {
-  if (lineKind === 'resell') return ['ea']
+function unitChoices(
+  finish: 'Rolls' | 'Cartons' | null | undefined,
+  lineKind?: 'product' | 'resell',
+  resellCatalogKind?: ResellCatalogKind,
+): QuantityUnit[] {
+  if (lineKind === 'resell') {
+    if (resellCatalogKind === 'outsourced_manufacturing') {
+      return ['kg', 'rolls', 'cartons', '1000', 'meters', 'ea']
+    }
+    return ['ea']
+  }
   const f = finish === 'Cartons' ? 'Cartons' : 'Rolls'
   if (f === 'Cartons') return ['kg', 'cartons', '1000']
   return ['kg', 'rolls', '1000']
@@ -200,6 +244,32 @@ function parseOrderNewDraftState(state: unknown): OrderNewDraft | null {
   }
 }
 
+function myobLinesFromApi(res: { items?: unknown; myob_import_lines?: unknown } | null | undefined): MyobImportLineRow[] {
+  const fromOrderItems = (Array.isArray(res?.items) ? res.items : []).filter(
+    (x: any) => x && x.line_kind === 'myob_import',
+  ) as any[]
+  const raw = fromOrderItems.length > 0 ? fromOrderItems : Array.isArray(res?.myob_import_lines) ? res?.myob_import_lines : []
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  return raw.map((m: any) => ({
+    id: String(m.id),
+    line_index: Number(m.line_index) || 0,
+    description: String(m.description ?? ''),
+    ship_quantity: Number(m.ship_quantity ?? m.quantity_value) || 0,
+    quantity_unit: String(m.quantity_unit ?? ''),
+    qty_type: String(m.qty_type ?? ''),
+    unit_price: m.unit_price != null && Number.isFinite(Number(m.unit_price)) ? Number(m.unit_price) : null,
+    line_total: m.line_total != null && Number.isFinite(Number(m.line_total)) ? Number(m.line_total) : null,
+    myob_item_number: m.myob_item_number != null ? String(m.myob_item_number) : null,
+    myob_item_name: m.myob_item_name != null ? String(m.myob_item_name) : null,
+    myob_item_sales_unit_raw: m.myob_item_sales_unit_raw != null ? String(m.myob_item_sales_unit_raw) : null,
+    requires_job_sheet: Boolean(m.requires_job_sheet),
+    job_sheet_id: m.job_sheet_id != null ? String(m.job_sheet_id) : null,
+    linked_product_id: m.linked_product_id != null ? String(m.linked_product_id) : null,
+    job_no: m.job_no != null ? String(m.job_no) : null,
+    is_import_draft: Boolean(m.is_import_draft),
+  }))
+}
+
 export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const { mode, orderId } = props
   const nav = useNavigate()
@@ -218,7 +288,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [orderStatus, setOrderStatus] = useState<string>('draft')
-  const orderLocked = mode === 'edit' && orderStatus !== 'draft'
+  const orderLocked =
+    mode === 'edit' && !['draft', 'confirmed'].includes(String(orderStatus || '').trim().toLowerCase())
 
   const [pvOpen, setPvOpen] = useState(false)
   const [pvProductId, setPvProductId] = useState<string | null>(null)
@@ -232,6 +303,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const [customerId, setCustomerId] = useState(initialDraft?.customerId || '')
   const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [customerPoNumber, setCustomerPoNumber] = useState('')
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [productId, setProductId] = useState('')
   const [items, setItems] = useState<OrderLine[]>(() =>
@@ -241,6 +313,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       total_price: (it as OrderLine).total_price ?? '',
     }))
   )
+  const [myobImportLines, setMyobImportLines] = useState<MyobImportLineRow[]>([])
+  const [linkMyobOpen, setLinkMyobOpen] = useState(false)
+  const [linkMyobLine, setLinkMyobLine] = useState<MyobImportLineRow | null>(null)
+  const [linkMyobJobSheetId, setLinkMyobJobSheetId] = useState('')
+  const [linkMyobSubmitting, setLinkMyobSubmitting] = useState(false)
 
   const originalRef = useRef<{ lines: Record<string, OrderLine> } | null>(null)
 
@@ -261,9 +338,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
               setOrderStatus(String(res?.status || 'draft'))
               setInvoiceNumber(String(res?.code ?? ''))
+              setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
               setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-              const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+              const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
               setItems(nextItems)
+              setMyobImportLines(myobLinesFromApi(res))
               originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
             } catch {
               /* ignore */
@@ -383,9 +462,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         setOrderStatus(String(res?.status || 'draft'))
         setCustomerId(String(res?.customer_id || ''))
         setInvoiceNumber(String(res?.code ?? ''))
+        setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
         setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-        const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
+        const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
         setItems(nextItems)
+        setMyobImportLines(myobLinesFromApi(res))
         originalRef.current = {
           lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])),
         }
@@ -508,20 +589,24 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setProductId('')
   }
 
-  function addResellToItemsLocal(rp: { id: string; description: string; unit_price: number }) {
+  function addResellToItemsLocal(rp: { id: string; description: string; unit_price: number; catalog_kind?: string | null }) {
     const rate = Number.isFinite(rp.unit_price) ? String(rp.unit_price) : ''
+    const rck: ResellCatalogKind =
+      rp.catalog_kind === 'outsourced_manufacturing' ? 'outsourced_manufacturing' : 'supply'
+    const defaultUnit = rck === 'outsourced_manufacturing' ? unitChoices(null, 'resell', rck)[0] : 'ea'
     setItems((prev) => [
       ...prev,
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         line_kind: 'resell',
         resell_product_id: rp.id,
+        resell_catalog_kind: rck,
         product_id: rp.id,
         product_code: 'Resell',
         product_name: rp.description,
         due_date: defaultDueDate(),
         finish_mode: null,
-        quantity_unit: 'ea',
+        quantity_unit: defaultUnit,
         quantity_value: '1',
         rate,
         total_price: '',
@@ -535,21 +620,25 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     try {
       setErr(null)
       setSaving(true)
+      const rck: ResellCatalogKind =
+        rp.catalog_kind === 'outsourced_manufacturing' ? 'outsourced_manufacturing' : 'supply'
+      const defaultUnit = rck === 'outsourced_manufacturing' ? unitChoices(null, 'resell', rck)[0] : 'ea'
       await dispatch(
         addOrderResellItem({
           orderId,
           body: {
             resell_product_id: rp.id,
             quantity_value: 1,
-            quantity_unit: 'ea',
+            quantity_unit: defaultUnit,
             due_date: defaultDueDate(),
             rate: Number.isFinite(rp.unit_price) ? rp.unit_price : undefined,
           },
         }),
       ).unwrap()
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
+      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
       setItems(nextItems)
+      setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to add resell line')
@@ -585,8 +674,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       ).unwrap()
       // reload order to pick up job_sheet_id/order_item_id
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = (res?.items || []).map((it: any) => lineFromApiItem(it))
+      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
       setItems(nextItems)
+      setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
 
       const added = nextItems.filter((it) => !prevLineKeys.has(it.order_item_id || it.id))
@@ -609,7 +699,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const canSaveDraft = useMemo(() => {
     if (!customerId) return false
     if (saving || publishing) return false
-    if (items.length === 0) return false
+    if (items.length === 0 && myobImportLines.length === 0) return false
     return items.every((it) => {
       const q = Number(it.quantity_value || '0')
       if (!Number.isFinite(q) || q <= 0 || !it.quantity_unit) return false
@@ -618,7 +708,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       }
       return !!it.product_id
     })
-  }, [customerId, items, saving, publishing])
+  }, [customerId, items, myobImportLines.length, saving, publishing])
 
   const canPublishNow = useMemo(() => {
     if (!canPublish) return false
@@ -645,6 +735,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           customer_id: customerId,
           status: 'draft',
           ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+          ...(customerPoNumber.trim() ? { customer_purchase_order_number: customerPoNumber.trim() } : {}),
           ...(orderDate ? { order_date: orderDate } : {}),
           items: productLines.map((it) => {
             const rate = parseOptionalMoney(it.rate)
@@ -666,7 +757,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                   return {
                     resell_product_id: String(it.resell_product_id || ''),
                     due_date: it.due_date || null,
-                    quantity_unit: 'ea',
+                    quantity_unit: it.quantity_unit,
                     quantity_value: Number(it.quantity_value || '0'),
                     ...(rate != null ? { rate } : {}),
                     ...(totalPrice != null ? { total_price: totalPrice } : {}),
@@ -699,6 +790,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           orderId,
           body: {
             invoice_number: invoiceNumber.trim() || null,
+            customer_purchase_order_number: customerPoNumber.trim() || null,
             order_date: orderDate || null,
           },
         }),
@@ -730,7 +822,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               lineId: rid,
               body: {
                 quantity_value: Number(it.quantity_value || '0'),
-                quantity_unit: 'ea',
+                quantity_unit: it.quantity_unit,
                 due_date: it.due_date || null,
                 rate: parseOptionalMoney(it.rate),
                 total_price: computedLineTotal(it),
@@ -761,9 +853,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       setOrderStatus(String(res?.status || orderStatus))
       setInvoiceNumber(String(res?.code ?? ''))
+      setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
       setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-      const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
       setItems(nextItems)
+      setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
       setDirty(false)
     } catch (e) {
@@ -789,6 +883,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             customer_id: customerId,
             status: 'draft',
             ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+            ...(customerPoNumber.trim() ? { customer_purchase_order_number: customerPoNumber.trim() } : {}),
             ...(orderDate ? { order_date: orderDate } : {}),
             items: productLines.map((it) => {
               const rate = parseOptionalMoney(it.rate)
@@ -810,7 +905,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                     return {
                       resell_product_id: String(it.resell_product_id || ''),
                       due_date: it.due_date || null,
-                      quantity_unit: 'ea',
+                      quantity_unit: it.quantity_unit,
                       quantity_value: Number(it.quantity_value || '0'),
                       ...(rate != null ? { rate } : {}),
                       ...(totalPrice != null ? { total_price: totalPrice } : {}),
@@ -853,8 +948,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         setSaving(true)
         await dispatch(deleteOrderResellItem({ orderId, lineId: rid })).unwrap()
         const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-        const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+        const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
         setItems(nextItems)
+        setMyobImportLines(myobLinesFromApi(res))
         originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Failed to remove line')
@@ -869,13 +965,39 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       setSaving(true)
       await dispatch(deleteOrderItem({ orderId, orderItemId: it.order_item_id })).unwrap()
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
       setItems(nextItems)
+      setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to remove order item')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function submitLinkMyobLine() {
+    if (mode !== 'edit' || !orderId || !linkMyobLine) return
+    const js = linkMyobJobSheetId.trim()
+    if (!js) {
+      setErr('Enter a job sheet id.')
+      return
+    }
+    setLinkMyobSubmitting(true)
+    try {
+      setErr(null)
+      await dispatch(
+        linkMyobImportLine({ orderId, lineId: linkMyobLine.id, job_sheet_id: js }),
+      ).unwrap()
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+      setMyobImportLines(myobLinesFromApi(res))
+      setLinkMyobOpen(false)
+      setLinkMyobLine(null)
+      setLinkMyobJobSheetId('')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to link job sheet')
+    } finally {
+      setLinkMyobSubmitting(false)
     }
   }
 
@@ -916,14 +1038,23 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           </TextField>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-            <TextField
-              label="Invoice Number"
-              value={invoiceNumber}
-              onChange={(e) => { setInvoiceNumber(e.target.value); setDirty(true) }}
-              disabled={orderLocked}
-              placeholder={mode === 'new' ? 'Leave blank to auto-generate' : undefined}
-              inputProps={{ maxLength: 32 }}
-            />
+            <Stack spacing={2}>
+              <TextField
+                label="Invoice Number"
+                value={invoiceNumber}
+                onChange={(e) => { setInvoiceNumber(e.target.value); setDirty(true) }}
+                disabled={orderLocked}
+                placeholder={mode === 'new' ? 'Leave blank to auto-generate' : undefined}
+                inputProps={{ maxLength: 32 }}
+              />
+              <TextField
+                label="Customer PO Number"
+                value={customerPoNumber}
+                onChange={(e) => { setCustomerPoNumber(e.target.value); setDirty(true) }}
+                disabled={orderLocked}
+                inputProps={{ maxLength: 128 }}
+              />
+            </Stack>
             <TextField
               label="Order Date"
               type="date"
@@ -954,8 +1085,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 {items.map((it) => (
                   <TableRow key={it.id} hover>
                     <TableCell>
-                      <strong>{it.product_code}</strong>
-                      {it.product_name ? <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {it.product_name}</span> : null}
+                      {it.line_kind === 'resell' ? (
+                        <strong>{it.product_name || '—'}</strong>
+                      ) : (
+                        <>
+                          <strong>{it.product_code}</strong>
+                          {it.product_name ? <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {it.product_name}</span> : null}
+                        </>
+                      )}
                     </TableCell>
                     <TableCell>
                       <TextField
@@ -999,7 +1136,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         sx={{ minWidth: 120 }}
                         disabled={saving || publishing || orderLocked}
                       >
-                        {unitChoices(it.finish_mode, it.line_kind).map((u) => (
+                        {unitChoices(it.finish_mode, it.line_kind, it.resell_catalog_kind).map((u) => (
                           <MenuItem key={u} value={u}>
                             {u === 'kg'
                               ? 'KG'
@@ -1009,7 +1146,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                                   ? '1000'
                                   : u === 'ea'
                                     ? 'Each'
-                                    : 'Carton'}
+                                    : u === 'meters'
+                                      ? 'Metres'
+                                      : 'Carton'}
                           </MenuItem>
                         ))}
                       </TextField>
@@ -1127,16 +1266,30 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                         ))}
                         <MenuItem divider />
                         <MenuItem value="__new_job_sheet__">New Job Sheet</MenuItem>
-                        {resellCatalog.length > 0 ? (
+                        {resellCatalog.some((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing') ? (
                           <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
                             Resell / supplies
                           </ListSubheader>
                         ) : null}
-                        {resellCatalog.map((rp) => (
-                          <MenuItem key={rp.id} value={`resell:${rp.id}`}>
-                            {rp.description}
-                          </MenuItem>
-                        ))}
+                        {resellCatalog
+                          .filter((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing')
+                          .map((rp) => (
+                            <MenuItem key={rp.id} value={`resell:${rp.id}`}>
+                              {rp.description}
+                            </MenuItem>
+                          ))}
+                        {resellCatalog.some((x) => (x.catalog_kind || 'supply') === 'outsourced_manufacturing') ? (
+                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
+                            Outsourced manufacturing
+                          </ListSubheader>
+                        ) : null}
+                        {resellCatalog
+                          .filter((x) => (x.catalog_kind || 'supply') === 'outsourced_manufacturing')
+                          .map((rp) => (
+                            <MenuItem key={`os-${rp.id}`} value={`resell:${rp.id}`}>
+                              {rp.description}
+                            </MenuItem>
+                          ))}
                       </TextField>
                     </Stack>
                   </TableCell>
@@ -1155,6 +1308,110 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               </TableFooter>
             </Table>
           </Paper>
+
+          {mode === 'edit' && myobImportLines.length > 0 ? (
+            <Paper variant="outlined" sx={{ p: 1 }}>
+              <Typography variant="subtitle2" sx={{ px: 1, pt: 1, pb: 0.5 }}>
+                MYOB import (draft)
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ px: 1, display: 'block', pb: 0.5 }}>
+                Lines from MYOB before production job sheets are linked. Use <strong>Link job sheet</strong> with an
+                existing job sheet id (same customer), or <strong>Open job sheet</strong> when a sheet is already
+                linked.
+              </Typography>
+              <Box sx={{ px: 1, pb: 0.5 }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => {
+                    if (!customerId) return
+                    setNewJobSheetOpen(true)
+                  }}
+                  disabled={!customerId || saving || publishing || orderLocked}
+                >
+                  New job sheet…
+                </Button>
+              </Box>
+              <Table size="small" sx={{ '& .MuiTableCell-root': { px: 1 } }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Description</TableCell>
+                    <TableCell align="right">Qty</TableCell>
+                    <TableCell>Unit</TableCell>
+                    <TableCell align="right">Total</TableCell>
+                    <TableCell align="right">Job sheet</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {myobImportLines.map((m) => (
+                    <TableRow key={m.id} hover>
+                      <TableCell>
+                        <strong>{m.myob_item_number || '—'}</strong>
+                        {m.description ? (
+                          <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {m.description}</span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell align="right">{m.ship_quantity}</TableCell>
+                      <TableCell>{m.quantity_unit}</TableCell>
+                      <TableCell align="right">
+                        {m.line_total != null && Number.isFinite(m.line_total) ? `$${m.line_total.toFixed(2)}` : '—'}
+                      </TableCell>
+                      <TableCell align="right">
+                        {m.requires_job_sheet ? (
+                          m.job_sheet_id ? (
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap" useFlexGap>
+                              {m.job_no ? (
+                                <Typography variant="body2" color="text.secondary">
+                                  {m.job_no}
+                                </Typography>
+                              ) : null}
+                              {m.linked_product_id ? (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  onClick={() => {
+                                    openProductVersionModal({
+                                      product_id: m.linked_product_id!,
+                                      product_code: m.myob_item_number,
+                                      job_sheet_id: m.job_sheet_id,
+                                    })
+                                  }}
+                                  disabled={saving || publishing}
+                                >
+                                  {m.is_import_draft ? 'Complete job sheet' : 'Open job sheet'}
+                                </Button>
+                              ) : (
+                                <Typography variant="caption" color="text.secondary">
+                                  Linked (missing product id)
+                                </Typography>
+                              )}
+                            </Stack>
+                          ) : (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => {
+                                setLinkMyobLine(m)
+                                setLinkMyobJobSheetId('')
+                                setLinkMyobOpen(true)
+                              }}
+                              disabled={saving || publishing || orderLocked}
+                            >
+                              Link job sheet
+                            </Button>
+                          )
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">
+                            —
+                          </Typography>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Paper>
+          ) : null}
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             <Button
@@ -1184,6 +1441,52 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       </Paper>
 
       <Dialog
+        open={linkMyobOpen}
+        onClose={() => {
+          if (linkMyobSubmitting) return
+          setLinkMyobOpen(false)
+          setLinkMyobLine(null)
+          setLinkMyobJobSheetId('')
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Link job sheet to MYOB line</DialogTitle>
+        <DialogContent>
+          {linkMyobLine ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              {linkMyobLine.myob_item_number ? `${linkMyobLine.myob_item_number} — ` : null}
+              {linkMyobLine.description}
+            </Typography>
+          ) : null}
+          <TextField
+            label="Job sheet id"
+            value={linkMyobJobSheetId}
+            onChange={(e) => setLinkMyobJobSheetId(e.target.value)}
+            fullWidth
+            size="small"
+            placeholder="UUID of an existing job sheet for this customer"
+            disabled={linkMyobSubmitting}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              if (linkMyobSubmitting) return
+              setLinkMyobOpen(false)
+              setLinkMyobLine(null)
+              setLinkMyobJobSheetId('')
+            }}
+          >
+            Cancel
+          </Button>
+          <Button variant="contained" onClick={() => void submitLinkMyobLine()} disabled={linkMyobSubmitting}>
+            {linkMyobSubmitting ? 'Linking…' : 'Link'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
         open={pvOpen}
         onClose={() => {
           if (saving || publishing) return
@@ -1207,8 +1510,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                   setOrderStatus(String(res?.status || orderStatus))
                   setInvoiceNumber(String(res?.code ?? ''))
                   setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-                  const nextItems: OrderLine[] = (res?.items || []).map((x: any) => lineFromApiItem(x))
+                  const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
                   setItems(nextItems)
+                  setMyobImportLines(myobLinesFromApi(res))
                   originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
                 } catch {
                   // stale table until user refreshes or saves again

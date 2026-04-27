@@ -57,11 +57,12 @@ export function OrderShowPage() {
   }
   if (!order || loading) return <p>Loading…</p>
 
-  const items = order.items || []
-  const totalPriceSum = items.reduce(
-    (sum: number, it: { total_price?: number | null }) => sum + (it.total_price != null ? Number(it.total_price) : 0),
-    0,
-  )
+  const items: any[] = Array.isArray(order.items) ? order.items : []
+  const rows = items.slice().sort((a, b) => (Number(a.line_index ?? 0) || 0) - (Number(b.line_index ?? 0) || 0))
+  const totalPriceSum = rows.reduce((sum: number, it: any) => {
+    const p = it.total_price != null ? Number(it.total_price) : it.line_total != null ? Number(it.line_total) : 0
+    return sum + (Number.isFinite(p) ? p : 0)
+  }, 0)
 
   function fmtCurrency(v: number | null | undefined): string {
     if (v == null || !Number.isFinite(v)) return '—'
@@ -73,6 +74,8 @@ export function OrderShowPage() {
     if (x === 'kg') return 'KG'
     if (x === 'rolls') return 'Roll'
     if (x === 'cartons') return 'Carton'
+    if (x === '1000') return '1000'
+    if (x === 'ea' || x === 'each' || x === 'unit' || x === 'units') return 'Each'
     if (x === 'bags') return 'Bags (legacy)'
     if (x === 'meters') return 'Meters (legacy)'
     return u || '—'
@@ -101,6 +104,32 @@ export function OrderShowPage() {
         Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Order Date:{' '}
         {order.order_date || order.created_at?.slice(0, 10) || '-'}
       </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Customer PO: {order.customer_purchase_order_number || '—'}
+      </Typography>
+
+      {order.import_source === 'MYOB' ? (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <strong>Imported from MYOB</strong>
+          {order.myob_order_uid ? (
+            <>
+              {' '}
+              — order UID <code>{order.myob_order_uid}</code>
+            </>
+          ) : null}
+          {order.myob_synced_at ? (
+            <>
+              {' '}
+              · last sync {String(order.myob_synced_at).replace('T', ' ').slice(0, 19)} UTC
+            </>
+          ) : null}
+          <br />
+          Job sheet data from MYOB:{' '}
+          {order.myob_all_job_sheets_entered
+            ? 'all required production lines have a completed job sheet (not an import draft), or only non-production lines.'
+            : 'pending — open each import line’s job sheet and complete product details, or link an existing job sheet from the order editor.'}
+        </Alert>
+      ) : null}
 
       {publishErr && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -125,50 +154,123 @@ export function OrderShowPage() {
       </Box>
 
       <Paper variant="outlined" sx={{ mb: 2 }}>
+        <Typography variant="subtitle2" sx={{ px: 2, pt: 2, pb: 1 }}>
+          Order lines
+        </Typography>
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Job No</TableCell>
-              <TableCell>Product Code</TableCell>
-              <TableCell>Product Name</TableCell>
+              <TableCell>Line</TableCell>
+              <TableCell>Job / Item</TableCell>
+              <TableCell>Description</TableCell>
               <TableCell align="right">Qty</TableCell>
-              <TableCell>Unit</TableCell>
-              <TableCell align="right">Price</TableCell>
-              <TableCell align="right">Total Price</TableCell>
+              <TableCell>Unit / type</TableCell>
+              <TableCell align="right">Unit price</TableCell>
+              <TableCell align="right">Line total</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {items.map((it: any) => (
-              <TableRow key={it.id} hover>
-                <TableCell>{it.job_no || '-'}</TableCell>
-                <TableCell>{it.product_code || '-'}</TableCell>
-                <TableCell>{it.product_name || '-'}</TableCell>
-                <TableCell align="right">
-                  {it.quantity_value != null ? Number(it.quantity_value).toLocaleString() : '—'}
-                </TableCell>
-                <TableCell>{formatOrderUnit(it.quantity_unit)}</TableCell>
-                <TableCell align="right">{fmtCurrency(it.rate)}</TableCell>
-                <TableCell align="right">{fmtCurrency(it.total_price)}</TableCell>
-                <TableCell align="right">
-                  <Button
-                    size="small"
-                    component={Link}
-                    to={`/job-sheets/${it.job_sheet_id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
-                  >
-                    Edit job sheet
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            {items.length === 0 && (
+            {rows.map((it: any) => {
+              const kind = it.line_kind || 'product'
+              if (kind === 'resell') {
+                return (
+                  <TableRow key={it.id} hover>
+                    <TableCell>Resell</TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>
+                      {it.product_name ? <strong>{it.product_name}</strong> : '—'}
+                    </TableCell>
+                    <TableCell align="right">
+                      {it.quantity_value != null ? Number(it.quantity_value).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell>{formatOrderUnit(it.quantity_unit)}</TableCell>
+                    <TableCell align="right">{fmtCurrency(it.rate)}</TableCell>
+                    <TableCell align="right">{fmtCurrency(it.total_price)}</TableCell>
+                    <TableCell align="right">—</TableCell>
+                  </TableRow>
+                )
+              }
+              if (kind === 'myob_import') {
+                return (
+                  <TableRow key={it.id} hover>
+                    <TableCell>MYOB</TableCell>
+                    <TableCell>
+                      {it.myob_item_number || '—'}
+                      {it.myob_item_sales_unit_raw ? (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          MYOB UOM: {it.myob_item_sales_unit_raw}
+                        </Typography>
+                      ) : null}
+                    </TableCell>
+                    <TableCell sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>{it.description || '—'}</TableCell>
+                    <TableCell align="right">
+                      {it.ship_quantity != null ? Number(it.ship_quantity).toLocaleString() : it.quantity_value != null ? Number(it.quantity_value).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell>
+                      {formatOrderUnit(it.quantity_unit)} / {it.qty_type || '—'}
+                    </TableCell>
+                    <TableCell align="right">{fmtCurrency(it.unit_price ?? it.rate)}</TableCell>
+                    <TableCell align="right">{fmtCurrency(it.line_total ?? it.total_price)}</TableCell>
+                    <TableCell align="right">
+                      {it.requires_job_sheet
+                        ? it.job_sheet_id
+                          ? it.is_import_draft
+                            ? 'Draft import'
+                            : 'Linked'
+                          : 'Not linked'
+                        : 'N/A (non-production)'}
+                      {it.job_sheet_id ? (
+                        <Button
+                          size="small"
+                          sx={{ display: 'block', mt: 0.5 }}
+                          component={Link}
+                          to={`/job-sheets/${it.job_sheet_id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
+                        >
+                          {it.is_import_draft ? 'Complete job sheet' : 'Edit job sheet'}
+                        </Button>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                )
+              }
+              return (
+                <TableRow key={it.id} hover>
+                  <TableCell>Production</TableCell>
+                  <TableCell>{it.job_no || '—'}</TableCell>
+                  <TableCell>
+                    {it.product_code || '—'} — {it.product_name || '—'}
+                  </TableCell>
+                  <TableCell align="right">
+                    {it.quantity_value != null ? Number(it.quantity_value).toLocaleString() : '—'}
+                  </TableCell>
+                  <TableCell>{formatOrderUnit(it.quantity_unit)}</TableCell>
+                  <TableCell align="right">{fmtCurrency(it.rate)}</TableCell>
+                  <TableCell align="right">{fmtCurrency(it.total_price)}</TableCell>
+                  <TableCell align="right">
+                    {it.job_sheet_id ? (
+                      <Button
+                        size="small"
+                        component={Link}
+                        to={`/job-sheets/${it.job_sheet_id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
+                      >
+                        {it.is_import_draft ? 'Complete job sheet' : 'Edit job sheet'}
+                      </Button>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+            {rows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={8}>
-                  <Typography color="text.secondary">No line items.</Typography>
+                  <Typography color="text.secondary">No lines on this order yet.</Typography>
                 </TableCell>
               </TableRow>
             )}
-            {items.length > 0 && (
+            {rows.length > 0 && (
               <TableRow sx={{ fontWeight: 600, bgcolor: 'action.hover' }}>
                 <TableCell colSpan={6} align="right">
                   Total

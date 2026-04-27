@@ -7,6 +7,7 @@ type Status = 'idle' | 'loading' | 'succeeded' | 'failed'
 export type OrderRow = {
   id: string
   code: string
+  customer_purchase_order_number?: string | null
   status: string
   customer_name?: string | null
   product_code?: string | null
@@ -14,11 +15,21 @@ export type OrderRow = {
   item_count?: number | null
   created_at?: string | null
   order_date?: string | null
+  import_source?: string | null
+  myob_order_uid?: string | null
+  myob_synced_at?: string | null
+  myob_all_job_sheets_entered?: boolean | null
+  order_total?: number | null
 }
 
 export type OrdersBootstrapCustomer = { id: string; name: string }
 
-export type OrdersBootstrapResellProduct = { id: string; description: string; unit_price: number }
+export type OrdersBootstrapResellProduct = {
+  id: string
+  description: string
+  unit_price: number
+  catalog_kind?: string | null
+}
 
 type OrdersState = {
   list: {
@@ -90,6 +101,7 @@ export type CreateOrderBody = {
   status: string
   order_date?: string | null
   invoice_number?: string | null
+  customer_purchase_order_number?: string | null
   resell_items?: Array<{
     resell_product_id: string
     quantity_value: number
@@ -187,6 +199,21 @@ export const deleteOrderResellItem = createAsyncThunk(
     await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/resell-items/${encodeURIComponent(lineId)}`, {
       method: 'DELETE',
     })
+    return { orderId }
+  },
+)
+
+export const linkMyobImportLine = createAsyncThunk(
+  'orders/linkMyobLine',
+  async (payload: { orderId: string; lineId: string; job_sheet_id: string }) => {
+    const { orderId, lineId, job_sheet_id } = payload
+    await apiFetch(
+      `/api/orders/${encodeURIComponent(orderId)}/myob-import-lines/${encodeURIComponent(lineId)}/link`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ job_sheet_id }),
+      },
+    )
     return { orderId }
   },
 )

@@ -31,6 +31,7 @@ import { buildQuickQuoteInputsFromSpec } from '../../../utils/specToQuoteInputs'
 import {
   cartonsWeightPerRollKg,
   coerceQtyTypeForFinishMode,
+  productDisplayUnitPlural,
   computeRollsDisplay,
   computeTotalKgDisplay,
   computeWeightPerRollDisplay,
@@ -157,6 +158,11 @@ export function ProductVersionEditor(props: {
   const customers = useAppSelector((s) => s.customers.list.items)
   const customersStatus = useAppSelector((s) => s.customers.list.status)
   const jobSheetDetail = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
+  const myobImportLineDescription = useMemo(() => {
+    const raw = jobSheetDetail?.data?.myob_import_line_description
+    if (raw == null || typeof raw !== 'string') return ''
+    return raw.trim()
+  }, [jobSheetDetail?.data?.myob_import_line_description])
   const ratebook = useAppSelector((s) => s.quotes.quoteRatebook.data)
 
   const upsert = useAppSelector((s) => s.products.newVersion)
@@ -274,31 +280,54 @@ export function ProductVersionEditor(props: {
     lastHydratedJobDetailDataRef.current = st.data
     const res = st.data
     const js = res.job_sheet
-    const loadedSpec = ensureSpec(res.spec_payload)
-    setSpec(loadedSpec)
+    const isImportDraft = Boolean(js?.is_import_draft)
+    let loadedSpec0 = ensureSpec(res.spec_payload)
+    const rawQu = String(js?.quantity_unit || '').toLowerCase()
+    const rawQtHint = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
+    if (isImportDraft && (rawQu === 'rolls' || String(rawQtHint || '') === 'total_rolls')) {
+      loadedSpec0 = {
+        ...loadedSpec0,
+        identity: { ...loadedSpec0.identity, finish_mode: 'Rolls' },
+      }
+    }
+    setSpec(loadedSpec0)
     setCustomerId(js?.customer_id || '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setDueDate(js?.due_date || '')
-    const fm: FinishMode = loadedSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+    const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
     const rawQt = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
-    const pt = String(loadedSpec.identity?.product_type || 'Bag')
-    const lenRaw = String(loadedSpec.dimensions?.length_units || '')
+    const pt = String(loadedSpec0.identity?.product_type || 'Bag')
+    const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
     const continuousLength =
       pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
-    const qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
-    setQtyType(qt === 'units_per_1000' ? 'units' : qt)
+    let qt: QtyType
+    if (isImportDraft) {
+      const base = (rawQt && String(rawQt).trim() ? String(rawQt) : inferQtyTypeFromUnit(js?.quantity_unit)) as QtyType
+      if (continuousLength && base === 'rolls_units') {
+        qt = 'kg'
+      } else {
+        qt = base === 'units_per_1000' ? 'units' : base
+      }
+    } else {
+      qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
+    }
+    let qtResolved: QtyType = qt === 'units_per_1000' ? 'units' : qt
+    if (isImportDraft && rawQu === 'rolls' && qtResolved === 'total_rolls') {
+      qtResolved = 'rolls_units'
+    }
+    setQtyType(qtResolved)
     const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
     const wpr =
       js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
         ? String(js.weight_per_roll_kg)
         : ''
-    if (qt === 'kg') {
+    if (qtResolved === 'kg') {
       setTotalKg(String(js?.quantity_value ?? ''))
       setNumUnits('')
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
-    } else if (qt === 'units_per_1000') {
+    } else if (qtResolved === 'units_per_1000') {
       const abs =
         js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))
           ? Math.max(0, Math.round(Number(js.num_product_units)))
@@ -308,10 +337,12 @@ export function ProductVersionEditor(props: {
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
-    } else if (qt === 'units') {
+    } else if (qtResolved === 'units') {
       const quRaw = String(js?.quantity_unit || '').toLowerCase()
       if (quRaw === 'cartons' && js?.num_product_units != null) {
         setNumUnits(String(js.num_product_units))
+      } else if (quRaw === '1000' && js?.num_product_units != null) {
+        setNumUnits(String(Math.max(0, Math.round(Number(js.num_product_units)))))
       } else {
         setNumUnits(String(js?.num_product_units ?? js?.quantity_value ?? ''))
       }
@@ -319,7 +350,7 @@ export function ProductVersionEditor(props: {
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
-    } else if (qt === 'rolls_units') {
+    } else if (qtResolved === 'rolls_units') {
       setNumRolls(String(nrStored))
       setTotalKg('')
       setNumUnits('')
@@ -533,8 +564,8 @@ export function ProductVersionEditor(props: {
     }
   }, [jobSheetId, embedded, effectiveQtyType, derivedForDisplay?.billedKgPerRoll, derivedForDisplay?.kgPerRoll])
 
-  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
-  const productTypeIsBag = productType === 'Bag'
+  const productUnitLabel = productDisplayUnitPlural(productType)
+  const productTypeIsBag = String(productType || '').toLowerCase() === 'bag'
 
   const loadedJobSheet = jobSheetId && jobSheetDetail?.status === 'succeeded' ? jobSheetDetail.data?.job_sheet : undefined
 
@@ -655,12 +686,13 @@ export function ProductVersionEditor(props: {
       void dispatch(clearCreateErrors())
       const code = getDisplayProductCodeFromSpec(spec).trim()
       if (!code) {
-        setJobSaveErr('Product code is empty. Set a product code or complete dimensions and product type.')
+        setJobSaveErr(
+          'Customer-facing product code is empty. Set a customer-facing product code or complete dimensions and product type.',
+        )
         return
       }
       const missing: string[] = []
       if (!customerId) missing.push('Customer')
-      if (!dueDate) missing.push('Due Date')
       if (missing.length > 0) {
         setJobSaveErr(`Missing required fields: ${missing.join(', ')}`)
         return
@@ -790,7 +822,6 @@ export function ProductVersionEditor(props: {
       setJobSaveErr(null)
       const missing: string[] = []
       if (!customerId) missing.push('Customer')
-      if (!dueDate) missing.push('Due Date')
       if (missing.length > 0) {
         setJobSaveErr(`Missing required fields: ${missing.join(', ')}`)
         return
@@ -1013,6 +1044,7 @@ export function ProductVersionEditor(props: {
                   jobSheetId={jobSheetId ? String(jobSheetId) : null}
                   productCode={previewProductCode}
                   description={previewDescription}
+                  myobImportLineDescription={myobImportLineDescription}
                 />
               ) : null}
 
@@ -1114,6 +1146,7 @@ export function ProductVersionEditor(props: {
                 jobSheetId={jobSheetId ? String(jobSheetId) : null}
                 productCode={previewProductCode}
                 description={previewDescription}
+                myobImportLineDescription={myobImportLineDescription}
               />
             </StickySideAside>
           ) : null}

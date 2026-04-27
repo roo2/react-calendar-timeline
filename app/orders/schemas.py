@@ -49,6 +49,7 @@ class CreateOrderRequest(BaseModel):
     # Orders are always created as DRAFT; publishing is a separate action.
     status: str = "draft"
     invoice_number: Optional[str] = None  # optional; if provided (non-empty) used as order code (e.g. MYOB/Xero invoice #)
+    customer_purchase_order_number: Optional[str] = None
     order_date: Optional[date] = None  # editable; displayed instead of created_at when set
 
 
@@ -67,14 +68,20 @@ class JobDTO(BaseModel):
 
 
 class UpdateOrderRequest(BaseModel):
-    """Update order header (draft only)."""
+    """Update order header (draft or confirmed)."""
     invoice_number: Optional[str] = None
+    customer_purchase_order_number: Optional[str] = None
     order_date: Optional[date] = None
+
+
+class LinkMyobImportLineRequest(BaseModel):
+    job_sheet_id: uuid.UUID
 
 
 class OrderListItemDTO(BaseModel):
     id: uuid.UUID
     code: str  # invoice number
+    customer_purchase_order_number: Optional[str] = None
     status: str
     customer_id: uuid.UUID
     product_version_id: Optional[uuid.UUID] = None
@@ -82,11 +89,17 @@ class OrderListItemDTO(BaseModel):
     product_code: Optional[str] = None
     version_number: Optional[int] = None
     item_count: int = 0
+    order_total: Optional[float] = None
     created_at: Optional[str] = None
     order_date: Optional[str] = None  # display instead of created_at when set
+    import_source: Optional[str] = None
+    myob_order_uid: Optional[str] = None
+    myob_synced_at: Optional[str] = None
+    myob_all_job_sheets_entered: Optional[bool] = None
 
 
 class OrderDetailDTO(OrderListItemDTO):
     jobs: List[JobDTO] = []
     items: list[dict] = []
+    myob_import_lines: list[dict] = []
 

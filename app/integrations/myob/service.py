@@ -4,12 +4,13 @@ import secrets
 import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import MYOB_SCOPES, settings
 from app.db.models.domain import MyobConnection, MyobOAuthState
 
 MYOB_AUTHORIZE_URL = "https://secure.myob.com/oauth2/account/authorize"
@@ -19,6 +20,19 @@ MYOB_ACCOUNTRIGHT_BASE = "https://api.myob.com/accountright"
 STATE_TTL = timedelta(minutes=10)
 # Safety cap when following OData NextPageLink (GET-only pagination).
 MYOB_CUSTOMER_FETCH_MAX_PAGES = 5000
+# OData $top cap for MYOB list previews (Sale/Order, Sale/Invoice/Item, etc.); full import will paginate separately.
+MYOB_SALE_ORDER_LIST_MAX_TOP = 1000
+
+
+def _myob_accountright_api_host_ok(host: str) -> bool:
+    """
+    MYOB AccountRight JSON often uses ``https://api.myob.com/...``; some files return regional hosts
+    such as ``https://arl2.api.myob.com/...`` on ``URI`` fields. Allow only these (SSRF guard).
+    """
+    h = (host or "").lower().strip()
+    if not h:
+        return False
+    return h == "api.myob.com" or h.endswith(".api.myob.com")
 
 
 def _as_utc_aware(dt: datetime) -> datetime:
@@ -110,6 +124,56 @@ def _myob_get_json(*, url: str, access_token: str) -> dict[str, Any]:
     return resp.json()
 
 
+def validate_myob_get_url_for_company_file(*, url: str, company_file_id: str) -> str:
+    """
+    SSRF guard: only https to api.myob.com / *.api.myob.com, path must be
+    ``/accountright/{configuredCompanyFileId}/...``.
+    """
+    u = (url or "").strip()
+    if not u:
+        raise MyobConfigError("url is empty")
+    p = urlparse(u)
+    if p.scheme.lower() != "https":
+        raise MyobConfigError("url must use https")
+    if not _myob_accountright_api_host_ok(p.netloc or ""):
+        raise MyobConfigError("url host must be api.myob.com or a regional *.api.myob.com host")
+    path = (p.path or "").strip("/")
+    parts = [x for x in path.split("/") if x]
+    if len(parts) < 2 or parts[0].lower() != "accountright":
+        raise MyobConfigError("url path must start with /accountright/{companyFileId}/")
+    cf = (company_file_id or "").strip()
+    if not cf:
+        raise MyobConfigError("MYOB company file id is missing")
+    if parts[1].lower() != cf.lower():
+        raise MyobConfigError("url company file id does not match the configured MYOB company file")
+    return u
+
+
+def fetch_myob_url_readonly(db: Session, *, url: str) -> dict[str, Any]:
+    """
+    Read-only GET to any path under the connected company file, for admin JSON inspection.
+    Response may be a JSON object or array (OData values, single resource, etc.).
+    """
+    access = ensure_myob_access_token_for_api(db)
+    cid, _ = effective_company_file_id(db)
+    cid = (cid or "").strip()
+    normalized = validate_myob_get_url_for_company_file(url=url, company_file_id=cid)
+    headers = _myob_api_headers(access_token=access)
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.get(normalized, headers=headers)
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise MyobApiError(f"MYOB API error {resp.status_code}: {detail}")
+    try:
+        body: Any = resp.json()
+    except Exception as e:
+        raise MyobApiError(f"MYOB response is not JSON: {e}") from e
+    return {"request_url": normalized, "myob": body}
+
+
 def fetch_customers_readonly_preview(db: Session) -> dict[str, Any]:
     """
     Read-only: GET Contact/Customer from MYOB and return JSON-safe data for admin preview.
@@ -149,6 +213,181 @@ def fetch_customers_readonly_preview(db: Session) -> dict[str, Any]:
     }
 
 
+def fetch_sale_orders_list_readonly(db: Session, *, top: int = 20, skip: int = 0) -> dict[str, Any]:
+    """
+    Read-only: GET ``Sale/Order`` from MYOB (OData ``$top`` / ``$skip``) for admin testing.
+
+    Returns the raw MYOB JSON plus request metadata. Use ``Items[].URI`` (when present) or
+    ``Items[].UID`` with :func:`fetch_sale_order_detail_readonly` to retrieve one order.
+    """
+    access = ensure_myob_access_token_for_api(db)
+    business_id, _ = effective_company_file_id(db)
+    business_id = (business_id or "").strip()
+    top_i = max(1, min(int(top), MYOB_SALE_ORDER_LIST_MAX_TOP))
+    skip_i = max(0, int(skip))
+    url = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}/Sale/Order?$top={top_i}&$skip={skip_i}"
+    data = _myob_get_json(url=url, access_token=access)
+    items = data.get("Items")
+    item_count = len(items) if isinstance(items, list) else 0
+    return {
+        "business_id": business_id,
+        "request_url": url,
+        "top": top_i,
+        "skip": skip_i,
+        "item_count": item_count,
+        "next_page_link": data.get("NextPageLink"),
+        "myob": data,
+    }
+
+
+def fetch_sale_invoice_items_list_readonly(db: Session, *, top: int = 20, skip: int = 0) -> dict[str, Any]:
+    """
+    Read-only: GET ``Sale/Invoice/Item`` from MYOB (item-type sale invoices; OData ``$top`` / ``$skip``).
+
+    Returns the raw MYOB JSON plus request metadata. Inspect ``myob.Items`` for rows (``URI``, ``Number``, etc.).
+    """
+    access = ensure_myob_access_token_for_api(db)
+    business_id, _ = effective_company_file_id(db)
+    business_id = (business_id or "").strip()
+    top_i = max(1, min(int(top), MYOB_SALE_ORDER_LIST_MAX_TOP))
+    skip_i = max(0, int(skip))
+    url = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}/Sale/Invoice/Item?$top={top_i}&$skip={skip_i}"
+    data = _myob_get_json(url=url, access_token=access)
+    items = data.get("Items")
+    item_count = len(items) if isinstance(items, list) else 0
+    return {
+        "business_id": business_id,
+        "request_url": url,
+        "top": top_i,
+        "skip": skip_i,
+        "item_count": item_count,
+        "next_page_link": data.get("NextPageLink"),
+        "myob": data,
+    }
+
+
+def _validate_myob_order_get_url(order_uri: str, *, business_id: str) -> str:
+    """Reject non-MYOB URLs (SSRF guard)."""
+    u = (order_uri or "").strip()
+    if not u:
+        raise MyobConfigError("order_uri is empty.")
+    parsed = urlparse(u)
+    if parsed.scheme.lower() != "https":
+        raise MyobConfigError("order_uri must use https.")
+    host = (parsed.netloc or "").lower()
+    if not _myob_accountright_api_host_ok(host):
+        raise MyobConfigError("order_uri must use a MYOB AccountRight API host (https, api.myob.com or *.api.myob.com).")
+    path = parsed.path or ""
+    # Expect /accountright/{business_id}/...
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 3 or parts[0].lower() != "accountright":
+        raise MyobConfigError("order_uri path must look like /accountright/{companyFileId}/...")
+    cf = parts[1]
+    if cf.lower() != business_id.lower():
+        raise MyobConfigError("order_uri company file id does not match the configured MYOB company file.")
+    tail = "/".join(parts[2:]).lower()
+    if not tail.startswith("sale/order"):
+        raise MyobConfigError("order_uri must be under Sale/Order.")
+    return u
+
+
+def fetch_sale_order_detail_readonly(
+    db: Session,
+    *,
+    order_uri: str | None = None,
+    order_uid: str | None = None,
+) -> dict[str, Any]:
+    """
+    Read-only: GET a single sale order JSON from MYOB.
+
+    Pass either ``order_uri`` (absolute URL from a list row's ``URI`` field) or ``order_uid``
+    (GUID). For UID-only, tries ``Sale/Order/{Service|Item|Professional|Miscellaneous|TimeBilling}/{uid}``
+    until one succeeds (MYOB stores different layouts under different resource paths).
+    """
+    access = ensure_myob_access_token_for_api(db)
+    business_id, _ = effective_company_file_id(db)
+    business_id = (business_id or "").strip()
+    base = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}"
+
+    ou = (order_uri or "").strip() or None
+    uid_raw = (order_uid or "").strip() or None
+    if ou:
+        url = _validate_myob_order_get_url(ou, business_id=business_id)
+        data = _myob_get_json(url=url, access_token=access)
+        return {"request_url": url, "resolved_by": "order_uri", "myob": data}
+
+    if not uid_raw:
+        raise MyobConfigError("Provide order_uri (from MYOB list URI) or order_uid (GUID).")
+
+    kinds = ("Service", "Item", "Professional", "Miscellaneous", "TimeBilling")
+    last_err: MyobApiError | None = None
+    for kind in kinds:
+        url = f"{base}/Sale/Order/{kind}/{uid_raw}"
+        try:
+            data = _myob_get_json(url=url, access_token=access)
+            return {"request_url": url, "resolved_by": f"order_uid:{kind}", "myob": data}
+        except MyobApiError as e:
+            last_err = e
+            msg = str(e)
+            if " 404" in msg or "404:" in msg or " 405" in msg:
+                continue
+            raise
+    raise MyobApiError(f"Could not resolve sale order for UID {uid_raw!r}. Last error: {last_err}")
+
+
+def _validate_myob_inventory_item_get_url(item_uri: str, *, business_id: str) -> str:
+    """Reject non-MYOB URLs (SSRF guard) for ``GET …/Inventory/Item/…``."""
+    u = (item_uri or "").strip()
+    if not u:
+        raise MyobConfigError("item_uri is empty.")
+    parsed = urlparse(u)
+    if parsed.scheme.lower() != "https":
+        raise MyobConfigError("item_uri must use https.")
+    host = (parsed.netloc or "").lower()
+    if not _myob_accountright_api_host_ok(host):
+        raise MyobConfigError("item_uri must use a MYOB AccountRight API host (https, api.myob.com or *.api.myob.com).")
+    path = parsed.path or ""
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 3 or parts[0].lower() != "accountright":
+        raise MyobConfigError("item_uri path must look like /accountright/{companyFileId}/...")
+    cf = parts[1]
+    if cf.lower() != business_id.lower():
+        raise MyobConfigError("item_uri company file id does not match the configured MYOB company file.")
+    tail = "/".join(parts[2:]).lower()
+    if not tail.startswith("inventory/item"):
+        raise MyobConfigError("item_uri must be under Inventory/Item.")
+    return u
+
+
+def fetch_inventory_item_readonly(
+    db: Session,
+    *,
+    item_uri: str | None = None,
+    item_uid: str | None = None,
+) -> dict[str, Any]:
+    """
+    Read-only: GET a single ``Inventory/Item`` document (for UOM / quantity type when importing orders).
+    """
+    access = ensure_myob_access_token_for_api(db)
+    business_id, _ = effective_company_file_id(db)
+    business_id = (business_id or "").strip()
+    base = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}"
+
+    iu = (item_uri or "").strip() or None
+    uid_raw = (item_uid or "").strip() or None
+    if iu:
+        url = _validate_myob_inventory_item_get_url(iu, business_id=business_id)
+        data = _myob_get_json(url=url, access_token=access)
+        return {"request_url": url, "resolved_by": "item_uri", "myob": data}
+
+    if not uid_raw:
+        raise MyobConfigError("Provide item_uri (from a MYOB line ``Item.URI``) or item_uid (GUID).")
+
+    url = f"{base}/Inventory/Item/{uid_raw}"
+    data = _myob_get_json(url=url, access_token=access)
+    return {"request_url": url, "resolved_by": "item_uid", "myob": data}
+
+
 def myob_configured() -> bool:
     return bool(settings.MYOB_APP_KEY and settings.MYOB_APP_SECRET)
 
@@ -159,7 +398,7 @@ def _require_config() -> None:
 
 
 def _normalize_scopes() -> str:
-    return " ".join(s for s in settings.MYOB_SCOPES.replace(",", " ").split() if s)
+    return " ".join(s for s in MYOB_SCOPES.replace(",", " ").split() if s)
 
 
 def cleanup_expired_oauth_states(db: Session) -> None:

@@ -4,21 +4,32 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm.base import NO_VALUE
 
 from app.auth.deps import allow_roles_any, csrf_protect, require_roles
 from app.exceptions import DomainError
 from app.resell_products import service
 from app.resell_products.schemas import ResellProductCreate, ResellProductDTO, ResellProductUpdate
+from app.str_norm import strip_trailing_dash_suffix
 
 router = APIRouter(prefix="/api/admin/resell-products", tags=["admin-resell-products"])
 
 
 def _to_dto(r) -> ResellProductDTO:
+    # Avoid lazy-loading `income_account` on detached instances (e.g. after create_row).
+    lv = sa_inspect(r).attrs.income_account.loaded_value
+    ia = None if lv is NO_VALUE else lv
     return ResellProductDTO(
         id=str(r.id),
-        description=str(r.description),
+        description=strip_trailing_dash_suffix(str(r.description)),
         unit_price=r.unit_price if isinstance(r.unit_price, Decimal) else Decimal(str(r.unit_price)),
         active=bool(r.active),
+        catalog_kind=str(getattr(r, "catalog_kind", None) or "supply"),
+        myob_item_uid=getattr(r, "myob_item_uid", None),
+        myob_income_account_uid=getattr(r, "myob_income_account_uid", None),
+        income_account_display_id=getattr(ia, "display_id", None) if ia is not None else None,
+        income_account_name=getattr(ia, "name", None) if ia is not None else None,
     )
 
 

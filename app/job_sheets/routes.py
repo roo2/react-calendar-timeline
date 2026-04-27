@@ -130,6 +130,7 @@ def _to_summary(
         product_id=js.product_id,
         product_version_id=js.product_version_id,
         version_number=int(getattr(version, "version_number", 0) or 0),
+        is_import_draft=bool(getattr(js, "is_import_draft", False)),
         due_date=str(js.due_date.date()) if getattr(js, "due_date", None) is not None else None,
         quantity_value=float(js.quantity_value),
         quantity_unit=js.quantity_unit,
@@ -274,9 +275,21 @@ async def get_job_sheet(job_sheet_id: str):
     snap_map = service.production_job_snapshots_by_job_sheet_ids([str(js.id)])
     order_info = order_map.get(str(js.id))
     spec = getattr(getattr(js, "version", None), "spec_payload", None) or {}
+    myob_desc: str | None = None
+    with SessionLocal() as db:
+        oi = (
+            db.query(OrderItem)
+            .filter(OrderItem.job_sheet_id == str(js.id))
+            .order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
+            .first()
+        )
+        if oi is not None and getattr(oi, "import_line_description", None):
+            d = str(oi.import_line_description).strip()
+            myob_desc = d or None
     out = JobSheetDetail(
         job_sheet=_to_summary(js, order_info, production_snapshot=snap_map.get(str(js.id))),
         spec_payload=spec,
+        myob_import_line_description=myob_desc,
     )
     return out.model_dump()
 

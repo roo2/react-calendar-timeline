@@ -20,7 +20,7 @@ Each migration file’s `revision = "..."` string is written into that column wh
 
 If you change a migration’s `revision =` string but your DB’s `alembic_version` row still has the **old** id, Alembic will error (`Can't locate revision identified by '…'`). Fix by updating that row to the **new** id (no need to re-run the migration body).
 
-Current linear head: **`0010_cust_myob_json_nocode`** (see `versions/*.py` for the full chain `0001_initial_schema` → … → `0010_cust_myob_json_nocode`).
+Current linear head: **`0011_myob_orders_unified`** (see `versions/*.py` for the full chain `0001_initial_schema` → … → `0011_myob_orders_unified`).
 
 Example (Postgres / Heroku `psql`):
 

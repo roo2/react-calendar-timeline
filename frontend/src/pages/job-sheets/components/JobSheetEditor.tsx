@@ -6,6 +6,7 @@ import { computeDerivedGeometryAndTotals, getRollWeightAvgKg } from '../../../ut
 import { buildQuickQuoteInputsFromSpec } from '../../../utils/specToQuoteInputs'
 import {
   coerceQtyTypeForFinishMode,
+  productDisplayUnitPlural,
   computeRollsDisplay,
   computeTotalKgDisplay,
   computeWeightPerRollDisplay,
@@ -228,28 +229,51 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionStatus(normalizedPs)
     setProductionStartedLocal(isoToDatetimeLocalValue(js?.production_started_at as string | null | undefined))
     setProductionFinishedLocal(isoToDatetimeLocalValue(js?.production_finished_at as string | null | undefined))
-    const loadedSpec = ensureSpec(res?.spec_payload)
-    setSpec(loadedSpec)
-    const fm: FinishMode = loadedSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+    const isImportDraft = Boolean(js?.is_import_draft)
+    let loadedSpec0 = ensureSpec(res?.spec_payload)
+    const rawQu = String(js?.quantity_unit || '').toLowerCase()
+    const rawQtHint = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
+    if (isImportDraft && (rawQu === 'rolls' || String(rawQtHint || '') === 'total_rolls')) {
+      loadedSpec0 = {
+        ...loadedSpec0,
+        identity: { ...loadedSpec0.identity, finish_mode: 'Rolls' },
+      }
+    }
+    setSpec(loadedSpec0)
+    const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
     const rawQt = (js?.qty_type as QtyType) || inferQtyTypeFromUnit(js?.quantity_unit)
-    const pt = String(loadedSpec.identity?.product_type || 'Bag')
-    const lenRaw = String(loadedSpec.dimensions?.length_units || '')
+    const pt = String(loadedSpec0.identity?.product_type || 'Bag')
+    const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
     const continuousLength =
       pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
-    const qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
-    setQtyType(qt === 'units_per_1000' ? 'units' : qt)
+    let qt: QtyType
+    if (isImportDraft) {
+      const base = (rawQt && String(rawQt).trim() ? String(rawQt) : inferQtyTypeFromUnit(js?.quantity_unit)) as QtyType
+      if (continuousLength && base === 'rolls_units') {
+        qt = 'kg'
+      } else {
+        qt = base === 'units_per_1000' ? 'units' : base
+      }
+    } else {
+      qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
+    }
+    let qtResolved: QtyType = qt === 'units_per_1000' ? 'units' : qt
+    if (isImportDraft && rawQu === 'rolls' && qtResolved === 'total_rolls') {
+      qtResolved = 'rolls_units'
+    }
+    setQtyType(qtResolved)
     const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
     const wpr =
       js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
         ? String(js.weight_per_roll_kg)
         : ''
-    if (qt === 'kg') {
+    if (qtResolved === 'kg') {
       setTotalKg(String(js?.quantity_value ?? ''))
       setNumUnits('')
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
-    } else if (qt === 'units_per_1000') {
+    } else if (qtResolved === 'units_per_1000') {
       const abs =
         js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))
           ? Math.max(0, Math.round(Number(js.num_product_units)))
@@ -259,10 +283,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
-    } else if (qt === 'units') {
+    } else if (qtResolved === 'units') {
       const quRaw = String(js?.quantity_unit || '').toLowerCase()
       if (quRaw === 'cartons' && js?.num_product_units != null) {
         setNumUnits(String(js.num_product_units))
+      } else if (quRaw === '1000' && js?.num_product_units != null) {
+        setNumUnits(String(Math.max(0, Math.round(Number(js.num_product_units)))))
       } else {
         setNumUnits(String(js?.num_product_units ?? js?.quantity_value ?? ''))
       }
@@ -270,7 +296,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       setUnitsPerRoll('')
       setNumRolls(String(nrStored))
       setWeightPerRoll(wpr)
-    } else if (qt === 'rolls_units') {
+    } else if (qtResolved === 'rolls_units') {
       setNumRolls(String(nrStored))
       setTotalKg('')
       setNumUnits('')
@@ -516,10 +542,15 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     }
   }, [effectiveQtyType, derivedForDisplay?.billedKgPerRoll, derivedForDisplay?.kgPerRoll])
 
-  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
-  const productTypeIsBag = productType === 'Bag'
+  const productUnitLabel = productDisplayUnitPlural(productType)
+  const productTypeIsBag = String(productType || '').toLowerCase() === 'bag'
 
   const loadedJobSheet = mode === 'edit' && jobSheetId ? jobSheetDetail?.data?.job_sheet : undefined
+  const myobImportLineDescription = useMemo(() => {
+    const raw = jobSheetDetail?.data?.myob_import_line_description
+    if (raw == null || typeof raw !== 'string') return ''
+    return raw.trim()
+  }, [jobSheetDetail?.data?.myob_import_line_description])
 
   async function onSave() {
     setSaveMsg(null)
@@ -529,7 +560,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     const missing: string[] = []
     if (!customerId) missing.push('Customer')
     if (!productId) missing.push('Product')
-    if (!dueDate) missing.push('Due Date')
     if (missing.length > 0) {
       setSaveErr(`Missing required fields: ${missing.join(', ')}`)
       return
@@ -636,7 +666,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           createJobSheet({
             customer_id: customerId,
             product_id: effectiveProductId,
-            due_date: dueDate,
+            due_date: dueDate.trim() ? dueDate : null,
             ...(orderDate ? { order_date: orderDate } : {}),
             quantity_value: oq.quantity_value,
             quantity_unit: oq.quantity_unit,
@@ -667,7 +697,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       } else {
         if (!jobSheetId) throw new Error('Missing job sheet id')
         const body: Record<string, unknown> = {
-          due_date: dueDate,
+          due_date: dueDate.trim() ? dueDate : null,
           order_date: orderDate || null,
           quantity_value: oq.quantity_value,
           quantity_unit: oq.quantity_unit,
@@ -891,7 +921,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           productRow={
             <Box>
               <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.5 }}>
-                {mode === 'new' ? 'Product code (generated)' : 'Product'}
+                {mode === 'new' ? 'Customer-facing product code (generated)' : 'Product'}
               </Typography>
               <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-word' }}>
                 {previewProductCode.trim() || (mode === 'edit' ? productInfo?.code?.trim() : '') || '—'}
@@ -926,6 +956,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             dueDate={dueDate}
             productCode={previewProductCode}
             description={previewDescription}
+            myobImportLineDescription={myobImportLineDescription}
           />
         ) : null}
 
@@ -975,6 +1006,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               dueDate={dueDate}
               productCode={previewProductCode}
               description={previewDescription}
+              myobImportLineDescription={myobImportLineDescription}
             />
           </StickySideAside>
         ) : null}

@@ -166,7 +166,7 @@ export function ProductNewPage() {
               </TextField>
 
               <TextField
-                label="Product Code"
+                label="Customer-facing product code"
                 value={code}
                 onChange={(e) => {
                   setCode(e.currentTarget.value)
@@ -175,7 +175,10 @@ export function ProductNewPage() {
                 }}
                 required
                 helperText={
-                  fieldErrors['code'] || (codeExists ? 'Product code already exists' : 'Unique code for this product (spec-derived codes do not include customer prefix).')
+                  fieldErrors['code'] ||
+                  (codeExists
+                    ? 'Customer-facing product code already exists'
+                    : 'Unique customer-facing code for this product (spec-derived codes do not include customer prefix).')
                 }
                 error={!!fieldErrors['code'] || codeExists}
               />

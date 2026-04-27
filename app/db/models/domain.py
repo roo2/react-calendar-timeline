@@ -157,6 +157,7 @@ class JobSheet(Base):
     line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    is_import_draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     customer: Mapped["Customer"] = relationship()
     product: Mapped["Product"] = relationship()
@@ -214,11 +215,19 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(OrderStatusColumn(), nullable=False)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     order_date: Mapped[Optional[str]] = mapped_column(Date, nullable=True)  # editable; display instead of created_at when set
+    customer_purchase_order_number: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # MYOB one-way import (upsert by myob_order_uid when set)
+    import_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    myob_order_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True, index=True)
+    myob_last_modified: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    myob_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")
-    items: Mapped[list["OrderItem"]] = relationship(back_populates="order")
-    resell_lines: Mapped[list["OrderResellLine"]] = relationship(back_populates="order")
+    items: Mapped[list["OrderItem"]] = relationship(
+        back_populates="order",
+        order_by="OrderItem.line_index",
+    )
 
 
 class SavedQuote(Base):
@@ -239,51 +248,76 @@ class SavedQuote(Base):
 class OrderItem(Base):
     __tablename__ = "order_items"
     __table_args__ = (
-        UniqueConstraint("order_id", "job_sheet_id", name="uq_order_item_order_job_sheet"),
+        UniqueConstraint("order_id", "line_index", name="uq_order_items_order_line_index"),
         Index("ix_order_items_order", "order_id"),
         Index("ix_order_items_job_sheet", "job_sheet_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
-    job_sheet_id: Mapped[str] = mapped_column(ForeignKey("job_sheets.id", ondelete="RESTRICT"), index=True)
+    line_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # manufactured | resell | myob_import
+    line_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="manufactured")
+    job_sheet_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("job_sheets.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    resell_product_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("resell_products.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    resell_description_snapshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resell_due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    resell_quantity_value: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    resell_quantity_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    resell_unit_rate: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    resell_line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    import_line_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    myob_row_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    myob_line_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    myob_item_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    myob_item_number: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    myob_item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    import_ship_quantity: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    import_unit_price: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    import_line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
+    import_quantity_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    import_qty_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    myob_item_sales_unit_raw: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    myob_item_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    import_requires_job_sheet: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     order: Mapped["Order"] = relationship(back_populates="items")
+    job_sheet: Mapped[Optional["JobSheet"]] = relationship(foreign_keys=[job_sheet_id])
+    resell_product: Mapped[Optional["ResellProduct"]] = relationship(foreign_keys=[resell_product_id])
 
 
 class ResellProduct(Base):
-    """Catalog of non-manufactured lines resold on orders (e.g. cores, pallets)."""
+    """Catalog of resell lines: supplies (cores, pallets) vs outsourced manufactured MYOB items."""
 
     __tablename__ = "resell_products"
-    __table_args__ = (Index("ix_resell_products_active", "active"),)
+    __table_args__ = (
+        Index("ix_resell_products_active", "active"),
+        Index("ix_resell_products_myob_income_account_uid", "myob_income_account_uid"),
+        Index("ix_resell_products_catalog_kind", "catalog_kind"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     description: Mapped[str] = mapped_column(Text, nullable=False)
     unit_price: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # supply = consumables / fees (default); outsourced_manufacturing = MYOB bought finished goods we outsource.
+    catalog_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="supply")
+    # Set when a row is created/linked from MYOB; upserts on re-import are keyed on this, not the description text.
+    myob_item_uid: Mapped[Optional[str]] = mapped_column(
+        String(36), unique=True, nullable=True, index=True
+    )
+    myob_income_account_uid: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("myob_income_accounts.myob_account_uid", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    lines: Mapped[list["OrderResellLine"]] = relationship(back_populates="resell_product")
-
-
-class OrderResellLine(Base):
-    """Order line for a resell / supplies catalog item (no job sheet)."""
-
-    __tablename__ = "order_resell_lines"
-    __table_args__ = (Index("ix_order_resell_lines_order", "order_id"),)
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id", ondelete="RESTRICT"), index=True)
-    resell_product_id: Mapped[str] = mapped_column(ForeignKey("resell_products.id", ondelete="RESTRICT"), nullable=False)
-    description_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
-    quantity_value: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
-    quantity_unit: Mapped[str] = mapped_column(String(16), nullable=False, default="ea")
-    unit_rate: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
-    line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
-    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-
-    order: Mapped["Order"] = relationship(back_populates="resell_lines")
-    resell_product: Mapped["ResellProduct"] = relationship(back_populates="lines")
+    income_account: Mapped[Optional["MyobIncomeAccount"]] = relationship(foreign_keys=[myob_income_account_uid])
 
 
 class Job(Base):
@@ -745,6 +779,48 @@ class MyobOAuthState(Base):
         server_default=func.current_timestamp(),
     )
     expires_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MyobIncomeAccount(Base):
+    """MYOB General Ledger income account referenced by ``Inventory/Item.IncomeAccount`` (synced from items)."""
+
+    __tablename__ = "myob_income_accounts"
+    __table_args__ = (Index("ix_myob_income_accounts_display_id", "display_id"),)
+
+    myob_account_uid: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    display_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MyobItemSellingUom(Base):
+    """
+    Cached MYOB ``Inventory/Item`` UID → ``SellingDetails.SellingUnitOfMeasure`` for order import
+    and admin reporting (distinct UOM values in use).
+    """
+
+    __tablename__ = "myob_item_selling_uoms"
+    __table_args__ = (
+        Index("ix_myob_item_selling_uoms_uom", "selling_unit_of_measure"),
+        Index("ix_myob_item_selling_uoms_income_account", "myob_income_account_uid"),
+    )
+
+    myob_item_uid: Mapped[str] = mapped_column(String(36), primary_key=True)
+    selling_unit_of_measure: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # From MYOB ``Inventory/Item`` ``IsBought`` when the row was last synced; None if not yet read.
+    is_bought: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    is_sold: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    is_inventoried: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    myob_income_account_uid: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("myob_income_accounts.myob_account_uid", ondelete="SET NULL"),
+        nullable=True,
+    )
+    synced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    income_account: Mapped[Optional["MyobIncomeAccount"]] = relationship(foreign_keys=[myob_income_account_uid])
 
 
 class MyobConnection(Base):

@@ -1187,7 +1187,7 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ mb: 2, maxWidth: { xs: '100%', sm: '50%' } }}>
           <TextField
-            label="Product Code"
+            label="Customer-facing product code"
             placeholder={generatedProductCodePlaceholder}
             value={identity.customer_code ?? ''}
             onChange={(e) =>

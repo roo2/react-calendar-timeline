@@ -10,6 +10,10 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
+from app.db.myob_import_placeholders import (
+    MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID,
+    MYOB_DRAFT_PLACEHOLDER_VERSION_ID,
+)
 from app.db.models.domain import Customer, Product, ProductVersion, JobSheet, Job, Order, OrderItem
 from app.db.models.enums import OrderStatus
 from app.exceptions import DomainError
@@ -27,6 +31,7 @@ from app.products.service import (
     _next_version_number,
     compute_product_code_full,
     compute_product_description,
+    create_product_v1_in_session,
 )  # reuse version numbering helper
 from app.job_sheets.schemas import JobSheetCreateRequest, JobSheetUpdateRequest
 
@@ -188,6 +193,8 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
 
         _ensure_draft_order_for_job_sheet_in_db(db, str(js.id), new_order_date=payload.order_date)
         job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
+        if job is None:
+            raise DomainError("Could not create production job for job sheet")
         upd = payload.model_dump(exclude_unset=True)
         if "production_status" in upd and payload.production_status is not None:
             job.status = payload.production_status
@@ -289,6 +296,73 @@ def create_job_sheet_from_product_latest_version(
             continue
     if js is None:
         raise DomainError("Failed to allocate job number") from last_err
+    return js
+
+
+def create_myob_import_draft_job_sheet(
+    *,
+    db,
+    customer_id: str,
+    quantity_value: float,
+    quantity_unit: str,
+    qty_type: str,
+    unit_rate: Optional[float],
+    line_total: Optional[float],
+    created_by: str,
+) -> JobSheet:
+    """
+    Create a job sheet for a MYOB import line: real order customer, placeholder product/version, qty/price
+    from MYOB. Does not create a production ``Job`` row (``is_import_draft``) until the sheet is completed.
+    """
+    cid = _ensure_customer_exists(db, str(customer_id))
+    cust = db.get(Customer, cid)
+    assert cust is not None
+    prefix = _job_no_prefix_for_customer(cust)
+    pv = db.get(ProductVersion, str(MYOB_DRAFT_PLACEHOLDER_VERSION_ID))
+    if not pv or str(pv.product_id) != str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID):
+        raise DomainError("MYOB draft placeholder product/version is not installed (run migrations)")
+
+    qt, npu0, wpr0, nr0 = _infer_qty_fields_for_order_line(
+        float(quantity_value), str(quantity_unit), qty_type, None
+    )
+    npu = float(npu0) if npu0 is not None else None
+    wpr = float(wpr0) if wpr0 is not None else None
+
+    js: Optional[JobSheet] = None
+    last_err: Optional[Exception] = None
+    for _ in range(5):
+        seq = _next_job_seq(db, cid)
+        job_no = f"{prefix}_{seq}"
+        try:
+            with db.begin_nested():
+                js = JobSheet(
+                    job_no=job_no,
+                    job_seq=seq,
+                    customer_id=cid,
+                    product_id=str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID),
+                    product_version_id=str(MYOB_DRAFT_PLACEHOLDER_VERSION_ID),
+                    due_date=None,
+                    quantity_value=float(quantity_value),
+                    quantity_unit=str(quantity_unit),
+                    qty_type=qt,
+                    num_product_units=npu,
+                    weight_per_roll_kg=wpr,
+                    num_rolls=int(nr0),
+                    unit_rate=float(unit_rate) if unit_rate is not None else None,
+                    line_total=float(line_total) if line_total is not None else None,
+                    created_by=created_by or "system",
+                    is_import_draft=True,
+                )
+                db.add(js)
+                db.flush()
+            last_err = None
+            break
+        except IntegrityError as e:
+            last_err = e
+            js = None
+            continue
+    if js is None:
+        raise DomainError("Failed to allocate job number for MYOB import draft") from last_err
     return js
 
 
@@ -567,6 +641,34 @@ def get_job_sheet(job_sheet_id: str) -> Optional[JobSheet]:
         return js
 
 
+def finalize_import_draft_job_sheet_after_spec_save(db, job_sheet_id: str) -> None:
+    """
+    After staff save a real spec for a MYOB import draft sheet: clear the draft flag, treat the order line
+    as normal production, and ensure a scheduling Job exists (planned).
+    """
+    try:
+        jid = str(uuid.UUID(str(job_sheet_id)))
+    except Exception:
+        return
+    js = db.get(JobSheet, jid)
+    if not js or not bool(getattr(js, "is_import_draft", False)):
+        return
+    js.is_import_draft = False
+    db.add(js)
+    db.flush()
+    oi = db.execute(
+        select(OrderItem).where(
+            OrderItem.job_sheet_id == str(js.id),
+            OrderItem.line_kind == "myob_import",
+        )
+    ).scalars().first()
+    if oi is not None:
+        oi.line_kind = "manufactured"
+        db.add(oi)
+    db.flush()
+    ensure_scheduling_job_for_job_sheet(db, str(js.id))
+
+
 def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updated_by: str) -> str:
     with SessionLocal.begin() as db:
         try:
@@ -577,6 +679,8 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         js = db.get(JobSheet, jid)
         if not js:
             raise DomainError("Job sheet not found")
+
+        import_draft_before = bool(getattr(js, "is_import_draft", False))
 
         upd = payload.model_dump(exclude_unset=True)
 
@@ -606,31 +710,43 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
 
         # Optionally create a new product version + repoint job sheet
         if payload.spec is not None:
-            pid = str(js.product_id)
-            vnum = _next_version_number(db, pid)
-            version = ProductVersion(
-                product_id=pid,
-                version_number=vnum,
-                created_by=updated_by or "system",
-                spec_payload=payload.spec.dict(),
-            )
-            db.add(version)
-            db.flush()
+            on_placeholder = str(js.product_id) == str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID)
+            if import_draft_before and on_placeholder:
+                new_product, version = create_product_v1_in_session(
+                    db, customer_id=str(js.customer_id), spec=payload.spec, created_by=updated_by
+                )
+                js.product_id = str(new_product.id)
+                js.product_version_id = str(version.id)
+            else:
+                pid = str(js.product_id)
+                vnum = _next_version_number(db, pid)
+                spec_payload = (
+                    payload.spec.model_dump() if hasattr(payload.spec, "model_dump") else payload.spec.dict()
+                )
+                version = ProductVersion(
+                    product_id=pid,
+                    version_number=vnum,
+                    created_by=updated_by or "system",
+                    spec_payload=spec_payload,
+                )
+                db.add(version)
+                db.flush()
 
-            product = db.get(Product, pid)
-            if product:
-                product.active_version_id = version.id
-                # Keep product code aligned with the new active version spec.
-                if isinstance(getattr(version, "spec_payload", None), dict):
-                    new_code = compute_product_code_full(product, version.spec_payload)
-                    if new_code and new_code != getattr(product, "code", None):
-                        product.code = new_code
-                db.add(product)
+                product = db.get(Product, pid)
+                if product:
+                    product.active_version_id = version.id
+                    if isinstance(getattr(version, "spec_payload", None), dict):
+                        new_code = compute_product_code_full(product, version.spec_payload)
+                        if new_code and new_code != getattr(product, "code", None):
+                            product.code = new_code
+                    db.add(product)
 
-            js.product_version_id = str(version.id)
+                js.product_version_id = str(version.id)
 
         db.add(js)
         db.flush()
+        if payload.spec is not None and import_draft_before:
+            finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
         if "order_date" in upd:
             o = db.get(Order, oid)
@@ -646,15 +762,16 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         )
         if prod_touch:
             job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
-            if "production_status" in upd and payload.production_status is not None:
-                job.status = payload.production_status
-                apply_job_production_timestamps(job, job.status)
-            if "production_started_at" in upd:
-                job.production_started_at = _utc_aware(payload.production_started_at)
-            if "production_finished_at" in upd:
-                job.production_finished_at = _utc_aware(payload.production_finished_at)
-            db.add(job)
-            db.flush()
+            if job is not None:
+                if "production_status" in upd and payload.production_status is not None:
+                    job.status = payload.production_status
+                    apply_job_production_timestamps(job, job.status)
+                if "production_started_at" in upd:
+                    job.production_started_at = _utc_aware(payload.production_started_at)
+                if "production_finished_at" in upd:
+                    job.production_finished_at = _utc_aware(payload.production_finished_at)
+                db.add(job)
+                db.flush()
 
         return str(js.id)
 

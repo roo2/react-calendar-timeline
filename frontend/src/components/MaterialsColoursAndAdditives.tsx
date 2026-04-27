@@ -86,8 +86,8 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell>Percentage (%)</TableCell>
             <TableCell>Colour</TableCell>
+            <TableCell>Percentage (%)</TableCell>
             <TableCell />
           </TableRow>
         </TableHead>
@@ -96,6 +96,14 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
             const isDefault = isDefaultRow(row, COLOUR_DEFAULTS)
             return (
               <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                <TableCell sx={{ width: '55%' }}>
+                  <ColourSelect
+                    options={colourOptions}
+                    valueCode={row.colour_code}
+                    label={idx === 0 ? 'Colour 1' : `Colour ${idx + 1}`}
+                    onChangeCode={(nextCode) => setColourRow(idx, { colour_code: nextCode })}
+                  />
+                </TableCell>
                 <TableCell sx={{ width: '35%' }}>
                   <TextField
                     size="small"
@@ -105,14 +113,6 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
                     value={row.strength_pct}
                     onChange={(e) => setColourRow(idx, { strength_pct: e.target.value })}
                     fullWidth
-                  />
-                </TableCell>
-                <TableCell sx={{ width: '55%' }}>
-                  <ColourSelect
-                    options={colourOptions}
-                    valueCode={row.colour_code}
-                    label={idx === 0 ? 'Colour 1' : `Colour ${idx + 1}`}
-                    onChangeCode={(nextCode) => setColourRow(idx, { colour_code: nextCode })}
                   />
                 </TableCell>
                 <TableCell sx={{ width: '10%' }}>
@@ -143,8 +143,8 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Percentage (%)</TableCell>
               <TableCell>Additive</TableCell>
+              <TableCell>Percentage (%)</TableCell>
               <TableCell />
             </TableRow>
           </TableHead>
@@ -153,6 +153,14 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
               const isDefault = isDefaultRow(row, ADDITIVE_DEFAULTS)
               return (
                 <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                  <TableCell sx={{ width: '55%' }}>
+                    <AdditiveSelect
+                      options={additiveOptions}
+                      valueCode={row.additive_code}
+                      label={`Additive ${idx + 1}`}
+                      onChangeCode={(nextCode) => setAdditiveRow(idx, { additive_code: nextCode })}
+                    />
+                  </TableCell>
                   <TableCell sx={{ width: '35%' }}>
                     <TextField
                       size="small"
@@ -162,14 +170,6 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
                       value={row.pct}
                       onChange={(e) => setAdditiveRow(idx, { pct: e.target.value })}
                       fullWidth
-                    />
-                  </TableCell>
-                  <TableCell sx={{ width: '55%' }}>
-                    <AdditiveSelect
-                      options={additiveOptions}
-                      valueCode={row.additive_code}
-                      label={`Additive ${idx + 1}`}
-                      onChangeCode={(nextCode) => setAdditiveRow(idx, { additive_code: nextCode })}
                     />
                   </TableCell>
                   <TableCell sx={{ width: '10%' }}>

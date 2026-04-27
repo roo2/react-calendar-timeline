@@ -671,7 +671,7 @@ function ResinBlendRow(props: {
   )
 
   const code = blend.blend_code
-  const compsSummary = blend.components.map((c) => `${c.pct}% ${c.resin_code}`).join(', ')
+  const compsSummary = blend.components.map((c) => `${c.resin_code} ${c.pct}%`).join(', ')
 
   const components = componentsDraft
     .filter((c) => c.resin_code.trim() && c.pct !== '')
@@ -735,7 +735,7 @@ function NewResinBlendRow(props: {
   const [open, setOpen] = useState(false)
   const compsSummary = components
     .filter((c) => c.resin_code.trim() && c.pct !== '')
-    .map((c) => `${Number(c.pct).toFixed(2)}% ${c.resin_code}`)
+    .map((c) => `${c.resin_code} ${Number(c.pct).toFixed(2)}%`)
     .join(', ')
 
   return (

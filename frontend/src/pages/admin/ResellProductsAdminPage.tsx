@@ -19,7 +19,19 @@ import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 
-type Row = { id: string; description: string; unit_price: number; active: boolean }
+const DESCRIPTION_COL_WIDTH = 520
+
+type Row = {
+  id: string
+  description: string
+  unit_price: number
+  active: boolean
+  catalog_kind?: string | null
+  myob_item_uid?: string | null
+  myob_income_account_uid?: string | null
+  income_account_display_id?: string | null
+  income_account_name?: string | null
+}
 
 export function ResellProductsAdminPage() {
   const { setDirty } = useUnsavedChanges()
@@ -52,6 +64,15 @@ export function ResellProductsAdminPage() {
   }, [])
 
   const canAdd = useMemo(() => !!newDesc.trim() && newPrice !== '' && Number(newPrice) >= 0, [newDesc, newPrice])
+
+  const supplyRows = useMemo(
+    () => rows.filter((r) => (r.catalog_kind || 'supply') !== 'outsourced_manufacturing'),
+    [rows],
+  )
+  const outsourcedRows = useMemo(
+    () => rows.filter((r) => (r.catalog_kind || 'supply') === 'outsourced_manufacturing'),
+    [rows],
+  )
 
   async function saveRow(id: string, patch: Partial<Pick<Row, 'description' | 'unit_price' | 'active'>>) {
     try {
@@ -116,10 +137,13 @@ export function ResellProductsAdminPage() {
     <Stack spacing={2}>
       <AdminPageHeader
         title="Resell / supplies"
-        subtitle="Non-manufactured items sold on orders (e.g. cardboard cores, pallets). Used in the order “Add product” dropdown."
+        subtitle="Supplies covers cores, pallets, and other add-ons you create here or import from MYOB. Outsourced manufacturing lists MYOB items that are bought, sold, and not stock-tracked (finished goods you outsource). Both appear in the order “Add product” list."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
 
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+        Supplies &amp; fees
+      </Typography>
       <Paper variant="outlined" sx={{ p: 2 }}>
         {loading && rows.length === 0 ? (
           <Typography color="text.secondary">Loading…</Typography>
@@ -127,14 +151,15 @@ export function ResellProductsAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell>Description</TableCell>
+                <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
+                <TableCell sx={{ minWidth: 220 }}>MYOB income account</TableCell>
                 <TableCell sx={{ width: 140 }}>Unit price ($)</TableCell>
                 <TableCell sx={{ width: 100 }}>Active</TableCell>
                 <TableCell sx={{ width: 200 }} />
               </TableRow>
             </TableHead>
             <TableBody>
-              {rows.map((r) => (
+              {supplyRows.map((r) => (
                 <ResellRow
                   key={r.id}
                   row={r}
@@ -144,15 +169,18 @@ export function ResellProductsAdminPage() {
                 />
               ))}
               <TableRow>
-                <TableCell>
+                <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>
                   <TextField
                     size="small"
                     fullWidth
                     label="Description"
+                    multiline
+                    minRows={2}
                     value={newDesc}
                     onChange={(e) => setNewDesc(e.target.value)}
                   />
                 </TableCell>
+                <TableCell />
                 <TableCell>
                   <TextField
                     size="small"
@@ -184,6 +212,46 @@ export function ResellProductsAdminPage() {
           </AdminDataTable>
         )}
       </Paper>
+
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, pt: 1 }}>
+        Outsourced manufacturing (from MYOB)
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ pb: 0.5 }}>
+        Rows are created when a matching MYOB order line is imported. Edit price or description here; catalog kind is
+        determined from the MYOB item.
+      </Typography>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        {loading && rows.length === 0 ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : outsourcedRows.length === 0 ? (
+          <Typography color="text.secondary" variant="body2">
+            No outsourced manufacturing products yet.
+          </Typography>
+        ) : (
+          <AdminDataTable>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
+                <TableCell sx={{ minWidth: 220 }}>MYOB income account</TableCell>
+                <TableCell sx={{ width: 140 }}>Unit price ($)</TableCell>
+                <TableCell sx={{ width: 100 }}>Active</TableCell>
+                <TableCell sx={{ width: 200 }} />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {outsourcedRows.map((r) => (
+                <ResellRow
+                  key={r.id}
+                  row={r}
+                  saving={savingId === r.id}
+                  onSave={saveRow}
+                  onDelete={deleteRow}
+                />
+              ))}
+            </TableBody>
+          </AdminDataTable>
+        )}
+      </Paper>
     </Stack>
   )
 }
@@ -207,10 +275,30 @@ function ResellRow(props: {
 
   const dirty = desc !== row.description || price !== row.unit_price || active !== row.active
 
+  const acctLabel =
+    row.income_account_display_id || row.income_account_name
+      ? [row.income_account_display_id, row.income_account_name].filter(Boolean).join(' — ')
+      : row.myob_income_account_uid
+        ? row.myob_income_account_uid
+        : '—'
+
   return (
     <TableRow>
+      <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>
+        <TextField
+          size="small"
+          fullWidth
+          multiline
+          minRows={2}
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+          disabled={saving}
+        />
+      </TableCell>
       <TableCell>
-        <TextField size="small" fullWidth value={desc} onChange={(e) => setDesc(e.target.value)} disabled={saving} />
+        <Typography variant="body2" color="text.secondary" title={row.myob_income_account_uid || undefined}>
+          {acctLabel}
+        </Typography>
       </TableCell>
       <TableCell>
         <TextField

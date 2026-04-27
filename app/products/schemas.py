@@ -66,7 +66,7 @@ class IdentitySpec(BaseModel):
     trim_pct: Optional[float] = Field(None, ge=0, le=100)
     industry_flags: List[Literal["food_contact", "non_food", "medical", "chemical_industrial"]] = []
     notes: Optional[str] = None
-    # Customer-visible product code override (UI: "Product Code"); persisted on the version spec.
+    # Customer-facing product code override (UI label); persisted on the version spec.
     customer_code: Optional[str] = Field(None, max_length=64)
 
 

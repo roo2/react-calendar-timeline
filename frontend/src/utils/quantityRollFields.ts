@@ -303,3 +303,17 @@ export function validateJobSheetQuantityInputs(
   }
   return null
 }
+
+/**
+ * Plural unit label for quantity menus (e.g. Bag → Bags).
+ * MYOB import placeholders use `product_type` "other"; treat as generic "Products" instead of "Others".
+ */
+export function productDisplayUnitPlural(productType: string | undefined | null): string {
+  const raw = String(productType ?? '').trim()
+  const key = raw.toLowerCase()
+  if (key === 'bag') return 'Bags'
+  if (key === 'u-film') return 'U-Films'
+  if (key === 'other') return 'Products'
+  if (!raw) return 'Bags'
+  return raw.endsWith('s') ? raw : `${raw}s`
+}

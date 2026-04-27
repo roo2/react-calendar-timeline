@@ -368,7 +368,6 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           }}
           inputRef={dueDateInputRef}
           InputLabelProps={{ shrink: true }}
-          required
         />
       </Box>
 
