@@ -26,28 +26,6 @@ import { formatDateDMYShort } from '../../utils/dateFormat'
 
 const ORDER_STATUSES = ['draft', 'confirmed', 'dispatched', 'closed', 'cancelled'] as const
 
-function ResellLineSummary({ outsourced, supply }: { outsourced: number; supply: number }) {
-  if (!outsourced && !supply) {
-    return (
-      <Typography component="span" variant="body2" color="text.secondary">
-        —
-      </Typography>
-    )
-  }
-  const parts: string[] = []
-  if (outsourced > 0) {
-    parts.push(`${outsourced} outsourced mfg${outsourced === 1 ? '' : ''}`)
-  }
-  if (supply > 0) {
-    parts.push(`${supply} resell${supply === 1 ? '' : ''}`)
-  }
-  return (
-    <Typography component="span" variant="body2" sx={{ whiteSpace: 'normal' }}>
-      {parts.join(' · ')}
-    </Typography>
-  )
-}
-
 function ProductsSummary({
   firstManufacturedCode,
   manufacturedOther,

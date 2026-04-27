@@ -85,6 +85,8 @@ type OrdersState = {
     total: number
     page: number
     pageSize: number
+    /** Set when the last successful list fetch was scoped by `customer_id` (customer detail page). */
+    lastCustomerId: string | null
   }
   detail: {
     byId: Record<
@@ -105,7 +107,7 @@ type OrdersState = {
 }
 
 const initialState: OrdersState = {
-  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 100 },
+  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 100, lastCustomerId: null },
   detail: { byId: {} },
   bootstrap: { status: 'idle', error: null, customers: null, resell_products: null },
 }
@@ -113,19 +115,27 @@ const initialState: OrdersState = {
 export const fetchOrders = createAsyncThunk(
   'orders/list',
   async (query: OrdersListQuery | undefined) => {
+    const customerId = query?.customer_id?.trim() || null
     const qs = query ? ordersListQueryToSearchParams(query) : new URLSearchParams()
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     const res = await apiFetch<{ items: OrderRow[]; total?: number; page?: number; page_size?: number } | OrderRow[]>(
       `/api/orders${suffix}`,
     )
     if (Array.isArray(res)) {
-      return { items: res, total: res.length, page: Number(query?.page) || 1, pageSize: Number(query?.page_size) || 100 }
+      return {
+        items: res,
+        total: res.length,
+        page: Number(query?.page) || 1,
+        pageSize: Number(query?.page_size) || 100,
+        customer_id: customerId,
+      }
     }
     return {
       items: Array.isArray(res.items) ? res.items : [],
       total: Number(res.total) || 0,
       page: Number(res.page) || Number(query?.page) || 1,
       pageSize: Number(res.page_size) || Number(query?.page_size) || 100,
+      customer_id: customerId,
     }
   },
 )
@@ -319,11 +329,14 @@ const slice = createSlice({
       s.list.total = a.payload.total
       s.list.page = a.payload.page
       s.list.pageSize = a.payload.pageSize
+      s.list.lastCustomerId = a.payload.customer_id
       s.list.error = null
     })
     b.addCase(fetchOrders.rejected, (s, a) => {
       s.list.status = 'failed'
       s.list.error = a.error.message || 'Failed to load orders'
+      const arg = a.meta.arg as OrdersListQuery | undefined
+      s.list.lastCustomerId = arg?.customer_id?.trim() ?? null
     })
 
     b.addCase(fetchOrder.pending, (s, a) => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProductListItem } from '../../../store/slices/productsSlice'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { can } from '../../../auth/permissions'
@@ -630,7 +630,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setProductId('')
   }
 
-  async function addResellToOrder(rp: { id: string; description: string; unit_price: number }) {
+  async function addResellToOrder(rp: { id: string; description: string; unit_price: number; catalog_kind?: string | null }) {
     if (!orderId) return
     try {
       setErr(null)
