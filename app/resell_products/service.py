@@ -13,6 +13,15 @@ from app.resell_products.schemas import ResellProductCreate, ResellProductUpdate
 from app.str_norm import strip_trailing_dash_suffix
 
 
+def _normalize_default_quantity_unit(value: str | None) -> str:
+    s = str(value or "ea").strip().lower()
+    if s in ("each", "eaches"):
+        return "ea"
+    if s in ("metre", "metres", "meter"):
+        return "meters"
+    return s or "ea"
+
+
 def list_all(*, include_inactive: bool = False) -> List[ResellProduct]:
     with SessionLocal() as db:
         stmt = (
@@ -40,6 +49,7 @@ def create_row(payload: ResellProductCreate) -> ResellProduct:
             id=str(uuid.uuid4()),
             description=str(payload.description).strip(),
             unit_price=float(payload.unit_price),
+            default_quantity_unit=_normalize_default_quantity_unit(payload.default_quantity_unit),
             active=bool(payload.active),
         )
         db.add(row)
@@ -63,6 +73,8 @@ def update_row(resell_product_id: str, payload: ResellProductUpdate) -> ResellPr
             row.description = strip_trailing_dash_suffix(str(data["description"])).strip()
         if "unit_price" in data and data["unit_price"] is not None:
             row.unit_price = float(data["unit_price"])
+        if "default_quantity_unit" in data:
+            row.default_quantity_unit = _normalize_default_quantity_unit(data.get("default_quantity_unit"))
         if "active" in data and data["active"] is not None:
             row.active = bool(data["active"])
         db.add(row)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -14,17 +15,30 @@ from app.orders.schemas import (
     UpdateResellOrderLineRequest,
     LinkMyobImportLineRequest,
     OrderListItemDTO,
+    OrderListResponse,
     OrderDetailDTO,
     JobDTO,
 )
 from app.orders import service
 from app.exceptions import DomainError
 from app.db.session import SessionLocal
-from app.db.models.domain import ProductVersion, Product, Customer, OrderItem, JobSheet, ResellProduct
+from app.db.models.domain import (
+    ProductVersion,
+    Product,
+    Customer,
+    OrderItem,
+    JobSheet,
+    ResellProduct,
+    MyobIncomeAccount,
+    MyobItemSellingUom,
+)
 from app.products.service import compute_product_code_full
 from app.str_norm import strip_trailing_dash_suffix
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+# Default sales/income account used for new in-house manufactured job-sheet products.
+DEFAULT_MANUFACTURED_INCOME_ACCOUNT_UID = "3d453a97-a7e0-4c7f-a0be-fd89ba3f6a46"
 
 
 def _job_to_dto(j) -> JobDTO:
@@ -56,6 +70,81 @@ def _myob_all_job_sheets_flag(o) -> bool | None:
         if js is not None and bool(getattr(js, "is_import_draft", False)):
             return False
     return True
+
+
+def _resell_line_counts(o) -> tuple[int, int]:
+    """Return (outsourced_manufacturing resell lines, supply resell lines)."""
+    out_n, sup_n = 0, 0
+    for oi in getattr(o, "items", None) or []:
+        if getattr(oi, "line_kind", None) != "resell":
+            continue
+        rp = getattr(oi, "resell_product", None)
+        if rp is not None and str(getattr(rp, "catalog_kind", None) or "") == "outsourced_manufacturing":
+            out_n += 1
+        else:
+            sup_n += 1
+    return out_n, sup_n
+
+
+def _myob_income_display_for_order_item(db, oi: OrderItem) -> tuple[str | None, str | None]:
+    """Resolve MYOB income account display id + name for an import line."""
+    j = getattr(oi, "myob_item_json", None)
+    if isinstance(j, dict):
+        inc = j.get("IncomeAccount")
+        if isinstance(inc, dict):
+            iu = str(inc.get("UID") or "").strip()
+            if iu:
+                acc = db.get(MyobIncomeAccount, iu)
+                if acc is not None:
+                    return (
+                        str(acc.display_id) if acc.display_id else None,
+                        str(acc.name) if acc.name else None,
+                    )
+    uid = str(getattr(oi, "myob_item_uid", None) or "").strip()
+    if uid:
+        row = db.get(MyobItemSellingUom, uid)
+        iu2 = str(getattr(row, "myob_income_account_uid", None) or "").strip() if row is not None else ""
+        if iu2:
+            acc = db.get(MyobIncomeAccount, iu2)
+            if acc is not None:
+                return (
+                    str(acc.display_id) if acc.display_id else None,
+                    str(acc.name) if acc.name else None,
+                )
+    return (None, None)
+
+
+def _default_income_display_for_new_job_sheet(db) -> tuple[str | None, str | None]:
+    """Fallback income account for in-house manufactured/new job-sheet products."""
+    acc = db.get(MyobIncomeAccount, DEFAULT_MANUFACTURED_INCOME_ACCOUNT_UID)
+    if acc is None:
+        return (None, None)
+    return (
+        str(acc.display_id) if acc.display_id else None,
+        str(acc.name) if acc.name else None,
+    )
+
+
+def _products_summary(o) -> tuple[str | None, int]:
+    """Return (first product code/label, number of additional product-like lines)."""
+    codes: list[str] = []
+    for oi in getattr(o, "items", None) or []:
+        kind = str(getattr(oi, "line_kind", None) or "manufactured")
+        if kind == "manufactured":
+            js = getattr(oi, "job_sheet", None)
+            p = getattr(js, "product", None) if js is not None else None
+            code = str(getattr(p, "code", None) or "").strip()
+        elif kind == "myob_import":
+            code = str(getattr(oi, "myob_item_number", None) or getattr(oi, "myob_item_name", None) or "").strip()
+            if not code:
+                code = "MYOB"
+        else:
+            continue
+        if code:
+            codes.append(code)
+    if not codes:
+        return None, 0
+    return codes[0], max(0, len(codes) - 1)
 
 
 def _order_total_from_orm(o) -> float | None:
@@ -112,14 +201,44 @@ def _order_to_detail_dto(o) -> OrderDetailDTO:
     return OrderDetailDTO(**_order_to_list_dto(o).model_dump(), jobs=[_job_to_dto(j) for j in (o.jobs or [])])
 
 
-@router.get("", response_model=list[OrderListItemDTO], dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def list_orders(customer_id: str | None = Query(default=None)):
+@router.get("", response_model=OrderListResponse, dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
+async def list_orders(
+    customer_id: str | None = Query(default=None),
+    invoice_number: str | None = Query(default=None),
+    customer_po: str | None = Query(default=None),
+    customer: str | None = Query(default=None),
+    product: str | None = Query(default=None),
+    order_total_min: float | None = Query(default=None),
+    order_total_max: float | None = Query(default=None),
+    status: str | None = Query(default=None),
+    order_date_from: date | None = Query(default=None),
+    order_date_to: date | None = Query(default=None),
+    line_item_search: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=200),
+):
     if customer_id:
         try:
             uuid.UUID(str(customer_id))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid customer_id")
-    orders = service.list_orders(customer_id=customer_id)
+    orders, total = service.list_orders(
+        customer_id=customer_id,
+        invoice_number=invoice_number,
+        customer_po=customer_po,
+        customer=customer,
+        product=product,
+        order_total_min=order_total_min,
+        order_total_max=order_total_max,
+        status=status,
+        order_date_from=order_date_from,
+        order_date_to=order_date_to,
+        line_item_search=line_item_search,
+        search=search,
+        page=page,
+        page_size=page_size,
+    )
     # Enrich with product code/version in a single DB round trip.
     # For multi-item orders, we use the first item as the summary.
     meta: dict[str, dict] = {}
@@ -147,12 +266,22 @@ async def list_orders(customer_id: str | None = Query(default=None)):
     out: list[OrderListItemDTO] = []
     for o in orders:
         dto = _order_to_list_dto(o)
+        r_out, r_sup = _resell_line_counts(o)
+        first_man_code, manu_other_n = _products_summary(o)
+        dto = dto.model_copy(
+            update={
+                "manufactured_first_product_code": first_man_code,
+                "manufactured_other_line_count": manu_other_n,
+                "resell_outsourced_line_count": r_out,
+                "resell_supply_line_count": r_sup,
+            }
+        )
         m = meta.get(str(o.product_version_id)) if getattr(o, "product_version_id", None) else None
         if m:
-            dto.product_code = m.get("product_code")
+            dto.product_code = dto.product_code or m.get("product_code")
             dto.version_number = m.get("version_number")
         out.append(dto)
-    return out
+    return {"items": out, "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
@@ -317,6 +446,13 @@ async def show_order(order_id: str):
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
     dto = _order_to_detail_dto(o)
+    r_out, r_sup = _resell_line_counts(o)
+    dto = dto.model_copy(
+        update={
+            "resell_outsourced_line_count": r_out,
+            "resell_supply_line_count": r_sup,
+        }
+    )
     # Add customer_name and product meta
     dto.customer_name = (o.customer.name if getattr(o, "customer", None) else None)
     dto.created_at = str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None
@@ -368,6 +504,13 @@ async def show_order(order_id: str):
                     db.get(ResellProduct, str(oi.resell_product_id)) if getattr(oi, "resell_product_id", None) else None
                 )
                 rck = str(getattr(rp_row, "catalog_kind", None) or "supply") if rp_row is not None else "supply"
+                inc_disp: str | None = None
+                inc_name: str | None = None
+                if rp_row is not None and getattr(rp_row, "myob_income_account_uid", None):
+                    acc_r = db.get(MyobIncomeAccount, str(rp_row.myob_income_account_uid))
+                    if acc_r is not None:
+                        inc_disp = str(acc_r.display_id) if acc_r.display_id else None
+                        inc_name = str(acc_r.name) if acc_r.name else None
                 dto.items.append(
                     {
                         "line_kind": "resell",
@@ -375,6 +518,8 @@ async def show_order(order_id: str):
                         "resell_line_id": str(oi.id),
                         "resell_product_id": str(oi.resell_product_id) if oi.resell_product_id else None,
                         "resell_catalog_kind": rck,
+                        "income_account_display_id": inc_disp,
+                        "income_account_name": inc_name,
                         "job_sheet_id": None,
                         "job_no": None,
                         "product_id": str(oi.resell_product_id) if oi.resell_product_id else None,
@@ -394,6 +539,7 @@ async def show_order(order_id: str):
             if oi.line_kind == "myob_import":
                 js = db.get(JobSheet, str(oi.job_sheet_id)) if oi.job_sheet_id else None
                 linked_pid, jno = _js_meta(js)
+                id_disp, nm_income = _myob_income_display_for_order_item(db, oi)
                 dto.items.append(
                     {
                         "line_kind": "myob_import",
@@ -419,6 +565,8 @@ async def show_order(order_id: str):
                         "quantity_value": float(oi.import_ship_quantity) if oi.import_ship_quantity is not None else 0.0,
                         "rate": float(oi.import_unit_price) if oi.import_unit_price is not None else None,
                         "total_price": float(oi.import_line_total) if oi.import_line_total is not None else None,
+                        "income_account_display_id": id_disp,
+                        "income_account_name": nm_income,
                     }
                 )
                 continue
@@ -448,6 +596,9 @@ async def show_order(order_id: str):
             myob_line = (str(oi.import_line_description).strip() if getattr(oi, "import_line_description", None) else "") or None
             spec_desc = getattr(p, "description", None)
             display_name = myob_line or spec_desc
+            id_disp, nm_income = _myob_income_display_for_order_item(db, oi)
+            if not id_disp and not nm_income:
+                id_disp, nm_income = _default_income_display_for_new_job_sheet(db)
             dto.items.append(
                 {
                     "line_kind": "product",
@@ -467,6 +618,8 @@ async def show_order(order_id: str):
                     "quantity_unit": js.quantity_unit,
                     "rate": float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None,
                     "total_price": float(js.line_total) if getattr(js, "line_total", None) is not None else None,
+                    "income_account_display_id": id_disp,
+                    "income_account_name": nm_income,
                 }
             )
         if changed_items:

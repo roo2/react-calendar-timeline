@@ -32,11 +32,15 @@ from app.db.myob_import_placeholders import (
 )
 from app.integrations.myob import service as myob_service
 from app.integrations.myob.order_import import import_one_myob_sale_order
+from app.integrations.myob.item_import_fixups import QUOTE_ROLL_PLACEHOLDER_ITEM_UID
 from app.integrations.myob.order_import_mapping import (
     OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID,
     map_myob_item_to_app_quantity,
     myob_resell_catalog_kind,
 )
+
+# 4-0007 Income - Resale - Imported items (not inc cores) (CP & AP) — also outsourced manufacturing resell.
+INCOME_RESELL_IMPORTED_ITEMS_UID = "fd93417d-f1e2-4c09-8697-b177a04176f4"
 
 
 def _seed_myob_draft_placeholders(db) -> None:
@@ -406,6 +410,12 @@ def test_myob_resell_catalog_kind_classifies_outsourced_manufacturing():
         "IncomeAccount": {"UID": OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID},
     }
     assert myob_resell_catalog_kind(sample) == "outsourced_manufacturing"
+    assert (
+        myob_resell_catalog_kind(
+            {**sample, "IncomeAccount": {"UID": INCOME_RESELL_IMPORTED_ITEMS_UID}}
+        )
+        == "outsourced_manufacturing"
+    )
     assert myob_resell_catalog_kind({**sample, "IsInventoried": True}) == "supply"
     assert myob_resell_catalog_kind({**sample, "IsSold": False}) == "supply"
     assert myob_resell_catalog_kind({**sample, "IsBought": False}) == "supply"
@@ -457,6 +467,133 @@ def _item_fetch_outsourced_roll():
         return {}
 
     return fetch
+
+
+def test_import_outsourced_bought_roll_4_0007_income_sets_outsourced_catalog_kind():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(
+        id=str(uuid.uuid4()),
+        name="SANOFI (test)",
+        myob_customer_uid="4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+    )
+    db.add(cust)
+    db.commit()
+    db.refresh(cust)
+
+    uid = "9ecbcb44-8a8d-4913-9621-c70bf253e900"
+
+    def fetch(uri: str | None, item_uid: str | None) -> dict:
+        u = (item_uid or "").lower()
+        if u == uid.lower():
+            return {
+                "UID": uid,
+                "IsBought": True,
+                "IsSold": True,
+                "IsInventoried": False,
+                "IncomeAccount": {"UID": INCOME_RESELL_IMPORTED_ITEMS_UID},
+                "SellingDetails": {"SellingUnitOfMeasure": "ROLL", "IsTaxInclusive": False},
+            }
+        return {}
+
+    res = import_one_myob_sale_order(
+        db,
+        myob_order=dict(OUTSOURCED_MYOB_ORDER),
+        item_fetch=fetch,
+    )
+    assert res["ok"] is True
+    resell = list(
+        db.query(OrderItem).filter(
+            OrderItem.order_id == str(res["order_id"]),
+            OrderItem.line_kind == "resell",
+        )
+    )
+    assert len(resell) == 1
+    from app.db.models.domain import ResellProduct
+
+    rp = db.get(ResellProduct, str(resell[0].resell_product_id))
+    assert rp is not None
+    assert getattr(rp, "catalog_kind", None) == "outsourced_manufacturing"
+
+
+def test_import_quote_roll_placeholder_not_resell_when_myob_isbought_true():
+    """MYOB marks '- ROLLS' / Used for Quotes as bought; we override to manufactured import."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(
+        id=str(uuid.uuid4()),
+        name="SANOFI (test)",
+        myob_customer_uid="4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+    )
+    db.add(cust)
+    db.commit()
+    db.refresh(cust)
+
+    order = {
+        "UID": str(uuid.uuid4()),
+        "Number": "ROLLS-OV-1",
+        "Date": "2026-01-20T00:00:00",
+        "LastModified": "2026-01-20T00:48:40.333",
+        "Customer": {
+            "UID": "4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+            "Name": "SANOFI-AVENTIS HEALTHCARE PTY LTD - Code 2646",
+        },
+        "Lines": [
+            {
+                "RowID": 7001,
+                "Type": "Transaction",
+                "Description": "Quote line",
+                "ShipQuantity": 5.0,
+                "UnitPrice": 10.0,
+                "Total": 50.0,
+                "Item": {
+                    "UID": QUOTE_ROLL_PLACEHOLDER_ITEM_UID,
+                    "Number": "- ROLLS",
+                    "Name": "Used for Quotes",
+                    "URI": f"https://api.myob.com/accountright/x/Inventory/Item/{QUOTE_ROLL_PLACEHOLDER_ITEM_UID}",
+                },
+            },
+        ],
+    }
+
+    def fetch(uri: str | None, item_uid: str | None) -> dict:
+        u = (item_uid or "").lower()
+        if u == QUOTE_ROLL_PLACEHOLDER_ITEM_UID.lower():
+            return {
+                "UID": QUOTE_ROLL_PLACEHOLDER_ITEM_UID,
+                "IsBought": True,
+                "IsSold": True,
+                "IsInventoried": True,
+                "SellingDetails": {"SellingUnitOfMeasure": "ROLL"},
+            }
+        return {}
+
+    res = import_one_myob_sale_order(db, myob_order=order, item_fetch=fetch)
+    assert res["ok"] is True
+    manu = list(
+        db.query(OrderItem).filter(
+            OrderItem.order_id == str(res["order_id"]),
+            OrderItem.line_kind == "myob_import",
+        )
+    )
+    resell = list(
+        db.query(OrderItem).filter(
+            OrderItem.order_id == str(res["order_id"]),
+            OrderItem.line_kind == "resell",
+        )
+    )
+    assert len(manu) == 1
+    assert manu[0].import_requires_job_sheet is True
+    assert manu[0].import_quantity_unit == "rolls"
+    assert len(resell) == 0
 
 
 def test_import_outsourced_bought_roll_sets_resell_uom_and_catalog_kind():
@@ -532,6 +669,28 @@ def test_myob_accountright_api_host_ok_accepts_regional_api_hosts():
     assert myob_service._myob_accountright_api_host_ok("arl2.api.myob.com")
     assert not myob_service._myob_accountright_api_host_ok("example.com")
     assert not myob_service._myob_accountright_api_host_ok("api.evil.com")
+
+
+def test_upsert_uom_quote_roll_placeholder_persists_is_bought_false():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    from app.integrations.myob.item_selling_uom_cache import upsert_uom_from_item_json
+
+    upsert_uom_from_item_json(
+        db,
+        item_uid=QUOTE_ROLL_PLACEHOLDER_ITEM_UID,
+        item_json={
+            "UID": QUOTE_ROLL_PLACEHOLDER_ITEM_UID,
+            "IsBought": True,
+            "SellingDetails": {"SellingUnitOfMeasure": "ROLL"},
+        },
+    )
+    db.commit()
+    u = db.get(MyobItemSellingUom, QUOTE_ROLL_PLACEHOLDER_ITEM_UID)
+    assert u is not None
+    assert u.is_bought is False
 
 
 def test_upsert_uom_from_item_json_sets_income_account_fk():

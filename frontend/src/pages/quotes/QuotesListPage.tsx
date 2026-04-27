@@ -5,6 +5,7 @@ import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { can } from '../../auth/permissions'
 import { buildSpecFromQuotePayload, type QuotePayload } from '../../utils/quoteToSpec'
 import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import { formatDateDMYShort } from '../../utils/dateFormat'
 import {
   Alert,
   Box,
@@ -134,9 +135,7 @@ export function QuotesListPage() {
                         : '—'}
                     </TableCell>
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                      {q.created_at
-                        ? new Date(q.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })
-                        : '-'}
+                      {formatDateDMYShort(q.created_at, '-')}
                     </TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>

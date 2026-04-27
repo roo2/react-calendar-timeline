@@ -18,6 +18,14 @@ from app.integrations.myob.item_selling_uom_cache import (
     is_sold_from_item_json,
 )
 
+# Income accounts that classify a bought MYOB line as outsourced manufacturing (resell catalog).
+OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS: frozenset[str] = frozenset(
+    {
+        "613ed84d-3545-462e-83f7-a5c83dc80605",  # 4-0003 Income - Sales - Outsoured - Manufacturing
+        "fd93417d-f1e2-4c09-8697-b177a04176f4",  # 4-0007 Income - Resale - Imported items (not inc cores) (CP & AP)
+    }
+)
+# Backwards compat for tests / callers that only referenced the original outsourced account.
 OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID = "613ed84d-3545-462e-83f7-a5c83dc80605"
 
 
@@ -153,6 +161,6 @@ def myob_resell_catalog_kind(item_json: dict[str, Any] | None) -> str:
         return "supply"
     income = item_json.get("IncomeAccount") if isinstance(item_json, dict) else None
     inc_uid = str((income or {}).get("UID") or "").strip().lower() if isinstance(income, dict) else ""
-    if inc_uid != OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID.lower():
+    if inc_uid not in OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS:
         return "supply"
     return "outsourced_manufacturing"

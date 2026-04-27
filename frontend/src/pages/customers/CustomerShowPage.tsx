@@ -8,6 +8,7 @@ import { fetchProducts } from '../../store/slices/productsSlice'
 import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { Alert, Box, Button, Chip, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 import { describePaymentTerms } from '../../utils/paymentTermsDisplay'
+import { formatDateTimeDMYShort } from '../../utils/dateFormat'
 
 const CUSTOMER_SECTION_HASHES = new Set(['quotes', 'orders'])
 
@@ -187,10 +188,7 @@ export function CustomerShowPage() {
             <div>
               <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Last modified in MYOB</strong>
               <p style={{ margin: '4px 0 0' }}>
-                {new Date(customer.myob_last_modified).toLocaleString(undefined, {
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-                })}
+                {formatDateTimeDMYShort(customer.myob_last_modified)}
               </p>
             </div>
           )}
@@ -198,10 +196,7 @@ export function CustomerShowPage() {
             <div>
               <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Last synced from MYOB</strong>
               <p style={{ margin: '4px 0 0' }}>
-                {new Date(customer.myob_synced_at).toLocaleString(undefined, {
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-                })}
+                {formatDateTimeDMYShort(customer.myob_synced_at)}
               </p>
             </div>
           )}

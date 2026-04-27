@@ -96,10 +96,23 @@ class OrderListItemDTO(BaseModel):
     myob_order_uid: Optional[str] = None
     myob_synced_at: Optional[str] = None
     myob_all_job_sheets_entered: Optional[bool] = None
+    # Manufactured-line summary for list-page "Products" text.
+    manufactured_first_product_code: Optional[str] = None
+    manufactured_other_line_count: int = 0
+    # Resell line breakdown (line_kind == "resell" only; for list UX).
+    resell_outsourced_line_count: int = 0
+    resell_supply_line_count: int = 0
 
 
 class OrderDetailDTO(OrderListItemDTO):
     jobs: List[JobDTO] = []
     items: list[dict] = []
     myob_import_lines: list[dict] = []
+
+
+class OrderListResponse(BaseModel):
+    items: List[OrderListItemDTO]
+    total: int
+    page: int
+    page_size: int
 

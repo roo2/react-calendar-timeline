@@ -20,6 +20,11 @@ export type OrderRow = {
   myob_synced_at?: string | null
   myob_all_job_sheets_entered?: boolean | null
   order_total?: number | null
+  manufactured_first_product_code?: string | null
+  manufactured_other_line_count?: number
+  /** MYOB resell line_kind counts (outsourced vs supply catalog). */
+  resell_outsourced_line_count?: number
+  resell_supply_line_count?: number
 }
 
 export type OrdersBootstrapCustomer = { id: string; name: string }
@@ -31,12 +36,55 @@ export type OrdersBootstrapResellProduct = {
   catalog_kind?: string | null
 }
 
+export type OrdersListQuery = {
+  customer_id?: string
+  invoice_number?: string
+  customer_po?: string
+  customer?: string
+  product?: string
+  order_total_min?: number
+  order_total_max?: number
+  status?: string
+  order_date_from?: string
+  order_date_to?: string
+  line_item_search?: string
+  search?: string
+  page?: number
+  page_size?: number
+}
+
+function ordersListQueryToSearchParams(q: OrdersListQuery): URLSearchParams {
+  const qs = new URLSearchParams()
+  const set = (k: string, v: string | number | undefined) => {
+    if (v === undefined || v === null) return
+    const s = typeof v === 'number' ? String(v) : String(v).trim()
+    if (s !== '') qs.set(k, s)
+  }
+  set('customer_id', q.customer_id)
+  set('invoice_number', q.invoice_number)
+  set('customer_po', q.customer_po)
+  set('customer', q.customer)
+  set('product', q.product)
+  set('order_total_min', q.order_total_min)
+  set('order_total_max', q.order_total_max)
+  set('status', q.status)
+  set('order_date_from', q.order_date_from)
+  set('order_date_to', q.order_date_to)
+  set('line_item_search', q.line_item_search)
+  set('search', q.search)
+  set('page', q.page)
+  set('page_size', q.page_size)
+  return qs
+}
+
 type OrdersState = {
   list: {
     status: Status
     error: string | null
     items: OrderRow[]
-    lastCustomerId: string | null
+    total: number
+    page: number
+    pageSize: number
   }
   detail: {
     byId: Record<
@@ -57,18 +105,28 @@ type OrdersState = {
 }
 
 const initialState: OrdersState = {
-  list: { status: 'idle', error: null, items: [], lastCustomerId: null },
+  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 100 },
   detail: { byId: {} },
   bootstrap: { status: 'idle', error: null, customers: null, resell_products: null },
 }
 
 export const fetchOrders = createAsyncThunk(
   'orders/list',
-  async (params: { customer_id?: string } | undefined) => {
-    const cid = params?.customer_id?.trim()
-    const url = cid ? `/api/orders?customer_id=${encodeURIComponent(cid)}` : '/api/orders'
-    const rows = await apiFetch<OrderRow[]>(url)
-    return { customer_id: cid ?? null, items: Array.isArray(rows) ? rows : [] }
+  async (query: OrdersListQuery | undefined) => {
+    const qs = query ? ordersListQueryToSearchParams(query) : new URLSearchParams()
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    const res = await apiFetch<{ items: OrderRow[]; total?: number; page?: number; page_size?: number } | OrderRow[]>(
+      `/api/orders${suffix}`,
+    )
+    if (Array.isArray(res)) {
+      return { items: res, total: res.length, page: Number(query?.page) || 1, pageSize: Number(query?.page_size) || 100 }
+    }
+    return {
+      items: Array.isArray(res.items) ? res.items : [],
+      total: Number(res.total) || 0,
+      page: Number(res.page) || Number(query?.page) || 1,
+      pageSize: Number(res.page_size) || Number(query?.page_size) || 100,
+    }
   },
 )
 
@@ -258,13 +316,14 @@ const slice = createSlice({
     b.addCase(fetchOrders.fulfilled, (s, a) => {
       s.list.status = 'succeeded'
       s.list.items = a.payload.items
-      s.list.lastCustomerId = a.payload.customer_id
+      s.list.total = a.payload.total
+      s.list.page = a.payload.page
+      s.list.pageSize = a.payload.pageSize
       s.list.error = null
     })
     b.addCase(fetchOrders.rejected, (s, a) => {
       s.list.status = 'failed'
       s.list.error = a.error.message || 'Failed to load orders'
-      s.list.lastCustomerId = a.meta.arg?.customer_id?.trim() ?? null
     })
 
     b.addCase(fetchOrder.pending, (s, a) => {

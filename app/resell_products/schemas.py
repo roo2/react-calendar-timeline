@@ -10,6 +10,7 @@ class ResellProductDTO(BaseModel):
     id: str
     description: str
     unit_price: Decimal
+    default_quantity_unit: Optional[str] = None
     active: bool = True
     catalog_kind: str = "supply"
     myob_item_uid: Optional[str] = None
@@ -21,10 +22,12 @@ class ResellProductDTO(BaseModel):
 class ResellProductCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=2000)
     unit_price: Decimal = Field(..., ge=0)
+    default_quantity_unit: Optional[str] = Field(default=None, max_length=16)
     active: bool = True
 
 
 class ResellProductUpdate(BaseModel):
     description: Optional[str] = Field(None, min_length=1, max_length=2000)
     unit_price: Optional[Decimal] = Field(None, ge=0)
+    default_quantity_unit: Optional[str] = Field(default=None, max_length=16)
     active: Optional[bool] = None

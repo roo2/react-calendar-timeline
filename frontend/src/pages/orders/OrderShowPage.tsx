@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchOrder, publishOrder } from '../../store/slices/ordersSlice'
 import { can } from '../../auth/permissions'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import {
   Alert,
   Box,
@@ -13,8 +14,10 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from '@mui/material'
+import { formatDateDMYShort } from '../../utils/dateFormat'
 
 export function OrderShowPage() {
   const { orderId } = useParams()
@@ -58,7 +61,21 @@ export function OrderShowPage() {
   if (!order || loading) return <p>Loading…</p>
 
   const items: any[] = Array.isArray(order.items) ? order.items : []
-  const rows = items.slice().sort((a, b) => (Number(a.line_index ?? 0) || 0) - (Number(b.line_index ?? 0) || 0))
+  const rowRank = (it: any): number => {
+    const kind = String(it?.line_kind || 'product')
+    if (kind === 'product') {
+      return String(it?.import_line_description || '').trim() ? 1 : 3
+    }
+    if (kind === 'myob_import') return 2
+    if (kind === 'resell') return it?.resell_catalog_kind === 'outsourced_manufacturing' ? 4 : 5
+    return 6
+  }
+  const rows = items.slice().sort((a, b) => {
+    const ra = rowRank(a)
+    const rb = rowRank(b)
+    if (ra !== rb) return ra - rb
+    return (Number(a.line_index ?? 0) || 0) - (Number(b.line_index ?? 0) || 0)
+  })
   const totalPriceSum = rows.reduce((sum: number, it: any) => {
     const p = it.total_price != null ? Number(it.total_price) : it.line_total != null ? Number(it.line_total) : 0
     return sum + (Number.isFinite(p) ? p : 0)
@@ -67,6 +84,31 @@ export function OrderShowPage() {
   function fmtCurrency(v: number | null | undefined): string {
     if (v == null || !Number.isFinite(v)) return '—'
     return `$${Number(v).toFixed(2)}`
+  }
+
+  function IncomeAccountCell(props: { displayId?: string | null; name?: string | null }) {
+    const { displayId, name } = props
+    const showId = displayId != null && String(displayId).trim() !== ''
+    const showName = name != null && String(name).trim() !== ''
+    return (
+      <TableCell>
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: 140 }}>
+          <Typography component="span" variant="body2" noWrap title={showId ? String(displayId) : undefined}>
+            {showId ? String(displayId) : '—'}
+          </Typography>
+          {showName ? (
+            <Tooltip title={String(name)} arrow placement="top">
+              <InfoOutlinedIcon
+                fontSize="small"
+                color="action"
+                sx={{ flexShrink: 0, cursor: 'help', verticalAlign: 'middle' }}
+                aria-label="Income account name"
+              />
+            </Tooltip>
+          ) : null}
+        </Box>
+      </TableCell>
+    )
   }
 
   function formatOrderUnit(u: string | undefined): string {
@@ -102,7 +144,7 @@ export function OrderShowPage() {
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Status: <strong>{order.status}</strong> • Customer: {order.customer_name || '-'} • Order Date:{' '}
-        {order.order_date || order.created_at?.slice(0, 10) || '-'}
+        {formatDateDMYShort(order.order_date || order.created_at, '-')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Customer PO: {order.customer_purchase_order_number || '—'}
@@ -160,7 +202,7 @@ export function OrderShowPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Line</TableCell>
+              <TableCell>Income account</TableCell>
               <TableCell>Job / Item</TableCell>
               <TableCell>Description</TableCell>
               <TableCell align="right">Qty</TableCell>
@@ -176,8 +218,8 @@ export function OrderShowPage() {
               if (kind === 'resell') {
                 return (
                   <TableRow key={it.id} hover>
-                    <TableCell>Resell</TableCell>
-                    <TableCell>—</TableCell>
+                    <IncomeAccountCell displayId={it.income_account_display_id} name={it.income_account_name} />
+                    <TableCell>{it.product_code || 'Resell'}</TableCell>
                     <TableCell>
                       {it.product_name ? <strong>{it.product_name}</strong> : '—'}
                     </TableCell>
@@ -194,9 +236,9 @@ export function OrderShowPage() {
               if (kind === 'myob_import') {
                 return (
                   <TableRow key={it.id} hover>
-                    <TableCell>MYOB</TableCell>
+                    <IncomeAccountCell displayId={it.income_account_display_id} name={it.income_account_name} />
                     <TableCell>
-                      {it.myob_item_number || '—'}
+                      {it.myob_item_number || it.myob_item_name || 'MYOB'}
                       {it.myob_item_sales_unit_raw ? (
                         <Typography variant="caption" color="text.secondary" display="block">
                           MYOB UOM: {it.myob_item_sales_unit_raw}
@@ -236,10 +278,10 @@ export function OrderShowPage() {
               }
               return (
                 <TableRow key={it.id} hover>
-                  <TableCell>Production</TableCell>
-                  <TableCell>{it.job_no || '—'}</TableCell>
+                  <IncomeAccountCell displayId={it.income_account_display_id} name={it.income_account_name} />
+                  <TableCell>{it.product_code || it.product_id || '—'}</TableCell>
                   <TableCell>
-                    {it.product_code || '—'} — {it.product_name || '—'}
+                    {it.product_name || '—'}
                   </TableCell>
                   <TableCell align="right">
                     {it.quantity_value != null ? Number(it.quantity_value).toLocaleString() : '—'}

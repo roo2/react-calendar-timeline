@@ -27,6 +27,7 @@ import {
 } from '@mui/material'
 import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
 import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
+import { formatDateDMYShort } from '../../utils/dateFormat'
 
 const PRODUCT_TYPES = ['Bag', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'] as const
 const PRINT_METHODS = ['None', 'Inline', 'Uteco'] as const
@@ -53,17 +54,7 @@ function fmtPricePerKg(v: unknown): string {
 }
 
 function fmtDateDdMmYy(v: string | null | undefined): string {
-  if (!v) return '-'
-  const s = String(v).trim()
-  if (!s) return '-'
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
-  if (m) return `${m[3]}/${m[2]}/${m[1].slice(2)}`
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return s
-  const dd = String(d.getDate()).padStart(2, '0')
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const yy = String(d.getFullYear()).slice(-2)
-  return `${dd}/${mm}/${yy}`
+  return formatDateDMYShort(v, '-')
 }
 
 export function JobSheetsPage() {

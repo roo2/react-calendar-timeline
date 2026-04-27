@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Any, List, Optional
 
 from sqlalchemy import select, func
@@ -14,6 +14,7 @@ from app.db.models.domain import (
     Job as JobModel,
     Customer,
     ProductVersion,
+    Product,
     JobSheet,
     ResellProduct,
 )
@@ -124,18 +125,129 @@ def _next_job_code(db, order_id: str) -> int:
     return int(current or 0) + 1
 
 
-def list_orders(*, customer_id: Optional[str] = None) -> List[OrderModel]:
+def _order_total_for_filters(o: OrderModel) -> float | None:
+    total = 0.0
+    any_line = False
+    for oi in getattr(o, "items", None) or []:
+        kind = getattr(oi, "line_kind", None) or "manufactured"
+        if kind == "resell":
+            t = getattr(oi, "resell_line_total", None)
+            if t is not None:
+                total += float(t)
+                any_line = True
+            continue
+        if kind == "myob_import":
+            t = getattr(oi, "import_line_total", None)
+            if t is not None:
+                total += float(t)
+                any_line = True
+            continue
+        js = getattr(oi, "job_sheet", None)
+        if js is not None and getattr(js, "line_total", None) is not None:
+            total += float(js.line_total)
+            any_line = True
+    return total if any_line else None
+
+
+def _order_tokens(o: OrderModel) -> str:
+    toks: list[str] = []
+    toks.append(str(getattr(o, "code", "") or ""))
+    toks.append(str(getattr(o, "customer_purchase_order_number", "") or ""))
+    c = getattr(o, "customer", None)
+    if c is not None:
+        toks.append(str(getattr(c, "name", "") or ""))
+    for oi in getattr(o, "items", None) or []:
+        toks.append(str(getattr(oi, "import_line_description", "") or ""))
+        toks.append(str(getattr(oi, "myob_item_name", "") or ""))
+        toks.append(str(getattr(oi, "myob_item_number", "") or ""))
+        toks.append(str(getattr(oi, "resell_description_snapshot", "") or ""))
+        rp = getattr(oi, "resell_product", None)
+        if rp is not None:
+            toks.append(str(getattr(rp, "description", "") or ""))
+        js = getattr(oi, "job_sheet", None)
+        if js is not None:
+            p = getattr(js, "product", None)
+            if p is not None:
+                toks.append(str(getattr(p, "code", "") or ""))
+                toks.append(str(getattr(p, "description", "") or ""))
+    return " ".join(toks).casefold()
+
+
+def list_orders(
+    *,
+    customer_id: Optional[str] = None,
+    invoice_number: Optional[str] = None,
+    customer_po: Optional[str] = None,
+    customer: Optional[str] = None,
+    product: Optional[str] = None,
+    order_total_min: float | None = None,
+    order_total_max: float | None = None,
+    status: Optional[str] = None,
+    order_date_from: date | None = None,
+    order_date_to: date | None = None,
+    line_item_search: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 100,
+) -> tuple[List[OrderModel], int]:
     with SessionLocal() as db:
         stmt = (
             select(OrderModel)
             .options(joinedload(OrderModel.customer))
-            .options(joinedload(OrderModel.items).joinedload(OrderItemModel.job_sheet))
+            .options(joinedload(OrderModel.items).joinedload(OrderItemModel.job_sheet).joinedload(JobSheet.product))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.resell_product))
             .order_by(OrderModel.created_at.desc())
         )
         if customer_id:
             stmt = stmt.where(OrderModel.customer_id == str(customer_id))
-        return list(db.execute(stmt).unique().scalars().all())
+        rows = list(db.execute(stmt).unique().scalars().all())
+
+        inv_f = (invoice_number or "").strip().casefold()
+        cpo_f = (customer_po or "").strip().casefold()
+        cust_f = (customer or "").strip().casefold()
+        prod_f = (product or "").strip().casefold()
+        total_min = float(order_total_min) if order_total_min is not None else None
+        total_max = float(order_total_max) if order_total_max is not None else None
+        st_f = (status or "").strip().casefold()
+        line_f = (line_item_search or "").strip().casefold()
+        all_f = (search or "").strip().casefold()
+
+        out: list[OrderModel] = []
+        for o in rows:
+            if inv_f and inv_f not in str(getattr(o, "code", "") or "").casefold():
+                continue
+            if cpo_f and cpo_f not in str(getattr(o, "customer_purchase_order_number", "") or "").casefold():
+                continue
+            c = getattr(o, "customer", None)
+            cust_name = str(getattr(c, "name", "") or "").casefold()
+            if cust_f and cust_f not in cust_name:
+                continue
+            od = getattr(o, "order_date", None)
+            if order_date_from is not None and (od is None or od < order_date_from):
+                continue
+            if order_date_to is not None and (od is None or od > order_date_to):
+                continue
+            st = str(getattr(getattr(o, "status", None), "value", getattr(o, "status", "")) or "").casefold()
+            if st_f and st_f != st:
+                continue
+            toks = _order_tokens(o)
+            if prod_f and prod_f not in toks:
+                continue
+            if line_f and line_f not in toks:
+                continue
+            if all_f and all_f not in toks:
+                continue
+            tot = _order_total_for_filters(o)
+            if total_min is not None and (tot is None or float(tot) < total_min):
+                continue
+            if total_max is not None and (tot is None or float(tot) > total_max):
+                continue
+            out.append(o)
+
+        total = len(out)
+        start = max(0, (int(page) - 1) * int(page_size))
+        end = start + max(1, int(page_size))
+        return out[start:end], total
 
 
 def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:

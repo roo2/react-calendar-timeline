@@ -92,6 +92,8 @@ type OrderLine = {
   resell_product_id?: string
   /** From linked resell catalog row; drives quantity unit choices for outsourced MYOB lines. */
   resell_catalog_kind?: ResellCatalogKind
+  import_line_description?: string | null
+  is_import_draft?: boolean
 }
 
 function normalizeFinishFromApi(v: unknown): 'Rolls' | 'Cartons' | null {
@@ -160,6 +162,8 @@ function lineFromApiItem(it: any): OrderLine {
     product_id: String(it.product_id),
     product_code: String(it.product_code || ''),
     product_name: (it.product_name as string | null | undefined) ?? null,
+    import_line_description: (it.import_line_description as string | null | undefined) ?? null,
+    is_import_draft: Boolean(it.is_import_draft),
     due_date: String(it.due_date || ''),
     finish_mode: finish,
     quantity_unit: normalizeQuantityUnitFromApi(it.quantity_unit as string | undefined, finish),
@@ -268,6 +272,17 @@ function myobLinesFromApi(res: { items?: unknown; myob_import_lines?: unknown } 
     job_no: m.job_no != null ? String(m.job_no) : null,
     is_import_draft: Boolean(m.is_import_draft),
   }))
+}
+
+function isImportedManufacturedLine(it: OrderLine): boolean {
+  if (it.line_kind !== 'product') return false
+  return Boolean((it.import_line_description || '').trim())
+}
+
+function orderLineRank(it: OrderLine): number {
+  if (it.line_kind === 'product') return isImportedManufacturedLine(it) ? 1 : 3
+  if (it.line_kind === 'resell') return it.resell_catalog_kind === 'outsourced_manufacturing' ? 4 : 5
+  return 6
 }
 
 export function OrderEditor(props: { mode: Mode; orderId?: string }) {
@@ -717,8 +732,25 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }, [canPublish, canSaveDraft, items])
 
   const grandTotal = useMemo(() => {
-    return items.reduce((sum, it) => sum + (computedLineTotal(it) ?? 0), 0)
-  }, [items])
+    const productTotal = items.reduce((sum, it) => sum + (computedLineTotal(it) ?? 0), 0)
+    const myobTotal = myobImportLines.reduce((sum, it) => sum + (it.line_total ?? 0), 0)
+    return productTotal + myobTotal
+  }, [items, myobImportLines])
+
+  const sortedItems = useMemo(
+    () =>
+      [...items].sort((a, b) => {
+        const ra = orderLineRank(a)
+        const rb = orderLineRank(b)
+        if (ra !== rb) return ra - rb
+        return String(a.product_code || a.product_name || '').localeCompare(String(b.product_code || b.product_name || ''))
+      }),
+    [items],
+  )
+  const sortedMyobImportLines = useMemo(
+    () => [...myobImportLines].sort((a, b) => (a.line_index || 0) - (b.line_index || 0)),
+    [myobImportLines],
+  )
 
   async function createDraft() {
     if (items.some((it) => !isValidMoneyField(it.rate))) {
@@ -1002,6 +1034,142 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }
 
   const title = mode === 'new' ? 'New Order' : 'Edit Order'
+  const cancelTo = mode === 'edit' && orderId ? `/orders/${orderId}` : '/orders'
+
+  function onCancel() {
+    if (mode === 'edit') {
+      // Prefer returning to the previous page the user came from.
+      if (typeof window !== 'undefined' && window.history.length > 1) {
+        nav(-1)
+        return
+      }
+    }
+    nav(cancelTo)
+  }
+
+  function renderOrderLineRow(it: OrderLine) {
+    return (
+      <TableRow key={it.id} hover>
+        <TableCell>
+          {it.line_kind === 'resell' ? (
+            <strong>{it.product_name || '—'}</strong>
+          ) : (
+            <>
+              <strong>{it.product_code}</strong>
+              {it.product_name ? <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {it.product_name}</span> : null}
+            </>
+          )}
+        </TableCell>
+        <TableCell>
+          <TextField
+            size="small"
+            type="date"
+            value={it.due_date}
+            onChange={(e) => {
+              const v = e.currentTarget.value
+              setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, due_date: v } : x)))
+              setDirty(true)
+            }}
+            InputLabelProps={{ shrink: true }}
+            disabled={saving || publishing || orderLocked}
+          />
+        </TableCell>
+        <TableCell>
+          <TextField
+            size="small"
+            value={it.quantity_value}
+            onChange={(e) => {
+              const v = e.currentTarget.value
+              if (!/^\d*\.?\d*$/.test(v)) return
+              setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_value: v } : x)))
+            }}
+            inputProps={{ inputMode: 'decimal' }}
+            disabled={saving || publishing || orderLocked}
+          />
+        </TableCell>
+        <TableCell>
+          <TextField
+            select
+            size="small"
+            value={it.quantity_unit}
+            onChange={(e) => {
+              const v = e.target.value as QuantityUnit
+              const allowed = unitChoices(it.finish_mode, it.line_kind)
+              const next = allowed.includes(v) ? v : allowed[0]
+              setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: next } : x)))
+              setDirty(true)
+            }}
+            sx={{ minWidth: 120 }}
+            disabled={saving || publishing || orderLocked}
+          >
+            {unitChoices(it.finish_mode, it.line_kind, it.resell_catalog_kind).map((u) => (
+              <MenuItem key={u} value={u}>
+                {u === 'kg'
+                  ? 'KG'
+                  : u === 'rolls'
+                    ? 'Roll'
+                    : u === '1000'
+                      ? '1000'
+                      : u === 'ea'
+                        ? 'Each'
+                        : u === 'meters'
+                          ? 'Metres'
+                          : 'Carton'}
+              </MenuItem>
+            ))}
+          </TextField>
+        </TableCell>
+        <TableCell>
+          <TextField
+            size="small"
+            placeholder="—"
+            value={it.rate}
+            onChange={(e) => {
+              const v = e.currentTarget.value
+              if (v !== '' && !/^\d*\.?\d*$/.test(v)) return
+              setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, rate: v } : x)))
+              setDirty(true)
+            }}
+            inputProps={{ inputMode: 'decimal' }}
+            disabled={saving || publishing || orderLocked}
+          />
+        </TableCell>
+        <TableCell>
+          <Typography variant="body2">
+            {computedLineTotal(it) != null ? `$${Number(computedLineTotal(it)).toFixed(2)}` : '—'}
+          </Typography>
+        </TableCell>
+        <TableCell align="right">
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+            {canEditProduct && it.line_kind !== 'resell' && (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => void openProductVersionModalForLine(it)}
+                disabled={saving || publishing || (mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id))}
+                title={
+                  mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id)
+                    ? 'Save the order draft first to edit job sheet, quantity, and spec together.'
+                    : undefined
+                }
+              >
+                Edit
+              </Button>
+            )}
+            <Button
+              size="small"
+              variant="text"
+              color="error"
+              onClick={() => void removeLine(it)}
+              disabled={saving || publishing || orderLocked}
+            >
+              Remove
+            </Button>
+          </Box>
+        </TableCell>
+      </TableRow>
+    )
+  }
 
   return (
     <Box onChange={() => setDirty(true)}>
@@ -1082,131 +1250,59 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {items.map((it) => (
-                  <TableRow key={it.id} hover>
-                    <TableCell>
-                      {it.line_kind === 'resell' ? (
-                        <strong>{it.product_name || '—'}</strong>
-                      ) : (
-                        <>
-                          <strong>{it.product_code}</strong>
-                          {it.product_name ? <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {it.product_name}</span> : null}
-                        </>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        type="date"
-                        value={it.due_date}
-                        onChange={(e) => {
-                          const v = e.currentTarget.value
-                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, due_date: v } : x)))
-                          setDirty(true)
-                        }}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={saving || publishing || orderLocked}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        value={it.quantity_value}
-                        onChange={(e) => {
-                          const v = e.currentTarget.value
-                          if (!/^\d*\.?\d*$/.test(v)) return
-                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_value: v } : x)))
-                        }}
-                        inputProps={{ inputMode: 'decimal' }}
-                        disabled={saving || publishing || orderLocked}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        select
-                        size="small"
-                        value={it.quantity_unit}
-                        onChange={(e) => {
-                          const v = e.target.value as QuantityUnit
-                          const allowed = unitChoices(it.finish_mode, it.line_kind)
-                          const next = allowed.includes(v) ? v : allowed[0]
-                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: next } : x)))
-                          setDirty(true)
-                        }}
-                        sx={{ minWidth: 120 }}
-                        disabled={saving || publishing || orderLocked}
-                      >
-                        {unitChoices(it.finish_mode, it.line_kind, it.resell_catalog_kind).map((u) => (
-                          <MenuItem key={u} value={u}>
-                            {u === 'kg'
-                              ? 'KG'
-                              : u === 'rolls'
-                                ? 'Roll'
-                                : u === '1000'
-                                  ? '1000'
-                                  : u === 'ea'
-                                    ? 'Each'
-                                    : u === 'meters'
-                                      ? 'Metres'
-                                      : 'Carton'}
-                          </MenuItem>
-                        ))}
-                      </TextField>
-                    </TableCell>
-                    <TableCell>
-                      <TextField
-                        size="small"
-                        placeholder="—"
-                        value={it.rate}
-                        onChange={(e) => {
-                          const v = e.currentTarget.value
-                          if (v !== '' && !/^\d*\.?\d*$/.test(v)) return
-                          setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, rate: v } : x)))
-                          setDirty(true)
-                        }}
-                        inputProps={{ inputMode: 'decimal' }}
-                        disabled={saving || publishing || orderLocked}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {computedLineTotal(it) != null ? `$${Number(computedLineTotal(it)).toFixed(2)}` : '—'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                        {canEditProduct && it.line_kind !== 'resell' && (
-                          <Button
-                            size="small"
-                            variant="text"
-                            onClick={() => void openProductVersionModalForLine(it)}
-                            disabled={
-                              saving ||
-                              publishing ||
-                              (mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id))
-                            }
-                            title={
-                              mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id)
-                                ? 'Save the order draft first to edit job sheet, quantity, and spec together.'
-                                : undefined
-                            }
-                          >
-                            Edit
-                          </Button>
-                        )}
-                        <Button
-                          size="small"
-                          variant="text"
-                          color="error"
-                          onClick={() => void removeLine(it)}
-                          disabled={saving || publishing || orderLocked}
-                        >
-                          Remove
-                        </Button>
-                      </Box>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {sortedItems.filter((it) => isImportedManufacturedLine(it)).map((it) => renderOrderLineRow(it))}
+                {mode === 'edit'
+                  ? sortedMyobImportLines.map((m) => (
+                      <TableRow key={`myob-${m.id}`} hover>
+                        <TableCell>
+                          <strong>{m.myob_item_number || 'MYOB'}</strong>
+                          {m.description ? <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {m.description}</span> : null}
+                        </TableCell>
+                        <TableCell>—</TableCell>
+                        <TableCell>{Number(m.ship_quantity).toLocaleString()}</TableCell>
+                        <TableCell>{m.quantity_unit || '—'}</TableCell>
+                        <TableCell>{m.unit_price != null ? `$${m.unit_price.toFixed(2)}` : '—'}</TableCell>
+                        <TableCell>{m.line_total != null ? `$${m.line_total.toFixed(2)}` : '—'}</TableCell>
+                        <TableCell align="right">
+                          {m.requires_job_sheet ? (
+                            m.job_sheet_id ? (
+                              <Button
+                                size="small"
+                                variant="text"
+                                onClick={() => {
+                                  if (!m.linked_product_id) return
+                                  openProductVersionModal({
+                                    product_id: m.linked_product_id,
+                                    product_code: m.myob_item_number,
+                                    job_sheet_id: m.job_sheet_id,
+                                  })
+                                }}
+                                disabled={saving || publishing || !m.linked_product_id}
+                              >
+                                {m.is_import_draft ? 'Complete job sheet' : 'Open job sheet'}
+                              </Button>
+                            ) : (
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => {
+                                  setLinkMyobLine(m)
+                                  setLinkMyobJobSheetId('')
+                                  setLinkMyobOpen(true)
+                                }}
+                                disabled={saving || publishing || orderLocked}
+                              >
+                                Link job sheet
+                              </Button>
+                            )
+                          ) : (
+                            '—'
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  : null}
+                {sortedItems.filter((it) => !isImportedManufacturedLine(it)).map((it) => renderOrderLineRow(it))}
                 <TableRow>
                   <TableCell colSpan={7} sx={{ borderBottom: 'none' }}>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} sx={{ py: 0.5 }}>
@@ -1264,20 +1360,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                             {p.code}
                           </MenuItem>
                         ))}
-                        <MenuItem divider />
                         <MenuItem value="__new_job_sheet__">New Job Sheet</MenuItem>
-                        {resellCatalog.some((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing') ? (
-                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
-                            Resell / supplies
-                          </ListSubheader>
-                        ) : null}
-                        {resellCatalog
-                          .filter((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing')
-                          .map((rp) => (
-                            <MenuItem key={rp.id} value={`resell:${rp.id}`}>
-                              {rp.description}
-                            </MenuItem>
-                          ))}
+                        <MenuItem divider />
                         {resellCatalog.some((x) => (x.catalog_kind || 'supply') === 'outsourced_manufacturing') ? (
                           <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
                             Outsourced manufacturing
@@ -1287,6 +1371,18 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                           .filter((x) => (x.catalog_kind || 'supply') === 'outsourced_manufacturing')
                           .map((rp) => (
                             <MenuItem key={`os-${rp.id}`} value={`resell:${rp.id}`}>
+                              {rp.description}
+                            </MenuItem>
+                          ))}
+                        {resellCatalog.some((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing') ? (
+                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
+                            Resell / supplies
+                          </ListSubheader>
+                        ) : null}
+                        {resellCatalog
+                          .filter((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing')
+                          .map((rp) => (
+                            <MenuItem key={rp.id} value={`resell:${rp.id}`}>
                               {rp.description}
                             </MenuItem>
                           ))}
@@ -1309,116 +1405,13 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             </Table>
           </Paper>
 
-          {mode === 'edit' && myobImportLines.length > 0 ? (
-            <Paper variant="outlined" sx={{ p: 1 }}>
-              <Typography variant="subtitle2" sx={{ px: 1, pt: 1, pb: 0.5 }}>
-                MYOB import (draft)
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ px: 1, display: 'block', pb: 0.5 }}>
-                Lines from MYOB before production job sheets are linked. Use <strong>Link job sheet</strong> with an
-                existing job sheet id (same customer), or <strong>Open job sheet</strong> when a sheet is already
-                linked.
-              </Typography>
-              <Box sx={{ px: 1, pb: 0.5 }}>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => {
-                    if (!customerId) return
-                    setNewJobSheetOpen(true)
-                  }}
-                  disabled={!customerId || saving || publishing || orderLocked}
-                >
-                  New job sheet…
-                </Button>
-              </Box>
-              <Table size="small" sx={{ '& .MuiTableCell-root': { px: 1 } }}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Description</TableCell>
-                    <TableCell align="right">Qty</TableCell>
-                    <TableCell>Unit</TableCell>
-                    <TableCell align="right">Total</TableCell>
-                    <TableCell align="right">Job sheet</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {myobImportLines.map((m) => (
-                    <TableRow key={m.id} hover>
-                      <TableCell>
-                        <strong>{m.myob_item_number || '—'}</strong>
-                        {m.description ? (
-                          <span style={{ color: 'rgba(0,0,0,0.6)' }}> — {m.description}</span>
-                        ) : null}
-                      </TableCell>
-                      <TableCell align="right">{m.ship_quantity}</TableCell>
-                      <TableCell>{m.quantity_unit}</TableCell>
-                      <TableCell align="right">
-                        {m.line_total != null && Number.isFinite(m.line_total) ? `$${m.line_total.toFixed(2)}` : '—'}
-                      </TableCell>
-                      <TableCell align="right">
-                        {m.requires_job_sheet ? (
-                          m.job_sheet_id ? (
-                            <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap" useFlexGap>
-                              {m.job_no ? (
-                                <Typography variant="body2" color="text.secondary">
-                                  {m.job_no}
-                                </Typography>
-                              ) : null}
-                              {m.linked_product_id ? (
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  onClick={() => {
-                                    openProductVersionModal({
-                                      product_id: m.linked_product_id!,
-                                      product_code: m.myob_item_number,
-                                      job_sheet_id: m.job_sheet_id,
-                                    })
-                                  }}
-                                  disabled={saving || publishing}
-                                >
-                                  {m.is_import_draft ? 'Complete job sheet' : 'Open job sheet'}
-                                </Button>
-                              ) : (
-                                <Typography variant="caption" color="text.secondary">
-                                  Linked (missing product id)
-                                </Typography>
-                              )}
-                            </Stack>
-                          ) : (
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => {
-                                setLinkMyobLine(m)
-                                setLinkMyobJobSheetId('')
-                                setLinkMyobOpen(true)
-                              }}
-                              disabled={saving || publishing || orderLocked}
-                            >
-                              Link job sheet
-                            </Button>
-                          )
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">
-                            —
-                          </Typography>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Paper>
-          ) : null}
+          
 
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             <Button
               variant="text"
               color="primary"
-              component={Link}
-              to={mode === 'edit' && orderId ? `/orders/${orderId}` : '/orders'}
+              onClick={onCancel}
             >
               Cancel
             </Button>

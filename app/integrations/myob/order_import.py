@@ -21,6 +21,7 @@ from app.integrations.myob.item_selling_uom_cache import (
     is_bought_from_item_json,
     upsert_uom_from_item_json,
 )
+from app.integrations.myob.item_import_fixups import normalize_myob_item_json_for_order_import
 from app.integrations.myob.order_import_mapping import map_myob_item_to_app_quantity, myob_resell_catalog_kind
 from app.integrations.myob.service import MyobConfigError, fetch_inventory_item_readonly
 from app.job_sheets import service as job_sheets_service
@@ -322,6 +323,8 @@ def import_one_myob_sale_order(
 
         if not isinstance(item_json, dict):
             item_json = {}
+        uid_line = str(it_d.get("UID")).strip() if it_d and it_d.get("UID") else None
+        item_json = normalize_myob_item_json_for_order_import(item_json, item_uid=uid_line)
 
         qty = line.get("ShipQuantity")
         try:

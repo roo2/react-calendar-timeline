@@ -21,8 +21,9 @@ function dimensionsAreContinuous(dim: any, productType: string): boolean {
 function baseLengthMmFromDimensions(dim: any, productType: string): number {
   if (dimensionsAreContinuous(dim, productType)) return 0
   const raw = Number(dim?.base_length_mm || 0)
-  const u = String(dim?.length_units || 'mm')
-  if (u === 'M' || u === 'm') return Math.round(raw * 1000)
+  // `base_length_mm` is always stored in millimetres (SpecPayloadForm converts M→mm on input).
+  // Do not scale again when `length_units` is M — that would double-count vs the form and blow up
+  // rolls_units total_m / kg (e.g. Sleeve + M + Rolls × sleeves per roll).
   return Math.round(raw)
 }
 

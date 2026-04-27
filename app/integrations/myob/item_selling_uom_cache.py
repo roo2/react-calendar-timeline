@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.domain import MyobItemSellingUom
 from app.integrations.myob.income_account_sync import sync_income_account_from_item_json
+from app.integrations.myob.item_import_fixups import normalize_myob_item_json_for_order_import
 from app.integrations.myob.service import (
     MYOB_ACCOUNTRIGHT_BASE,
     MyobConfigError,
@@ -97,6 +98,7 @@ def get_cached_item_json_for_mapping(db: Session, *, item_uid: str) -> dict[str,
         out["IsInventoried"] = bool(row.is_inventoried)
     if getattr(row, "myob_income_account_uid", None):
         out["IncomeAccount"] = {"UID": str(row.myob_income_account_uid)}
+    out = normalize_myob_item_json_for_order_import(out, item_uid=uid)
     return out
 
 
@@ -105,6 +107,7 @@ def upsert_uom_from_item_json(db: Session, *, item_uid: str, item_json: dict[str
     uid = str(item_uid or "").strip()
     if not uid:
         return
+    item_json = normalize_myob_item_json_for_order_import(item_json, item_uid=uid)
     uom = _uom_string_from_item_json(item_json)
     bought = is_bought_from_item_json(item_json)
     sold = is_sold_from_item_json(item_json)
@@ -170,11 +173,16 @@ def rebuild_myob_item_selling_uom_cache(db: Session) -> dict[str, Any]:
                 uid = str(obj.get("UID") or "").strip()
                 if not uid:
                     continue
-                uom = _uom_string_from_item_json(obj)
-                bought = is_bought_from_item_json(obj) if isinstance(obj, dict) else None
-                sold = is_sold_from_item_json(obj) if isinstance(obj, dict) else None
-                inv = is_inventoried_from_item_json(obj) if isinstance(obj, dict) else None
-                inc_uid = sync_income_account_from_item_json(db, obj)
+                obj_norm = (
+                    normalize_myob_item_json_for_order_import(obj, item_uid=uid)
+                    if isinstance(obj, dict)
+                    else obj
+                )
+                uom = _uom_string_from_item_json(obj_norm) if isinstance(obj_norm, dict) else None
+                bought = is_bought_from_item_json(obj_norm) if isinstance(obj_norm, dict) else None
+                sold = is_sold_from_item_json(obj_norm) if isinstance(obj_norm, dict) else None
+                inv = is_inventoried_from_item_json(obj_norm) if isinstance(obj_norm, dict) else None
+                inc_uid = sync_income_account_from_item_json(db, obj_norm)
                 batch.append(
                     MyobItemSellingUom(
                         myob_item_uid=uid,

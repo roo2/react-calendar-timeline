@@ -64,6 +64,7 @@ import {
 import { QuotePreviewPanel } from './components/QuotePreviewPanel'
 import { MobileFixedBottomAside, StickySideAside } from '../../components/StickySideAside'
 import { fmtCount, fmtHoursMinutes, fmtQtyNumber } from '../../utils/quoteFormat'
+import { formatDateDMYShort } from '../../utils/dateFormat'
 
 function formatKgDisplay(v: number | null | undefined): string {
   if (v == null) return ''
@@ -79,9 +80,7 @@ function roundTo2Decimals(s: string): string {
 }
 
 function fmtSavedQuoteDate(raw: string | null | undefined): string {
-  if (!raw || String(raw).trim() === '') return '—'
-  const d = new Date(String(raw))
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { dateStyle: 'medium' })
+  return formatDateDMYShort(raw, '—')
 }
 
 /**

@@ -2,6 +2,7 @@ import { Box, Divider, Paper, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../../../api/client'
 import type { GanttBar, GanttLane, UnqueuedScheduleJob } from '../../../store/slices/scheduleSlice'
+import { formatDateTimeDMYShort } from '../../../utils/dateFormat'
 
 type Props = {
   jobId: string | null
@@ -160,9 +161,9 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
           ) : null}
           {fromLane.bar.tentative_start ? (
             <Typography variant="caption" color="text.secondary" display="block">
-              Tentative: {new Date(fromLane.bar.tentative_start).toLocaleString()} →{' '}
+              Tentative: {formatDateTimeDMYShort(fromLane.bar.tentative_start)} →{' '}
               {fromLane.bar.tentative_finish
-                ? new Date(fromLane.bar.tentative_finish).toLocaleString()
+                ? formatDateTimeDMYShort(fromLane.bar.tentative_finish)
                 : '—'}
             </Typography>
           ) : null}

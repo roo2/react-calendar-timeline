@@ -303,6 +303,8 @@ class ResellProduct(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     description: Mapped[str] = mapped_column(Text, nullable=False)
     unit_price: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    # Preferred order-line quantity unit when this resell product is added.
+    default_quantity_unit: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # supply = consumables / fees (default); outsourced_manufacturing = MYOB bought finished goods we outsource.
     catalog_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="supply")

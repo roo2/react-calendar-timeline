@@ -6,6 +6,7 @@ import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
 import { computeDerivedGeometryAndTotals } from '../../utils/quoteCalculator'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { buildQuickQuoteInputsFromSpec } from '../../utils/specToQuoteInputs'
+import { formatDateDMYShort } from '../../utils/dateFormat'
 import {
   coerceQtyTypeForFinishMode,
   type FinishMode,
@@ -264,7 +265,7 @@ export function JobSheetShowPage() {
           <FieldBlock label="Customer">{js.customer_name?.trim() ? js.customer_name : '—'}</FieldBlock>
           <FieldBlock label="Invoice No">{js.invoice_no?.trim() ? js.invoice_no : '—'}</FieldBlock>
           <FieldBlock label="Order Date">
-            {js.order_date ? String(js.order_date).slice(0, 10) : '—'}
+            {formatDateDMYShort(js.order_date, '—')}
           </FieldBlock>
           <FieldBlock label="Due Date">{js.due_date?.trim() ? js.due_date : '—'}</FieldBlock>
         </Box>
