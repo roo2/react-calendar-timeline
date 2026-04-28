@@ -126,49 +126,51 @@ def upgrade() -> None:
 
     spec = json.dumps({"identity": {"product_type": "other", "finish_mode": "Rolls"}, "import_placeholder": True})
 
+    # Use distinct bind names for the same value in SELECT vs WHERE — PostgreSQL infers one $n as text
+    # and another as varchar when a single :id is reused, causing AmbiguousParameter / inconsistent types.
     conn.execute(
         text(
             """
             INSERT INTO customers (id, name, brand_id, priority_rank, abn, contact_phone, status, contacts,
                 delivery_addresses, delivery_preferences, payment_terms, notes, myob_display_id, myob_customer_uid,
                 myob_last_modified, myob_synced_at, myob_notes)
-            SELECT :id, 'Internal (MYOB import placeholder)', NULL, NULL, NULL, NULL, 'Active', '{}', '{}', '{}', NULL, NULL, NULL, NULL, NULL, NULL, NULL
-            WHERE NOT EXISTS (SELECT 1 FROM customers WHERE id = :id)
+            SELECT :id_row, 'Internal (MYOB import placeholder)', NULL, NULL, NULL, NULL, 'Active', '{}', '{}', '{}', NULL, NULL, NULL, NULL, NULL, NULL, NULL
+            WHERE NOT EXISTS (SELECT 1 FROM customers WHERE id = :id_exists)
             """
         ),
-        {"id": CUID},
+        {"id_row": CUID, "id_exists": CUID},
     )
     conn.execute(
         text(
             """
             INSERT INTO products (id, code, description, customer_id, active_version_id, created_at)
-            SELECT :id, :code, 'Placeholder for MYOB import draft job sheets', :cust, NULL, CURRENT_TIMESTAMP
-            WHERE NOT EXISTS (SELECT 1 FROM products WHERE id = :id)
+            SELECT :id_row, :code, 'Placeholder for MYOB import draft job sheets', :cust, NULL, CURRENT_TIMESTAMP
+            WHERE NOT EXISTS (SELECT 1 FROM products WHERE id = :id_exists)
             """
         ),
-        {"id": PPID, "code": PCODE, "cust": CUID},
+        {"id_row": PPID, "id_exists": PPID, "code": PCODE, "cust": CUID},
     )
     if _is_postgres(conn):
         conn.execute(
             text(
                 """
                 INSERT INTO product_versions (id, product_id, version_number, created_by, spec_payload, created_at)
-                SELECT :pvid, :ppid, 1, 'migration', CAST(:spec AS jsonb), CURRENT_TIMESTAMP
-                WHERE NOT EXISTS (SELECT 1 FROM product_versions WHERE id = :pvid)
+                SELECT :pvid_row, :ppid, 1, 'migration', CAST(:spec AS jsonb), CURRENT_TIMESTAMP
+                WHERE NOT EXISTS (SELECT 1 FROM product_versions WHERE id = :pvid_exists)
                 """
             ),
-            {"pvid": PVID, "ppid": PPID, "spec": spec},
+            {"pvid_row": PVID, "pvid_exists": PVID, "ppid": PPID, "spec": spec},
         )
     else:
         conn.execute(
             text(
                 """
                 INSERT INTO product_versions (id, product_id, version_number, created_by, spec_payload, created_at)
-                SELECT :pvid, :ppid, 1, 'migration', :spec, CURRENT_TIMESTAMP
-                WHERE NOT EXISTS (SELECT 1 FROM product_versions WHERE id = :pvid)
+                SELECT :pvid_row, :ppid, 1, 'migration', :spec, CURRENT_TIMESTAMP
+                WHERE NOT EXISTS (SELECT 1 FROM product_versions WHERE id = :pvid_exists)
                 """
             ),
-            {"pvid": PVID, "ppid": PPID, "spec": spec},
+            {"pvid_row": PVID, "pvid_exists": PVID, "ppid": PPID, "spec": spec},
         )
     conn.execute(
         text("UPDATE products SET active_version_id = :pvid WHERE id = :ppid"), {"pvid": PVID, "ppid": PPID}
