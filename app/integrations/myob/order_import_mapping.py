@@ -31,6 +31,7 @@ OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_DISPLAY_IDS: frozenset[str] = frozenset(
         "4-1110",
         "4-0008",
         "4-1113",
+        "4-3001",
         "5-0010",
     }
 )
@@ -117,7 +118,7 @@ def map_myob_item_to_app_quantity(
     if s in ("100", "500"):
         return "ea", "units", raw_display
 
-    if s == "1000":
+    if s in ("1000", "thou", "thousand"):
         return "1000", "units", raw_display
 
     if "roll" in s:

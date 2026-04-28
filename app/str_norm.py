@@ -18,3 +18,15 @@ def strip_trailing_dash_suffix(value: str | None) -> str:
     while t and t[-1] in _TRAILING_DASH_CHARS:
         t = t[:-1].rstrip()
     return t
+
+
+def customer_facing_product_code_from_import_description(text: str | None) -> str | None:
+    """
+    For MYOB / Dolphin long-form line descriptions, return the leading "customer-facing" code segment
+    before the first `` - `` (e.g. ``PB1000800100 - L/D NATURAL POLY BAG ...`` → ``PB1000800100``).
+    """
+    s = (text or "").strip()
+    if not s or " - " not in s:
+        return None
+    head = s.split(" - ", 1)[0].strip()
+    return head or None

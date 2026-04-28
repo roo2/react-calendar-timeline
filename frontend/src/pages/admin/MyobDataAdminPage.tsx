@@ -7,7 +7,9 @@ import { AdminPageHeader } from './components/AdminPageHeader'
 const ITEM_LIST_LIMIT = 10_000
 
 type IncomeRow = {
-  myob_account_uid: string
+  id: string
+  brand_source: string
+  myob_account_uid: string | null
   name: string | null
   display_id: string | null
   synced_at: string | null
@@ -101,20 +103,28 @@ export function MyobDataAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ width: 100 }}>Brand</TableCell>
                 <TableCell sx={{ width: 120 }}>Display ID</TableCell>
                 <TableCell>Name</TableCell>
-                <TableCell sx={{ width: 320 }}>MYOB UID</TableCell>
+                <TableCell sx={{ width: 280 }}>App id</TableCell>
+                <TableCell sx={{ width: 280 }}>MYOB account UID</TableCell>
                 <TableCell sx={{ width: 200 }}>Last synced (UTC)</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {incomeRows.map((r) => (
-                <TableRow key={r.myob_account_uid} hover>
+                <TableRow key={r.id} hover>
+                  <TableCell>{r.brand_source || '—'}</TableCell>
                   <TableCell>{r.display_id || '—'}</TableCell>
                   <TableCell>{r.name || '—'}</TableCell>
                   <TableCell>
                     <Typography variant="body2" component="code" sx={{ wordBreak: 'break-all' }}>
-                      {r.myob_account_uid}
+                      {r.id}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" component="code" sx={{ wordBreak: 'break-all' }}>
+                      {r.myob_account_uid || '—'}
                     </Typography>
                   </TableCell>
                   <TableCell>

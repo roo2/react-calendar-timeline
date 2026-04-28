@@ -151,6 +151,23 @@ except Exception:  # pragma: no cover
 
 app = FastAPI(title="Production Software")
 
+
+@app.on_event("startup")
+async def _mark_stale_myob_import_jobs() -> None:
+    """Mark in-DB ``running`` MYOB import jobs as interrupted so imports can be resumed after deploy/crash."""
+    try:
+        from app.integrations.myob.myob_import_job import mark_interrupted_jobs_on_startup
+
+        n = mark_interrupted_jobs_on_startup()
+        if n:
+            import sys
+
+            print(f"MYOB import: marked {n} running job(s) as interrupted (resume via POST /api/myob/import/jobs/{{id}}/resume).", file=sys.stderr)
+    except Exception as e:  # pragma: no cover - DB may be unavailable in odd boot orders
+        import sys
+
+        print(f"WARN: MYOB import startup hook failed: {e}", file=sys.stderr)
+
 # Identity dependency (fallback if auth deps unavailable)
 try:
     from app.auth.deps import current_identity  # type: ignore

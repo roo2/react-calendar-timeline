@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 
 from app.auth.deps import allow_roles_any, csrf_protect, current_identity, require_roles
 from app.db.models.domain import (
@@ -34,12 +34,31 @@ from app.orders.schemas import (
     UpdateResellOrderLineRequest,
 )
 from app.products.service import compute_product_code_full
-from app.str_norm import strip_trailing_dash_suffix
+from app.str_norm import (
+    customer_facing_product_code_from_import_description,
+    strip_trailing_dash_suffix,
+)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 # Default sales/income account used for new in-house manufactured job-sheet products.
 DEFAULT_MANUFACTURED_INCOME_ACCOUNT_UID = "3d453a97-a7e0-4c7f-a0be-fd89ba3f6a46"
+
+
+def _myob_import_line_product_code(oi: OrderItem, order_import_source: str | None) -> str:
+    """List/detail label for ``myob_import`` lines: Dolphin uses the leading product code in the description."""
+    src = str(order_import_source or "")
+    is_dolphin = src == "DOLPHIN_TSV" or (
+        isinstance(getattr(oi, "myob_item_json", None), dict) and (oi.myob_item_json or {}).get("_dolphin")
+    )
+    if is_dolphin:
+        cf = customer_facing_product_code_from_import_description(getattr(oi, "import_line_description", None))
+        if cf:
+            return cf
+    n = str(getattr(oi, "myob_item_number", None) or getattr(oi, "myob_item_name", None) or "").strip()
+    if n:
+        return n
+    return "MYOB"
 
 
 def _job_to_dto(j) -> JobDTO:
@@ -88,14 +107,28 @@ def _resell_line_counts(o) -> tuple[int, int]:
 
 
 def _myob_income_display_for_order_item(db, oi: OrderItem) -> tuple[str | None, str | None]:
-    """Resolve MYOB income account display id + name for an import line."""
+    """Resolve income account display id + name for an import line (Crown Pack MYOB vs Dolphin TSV)."""
     j = getattr(oi, "myob_item_json", None)
     if isinstance(j, dict):
+        d0 = j.get("_dolphin")
+        if isinstance(d0, dict):
+            iid = str(d0.get("income_account_id") or "").strip()
+            if iid:
+                acc = db.get(MyobIncomeAccount, iid)
+                if acc is not None:
+                    return (
+                        str(acc.display_id) if acc.display_id else None,
+                        str(acc.name) if acc.name else None,
+                    )
         inc = j.get("IncomeAccount")
         if isinstance(inc, dict):
             iu = str(inc.get("UID") or "").strip()
             if iu:
                 acc = db.get(MyobIncomeAccount, iu)
+                if acc is None:
+                    acc = db.scalar(
+                        select(MyobIncomeAccount).where(MyobIncomeAccount.myob_account_uid == iu)
+                    )
                 if acc is not None:
                     return (
                         str(acc.display_id) if acc.display_id else None,
@@ -136,9 +169,7 @@ def _products_summary(o) -> tuple[str | None, int]:
             p = getattr(js, "product", None) if js is not None else None
             code = str(getattr(p, "code", None) or "").strip()
         elif kind == "myob_import":
-            code = str(getattr(oi, "myob_item_number", None) or getattr(oi, "myob_item_name", None) or "").strip()
-            if not code:
-                code = "MYOB"
+            code = _myob_import_line_product_code(oi, getattr(o, "import_source", None))
         else:
             continue
         if code:
@@ -199,12 +230,30 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
 
 
 def _order_to_detail_dto(o) -> OrderDetailDTO:
-    return OrderDetailDTO(**_order_to_list_dto(o).model_dump(), jobs=[_job_to_dto(j) for j in (o.jobs or [])])
+    return OrderDetailDTO(
+        **_order_to_list_dto(o).model_dump(),
+        jobs=[_job_to_dto(j) for j in (o.jobs or [])],
+        myob_source_sales_order_json=(
+            dict(getattr(o, "myob_source_sales_order_json"))
+            if isinstance(getattr(o, "myob_source_sales_order_json", None), dict)
+            else None
+        ),
+        myob_source_invoices_json=(
+            list(getattr(o, "myob_source_invoices_json"))
+            if isinstance(getattr(o, "myob_source_invoices_json", None), list)
+            else []
+        ),
+    )
 
 
 @router.get("", response_model=OrderListResponse, dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
 async def list_orders(
     customer_id: str | None = Query(default=None),
+    brand_id: str | None = Query(default=None, description="Filter by customers.brand_id (UUID)"),
+    brand_code: str | None = Query(
+        default=None,
+        description="Filter by brand code (e.g. CROWN_PACK, DOLPHIN); ignored if brand_id is set",
+    ),
     invoice_number: str | None = Query(default=None),
     customer_po: str | None = Query(default=None),
     customer: str | None = Query(default=None),
@@ -224,8 +273,15 @@ async def list_orders(
             uuid.UUID(str(customer_id))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid customer_id")
+    if brand_id:
+        try:
+            uuid.UUID(str(brand_id))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid brand_id")
     orders, total = service.list_orders(
         customer_id=customer_id,
+        brand_id=brand_id,
+        brand_code=brand_code,
         invoice_number=invoice_number,
         customer_po=customer_po,
         customer=customer,
@@ -592,7 +648,7 @@ async def show_order(order_id: str):
                         "job_no": jno,
                         "linked_product_id": linked_pid,
                         "product_id": None,
-                        "product_code": (oi.myob_item_number or "MYOB") if oi.myob_item_number else "MYOB",
+                        "product_code": _myob_import_line_product_code(oi, getattr(o, "import_source", None)),
                         "product_name": oi.import_line_description,
                         "quantity_value": float(oi.import_ship_quantity) if oi.import_ship_quantity is not None else 0.0,
                         "rate": float(oi.import_unit_price) if oi.import_unit_price is not None else None,

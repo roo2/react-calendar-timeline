@@ -19,7 +19,7 @@ from app.integrations.myob.item_selling_uom_cache import (
     rebuild_myob_item_selling_uom_cache,
 )
 from app.integrations.myob.order_import import import_one_myob_sale_order
-from app.integrations.myob.myob_import_job import get_import_job, start_import_job
+from app.integrations.myob.myob_import_job import get_import_job, resume_import_job, start_import_job
 from app.integrations.myob.myob_import_pipeline import run_myob_import_pipeline
 from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
 from app.integrations.myob.service import (
@@ -50,9 +50,11 @@ SysAdminIdentity = Annotated[dict, Depends(_sys_admin)]
 
 
 class MyobIncomeAccountDTO(BaseModel):
-    """Income account row synced from MYOB ``Inventory/Item.IncomeAccount`` (read-only in admin UI)."""
+    """Cached GL income account (Crown Pack MYOB sync or Dolphin TSV import; read-only in admin UI)."""
 
-    myob_account_uid: str
+    id: str
+    brand_source: str
+    myob_account_uid: str | None = None
     name: str | None = None
     display_id: str | None = None
     synced_at: str | None = None
@@ -276,10 +278,10 @@ class MyobImportPipelineStartResponse(BaseModel):
 
 
 class MyobImportJobStatusDTO(BaseModel):
-    """Background MYOB import job state (in-memory on this server worker)."""
+    """Background MYOB import job state (stored in the database; pollable from any worker)."""
 
     job_id: str
-    status: Literal["running", "completed", "failed"]
+    status: Literal["running", "completed", "failed", "interrupted"]
     phase: Literal["customers", "item_cache", "orders", "done"]
     message: str
     orders_mode: Literal["all", "page"]
@@ -376,9 +378,11 @@ async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImpo
     """
     Queue the same import pipeline as ``POST /import/pipeline`` on a **background thread** and return a ``job_id``.
 
-    Poll ``GET /api/myob/import/jobs/{job_id}`` for ``phase`` / ``message`` updates; when ``status`` is ``completed`` or
-    ``failed``, read ``result`` or ``error``. Only one import may run at a time **per server process**; if another job
-    is active, returns **409** with the running job snapshot in the response body.
+    Poll ``GET /api/myob/import/jobs/{job_id}`` for ``phase`` / ``message`` updates; when ``status`` is ``completed``,
+    ``failed``, or ``interrupted``, read ``result`` or ``error``. Job state is stored in the database (any dyno can poll).
+    Only one import may run at a time **app-wide**; if another job is active, returns **409** with the running job
+    snapshot in the response body. After an ``interrupted`` or ``failed`` job (with partial progress), call
+    ``POST /import/jobs/{job_id}/resume`` to continue.
     """
     del _identity
     if not myob_configured():
@@ -395,7 +399,7 @@ async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImpo
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": "Another MYOB import pipeline is already running on this server worker.",
+                "message": "Another MYOB import pipeline is already running.",
                 "running_job": conflict,
             },
         )
@@ -404,12 +408,37 @@ async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImpo
 
 @router.get("/import/jobs/{job_id}", response_model=MyobImportJobStatusDTO)
 async def myob_import_job_status(_identity: SysAdminIdentity, job_id: str):
-    """Poll background import job status (same worker that started the job must handle polls when using multiple workers)."""
+    """Poll background import job status (reads persisted state)."""
     del _identity
     row = get_import_job(job_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown import job id.")
     return MyobImportJobStatusDTO(**row)
+
+
+@router.post("/import/jobs/{job_id}/resume", dependencies=[Depends(csrf_protect())])
+async def myob_import_job_resume(_identity: SysAdminIdentity, job_id: str):
+    """
+    Continue a **failed** or **interrupted** import using the same ``job_id`` (partial progress is kept in ``partial``).
+
+    Skips steps that already finished and were committed (customers → item cache → orders).
+    """
+    del _identity
+    if not myob_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MYOB is not configured (set MYOB_APP_KEY and MYOB_APP_SECRET).",
+        )
+    jid, conflict, err = resume_import_job(job_id)
+    if err:
+        if conflict is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"message": err, "running_job": conflict},
+            )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+    assert jid is not None
+    return MyobImportPipelineStartResponse(job_id=jid, status_path=f"/api/myob/import/jobs/{jid}")
 
 
 @router.post("/customers/sync", dependencies=[Depends(csrf_protect())])
@@ -445,13 +474,16 @@ async def myob_list_income_accounts(_identity: SysAdminIdentity):
     with SessionLocal() as db:
         rows = db.scalars(
             select(MyobIncomeAccount).order_by(
+                MyobIncomeAccount.brand_source.asc(),
                 MyobIncomeAccount.display_id.asc(),
                 MyobIncomeAccount.name.asc(),
-                MyobIncomeAccount.myob_account_uid.asc(),
+                MyobIncomeAccount.id.asc(),
             )
         ).all()
     return [
         MyobIncomeAccountDTO(
+            id=r.id,
+            brand_source=str(getattr(r, "brand_source", None) or "crownpack"),
             myob_account_uid=r.myob_account_uid,
             name=r.name,
             display_id=r.display_id,

@@ -36,7 +36,13 @@ def _orders_progress_snapshot(orders_result: dict[str, Any], *, orders: Literal[
         snap["list_item_count"] = orders_result.get("list_item_count")
         snap["top"] = orders_result.get("top")
         snap["skip"] = orders_result.get("skip")
+    if orders_result.get("sale_invoices_indexed") is not None:
+        snap["sale_invoices_indexed"] = orders_result.get("sale_invoices_indexed")
     return snap
+
+
+def _skipped_step_result(step: PipelineStep) -> dict[str, Any]:
+    return {"ok": True, "skipped": True, "reason": "resume", "step": step}
 
 
 def run_myob_import_pipeline(
@@ -46,6 +52,7 @@ def run_myob_import_pipeline(
     orders_top: int = 200,
     orders_skip: int = 0,
     on_step: OnPipelineStep | None = None,
+    resume_from: Literal["item_cache", "orders"] | None = None,
 ) -> dict[str, Any]:
     """
     Run MYOB imports in order:
@@ -59,15 +66,28 @@ def run_myob_import_pipeline(
 
     Optional ``on_step`` is invoked after each major step with ``(step_name, {"result": ...})`` where ``result`` is
     JSON-friendly (customer sync omits ``myob_json``).
-    """
-    customers = import_customers_from_myob(db)
-    if on_step is not None:
-        on_step("customers", {"result": _customers_for_progress(customers)})
 
-    item_cache = rebuild_myob_item_selling_uom_cache(db)
-    db.commit()
-    if on_step is not None:
-        on_step("item_cache", {"result": dict(item_cache)})
+    ``resume_from`` skips leading steps that already completed (and were committed) before a worker died:
+    ``"item_cache"`` skips **customers** only; ``"orders"`` skips **customers** and **item cache** (order import
+    only).
+    """
+    skip_customers = resume_from is not None
+    skip_item_cache = resume_from == "orders"
+
+    if not skip_customers:
+        customers = import_customers_from_myob(db)
+        if on_step is not None:
+            on_step("customers", {"result": _customers_for_progress(customers)})
+    else:
+        customers = _skipped_step_result("customers")
+
+    if not skip_item_cache:
+        item_cache = rebuild_myob_item_selling_uom_cache(db)
+        db.commit()
+        if on_step is not None:
+            on_step("item_cache", {"result": dict(item_cache)})
+    else:
+        item_cache = _skipped_step_result("item_cache")
 
     top_i = max(1, min(int(orders_top), 1000))
     skip_i = max(0, int(orders_skip))
@@ -80,7 +100,9 @@ def run_myob_import_pipeline(
     if on_step is not None:
         on_step("orders", {"result": _orders_progress_snapshot(orders_result, orders=orders)})
 
-    overall_ok = bool(customers.get("ok")) and bool(item_cache.get("ok", True)) and bool(orders_result.get("ok"))
+    customers_ok = bool(customers.get("ok")) if not customers.get("skipped") else True
+    item_ok = bool(item_cache.get("ok", True)) if not item_cache.get("skipped") else True
+    overall_ok = customers_ok and item_ok and bool(orders_result.get("ok"))
 
     return {
         "ok": overall_ok,

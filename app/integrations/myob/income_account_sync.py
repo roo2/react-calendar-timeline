@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models.domain import MyobIncomeAccount
 
+CROWNPACK_BRAND = "crownpack"
+
 
 def parse_income_account_fields(
     item_json: dict[str, Any] | None,
@@ -27,7 +29,7 @@ def parse_income_account_fields(
 def sync_income_account_from_item_json(db: Session, item_json: dict[str, Any] | None) -> str | None:
     """
     Read ``IncomeAccount`` from a full ``Inventory/Item`` JSON object, upsert ``myob_income_accounts``,
-    and return the MYOB account UID (or ``None`` if the payload has no income account).
+    and return the local income account id (``id``; same as MYOB ``UID`` for Crown Pack sync rows).
     """
     uid, name, disp = parse_income_account_fields(item_json)
     if not uid:
@@ -38,7 +40,9 @@ def sync_income_account_from_item_json(db: Session, item_json: dict[str, Any] | 
     if row is None:
         db.add(
             MyobIncomeAccount(
+                id=uid,
                 myob_account_uid=uid,
+                brand_source=CROWNPACK_BRAND,
                 name=name,
                 display_id=disp_s,
                 synced_at=now,
@@ -49,6 +53,8 @@ def sync_income_account_from_item_json(db: Session, item_json: dict[str, Any] | 
             row.name = name
         if disp_s is not None:
             row.display_id = disp_s
+        row.brand_source = CROWNPACK_BRAND
+        row.myob_account_uid = uid
         row.synced_at = now
         db.add(row)
     db.flush()

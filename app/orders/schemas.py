@@ -108,6 +108,8 @@ class OrderDetailDTO(OrderListItemDTO):
     jobs: List[JobDTO] = []
     items: list[dict] = []
     myob_import_lines: list[dict] = []
+    myob_source_sales_order_json: dict | None = None
+    myob_source_invoices_json: list[dict] = []
 
 
 class OrderListResponse(BaseModel):

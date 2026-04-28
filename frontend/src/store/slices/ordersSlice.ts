@@ -45,6 +45,10 @@ export type OrdersBootstrapQuery = {
 
 export type OrdersListQuery = {
   customer_id?: string
+  /** Filter orders whose customer belongs to this brand (UUID). */
+  brand_id?: string
+  /** Filter by brand code (e.g. CROWN_PACK); ignored if brand_id is set. */
+  brand_code?: string
   invoice_number?: string
   customer_po?: string
   customer?: string
@@ -68,6 +72,8 @@ function ordersListQueryToSearchParams(q: OrdersListQuery): URLSearchParams {
     if (s !== '') qs.set(k, s)
   }
   set('customer_id', q.customer_id)
+  set('brand_id', q.brand_id)
+  set('brand_code', q.brand_code)
   set('invoice_number', q.invoice_number)
   set('customer_po', q.customer_po)
   set('customer', q.customer)

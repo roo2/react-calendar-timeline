@@ -12,6 +12,7 @@ from app.db.models.domain import (
     Order as OrderModel,
     OrderItem as OrderItemModel,
     Job as JobModel,
+    Brand,
     Customer,
     ProductVersion,
     Product,
@@ -183,6 +184,8 @@ def _order_tokens(o: OrderModel) -> str:
 def list_orders(
     *,
     customer_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+    brand_code: Optional[str] = None,
     invoice_number: Optional[str] = None,
     customer_po: Optional[str] = None,
     customer: Optional[str] = None,
@@ -198,6 +201,17 @@ def list_orders(
     page_size: int = 100,
 ) -> tuple[List[OrderModel], int]:
     with SessionLocal() as db:
+        effective_brand_id: str | None = None
+        s_bid = (brand_id or "").strip()
+        s_bcode = (brand_code or "").strip()
+        if s_bid:
+            effective_brand_id = s_bid
+        elif s_bcode:
+            b = db.scalar(select(Brand).where(func.lower(Brand.code) == s_bcode.lower()))
+            if b is None:
+                return [], 0
+            effective_brand_id = str(b.id)
+
         stmt = (
             select(OrderModel)
             .options(joinedload(OrderModel.customer))
@@ -205,6 +219,10 @@ def list_orders(
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.resell_product))
             .order_by(OrderModel.created_at.desc())
         )
+        if effective_brand_id:
+            stmt = stmt.where(
+                OrderModel.customer_id.in_(select(Customer.id).where(Customer.brand_id == effective_brand_id))
+            )
         if customer_id:
             stmt = stmt.where(OrderModel.customer_id == str(customer_id))
         rows = list(db.execute(stmt).unique().scalars().all())

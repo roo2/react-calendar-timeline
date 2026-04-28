@@ -221,6 +221,8 @@ class Order(Base):
     myob_order_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True, index=True)
     myob_last_modified: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     myob_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    myob_source_sales_order_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    myob_source_invoices_json: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")
@@ -319,7 +321,7 @@ class ResellProduct(Base):
     myob_item_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     myob_income_account_uid: Mapped[Optional[str]] = mapped_column(
         String(36),
-        ForeignKey("myob_income_accounts.myob_account_uid", ondelete="SET NULL"),
+        ForeignKey("myob_income_accounts.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -776,6 +778,38 @@ class ProductionCalendarException(Base):
     note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
 
+class MyobImportJob(Base):
+    """
+    Background MYOB import pipeline job (customers → item cache → orders).
+
+    Persists status so polling works across workers / restarts; use ``resume_from`` on the pipeline
+    when completing a job that was interrupted after earlier steps finished.
+    """
+
+    __tablename__ = "myob_import_jobs"
+    __table_args__ = (Index("ix_myob_import_jobs_status", "status"), Index("ix_myob_import_jobs_updated_at", "updated_at"))
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str] = mapped_column(Text(), nullable=False)
+    orders_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    orders_top: Mapped[int] = mapped_column(Integer(), nullable=False)
+    orders_skip: Mapped[int] = mapped_column(Integer(), nullable=False)
+    step_partial: Mapped[dict] = mapped_column("partial", JSON, default=dict)
+    result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.current_timestamp(), nullable=True
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=True,
+    )
+
+
 class MyobOAuthState(Base):
     """Short-lived CSRF/state token for the MYOB OAuth authorize redirect."""
 
@@ -790,12 +824,23 @@ class MyobOAuthState(Base):
 
 
 class MyobIncomeAccount(Base):
-    """MYOB General Ledger income account referenced by ``Inventory/Item.IncomeAccount`` (synced from items)."""
+    """
+    General Ledger income account row. ``id`` is the app primary key; ``myob_account_uid`` is the
+    AccountRight API UID and is set only for rows synced from MYOB (Crown Pack). Dolphin imports
+    use ``brand_source="dolphin"`` and leave ``myob_account_uid`` unset.
+    """
 
     __tablename__ = "myob_income_accounts"
-    __table_args__ = (Index("ix_myob_income_accounts_display_id", "display_id"),)
+    __table_args__ = (
+        Index("ix_myob_income_accounts_display_id", "display_id"),
+        Index("ix_myob_income_accounts_brand", "brand_source"),
+        Index("ix_myob_income_accounts_myob_account_uid", "myob_account_uid"),
+    )
 
-    myob_account_uid: Mapped[str] = mapped_column(String(36), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # AccountRight ``IncomeAccount.UID``; only populated for ``brand_source == crownpack`` MYOB syncs.
+    myob_account_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=False)
+    brand_source: Mapped[str] = mapped_column(String(16), nullable=False, default="crownpack")
     name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     display_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -821,7 +866,7 @@ class MyobItemSellingUom(Base):
     is_inventoried: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     myob_income_account_uid: Mapped[Optional[str]] = mapped_column(
         String(36),
-        ForeignKey("myob_income_accounts.myob_account_uid", ondelete="SET NULL"),
+        ForeignKey("myob_income_accounts.id", ondelete="SET NULL"),
         nullable=True,
     )
     synced_at: Mapped[Optional[datetime]] = mapped_column(

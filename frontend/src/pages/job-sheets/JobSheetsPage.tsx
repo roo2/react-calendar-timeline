@@ -33,7 +33,14 @@ import { formatDateDMYShort } from '../../utils/dateFormat'
 const PRODUCT_TYPES = ['Bag', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'] as const
 const PRINT_METHODS = ['None', 'Inline', 'Uteco'] as const
 const FINISH_MODES = ['Rolls', 'Cartons'] as const
-const ORDER_STATUSES = ['Draft', 'Confirmed', 'Dispatched', 'Closed', 'Cancelled'] as const
+const ORDER_STATUSES = [
+  'Draft',
+  'Confirmed',
+  'Dispatched',
+  'Partially fulfilled',
+  'Closed',
+  'Cancelled',
+] as const
 const PRODUCTION_STATUSES = ['Planned', 'Scheduled', 'Running', 'Dispatched', 'Cancelled'] as const
 
 const JOB_SHEET_FILTER_DEFAULTS: Record<string, string> = {
@@ -218,7 +225,10 @@ export function JobSheetsPage() {
                       <em>Any</em>
                     </MenuItem>
                     {ORDER_STATUSES.map((s) => (
-                      <MenuItem key={s} value={s.toLowerCase()}>
+                      <MenuItem
+                        key={s}
+                        value={s === 'Partially fulfilled' ? 'partially_fulfilled' : s.toLowerCase()}
+                      >
                         {s}
                       </MenuItem>
                     ))}

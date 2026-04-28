@@ -4,7 +4,7 @@ import secrets
 import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from sqlalchemy import delete
@@ -266,6 +266,103 @@ def fetch_sale_invoice_items_list_readonly(db: Session, *, top: int = 20, skip: 
         "next_page_link": data.get("NextPageLink"),
         "myob": data,
     }
+
+
+def fetch_sale_invoice_item_by_number_readonly(
+    db: Session,
+    *,
+    number: str,
+    customer_purchase_order_number: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Read-only: one item-type sale invoice by document ``Number`` (OData ``$filter=Number eq '…'``).
+
+    Returns the first matching invoice document. When ``customer_purchase_order_number`` is provided,
+    requires exact match on both fields.
+    """
+    business_id, _ = effective_company_file_id(db)
+    business_id = (business_id or "").strip()
+    num = str(number or "").strip()
+    if not business_id or not num:
+        return None
+    safe = num.replace("'", "''")
+    filter_expr = f"Number eq '{safe}'"
+    enc = quote(filter_expr, safe="()'")
+    url = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}/Sale/Invoice/Item?$filter={enc}&$top=10"
+    try:
+        access = ensure_myob_access_token_for_api(db)
+        data = _myob_get_json(url=url, access_token=access)
+    except MyobApiError:
+        return None
+    items = data.get("Items")
+    if not isinstance(items, list) or not items:
+        return None
+    cpo = str(customer_purchase_order_number or "").strip()
+    if not cpo:
+        first = items[0]
+        return first if isinstance(first, dict) else None
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        row_cpo = str(row.get("CustomerPurchaseOrderNumber") or "").strip()
+        if row_cpo == cpo:
+            return row
+    return None
+
+
+def fetch_all_sale_invoice_items_readonly(db: Session) -> list[dict[str, Any]]:
+    """
+    Read-only: page through ``GET …/Sale/Invoice/Item`` and return all invoice documents.
+
+    Same pagination contract as :func:`import_all_myob_sale_orders` (``NextPageLink`` + ``$skip``).
+    """
+    top_i = max(1, min(int(MYOB_SALE_ORDER_LIST_MAX_TOP), 1000))
+    skip = 0
+    list_url: str | None = None
+    out: list[dict[str, Any]] = []
+    pages = 0
+    while pages < MYOB_SALE_ORDER_IMPORT_MAX_PAGES:
+        page_from_next_link = bool(list_url)
+        if list_url:
+            page_meta = fetch_myob_url_readonly(db, url=list_url)
+            raw = page_meta.get("myob")
+        else:
+            page_meta = fetch_sale_invoice_items_list_readonly(db, top=top_i, skip=skip)
+            raw = page_meta.get("myob")
+
+        items_raw: list[Any] = []
+        if isinstance(raw, dict):
+            batch = raw.get("Items")
+            if isinstance(batch, list):
+                items_raw = batch
+
+        for row in items_raw:
+            if isinstance(row, dict):
+                out.append(row)
+
+        if not items_raw:
+            break
+
+        pages += 1
+
+        next_link: str | None = None
+        if isinstance(raw, dict):
+            npl = raw.get("NextPageLink")
+            if isinstance(npl, str) and npl.strip():
+                next_link = npl.strip()
+
+        if next_link:
+            list_url = next_link
+            continue
+
+        list_url = None
+        if page_from_next_link:
+            break
+        if len(items_raw) < top_i:
+            break
+        skip += len(items_raw)
+
+    return out
 
 
 def _validate_myob_order_get_url(order_uri: str, *, business_id: str) -> str:

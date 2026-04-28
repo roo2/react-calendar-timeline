@@ -31,7 +31,12 @@ from app.db.myob_import_placeholders import (
     MYOB_DRAFT_SPEC_PAYLOAD,
 )
 from app.integrations.myob import service as myob_service
-from app.integrations.myob.order_import import import_one_myob_sale_order
+from app.db.models.enums import OrderStatus
+from app.integrations.myob.order_import import (
+    derive_order_status_for_myob_import,
+    import_one_myob_sale_order,
+    myob_invoice_partial_fulfillment_vs_order,
+)
 from app.integrations.myob.item_import_fixups import QUOTE_ROLL_PLACEHOLDER_ITEM_UID
 from app.integrations.myob.order_import_mapping import (
     map_myob_item_to_app_quantity,
@@ -166,6 +171,7 @@ def test_import_one_order_creates_rows_and_pallet_does_not_require_job_sheet():
     assert order.customer_purchase_order_number == "PO-2646-01"
     assert order.import_source == "MYOB"
     assert order.customer_id == cust.id
+    assert order.status == OrderStatus.CONFIRMED
 
     lines = list(
         db.query(OrderItem)
@@ -412,7 +418,13 @@ def test_myob_resell_catalog_kind_classifies_outsourced_manufacturing():
     assert myob_resell_catalog_kind(sample) == "outsourced_manufacturing"
     assert (
         myob_resell_catalog_kind(
-            {**sample, "IncomeAccount": {"UID": INCOME_RESELL_IMPORTED_ITEMS_UID}}
+            {
+                **sample,
+                "IncomeAccount": {
+                    "DisplayID": "4-0003",
+                    "UID": INCOME_RESELL_IMPORTED_ITEMS_UID,
+                },
+            }
         )
         == "outsourced_manufacturing"
     )
@@ -507,7 +519,10 @@ def test_import_outsourced_bought_roll_4_0007_income_sets_outsourced_catalog_kin
                 "IsBought": True,
                 "IsSold": True,
                 "IsInventoried": False,
-                "IncomeAccount": {"UID": INCOME_RESELL_IMPORTED_ITEMS_UID},
+                "IncomeAccount": {
+                    "UID": INCOME_RESELL_IMPORTED_ITEMS_UID,
+                    "DisplayID": "4-0007",
+                },
                 "SellingDetails": {"SellingUnitOfMeasure": "ROLL", "IsTaxInclusive": False},
             }
         return {}
@@ -739,6 +754,182 @@ def test_upsert_uom_from_item_json_sets_income_account_fk():
     ia = db.get(MyobIncomeAccount, acid)
     assert ia is not None
     assert ia.display_id == "1-100"
+
+
+def test_derive_order_status_open_or_missing_maps_to_confirmed():
+    order = {"Status": "Open", "Lines": []}
+    assert derive_order_status_for_myob_import(order, None) == OrderStatus.CONFIRMED
+    assert derive_order_status_for_myob_import({"Lines": []}, None) == OrderStatus.CONFIRMED
+
+
+def test_derive_order_status_converted_no_invoice_document_dispatched():
+    order = {"Status": "ConvertedToInvoice", "Lines": []}
+    assert derive_order_status_for_myob_import(order, None) == OrderStatus.DISPATCHED
+
+
+def test_derive_order_status_converted_invoice_closed_full_closed():
+    uid = "951c35aa-9f4c-4acd-aae1-802d6d11be36"
+    order = {
+        "Status": "ConvertedToInvoice",
+        "Lines": [
+            {"Type": "Transaction", "ShipQuantity": 10.0, "Item": {"UID": uid}},
+        ],
+    }
+    invoice = {
+        "Status": "Closed",
+        "Lines": [
+            {"Type": "Transaction", "ShipQuantity": 10.0, "Item": {"UID": uid}},
+        ],
+    }
+    assert derive_order_status_for_myob_import(order, invoice) == OrderStatus.CLOSED
+    assert myob_invoice_partial_fulfillment_vs_order(order, invoice) is False
+
+
+def test_derive_order_status_converted_invoice_open_partial_partially_fulfilled():
+    uid = "951c35aa-9f4c-4acd-aae1-802d6d11be36"
+    order = {
+        "Status": "ConvertedToInvoice",
+        "Lines": [
+            {"Type": "Transaction", "ShipQuantity": 10.0, "Item": {"UID": uid}},
+        ],
+    }
+    invoice = {
+        "Status": "Open",
+        "Lines": [
+            {"Type": "Transaction", "ShipQuantity": 4.0, "Item": {"UID": uid}},
+        ],
+    }
+    assert myob_invoice_partial_fulfillment_vs_order(order, invoice) is True
+    assert derive_order_status_for_myob_import(order, invoice) == OrderStatus.PARTIALLY_FULFILLED
+
+
+def test_derive_order_status_converted_invoice_closed_partial_still_closed():
+    uid = "951c35aa-9f4c-4acd-aae1-802d6d11be36"
+    order = {
+        "Status": "ConvertedToInvoice",
+        "Lines": [
+            {"Type": "Transaction", "ShipQuantity": 10.0, "Item": {"UID": uid}},
+        ],
+    }
+    invoice = {
+        "Status": "Closed",
+        "Lines": [
+            {"Type": "Transaction", "ShipQuantity": 4.0, "Item": {"UID": uid}},
+        ],
+    }
+    assert derive_order_status_for_myob_import(order, invoice) == OrderStatus.CLOSED
+
+
+def test_import_uses_invoice_lines_when_matching_invoice_exists():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(
+        id=str(uuid.uuid4()),
+        name="SANOFI (test)",
+        myob_customer_uid="4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+    )
+    db.add(cust)
+    db.commit()
+    db.refresh(cust)
+
+    order_payload = dict(SAMPLE_MYOB_ORDER)
+    order_payload["Status"] = "ConvertedToInvoice"
+    invoice_payload = {
+        "Number": order_payload["Number"],
+        "CustomerPurchaseOrderNumber": order_payload["CustomerPurchaseOrderNumber"],
+        "Status": "Open",
+        "Lines": [
+            {
+                "RowID": 9001,
+                "Type": "Transaction",
+                "Description": "ANTI -STATIC",
+                "ShipQuantity": 12.0,
+                "UnitPrice": 64.3,
+                "Total": 771.6,
+                "Item": {
+                    "UID": "951c35aa-9f4c-4acd-aae1-802d6d11be36",
+                    "Number": "S25035",
+                    "Name": "SANOFI",
+                },
+            }
+        ],
+    }
+
+    f = _item_fetch("951c35aa-9f4c-4acd-aae1-802d6d11be36", "4d3e1150-452d-47fc-a1ef-4561fba93cc3")
+    res = import_one_myob_sale_order(
+        db,
+        myob_order=order_payload,
+        item_fetch=f,
+        invoices=[invoice_payload],
+    )
+    assert res["line_items_source"] == "invoice"
+    assert res["lines_synced"] == 1
+
+    order = db.get(Order, res["order_id"])
+    assert order is not None
+    assert order.status == OrderStatus.PARTIALLY_FULFILLED
+    lines = list(
+        db.query(OrderItem)
+        .filter(OrderItem.order_id == str(order.id), OrderItem.line_kind == "myob_import")
+        .order_by(OrderItem.line_index)
+    )
+    assert len(lines) == 1
+    assert float(lines[0].import_ship_quantity or 0.0) == pytest.approx(12.0)
+
+
+def test_import_closed_invoice_is_authoritative_even_if_qty_looks_partial():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(
+        id=str(uuid.uuid4()),
+        name="SANOFI (test)",
+        myob_customer_uid="4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+    )
+    db.add(cust)
+    db.commit()
+    db.refresh(cust)
+
+    order_payload = dict(SAMPLE_MYOB_ORDER)
+    order_payload["Status"] = "ConvertedToInvoice"
+    invoice_payload = {
+        "Number": order_payload["Number"],
+        "CustomerPurchaseOrderNumber": order_payload["CustomerPurchaseOrderNumber"],
+        "Status": "Closed",
+        "Lines": [
+            {
+                "RowID": 9001,
+                "Type": "Transaction",
+                "Description": "ANTI -STATIC",
+                "ShipQuantity": 12.0,
+                "UnitPrice": 64.3,
+                "Total": 771.6,
+                "Item": {
+                    "UID": "951c35aa-9f4c-4acd-aae1-802d6d11be36",
+                    "Number": "S25035",
+                    "Name": "SANOFI",
+                },
+            }
+        ],
+    }
+
+    f = _item_fetch("951c35aa-9f4c-4acd-aae1-802d6d11be36", "4d3e1150-452d-47fc-a1ef-4561fba93cc3")
+    res = import_one_myob_sale_order(
+        db,
+        myob_order=order_payload,
+        item_fetch=f,
+        invoices=[invoice_payload],
+    )
+    order = db.get(Order, res["order_id"])
+    assert order is not None
+    assert order.status == OrderStatus.CLOSED
 
 
 if __name__ == "__main__":

@@ -22,7 +22,10 @@ class JobStatus(str, Enum):
 class OrderStatus(str, Enum):
     DRAFT = "draft"
     CONFIRMED = "confirmed"
+    # Invoiced in MYOB (sale invoice open) or legacy in-app dispatch.
     DISPATCHED = "dispatched"
+    # MYOB invoice lines: ShipQuantity sums below order line quantities (by item UID).
+    PARTIALLY_FULFILLED = "partially_fulfilled"
     CLOSED = "closed"
     CANCELLED = "cancelled"
 

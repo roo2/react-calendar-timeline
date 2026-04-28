@@ -8,6 +8,7 @@ import {
   Alert,
   Box,
   Button,
+  Divider,
   Paper,
   Table,
   TableBody,
@@ -171,6 +172,56 @@ export function OrderShowPage() {
             ? 'all required production lines have a completed job sheet (not an import draft), or only non-production lines.'
             : 'pending — open each import line’s job sheet and complete product details, or link an existing job sheet from the order editor.'}
         </Alert>
+      ) : null}
+
+      {order.import_source === 'MYOB' ? (
+        <Paper variant="outlined" sx={{ mb: 2, p: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            MYOB source JSON
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Original sale order payload and associated invoice payloads captured during import.
+          </Typography>
+          <Typography variant="subtitle2" sx={{ mt: 1 }}>
+            Sale Order JSON
+          </Typography>
+          <Box
+            component="pre"
+            sx={{
+              mt: 1,
+              mb: 2,
+              p: 1.5,
+              backgroundColor: 'grey.100',
+              borderRadius: 1,
+              overflow: 'auto',
+              maxHeight: 360,
+              fontSize: 12,
+            }}
+          >
+            {order.myob_source_sales_order_json
+              ? JSON.stringify(order.myob_source_sales_order_json, null, 2)
+              : 'No sale order JSON stored for this record.'}
+          </Box>
+          <Divider sx={{ mb: 1 }} />
+          <Typography variant="subtitle2">Associated Invoices JSON</Typography>
+          <Box
+            component="pre"
+            sx={{
+              mt: 1,
+              mb: 0,
+              p: 1.5,
+              backgroundColor: 'grey.100',
+              borderRadius: 1,
+              overflow: 'auto',
+              maxHeight: 360,
+              fontSize: 12,
+            }}
+          >
+            {Array.isArray(order.myob_source_invoices_json) && order.myob_source_invoices_json.length > 0
+              ? JSON.stringify(order.myob_source_invoices_json, null, 2)
+              : 'No associated invoices were stored for this order import.'}
+          </Box>
+        </Paper>
       ) : null}
 
       {publishErr && (

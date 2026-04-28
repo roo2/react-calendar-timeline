@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -57,6 +57,136 @@ def _float_or_none(v: Any) -> float | None:
         return f if f == f else None
     except (TypeError, ValueError):
         return None
+
+
+_QTY_EPS = 1e-6
+
+
+def _myob_transaction_ship_qty_by_item_uid(doc: dict[str, Any]) -> dict[str, float]:
+    """Sum ``ShipQuantity`` per ``Item.UID`` on transaction lines (MYOB sale order or item invoice)."""
+    lines = doc.get("Lines")
+    if not isinstance(lines, list):
+        return {}
+    out: dict[str, float] = {}
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        if str(line.get("Type") or "Transaction") not in ("", "Transaction"):
+            continue
+        it = line.get("Item")
+        if not isinstance(it, dict) or not it.get("UID"):
+            continue
+        uid = str(it.get("UID")).strip()
+        if not uid:
+            continue
+        q = line.get("ShipQuantity")
+        try:
+            qf = float(q) if q is not None else 0.0
+        except (TypeError, ValueError):
+            qf = 0.0
+        out[uid] = out.get(uid, 0.0) + qf
+    return out
+
+
+def myob_invoice_partial_fulfillment_vs_order(
+    myob_order: dict[str, Any],
+    invoice: dict[str, Any] | None,
+) -> bool:
+    """
+    True when any order line (by ``Item.UID``) has total invoice ``ShipQuantity`` below the order line total.
+
+    When ``invoice`` is missing, returns False (callers use a separate rule for missing documents).
+    """
+    if not isinstance(invoice, dict):
+        return False
+    o_map = _myob_transaction_ship_qty_by_item_uid(myob_order)
+    i_map = _myob_transaction_ship_qty_by_item_uid(invoice)
+    for uid, oqty in o_map.items():
+        if oqty <= _QTY_EPS:
+            continue
+        iq = i_map.get(uid, 0.0)
+        if iq + _QTY_EPS < oqty:
+            return True
+    return False
+
+
+def derive_order_status_for_myob_import(
+    myob_order: dict[str, Any],
+    invoice: dict[str, Any] | None,
+) -> OrderStatus:
+    """
+    Map MYOB sale order ``Status`` (+ optional item invoice) to app :class:`OrderStatus`.
+
+    - ``Open`` (or absent) → ``confirmed`` (order not yet converted to invoice in MYOB).
+    - ``ConvertedToInvoice`` + invoice → invoice ``Status`` is authoritative for ``closed``; otherwise
+      ``partially_fulfilled`` / ``dispatched`` from line ``ShipQuantity`` reconciliation.
+    - ``ConvertedToInvoice`` without a resolvable invoice document → ``dispatched`` (conversion happened; document
+      not loaded).
+    """
+    st = str(myob_order.get("Status") or "").strip().lower()
+    if st in ("", "open"):
+        return OrderStatus.CONFIRMED
+    if st == "convertedtoinvoice":
+        if not isinstance(invoice, dict):
+            return OrderStatus.DISPATCHED
+        inv_st = str(invoice.get("Status") or "").strip().lower()
+        if inv_st == "closed":
+            return OrderStatus.CLOSED
+        if myob_invoice_partial_fulfillment_vs_order(myob_order, invoice):
+            return OrderStatus.PARTIALLY_FULFILLED
+        return OrderStatus.DISPATCHED
+    return OrderStatus.CONFIRMED
+
+
+def derive_order_status_for_invoice_only(invoice: dict[str, Any]) -> OrderStatus:
+    """Map an invoice-only document (no matching sale order) into app order status."""
+    inv_st = str(invoice.get("Status") or "").strip().lower()
+    if inv_st == "closed":
+        return OrderStatus.CLOSED
+    return OrderStatus.DISPATCHED
+
+
+def _invoice_match_key(doc: dict[str, Any]) -> tuple[str, str]:
+    number = str(doc.get("Number") or "").strip()
+    cpo = str(doc.get("CustomerPurchaseOrderNumber") or "").strip()
+    return number, cpo
+
+
+def find_matching_invoice_for_order(
+    myob_order: dict[str, Any],
+    invoices: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Match invoice by (Number, CustomerPurchaseOrderNumber)."""
+    if not invoices:
+        return None
+    key = _invoice_match_key(myob_order)
+    if not key[0]:
+        return None
+    for inv in invoices:
+        if not isinstance(inv, dict):
+            continue
+        if _invoice_match_key(inv) == key:
+            return inv
+    return None
+
+
+def find_associated_invoices_for_order(
+    myob_order: dict[str, Any],
+    invoices: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """All invoices that match the order by (Number, CustomerPurchaseOrderNumber)."""
+    if not invoices:
+        return []
+    key = _invoice_match_key(myob_order)
+    if not key[0]:
+        return []
+    out: list[dict[str, Any]] = []
+    for inv in invoices:
+        if not isinstance(inv, dict):
+            continue
+        if _invoice_match_key(inv) == key:
+            out.append(inv)
+    return out
 
 
 def _is_credit_note_like_order(myob_order: dict[str, Any]) -> bool:
@@ -216,6 +346,8 @@ def import_one_myob_sale_order(
     *,
     myob_order: dict[str, Any],
     item_fetch: Callable[[str | None, str | None], dict[str, Any]] | None = None,
+    invoices: list[dict[str, Any]] | None = None,
+    source_document: Literal["order", "invoice"] = "order",
 ) -> dict[str, Any]:
     if not isinstance(myob_order, dict):
         raise MyobConfigError("myob_order must be an object.")
@@ -245,6 +377,9 @@ def import_one_myob_sale_order(
         myob_last_modified = str(last_mod).strip()[:64]
     else:
         myob_last_modified = None
+    order_date = _parse_date_only(myob_order.get("Date"))
+    cpo_raw = myob_order.get("CustomerPurchaseOrderNumber")
+    customer_po_number = str(cpo_raw).strip()[:128] if cpo_raw is not None and str(cpo_raw).strip() else None
 
     cust_u = myob_order.get("Customer")
     if not isinstance(cust_u, dict) or not cust_u.get("UID"):
@@ -255,6 +390,32 @@ def import_one_myob_sale_order(
         raise MyobConfigError(
             f"Customer with MYOB UID {c_uid!r} is not in this app. Run MYOB customer import (sync) first."
         )
+
+    invoice_for_status: dict[str, Any] | None = None
+    associated_invoices: list[dict[str, Any]] = []
+    if source_document == "order" and number_s:
+        if invoices is not None:
+            associated_invoices = find_associated_invoices_for_order(myob_order, invoices)
+            invoice_for_status = associated_invoices[0] if associated_invoices else None
+        elif str(myob_order.get("Status") or "").strip().lower() == "convertedtoinvoice":
+            from app.integrations.myob.service import fetch_sale_invoice_item_by_number_readonly
+
+            invoice_for_status = fetch_sale_invoice_item_by_number_readonly(
+                db,
+                number=number_s,
+                customer_purchase_order_number=customer_po_number,
+            )
+            if isinstance(invoice_for_status, dict):
+                associated_invoices = [invoice_for_status]
+    elif source_document == "invoice":
+        invoice_for_status = myob_order
+        associated_invoices = [myob_order]
+
+    derived_status = (
+        derive_order_status_for_invoice_only(myob_order)
+        if source_document == "invoice"
+        else derive_order_status_for_myob_import(myob_order, invoice_for_status)
+    )
 
     if item_fetch is None:
 
@@ -277,9 +438,6 @@ def import_one_myob_sale_order(
 
     now = datetime.now(UTC)
     order = db.scalar(select(Order).where(Order.myob_order_uid == myob_uid))
-    order_date = _parse_date_only(myob_order.get("Date"))
-    cpo_raw = myob_order.get("CustomerPurchaseOrderNumber")
-    customer_po_number = str(cpo_raw).strip()[:128] if cpo_raw is not None and str(cpo_raw).strip() else None
 
     if order is None:
         conflict = db.scalar(select(Order).where(Order.code == code))
@@ -294,8 +452,10 @@ def import_one_myob_sale_order(
             myob_order_uid=myob_uid,
             myob_last_modified=myob_last_modified,
             myob_synced_at=now,
+            myob_source_sales_order_json=dict(myob_order) if source_document == "order" else None,
+            myob_source_invoices_json=list(associated_invoices) if associated_invoices else [],
             product_version_id=None,
-            status=OrderStatus.DRAFT,
+            status=derived_status,
             order_date=order_date,
             customer_purchase_order_number=customer_po_number,
         )
@@ -309,6 +469,8 @@ def import_one_myob_sale_order(
         if order_date is not None:
             order.order_date = order_date
         order.customer_purchase_order_number = customer_po_number
+        order.myob_source_sales_order_json = dict(myob_order) if source_document == "order" else None
+        order.myob_source_invoices_json = list(associated_invoices) if associated_invoices else []
         if number_s and len(number_s) <= 32 and order.code != number_s:
             other = db.scalar(
                 select(Order).where(Order.code == number_s).where(Order.id != str(order.id))
@@ -318,7 +480,8 @@ def import_one_myob_sale_order(
         db.add(order)
         db.flush()
 
-    lines = myob_order.get("Lines")
+    lines_source = invoice_for_status if isinstance(invoice_for_status, dict) else myob_order
+    lines = lines_source.get("Lines") if isinstance(lines_source, dict) else None
     if not isinstance(lines, list):
         lines = []
 
@@ -620,6 +783,7 @@ def import_one_myob_sale_order(
                 db.delete(oi2)
         db.flush()
 
+    order.status = derived_status
     db.add(order)
     db.commit()
     db.refresh(order)
@@ -646,10 +810,26 @@ def import_one_myob_sale_order(
                 all_js = False
                 break
 
+    part = (
+        myob_invoice_partial_fulfillment_vs_order(myob_order, invoice_for_status)
+        if isinstance(invoice_for_status, dict)
+        else None
+    )
     return {
         "ok": True,
         "order_id": str(order.id),
         "myob_order_uid": myob_uid,
         "myob_all_job_sheets_entered": all_js,
         "lines_synced": n_lines,
+        "line_items_source": "invoice" if isinstance(invoice_for_status, dict) else "order",
+        "source_document": source_document,
+        "app_order_status": derived_status.value,
+        "myob_sale_order_status": str(myob_order.get("Status") or ""),
+        "myob_invoice_status": str(invoice_for_status.get("Status") or "")
+        if isinstance(invoice_for_status, dict)
+        else None,
+        "fulfillment_partial": part,
+        "matched_invoice_uid": str(invoice_for_status.get("UID") or "").strip()
+        if isinstance(invoice_for_status, dict) and invoice_for_status.get("UID")
+        else None,
     }

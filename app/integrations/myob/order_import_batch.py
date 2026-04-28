@@ -1,6 +1,9 @@
 """
 Import multiple MYOB sale orders from one ``GET …/Sale/Order?$top&$skip`` page.
 
+Before importing orders, the batch loads **all** ``Sale/Invoice/Item`` rows (paginated) so each order can be
+reconciled with its invoice on ``(Number, CustomerPurchaseOrderNumber)`` (status + line ``ShipQuantity``).
+
 Each order is fetched and passed to :func:`import_one_myob_sale_order` (same as the single-order admin action).
 """
 
@@ -16,6 +19,7 @@ from app.integrations.myob.service import (
     MYOB_SALE_ORDER_LIST_MAX_TOP,
     MyobApiError,
     MyobConfigError,
+    fetch_all_sale_invoice_items_readonly,
     fetch_myob_url_readonly,
     fetch_sale_order_detail_readonly,
     fetch_sale_orders_list_readonly,
@@ -25,11 +29,14 @@ from app.integrations.myob.service import (
 def _import_myob_sale_orders_from_list_items(
     db: Session,
     items_raw: list[Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    *,
+    invoices: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], set[str]]:
     """Import each list row that has ``URI`` or ``UID``; return ``(results, skipped, errors)``."""
     results: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    matched_invoice_uids: set[str] = set()
 
     for row in items_raw:
         if not isinstance(row, dict):
@@ -71,8 +78,13 @@ def _import_myob_sale_orders_from_list_items(
             continue
 
         try:
-            one = import_one_myob_sale_order(db, myob_order=raw_order, item_fetch=None)
+            one = import_one_myob_sale_order(
+                db, myob_order=raw_order, item_fetch=None, invoices=invoices
+            )
             if isinstance(one, dict):
+                miu = str(one.get("matched_invoice_uid") or "").strip()
+                if miu:
+                    matched_invoice_uids.add(miu)
                 if bool(one.get("skipped")):
                     skipped.append(one)
                 else:
@@ -80,7 +92,7 @@ def _import_myob_sale_orders_from_list_items(
         except (MyobConfigError, MyobApiError) as e:
             errors.append({"order_uid": odu, "order_uri": ou, "error": str(e)})
 
-    return results, skipped, errors
+    return results, skipped, errors, matched_invoice_uids
 
 
 def import_myob_sale_orders_list_page(
@@ -101,13 +113,15 @@ def import_myob_sale_orders_list_page(
     top_i = int(list_meta.get("top") or top)
     skip_i = int(list_meta.get("skip") or skip)
 
+    invoices = fetch_all_sale_invoice_items_readonly(db)
+
     items_raw: list[Any] = []
     if isinstance(myob, dict):
         raw_items = myob.get("Items")
         if isinstance(raw_items, list):
             items_raw = raw_items
 
-    results, skipped, errors = _import_myob_sale_orders_from_list_items(db, items_raw)
+    results, skipped, errors, _matched = _import_myob_sale_orders_from_list_items(db, items_raw, invoices=invoices)
 
     return {
         "ok": len(errors) == 0,
@@ -115,6 +129,7 @@ def import_myob_sale_orders_list_page(
         "top": top_i,
         "skip": skip_i,
         "list_item_count": len(items_raw),
+        "sale_invoices_indexed": len(invoices),
         "imported": len(results),
         "skipped": len(skipped),
         "failed": len(errors),
@@ -142,6 +157,9 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
     first_request_url: str | None = None
     last_request_url: str | None = None
 
+    invoices = fetch_all_sale_invoice_items_readonly(db)
+    matched_invoice_uids: set[str] = set()
+
     while pages < MYOB_SALE_ORDER_IMPORT_MAX_PAGES:
         page_from_next_link = bool(list_url)
         if list_url:
@@ -166,10 +184,11 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
         if not items_raw:
             break
 
-        chunk_r, chunk_s, chunk_e = _import_myob_sale_orders_from_list_items(db, items_raw)
+        chunk_r, chunk_s, chunk_e, chunk_matched = _import_myob_sale_orders_from_list_items(db, items_raw, invoices=invoices)
         all_results.extend(chunk_r)
         all_skipped.extend(chunk_s)
         all_errors.extend(chunk_e)
+        matched_invoice_uids.update(chunk_matched)
 
         pages += 1
 
@@ -191,6 +210,33 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
             break
         skip += len(items_raw)
 
+    for inv in invoices:
+        if not isinstance(inv, dict):
+            continue
+        inv_uid = str(inv.get("UID") or "").strip()
+        if inv_uid and inv_uid in matched_invoice_uids:
+            continue
+        try:
+            one = import_one_myob_sale_order(
+                db,
+                myob_order=inv,
+                item_fetch=None,
+                invoices=invoices,
+                source_document="invoice",
+            )
+            if bool(one.get("skipped")):
+                all_skipped.append(one)
+            else:
+                all_results.append(one)
+        except (MyobConfigError, MyobApiError) as e:
+            all_errors.append(
+                {
+                    "invoice_uid": inv_uid or None,
+                    "invoice_number": str(inv.get("Number") or "") or None,
+                    "error": str(e),
+                }
+            )
+
     return {
         "ok": len(all_errors) == 0,
         "pages_fetched": pages,
@@ -198,6 +244,7 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
         "top": top_i,
         "first_list_request_url": first_request_url,
         "last_list_request_url": last_request_url,
+        "sale_invoices_indexed": len(invoices),
         "imported": len(all_results),
         "skipped": len(all_skipped),
         "failed": len(all_errors),

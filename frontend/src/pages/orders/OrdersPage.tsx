@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { apiFetch } from '../../api/client'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchOrders, fetchOrdersBootstrap, type OrderRow, type OrdersListQuery } from '../../store/slices/ordersSlice'
 import { can } from '../../auth/permissions'
@@ -25,13 +26,21 @@ import { LIST_PAGE_SIZE, ListFiltersCard, ListPaginationBar, ListTableSurface } 
 import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
-const ORDER_STATUSES = ['draft', 'confirmed', 'dispatched', 'closed', 'cancelled'] as const
+const ORDER_STATUSES = [
+  'draft',
+  'confirmed',
+  'dispatched',
+  'partially_fulfilled',
+  'closed',
+  'cancelled',
+] as const
 
 const ORDER_FILTER_DEFAULTS: Record<string, string> = {
   search: '',
   invoiceNumber: '',
   customerPo: '',
   customer: '',
+  brandCode: '',
   product: '',
   lineItemSearch: '',
   orderTotalMin: '',
@@ -47,6 +56,7 @@ const ORDER_URL_KEYS: Record<string, string> = {
   invoiceNumber: 'inv',
   customerPo: 'cpo',
   customer: 'cust',
+  brandCode: 'brand',
   product: 'prod',
   lineItemSearch: 'line',
   orderTotalMin: 'tmin',
@@ -101,6 +111,7 @@ export function OrdersPage() {
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
+  const [brands, setBrands] = useState<Array<{ id: string; code: string; name: string }>>([])
 
   const { filters, setFilter, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
     defaults: ORDER_FILTER_DEFAULTS,
@@ -114,6 +125,7 @@ export function OrdersPage() {
     if (filters.invoiceNumber.trim()) q.invoice_number = filters.invoiceNumber.trim()
     if (filters.customerPo.trim()) q.customer_po = filters.customerPo.trim()
     if (filters.customer.trim()) q.customer = filters.customer.trim()
+    if (filters.brandCode.trim()) q.brand_code = filters.brandCode.trim()
     if (filters.product.trim()) q.product = filters.product.trim()
     if (filters.lineItemSearch.trim()) q.line_item_search = filters.lineItemSearch.trim()
     const min = parseOptionalNumber(filters.orderTotalMin)
@@ -131,6 +143,20 @@ export function OrdersPage() {
   useEffect(() => {
     void dispatch(fetchOrdersBootstrap(undefined))
   }, [dispatch])
+
+  useEffect(() => {
+    let cancelled = false
+    void apiFetch<{ items: Array<{ id: string; code: string; name: string }> }>('/api/customers/brands')
+      .then((r) => {
+        if (!cancelled && Array.isArray(r?.items)) setBrands(r.items)
+      })
+      .catch(() => {
+        if (!cancelled) setBrands([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     setDebouncing(true)
@@ -186,6 +212,24 @@ export function OrdersPage() {
             <TextField size="small" label="Invoice Number" value={filters.invoiceNumber} onChange={(e) => setFilter('invoiceNumber', e.target.value)} />
             <TextField size="small" label="Customer PO" value={filters.customerPo} onChange={(e) => setFilter('customerPo', e.target.value)} />
             <TextField size="small" label="Customer" value={filters.customer} onChange={(e) => setFilter('customer', e.target.value)} />
+            <FormControl size="small" fullWidth>
+              <InputLabel id="orders-filter-brand">Brand</InputLabel>
+              <Select
+                labelId="orders-filter-brand"
+                label="Brand"
+                value={filters.brandCode}
+                onChange={(e) => setFilter('brandCode', e.target.value)}
+              >
+                <MenuItem value="">
+                  <em>Any</em>
+                </MenuItem>
+                {brands.map((b) => (
+                  <MenuItem key={b.id} value={b.code}>
+                    {b.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <TextField size="small" label="Product" value={filters.product} onChange={(e) => setFilter('product', e.target.value)} />
             <TextField size="small" label="Line item contains" value={filters.lineItemSearch} onChange={(e) => setFilter('lineItemSearch', e.target.value)} />
             <TextField size="small" label="Order total min" type="number" value={filters.orderTotalMin} onChange={(e) => setFilter('orderTotalMin', e.target.value)} />
