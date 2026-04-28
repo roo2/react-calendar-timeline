@@ -107,7 +107,7 @@ export function OrdersPage() {
   }, [search, invoiceNumber, customerPo, customer, product, lineItemSearch, orderTotalMin, orderTotalMax, statusFilter, orderDateFrom, orderDateTo, pageIdx])
 
   useEffect(() => {
-    void dispatch(fetchOrdersBootstrap())
+    void dispatch(fetchOrdersBootstrap(undefined))
   }, [dispatch])
 
   useEffect(() => {

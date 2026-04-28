@@ -298,6 +298,7 @@ def test_import_pallet_bought_goes_to_resell_catalog():
     assert str(rp.myob_item_uid).lower() == "4d3e1150-452d-47fc-a1ef-4561fba93cc3"
     assert str(rp.myob_income_account_uid).lower() == "3d453a97-a7e0-4c7f-a0be-fd89ba3f6a46"
     assert getattr(rp, "catalog_kind", None) == "supply"
+    assert getattr(rp, "customer_id", None) is None
     acc = db.get(MyobIncomeAccount, "3d453a97-a7e0-4c7f-a0be-fd89ba3f6a46")
     assert acc is not None
     assert acc.display_id == "4-0002"
@@ -420,6 +421,18 @@ def test_myob_resell_catalog_kind_classifies_outsourced_manufacturing():
     assert myob_resell_catalog_kind({**sample, "IsSold": False}) == "supply"
     assert myob_resell_catalog_kind({**sample, "IsBought": False}) == "supply"
     assert myob_resell_catalog_kind({**sample, "IncomeAccount": {"UID": str(uuid.uuid4())}}) == "supply"
+    # DisplayID match (stable GL code when MYOB income account UID differs from hard-coded set).
+    assert (
+        myob_resell_catalog_kind(
+            {
+                "IsBought": True,
+                "IsSold": True,
+                "IsInventoried": False,
+                "IncomeAccount": {"UID": str(uuid.uuid4()), "DisplayID": "4-1112"},
+            }
+        )
+        == "outsourced_manufacturing"
+    )
 
 
 OUTSOURCED_MYOB_ORDER = {
@@ -518,6 +531,11 @@ def test_import_outsourced_bought_roll_4_0007_income_sets_outsourced_catalog_kin
     rp = db.get(ResellProduct, str(resell[0].resell_product_id))
     assert rp is not None
     assert getattr(rp, "catalog_kind", None) == "outsourced_manufacturing"
+    from app.db.models.domain import Order
+
+    order_row = db.get(Order, str(res["order_id"]))
+    assert order_row is not None
+    assert str(rp.customer_id) == str(order_row.customer_id)
 
 
 def test_import_quote_roll_placeholder_not_resell_when_myob_isbought_true():
@@ -634,6 +652,11 @@ def test_import_outsourced_bought_roll_sets_resell_uom_and_catalog_kind():
     rp = db.get(ResellProduct, str(line.resell_product_id))
     assert rp is not None
     assert getattr(rp, "catalog_kind", None) == "outsourced_manufacturing"
+    from app.db.models.domain import Order
+
+    order_row = db.get(Order, str(res["order_id"]))
+    assert order_row is not None
+    assert str(rp.customer_id) == str(order_row.customer_id)
 
 
 def test_map_myob_item_uses_selling_unit_of_measure():

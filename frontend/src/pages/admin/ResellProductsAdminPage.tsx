@@ -19,7 +19,8 @@ import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
 import { confirmDelete } from './components/confirmDelete'
 
-const DESCRIPTION_COL_WIDTH = 520
+/** Description column max width so MYOB account / price / actions fit on one row. */
+const DESCRIPTION_COL_WIDTH = 280
 
 type Row = {
   id: string
@@ -151,8 +152,8 @@ export function ResellProductsAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
-                <TableCell sx={{ minWidth: 220 }}>MYOB income account</TableCell>
+                <TableCell sx={{ width: DESCRIPTION_COL_WIDTH, maxWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
+                <TableCell sx={{ minWidth: 200 }}>MYOB income account</TableCell>
                 <TableCell sx={{ width: 140 }}>Unit price ($)</TableCell>
                 <TableCell sx={{ width: 100 }}>Active</TableCell>
                 <TableCell sx={{ width: 200 }} />
@@ -169,7 +170,7 @@ export function ResellProductsAdminPage() {
                 />
               ))}
               <TableRow>
-                <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>
+                <TableCell sx={{ width: DESCRIPTION_COL_WIDTH, maxWidth: DESCRIPTION_COL_WIDTH, verticalAlign: 'top' }}>
                   <TextField
                     size="small"
                     fullWidth
@@ -231,8 +232,8 @@ export function ResellProductsAdminPage() {
           <AdminDataTable>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
-                <TableCell sx={{ minWidth: 220 }}>MYOB income account</TableCell>
+                <TableCell sx={{ width: DESCRIPTION_COL_WIDTH, maxWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
+                <TableCell sx={{ minWidth: 200 }}>MYOB income account</TableCell>
                 <TableCell sx={{ width: 140 }}>Unit price ($)</TableCell>
                 <TableCell sx={{ width: 100 }}>Active</TableCell>
                 <TableCell sx={{ width: 200 }} />
@@ -284,7 +285,7 @@ function ResellRow(props: {
 
   return (
     <TableRow>
-      <TableCell sx={{ minWidth: DESCRIPTION_COL_WIDTH }}>
+      <TableCell sx={{ width: DESCRIPTION_COL_WIDTH, maxWidth: DESCRIPTION_COL_WIDTH, verticalAlign: 'top' }}>
         <TextField
           size="small"
           fullWidth

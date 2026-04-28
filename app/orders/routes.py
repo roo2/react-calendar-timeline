@@ -4,33 +4,34 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 
-from app.auth.deps import require_roles, allow_roles_any, csrf_protect, current_identity
-from app.orders.schemas import (
-    CreateOrderRequest,
-    CreateOrderItemRequest,
-    CreateJobRequest,
-    CreateResellOrderLineRequest,
-    UpdateOrderRequest,
-    UpdateResellOrderLineRequest,
-    LinkMyobImportLineRequest,
-    OrderListItemDTO,
-    OrderListResponse,
-    OrderDetailDTO,
-    JobDTO,
-)
-from app.orders import service
-from app.exceptions import DomainError
-from app.db.session import SessionLocal
+from app.auth.deps import allow_roles_any, csrf_protect, current_identity, require_roles
 from app.db.models.domain import (
-    ProductVersion,
-    Product,
     Customer,
-    OrderItem,
     JobSheet,
-    ResellProduct,
     MyobIncomeAccount,
     MyobItemSellingUom,
+    OrderItem,
+    Product,
+    ProductVersion,
+    ResellProduct,
+)
+from app.db.session import SessionLocal
+from app.exceptions import DomainError
+from app.orders import service
+from app.orders.schemas import (
+    CreateJobRequest,
+    CreateOrderItemRequest,
+    CreateOrderRequest,
+    CreateResellOrderLineRequest,
+    JobDTO,
+    LinkMyobImportLineRequest,
+    OrderDetailDTO,
+    OrderListItemDTO,
+    OrderListResponse,
+    UpdateOrderRequest,
+    UpdateResellOrderLineRequest,
 )
 from app.products.service import compute_product_code_full
 from app.str_norm import strip_trailing_dash_suffix
@@ -364,6 +365,24 @@ async def remove_order_resell_item(order_id: str, line_id: str):
 
 
 @router.post(
+    "/{order_id}/resell-items/{line_id}/convert-to-myob-job-sheet",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def convert_resell_line_to_myob_job_sheet(order_id: str, line_id: str, identity=Depends(current_identity)):
+    """
+    When MYOB import classified a line as resell (``IsBought``) but it should be manufactured, convert the row to
+    ``myob_import`` with ``import_requires_job_sheet`` and a new import-draft job sheet (same as re-import path).
+    """
+    try:
+        u = identity.get("user")
+        created_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
+        oi = service.convert_resell_line_to_myob_import_job_sheet(order_id, line_id, created_by=created_by)
+        return {"ok": True, "order_item_id": str(oi.id), "job_sheet_id": str(oi.job_sheet_id) if oi.job_sheet_id else None}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.post(
     "/{order_id}/myob-import-lines/{line_id}/link",
     dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
 )
@@ -378,11 +397,13 @@ async def link_myob_import_line(order_id: str, line_id: str, payload: LinkMyobIm
 
 
 @router.get("/bootstrap", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def orders_bootstrap():
+async def orders_bootstrap(customer_id: str | None = Query(default=None)):
     """
     Data needed to render the "New Order" form:
     - customers list
     - active product versions list with product code + version number
+    - resell products: when ``customer_id`` is set, outsourced manufacturing rows are limited to that customer
+      (supply / fees rows are always included).
     """
     with SessionLocal() as db:
         customers = (
@@ -409,12 +430,20 @@ async def orders_bootstrap():
                     changed = True
             if changed:
                 db.commit()
-        resell_products = (
-            db.query(ResellProduct)
-            .filter(ResellProduct.active.is_(True))
-            .order_by(ResellProduct.description.asc())
-            .all()
-        )
+        resell_q = db.query(ResellProduct).filter(ResellProduct.active.is_(True))
+        cid = (customer_id or "").strip()
+        if cid:
+            try:
+                uuid.UUID(cid)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid customer_id")
+            resell_q = resell_q.filter(
+                or_(
+                    ResellProduct.catalog_kind != "outsourced_manufacturing",
+                    ResellProduct.customer_id == cid,
+                )
+            )
+        resell_products = resell_q.order_by(ResellProduct.description.asc()).all()
     return {
         "customers": [{"id": str(c.id), "name": c.name} for c in customers],
         "resell_products": [
@@ -423,6 +452,7 @@ async def orders_bootstrap():
                 "description": str(r.description),
                 "unit_price": float(r.unit_price) if r.unit_price is not None else 0.0,
                 "catalog_kind": str(getattr(r, "catalog_kind", None) or "supply"),
+                "customer_id": str(r.customer_id) if getattr(r, "customer_id", None) else None,
             }
             for r in resell_products
         ],
@@ -516,6 +546,8 @@ async def show_order(order_id: str):
                         "line_kind": "resell",
                         "id": str(oi.id),
                         "resell_line_id": str(oi.id),
+                        "myob_item_uid": getattr(oi, "myob_item_uid", None),
+                        "myob_row_id": getattr(oi, "myob_row_id", None),
                         "resell_product_id": str(oi.resell_product_id) if oi.resell_product_id else None,
                         "resell_catalog_kind": rck,
                         "income_account_display_id": inc_disp,

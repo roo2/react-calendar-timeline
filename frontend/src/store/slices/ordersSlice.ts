@@ -34,6 +34,13 @@ export type OrdersBootstrapResellProduct = {
   description: string
   unit_price: number
   catalog_kind?: string | null
+  /** Outsourced MYOB rows: customer this catalog entry belongs to; supplies are typically null. */
+  customer_id?: string | null
+}
+
+export type OrdersBootstrapQuery = {
+  /** When set, outsourced manufacturing resell products are limited to this customer (supply rows unchanged). */
+  customer_id?: string | null
 }
 
 export type OrdersListQuery = {
@@ -145,16 +152,21 @@ export const fetchOrder = createAsyncThunk('orders/detail', async (orderId: stri
   return { orderId, order }
 })
 
-export const fetchOrdersBootstrap = createAsyncThunk('orders/bootstrap', async () => {
-  const res = await apiFetch<{
-    customers: OrdersBootstrapCustomer[]
-    resell_products?: OrdersBootstrapResellProduct[]
-  }>('/api/orders/bootstrap')
-  return {
-    customers: Array.isArray(res.customers) ? res.customers : [],
-    resell_products: Array.isArray(res.resell_products) ? res.resell_products : [],
-  }
-})
+export const fetchOrdersBootstrap = createAsyncThunk(
+  'orders/bootstrap',
+  async (query: OrdersBootstrapQuery | undefined) => {
+    const cid = String(query?.customer_id || '').trim()
+    const suffix = cid ? `?customer_id=${encodeURIComponent(cid)}` : ''
+    const res = await apiFetch<{
+      customers: OrdersBootstrapCustomer[]
+      resell_products?: OrdersBootstrapResellProduct[]
+    }>(`/api/orders/bootstrap${suffix}`)
+    return {
+      customers: Array.isArray(res.customers) ? res.customers : [],
+      resell_products: Array.isArray(res.resell_products) ? res.resell_products : [],
+    }
+  },
+)
 
 export const publishOrder = createAsyncThunk('orders/publish', async (orderId: string) => {
   await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/publish`, { method: 'POST' })
@@ -267,6 +279,19 @@ export const deleteOrderResellItem = createAsyncThunk(
     await apiFetch(`/api/orders/${encodeURIComponent(orderId)}/resell-items/${encodeURIComponent(lineId)}`, {
       method: 'DELETE',
     })
+    return { orderId }
+  },
+)
+
+/** MYOB import fix-up: resell line → ``myob_import`` + import-draft job sheet. */
+export const convertResellLineToMyobJobSheet = createAsyncThunk(
+  'orders/convertResellToMyobJobSheet',
+  async (payload: { orderId: string; lineId: string }) => {
+    const { orderId, lineId } = payload
+    await apiFetch(
+      `/api/orders/${encodeURIComponent(orderId)}/resell-items/${encodeURIComponent(lineId)}/convert-to-myob-job-sheet`,
+      { method: 'POST' },
+    )
     return { orderId }
   },
 )

@@ -58,8 +58,8 @@ const ProductionCalendarAdminPage = lazy(async () => ({
 }))
 const ToolsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ToolsAdminPage')).ToolsAdminPage }))
 const MyobAdminPage = lazy(async () => ({ default: (await import('./pages/admin/MyobAdminPage')).MyobAdminPage }))
-const MyobIncomeAccountsAdminPage = lazy(async () => ({
-  default: (await import('./pages/admin/MyobIncomeAccountsAdminPage')).MyobIncomeAccountsAdminPage,
+const MyobDataAdminPage = lazy(async () => ({
+  default: (await import('./pages/admin/MyobDataAdminPage')).MyobDataAdminPage,
 }))
 
 function PageLoading() {
@@ -247,11 +247,12 @@ function App() {
                     </Suspense>
                   }
                 />
+                <Route path="myob-income-accounts" element={<Navigate to="/admin/myob-data" replace />} />
                 <Route
-                  path="myob-income-accounts"
+                  path="myob-data"
                   element={
                     <Suspense fallback={<PageLoading />}>
-                      <MyobIncomeAccountsAdminPage />
+                      <MyobDataAdminPage />
                     </Suspense>
                   }
                 />

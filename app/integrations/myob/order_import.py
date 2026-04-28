@@ -130,8 +130,14 @@ def _get_or_create_resell_product_for_myob(
     unit_price: float | None,
     item_json: dict[str, Any] | None = None,
     catalog_kind: str = "supply",
+    customer_id: str | None = None,
 ) -> ResellProduct:
-    """One catalog row per MYOB item UID; updates description/price when the importer runs again."""
+    """
+    Upsert MYOB-backed resell catalog rows.
+
+    Supply rows are keyed by ``myob_item_uid`` + ``catalog_kind=supply``. Outsourced manufacturing rows are
+    keyed by ``(myob_item_uid, customer_id)`` so the same MYOB item can exist per customer.
+    """
     uid = str(myob_item_uid or "").strip()
     if not uid:
         raise MyobConfigError("MYOB item missing UID for resell line")
@@ -147,7 +153,32 @@ def _get_or_create_resell_product_for_myob(
     ck = str(catalog_kind or "supply").strip() or "supply"
     if ck not in ("supply", "outsourced_manufacturing"):
         ck = "supply"
-    rp = db.scalar(select(ResellProduct).where(ResellProduct.myob_item_uid == uid))
+    cust = str(customer_id or "").strip() or None
+    if ck == "outsourced_manufacturing":
+        if not cust:
+            raise MyobConfigError("Outsourced MYOB resell products require an order customer")
+        rp = db.scalar(
+            select(ResellProduct).where(
+                ResellProduct.myob_item_uid == uid,
+                ResellProduct.catalog_kind == "outsourced_manufacturing",
+                ResellProduct.customer_id == cust,
+            )
+        )
+    else:
+        rp = db.scalar(
+            select(ResellProduct).where(
+                ResellProduct.myob_item_uid == uid,
+                ResellProduct.catalog_kind == "supply",
+            )
+        )
+        if rp is None:
+            rp = db.scalar(
+                select(ResellProduct).where(
+                    ResellProduct.myob_item_uid == uid,
+                    ResellProduct.customer_id.is_(None),
+                    ResellProduct.catalog_kind != "outsourced_manufacturing",
+                )
+            )
     if rp is not None:
         rp.description = desc[:2000] if desc else rp.description
         if rate > 0:
@@ -155,6 +186,10 @@ def _get_or_create_resell_product_for_myob(
         if not getattr(rp, "active", True):
             rp.active = True
         rp.catalog_kind = ck
+        if ck == "outsourced_manufacturing":
+            rp.customer_id = cust
+        else:
+            rp.customer_id = None
         if isinstance(item_json, dict):
             rp.myob_income_account_uid = inc_uid
         db.add(rp)
@@ -167,6 +202,7 @@ def _get_or_create_resell_product_for_myob(
         unit_price=rate if rate > 0 else 0.0,
         active=True,
         catalog_kind=ck,
+        customer_id=cust if ck == "outsourced_manufacturing" else None,
         myob_item_uid=uid,
         myob_income_account_uid=inc_uid,
     )
@@ -416,6 +452,9 @@ def import_one_myob_sale_order(
                 unit_price=up_f,
                 item_json=item_json,
                 catalog_kind=str(resell_catalog_kind),
+                customer_id=str(order.customer_id)
+                if str(resell_catalog_kind) == "outsourced_manufacturing"
+                else None,
             )
             if oi is not None and oi.line_kind == "myob_import":
                 _delete_draft_import_job_sheet_if_any(db, oi)

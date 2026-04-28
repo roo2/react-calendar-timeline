@@ -26,6 +26,7 @@ def _to_dto(r) -> ResellProductDTO:
         unit_price=r.unit_price if isinstance(r.unit_price, Decimal) else Decimal(str(r.unit_price)),
         active=bool(r.active),
         catalog_kind=str(getattr(r, "catalog_kind", None) or "supply"),
+        customer_id=str(r.customer_id) if getattr(r, "customer_id", None) else None,
         myob_item_uid=getattr(r, "myob_item_uid", None),
         myob_income_account_uid=getattr(r, "myob_income_account_uid", None),
         income_account_display_id=getattr(ia, "display_id", None) if ia is not None else None,

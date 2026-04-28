@@ -298,6 +298,7 @@ class ResellProduct(Base):
         Index("ix_resell_products_active", "active"),
         Index("ix_resell_products_myob_income_account_uid", "myob_income_account_uid"),
         Index("ix_resell_products_catalog_kind", "catalog_kind"),
+        Index("ix_resell_products_customer_id", "customer_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -308,10 +309,14 @@ class ResellProduct(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # supply = consumables / fees (default); outsourced_manufacturing = MYOB bought finished goods we outsource.
     catalog_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="supply")
-    # Set when a row is created/linked from MYOB; upserts on re-import are keyed on this, not the description text.
-    myob_item_uid: Mapped[Optional[str]] = mapped_column(
-        String(36), unique=True, nullable=True, index=True
+    # Outsourced MYOB rows are scoped to the order customer; supply rows stay global (NULL).
+    customer_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
     )
+    # Set when a row is created/linked from MYOB; uniqueness is (myob_item_uid, customer_id) in DB (partial index).
+    myob_item_uid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     myob_income_account_uid: Mapped[Optional[str]] = mapped_column(
         String(36),
         ForeignKey("myob_income_accounts.myob_account_uid", ondelete="SET NULL"),
@@ -320,6 +325,7 @@ class ResellProduct(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     income_account: Mapped[Optional["MyobIncomeAccount"]] = relationship(foreign_keys=[myob_income_account_uid])
+    customer: Mapped[Optional["Customer"]] = relationship(foreign_keys=[customer_id])
 
 
 class Job(Base):

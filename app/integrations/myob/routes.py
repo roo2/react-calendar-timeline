@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.orm import joinedload
 
 from app.auth.deps import csrf_protect, require_roles
 from app.config import settings
-from app.db.models.domain import MyobIncomeAccount
+from app.db.models.domain import MyobIncomeAccount, MyobItemSellingUom
 from app.db.session import SessionLocal
 from app.integrations.myob.customer_import import import_customers_from_myob
 from app.integrations.myob.item_selling_uom_cache import (
@@ -18,6 +19,7 @@ from app.integrations.myob.item_selling_uom_cache import (
     rebuild_myob_item_selling_uom_cache,
 )
 from app.integrations.myob.order_import import import_one_myob_sale_order
+from app.integrations.myob.myob_import_pipeline import run_myob_import_pipeline
 from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
 from app.integrations.myob.service import (
     MyobApiError,
@@ -53,6 +55,25 @@ class MyobIncomeAccountDTO(BaseModel):
     name: str | None = None
     display_id: str | None = None
     synced_at: str | None = None
+
+
+class MyobItemSellingUomRowDTO(BaseModel):
+    """One cached MYOB ``Inventory/Item`` row (read-only in admin UI)."""
+
+    myob_item_uid: str
+    selling_unit_of_measure: str | None = None
+    is_bought: bool | None = None
+    is_sold: bool | None = None
+    is_inventoried: bool | None = None
+    myob_income_account_uid: str | None = None
+    income_account_display_id: str | None = None
+    income_account_name: str | None = None
+    synced_at: str | None = None
+
+
+class MyobItemSellingUomListResponse(BaseModel):
+    total: int
+    items: list[MyobItemSellingUomRowDTO]
 
 
 def _business_id_from_query(request: Request, explicit: str | None) -> str | None:
@@ -220,6 +241,32 @@ class MyobImportAllOrdersBody(BaseModel):
     )
 
 
+class MyobImportPipelineBody(BaseModel):
+    """
+    Run customer sync, rebuild the MYOB item UOM cache, then import sale orders — in that order, in one request.
+    """
+
+    orders: Literal["all", "page"] = Field(
+        "all",
+        description=(
+            "``all`` walks every ``GET …/Sale/Order`` page until empty (same as ``/orders/import-all``). "
+            "``page`` imports a single list page (same as ``/orders/import-from-list``)."
+        ),
+    )
+    orders_top: int = Field(
+        200,
+        ge=1,
+        le=1000,
+        description="OData ``$top`` for sale orders: page size when listing all pages, or rows for a single page.",
+    )
+    orders_skip: int = Field(
+        0,
+        ge=0,
+        le=10_000_000,
+        description="OData ``$skip`` when ``orders`` is ``page``; ignored when ``orders`` is ``all``.",
+    )
+
+
 class MyobSaleOrderFetchBody(BaseModel):
     """Fetch one sale order document. Prefer ``order_uri`` from a list row when MYOB provides it."""
 
@@ -269,6 +316,36 @@ async def myob_disconnect(_identity: SysAdminIdentity):
     return {"ok": True, "message": "MYOB disconnected on this server."}
 
 
+@router.post("/import/pipeline", dependencies=[Depends(csrf_protect())])
+async def myob_import_pipeline(_identity: SysAdminIdentity, body: MyobImportPipelineBody):
+    """
+    Consolidated MYOB import: **customers** → **item UOM cache rebuild** (incl. income accounts from items) → **sale orders**.
+
+    Use ``orders: \"all\"`` for a full order walk (same behaviour as ``POST /orders/import-all``), or ``orders: \"page\"``
+    with ``orders_top`` / ``orders_skip`` for a single list page (same as ``POST /orders/import-from-list``).
+    """
+    del _identity
+    if not myob_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MYOB is not configured (set MYOB_APP_KEY and MYOB_APP_SECRET).",
+        )
+    with SessionLocal() as db:
+        try:
+            return run_myob_import_pipeline(
+                db,
+                orders=body.orders,
+                orders_top=body.orders_top,
+                orders_skip=body.orders_skip,
+            )
+        except MyobConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except MyobOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+        except MyobApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
 @router.post("/customers/sync", dependencies=[Depends(csrf_protect())])
 async def myob_customers_sync(_identity: SysAdminIdentity):
     """
@@ -316,6 +393,45 @@ async def myob_list_income_accounts(_identity: SysAdminIdentity):
         )
         for r in rows
     ]
+
+
+@router.get("/item-selling-uoms", response_model=MyobItemSellingUomListResponse)
+async def myob_list_item_selling_uoms(
+    _identity: SysAdminIdentity,
+    limit: int = Query(10_000, ge=1, le=25_000),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Read-only: locally cached MYOB inventory items (``myob_item_selling_uoms``), joined to income
+    account display id/name when known. Does not call MYOB.
+    """
+    del _identity
+    with SessionLocal() as db:
+        total = int(db.scalar(select(func.count()).select_from(MyobItemSellingUom)) or 0)
+        rows = db.scalars(
+            select(MyobItemSellingUom)
+            .options(joinedload(MyobItemSellingUom.income_account))
+            .order_by(MyobItemSellingUom.myob_item_uid.asc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+    out_items: list[MyobItemSellingUomRowDTO] = []
+    for r in rows:
+        acc = r.income_account
+        out_items.append(
+            MyobItemSellingUomRowDTO(
+                myob_item_uid=r.myob_item_uid,
+                selling_unit_of_measure=r.selling_unit_of_measure,
+                is_bought=r.is_bought,
+                is_sold=r.is_sold,
+                is_inventoried=r.is_inventoried,
+                myob_income_account_uid=r.myob_income_account_uid,
+                income_account_display_id=acc.display_id if acc is not None else None,
+                income_account_name=acc.name if acc is not None else None,
+                synced_at=r.synced_at.isoformat() if r.synced_at is not None else None,
+            )
+        )
+    return MyobItemSellingUomListResponse(total=total, items=out_items)
 
 
 @router.post("/sale/orders/list-preview", dependencies=[Depends(csrf_protect())])

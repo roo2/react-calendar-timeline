@@ -4,7 +4,7 @@ import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 
 const items = [
   { to: '/admin/myob', label: 'MYOB' },
-  { to: '/admin/myob-income-accounts', label: 'MYOB income accounts' },
+  { to: '/admin/myob-data', label: 'MYOB data' },
   { to: '/admin/resins', label: 'Resins' },
   { to: '/admin/extrusion', label: 'Extrusion' },
   { to: '/admin/printing', label: 'Printing' },

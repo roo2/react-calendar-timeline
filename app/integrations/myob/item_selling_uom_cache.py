@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import MyobItemSellingUom
+from app.db.models.domain import MyobIncomeAccount, MyobItemSellingUom
 from app.integrations.myob.income_account_sync import sync_income_account_from_item_json
 from app.integrations.myob.item_import_fixups import normalize_myob_item_json_for_order_import
 from app.integrations.myob.service import (
@@ -97,7 +97,14 @@ def get_cached_item_json_for_mapping(db: Session, *, item_uid: str) -> dict[str,
     if getattr(row, "is_inventoried", None) is not None:
         out["IsInventoried"] = bool(row.is_inventoried)
     if getattr(row, "myob_income_account_uid", None):
-        out["IncomeAccount"] = {"UID": str(row.myob_income_account_uid)}
+        inc_uid = str(row.myob_income_account_uid)
+        inc_obj: dict[str, Any] = {"UID": inc_uid}
+        acc = db.get(MyobIncomeAccount, inc_uid)
+        if acc is not None:
+            disp = getattr(acc, "display_id", None)
+            if disp is not None and str(disp).strip():
+                inc_obj["DisplayID"] = str(disp).strip()
+        out["IncomeAccount"] = inc_obj
     out = normalize_myob_item_json_for_order_import(out, item_uid=uid)
     return out
 

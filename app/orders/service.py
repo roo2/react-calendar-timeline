@@ -90,9 +90,16 @@ def _normalize_resell_quantity_unit(value: str | None) -> str:
 
 
 def _add_resell_line_core(db, order_id: str, item: CreateResellOrderLineRequest) -> OrderItemModel:
+    o = db.get(OrderModel, str(order_id))
+    if not o:
+        raise DomainError("Order not found")
     rp = db.get(ResellProduct, str(item.resell_product_id))
     if not rp or not bool(rp.active):
         raise DomainError("Resell product not found or inactive")
+    ck = str(getattr(rp, "catalog_kind", None) or "supply")
+    rp_cust = getattr(rp, "customer_id", None)
+    if ck == "outsourced_manufacturing" and rp_cust and str(rp_cust) != str(o.customer_id):
+        raise DomainError("That outsourced product belongs to a different customer.")
     qty = float(item.quantity_value)
     rate = float(item.rate) if item.rate is not None else float(rp.unit_price)
     if item.total_price is not None:
@@ -568,6 +575,83 @@ def update_order_resell_line(order_id: str, line_id: str, payload: UpdateResellO
         db.flush()
         db.refresh(ln)
         return ln
+
+
+def convert_resell_line_to_myob_import_job_sheet(order_id: str, line_id: str, *, created_by: str) -> OrderItemModel:
+    """
+    Turn a MYOB-imported **resell** line (wrong ``IsBought`` / catalog classification) into a ``myob_import`` line
+    that requires a job sheet, and attach a fresh import-draft job sheet (same as MYOB re-import path).
+
+    Requires MYOB row identifiers on the line (``myob_item_uid`` and/or ``myob_row_id``) and a positive import qty.
+    """
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+            uuid.UUID(str(line_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        o = db.get(OrderModel, str(order_id))
+        if not o:
+            raise DomainError("Order not found")
+        _require_order_editable(o)
+        oi = db.get(OrderItemModel, str(line_id))
+        if not oi or str(oi.order_id) != str(o.id):
+            raise DomainError("Order line not found")
+        if str(getattr(oi, "line_kind", "") or "") != "resell":
+            raise DomainError("Only resell lines can be converted")
+
+        uid = str(getattr(oi, "myob_item_uid", None) or "").strip()
+        rid = getattr(oi, "myob_row_id", None)
+        if not uid and rid is None:
+            raise DomainError("This resell line has no MYOB identifiers; convert is only for MYOB-imported rows")
+
+        # Backfill import columns from resell if an older row missed them.
+        if getattr(oi, "import_ship_quantity", None) is None and getattr(oi, "resell_quantity_value", None) is not None:
+            oi.import_ship_quantity = float(oi.resell_quantity_value)
+        if not getattr(oi, "import_quantity_unit", None) and getattr(oi, "resell_quantity_unit", None):
+            oi.import_quantity_unit = str(oi.resell_quantity_unit)
+        if getattr(oi, "import_unit_price", None) is None and getattr(oi, "resell_unit_rate", None) is not None:
+            oi.import_unit_price = float(oi.resell_unit_rate)
+        if getattr(oi, "import_line_total", None) is None and getattr(oi, "resell_line_total", None) is not None:
+            oi.import_line_total = float(oi.resell_line_total)
+        if not getattr(oi, "import_line_description", None) and getattr(oi, "resell_description_snapshot", None):
+            oi.import_line_description = str(oi.resell_description_snapshot)
+        if not getattr(oi, "import_qty_type", None):
+            oi.import_qty_type = "kg"
+        if not getattr(oi, "myob_line_type", None):
+            oi.myob_line_type = "Transaction"
+
+        qty = float(oi.import_ship_quantity or 0.0)
+        if not (qty > 0):
+            raise DomainError("Shipment quantity must be positive to create a MYOB import job sheet draft")
+
+        oi.resell_product_id = None
+        oi.resell_description_snapshot = None
+        oi.resell_quantity_value = None
+        oi.resell_quantity_unit = None
+        oi.resell_unit_rate = None
+        oi.resell_line_total = None
+        oi.resell_due_date = None
+
+        oi.line_kind = "myob_import"
+        oi.import_requires_job_sheet = True
+        oi.job_sheet_id = None
+
+        js = job_sheets_service.create_myob_import_draft_job_sheet(
+            db=db,
+            customer_id=str(o.customer_id),
+            quantity_value=qty,
+            quantity_unit=str(oi.import_quantity_unit or "kg"),
+            qty_type=str(oi.import_qty_type or "kg"),
+            unit_rate=float(oi.import_unit_price) if oi.import_unit_price is not None else None,
+            line_total=float(oi.import_line_total) if oi.import_line_total is not None else None,
+            created_by=(created_by or "system").strip() or "system",
+        )
+        oi.job_sheet_id = str(js.id)
+        db.add(oi)
+        db.flush()
+        db.refresh(oi)
+        return oi
 
 
 def link_myob_import_line_job_sheet(order_id: str, line_id: str, job_sheet_id: str) -> None:

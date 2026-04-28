@@ -34,6 +34,7 @@ import { fetchProducts } from '../../../store/slices/productsSlice'
 import {
   addOrderItem,
   addOrderResellItem,
+  convertResellLineToMyobJobSheet,
   createOrder,
   deleteOrderItem,
   deleteOrderResellItem,
@@ -92,6 +93,9 @@ type OrderLine = {
   resell_product_id?: string
   /** From linked resell catalog row; drives quantity unit choices for outsourced MYOB lines. */
   resell_catalog_kind?: ResellCatalogKind
+  /** Present when this resell row came from MYOB import (convert to manufactured / job sheet). */
+  myob_item_uid?: string | null
+  myob_row_id?: number | null
   import_line_description?: string | null
   is_import_draft?: boolean
 }
@@ -130,6 +134,9 @@ function orderLinesFromApiItems(items: unknown): OrderLine[] {
 
 function lineFromApiItem(it: any): OrderLine {
   if (it.line_kind === 'resell') {
+    const rowIdRaw = it.myob_row_id
+    const rowId =
+      rowIdRaw != null && rowIdRaw !== '' && Number.isFinite(Number(rowIdRaw)) ? Number(rowIdRaw) : null
     return {
       id: String(it.id),
       line_kind: 'resell',
@@ -138,6 +145,8 @@ function lineFromApiItem(it: any): OrderLine {
       resell_product_id: String(it.resell_product_id || ''),
       resell_catalog_kind:
         it.resell_catalog_kind === 'outsourced_manufacturing' ? 'outsourced_manufacturing' : 'supply',
+      myob_item_uid: it.myob_item_uid != null ? String(it.myob_item_uid) : null,
+      myob_row_id: rowId,
       job_sheet_id: '',
       product_id: String(it.resell_product_id || it.product_id || ''),
       product_code: String(it.product_code || 'Resell'),
@@ -285,6 +294,12 @@ function orderLineRank(it: OrderLine): number {
   return 6
 }
 
+function resellLineHasMyobIdentifiers(it: OrderLine): boolean {
+  if (it.line_kind !== 'resell') return false
+  if (String(it.myob_item_uid || '').trim()) return true
+  return it.myob_row_id != null && Number.isFinite(Number(it.myob_row_id))
+}
+
 export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const { mode, orderId } = props
   const nav = useNavigate()
@@ -333,6 +348,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [linkMyobLine, setLinkMyobLine] = useState<MyobImportLineRow | null>(null)
   const [linkMyobJobSheetId, setLinkMyobJobSheetId] = useState('')
   const [linkMyobSubmitting, setLinkMyobSubmitting] = useState(false)
+  const [convertingResellLineId, setConvertingResellLineId] = useState<string | null>(null)
 
   const originalRef = useRef<{ lines: Record<string, OrderLine> } | null>(null)
 
@@ -450,8 +466,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }
 
   useEffect(() => {
-    void dispatch(fetchOrdersBootstrap())
-  }, [dispatch])
+    const cid = String(customerId || '').trim()
+    void dispatch(fetchOrdersBootstrap(cid ? { customer_id: cid } : undefined))
+  }, [dispatch, customerId])
 
   useEffect(() => {
     if (mode !== 'new') return
@@ -1008,6 +1025,33 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     }
   }
 
+  async function convertResellImportedLineToMyobJobSheet(it: OrderLine) {
+    if (mode !== 'edit' || !orderId || orderLocked) return
+    if (it.line_kind !== 'resell' || !resellLineHasMyobIdentifiers(it)) return
+    const lineId = String(it.resell_line_id || it.order_item_id || '').trim()
+    if (!lineId) return
+    const ok = window.confirm(
+      'Convert this MYOB-imported resell line into a manufactured line with an import-draft job sheet? ' +
+        'The line will move to the MYOB section until the job sheet is completed.',
+    )
+    if (!ok) return
+    setErr(null)
+    setConvertingResellLineId(lineId)
+    try {
+      await dispatch(convertResellLineToMyobJobSheet({ orderId, lineId })).unwrap()
+      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+      setItems(nextItems)
+      setMyobImportLines(myobLinesFromApi(res))
+      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to convert line')
+    } finally {
+      setConvertingResellLineId(null)
+    }
+  }
+
   async function submitLinkMyobLine() {
     if (mode !== 'edit' || !orderId || !linkMyobLine) return
     const js = linkMyobJobSheetId.trim()
@@ -1156,12 +1200,35 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 Edit
               </Button>
             )}
+            {mode === 'edit' && canPublish && it.line_kind === 'resell' && resellLineHasMyobIdentifiers(it) ? (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => void convertResellImportedLineToMyobJobSheet(it)}
+                disabled={
+                  saving ||
+                  publishing ||
+                  orderLocked ||
+                  convertingResellLineId === String(it.resell_line_id || it.order_item_id || '')
+                }
+                title="Use when MYOB imported this as resell but it should be manufactured with a job sheet."
+              >
+                {convertingResellLineId === String(it.resell_line_id || it.order_item_id || '')
+                  ? 'Converting…'
+                  : 'Convert to job sheet'}
+              </Button>
+            ) : null}
             <Button
               size="small"
               variant="text"
               color="error"
               onClick={() => void removeLine(it)}
-              disabled={saving || publishing || orderLocked}
+              disabled={
+                saving ||
+                publishing ||
+                orderLocked ||
+                convertingResellLineId === String(it.resell_line_id || it.order_item_id || '')
+              }
             >
               Remove
             </Button>

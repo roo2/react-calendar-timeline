@@ -5,7 +5,8 @@ MYOB ``SellingDetails.SellingUnitOfMeasure`` values are normalized using statist
 (1000, ROLL, CTN, KG, nulls, etc.). Manufacturing lines that need job sheets map into ``kg``,
 ``rolls``, ``cartons``, ``1000``, etc.; typical resell supplies map to ``ea``; outsourced manufactured
 resell (see :func:`myob_resell_catalog_kind`) uses the same manufacturing-style mapping when the
-caller passes ``requires_job_sheet=True``.
+caller passes ``requires_job_sheet=True``. Outsourced resell is detected from known income-account
+UIDs and from configured ``IncomeAccount.DisplayID`` codes (stable across company files).
 """
 
 from __future__ import annotations
@@ -25,6 +26,16 @@ OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS: frozenset[str] = frozenset(
         "fd93417d-f1e2-4c09-8697-b177a04176f4",  # 4-0007 Income - Resale - Imported items (not inc cores) (CP & AP)
     }
 )
+# MYOB ``IncomeAccount.DisplayID`` values (company file may use different UIDs than above).
+OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_DISPLAY_IDS: frozenset[str] = frozenset(
+    {
+        "4-1112",
+        "4-1111",
+        "4-0008",
+        "4-1113",
+        "5-0010",
+    }
+)
 # Backwards compat for tests / callers that only referenced the original outsourced account.
 OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID = "613ed84d-3545-462e-83f7-a5c83dc80605"
 
@@ -33,6 +44,21 @@ def _str_norm(x: Any) -> str:
     if x is None:
         return ""
     return str(x).strip().lower()
+
+
+def _income_display_id_from_item_json(item_json: dict[str, Any] | None) -> str:
+    """MYOB ``Inventory/Item.IncomeAccount.DisplayID`` (trimmed)."""
+    if not isinstance(item_json, dict):
+        return ""
+    inc = item_json.get("IncomeAccount")
+    if not isinstance(inc, dict):
+        return ""
+    v = inc.get("DisplayID")
+    if v is None:
+        v = inc.get("DisplayId")
+    if v is None or not str(v).strip():
+        return ""
+    return str(v).strip()
 
 
 def _raw_selling_uom_from_item_json(item_json: dict[str, Any]) -> str | None:
@@ -161,6 +187,9 @@ def myob_resell_catalog_kind(item_json: dict[str, Any] | None) -> str:
         return "supply"
     income = item_json.get("IncomeAccount") if isinstance(item_json, dict) else None
     inc_uid = str((income or {}).get("UID") or "").strip().lower() if isinstance(income, dict) else ""
-    if inc_uid not in OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS:
+    disp = _income_display_id_from_item_json(item_json)
+    uid_ok = inc_uid in OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS
+    display_ok = bool(disp) and disp in OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_DISPLAY_IDS
+    if not uid_ok and not display_ok:
         return "supply"
     return "outsourced_manufacturing"

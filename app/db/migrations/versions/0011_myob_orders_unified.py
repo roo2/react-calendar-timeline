@@ -1,12 +1,12 @@
-"""Consolidated: MYOB order import, MYOB item cache + income accounts, unified order items, resell MYOB links.
+"""MYOB order columns, MYOB item cache + income accounts, unified order_items shape, MYOB draft placeholders.
 
-Replaces migrations 0011_myob_order_import through 0015_myob_income_accounts for fresh installs.
+Schema-only: assumes a fresh database (or empty orders/resell line tables). Legacy data moves from
+order_resell_lines / staging tables are not performed — rebuild and re-import instead.
 """
 
 from __future__ import annotations
 
 import json
-import uuid
 
 import sqlalchemy as sa
 from alembic import op
@@ -32,43 +32,12 @@ def _is_postgres(conn) -> bool:
 
 
 def upgrade() -> None:
-    # -- former 0011_myob_order_import --
     op.add_column("orders", sa.Column("import_source", sa.String(length=32), nullable=True))
     op.add_column("orders", sa.Column("myob_order_uid", sa.String(length=36), nullable=True))
     op.add_column("orders", sa.Column("myob_last_modified", sa.String(length=64), nullable=True))
     op.add_column("orders", sa.Column("myob_synced_at", sa.DateTime(timezone=True), nullable=True))
     op.create_index("ix_orders_myob_order_uid", "orders", ["myob_order_uid"], unique=True)
 
-    op.create_table(
-        "order_myob_lines",
-        sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("order_id", sa.String(length=36), nullable=False),
-        sa.Column("line_index", sa.Integer(), nullable=False),
-        sa.Column("myob_row_id", sa.Integer(), nullable=True),
-        sa.Column("myob_line_type", sa.String(length=32), nullable=True),
-        sa.Column("myob_item_uid", sa.String(length=36), nullable=True),
-        sa.Column("myob_item_number", sa.String(length=64), nullable=True),
-        sa.Column("myob_item_name", sa.String(length=255), nullable=True),
-        sa.Column("description", sa.Text(), nullable=False),
-        sa.Column("ship_quantity", sa.Numeric(18, 6), nullable=False),
-        sa.Column("unit_price", sa.Numeric(18, 6), nullable=True),
-        sa.Column("line_total", sa.Numeric(18, 6), nullable=True),
-        sa.Column("quantity_unit", sa.String(length=16), nullable=False, server_default="kg"),
-        sa.Column("qty_type", sa.String(length=32), nullable=False, server_default="kg"),
-        sa.Column("myob_item_sales_unit_raw", sa.String(length=64), nullable=True),
-        sa.Column("myob_item_json", sa.JSON(), nullable=True),
-        sa.Column("requires_job_sheet", sa.Boolean(), nullable=False, server_default=sa.text("1")),
-        sa.Column("job_sheet_id", sa.String(length=36), nullable=True),
-        sa.ForeignKeyConstraint(["order_id"], ["orders.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["job_sheet_id"], ["job_sheets.id"], ondelete="SET NULL"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("order_id", "line_index", name="uq_order_myob_lines_order_line_index"),
-        sa.UniqueConstraint("order_id", "myob_row_id", name="uq_order_myob_lines_order_row_id"),
-    )
-    op.create_index("ix_order_myob_lines_order", "order_myob_lines", ["order_id"])
-    op.create_index("ix_order_myob_lines_job_sheet", "order_myob_lines", ["job_sheet_id"])
-
-    # -- former 0015 (income accounts) + 0012/0014/0015 (MYOB item cache + resell columns) --
     op.create_table(
         "myob_income_accounts",
         sa.Column("myob_account_uid", sa.String(length=36), nullable=False),
@@ -108,7 +77,6 @@ def upgrade() -> None:
     )
 
     conn = op.get_bind()
-    # SQLite cannot ALTER TABLE to add FK constraints outside batch mode.
     if _is_sqlite(conn):
         with op.batch_alter_table("resell_products", schema=None) as batch:
             batch.add_column(sa.Column("myob_item_uid", sa.String(length=36), nullable=True))
@@ -151,25 +119,10 @@ def upgrade() -> None:
             ondelete="SET NULL",
         )
 
-    # -- former 0013_unified_order_items --
-
-    has_draft = False
-    if _is_sqlite(conn):
-        info = conn.execute(text("PRAGMA table_info(job_sheets)")).fetchall()
-        has_draft = any(str(row[1]) == "is_import_draft" for row in info)
-    elif _is_postgres(conn):
-        r = conn.execute(
-            text(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = 'job_sheets' AND column_name = 'is_import_draft'"
-            )
-        ).fetchone()
-        has_draft = r is not None
-    if not has_draft:
-        op.add_column(
-            "job_sheets",
-            sa.Column("is_import_draft", sa.Boolean(), nullable=False, server_default=sa.text("0")),
-        )
+    op.add_column(
+        "job_sheets",
+        sa.Column("is_import_draft", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    )
 
     spec = json.dumps({"identity": {"product_type": "other", "finish_mode": "Rolls"}, "import_placeholder": True})
 
@@ -289,270 +242,17 @@ def upgrade() -> None:
 
     if _is_sqlite(conn):
         with op.batch_alter_table("order_items", schema=None) as batch:
-            try:
-                batch.drop_constraint("uq_order_item_order_job_sheet", type_="unique")
-            except Exception:
-                pass
+            batch.drop_constraint("uq_order_item_order_job_sheet", type_="unique")
             _add_columns_sqlite_batch(batch)
     else:
         op.drop_constraint("uq_order_item_order_job_sheet", "order_items", type_="unique")
         _add_columns_plain()
 
-    oi_by_order: dict[str, list[tuple[str, str, str, int]]] = {}
-    for row in conn.execute(
-        text(
-            """
-            SELECT oi.id, oi.order_id, oi.job_sheet_id, js.job_seq
-            FROM order_items oi
-            JOIN job_sheets js ON js.id = oi.job_sheet_id
-            ORDER BY oi.order_id ASC, js.job_seq ASC, oi.id ASC
-            """
-        )
-    ).fetchall():
-        oi_id, order_id, js_id, job_seq = str(row[0]), str(row[1]), str(row[2]), int(row[3] or 0)
-        oi_by_order.setdefault(order_id, []).append((oi_id, order_id, js_id, job_seq))
-
-    for _order_id, ois in oi_by_order.items():
-        ois.sort(key=lambda x: (x[3], x[0]))
-        for idx, (oi_id, _, _, _) in enumerate(ois):
-            conn.execute(
-                text("UPDATE order_items SET line_index = :li, line_kind = 'manufactured' WHERE id = :id"),
-                {"li": idx, "id": oi_id},
-            )
-
-    def _order_max_line_index(oid: str) -> int:
-        r = conn.execute(
-            text("SELECT COALESCE(MAX(line_index), -1) FROM order_items WHERE order_id = :o"), {"o": oid}
-        ).fetchone()
-        v = r[0] if r is not None else -1
-        return int(v) if v is not None else -1
-
-    for row in conn.execute(
-        text(
-            """
-            SELECT id, order_id, resell_product_id, description_snapshot, quantity_value, quantity_unit, unit_rate, line_total, due_date
-            FROM order_resell_lines
-            ORDER BY order_id, id
-            """
-        )
-    ).fetchall():
-        (lid, order_id, rpid, desc, qv, qu, ur, lt, dd) = row
-        oid = str(order_id)
-        li = _order_max_line_index(oid) + 1
-        conn.execute(
-            text(
-                """
-                INSERT INTO order_items (
-                    id, order_id, job_sheet_id, line_index, line_kind,
-                    resell_product_id, resell_description_snapshot, resell_due_date, resell_quantity_value,
-                    resell_quantity_unit, resell_unit_rate, resell_line_total
-                ) VALUES (
-                    :id, :oid, NULL, :li, 'resell',
-                    :rpid, :desc, :dd, :qv, :qu, :ur, :lt
-                )
-                """
-            ),
-            {
-                "id": str(lid),
-                "oid": oid,
-                "li": li,
-                "rpid": str(rpid),
-                "desc": str(desc),
-                "dd": dd,
-                "qv": qv,
-                "qu": str(qu or "ea"),
-                "ur": ur,
-                "lt": lt,
-            },
-        )
-
-    myob_rows = conn.execute(
-        text(
-            """
-            SELECT
-              id, order_id, line_index, myob_row_id, myob_line_type, myob_item_uid, myob_item_number, myob_item_name,
-              description, ship_quantity, unit_price, line_total, quantity_unit, qty_type,
-              myob_item_sales_unit_raw, myob_item_json, requires_job_sheet, job_sheet_id
-            FROM order_myob_lines
-            ORDER BY order_id, line_index, id
-            """
-        )
-    ).fetchall()
-
-    for m in myob_rows:
-        (
-            mid,
-            m_order_id,
-            _m_line_index,
-            myob_row_id,
-            myob_line_type,
-            myob_item_uid,
-            myob_item_number,
-            myob_item_name,
-            description,
-            ship_quantity,
-            unit_price,
-            line_total,
-            quantity_unit,
-            qty_type,
-            sales_raw,
-            myob_item_json,
-            requires_js,
-            existing_js_id,
-        ) = m
-        oid = str(m_order_id)
-        li = _order_max_line_index(oid) + 1
-        mjid = str(mid)
-
-        payload_json = myob_item_json
-        if isinstance(payload_json, (dict, list)):
-            payload_json = json.dumps(payload_json)
-        elif payload_json is not None:
-            payload_json = str(payload_json)
-
-        needs_draft = bool(requires_js) and existing_js_id is None
-        jsid = str(existing_js_id) if existing_js_id is not None else None
-
-        if needs_draft:
-            cust = conn.execute(
-                text("SELECT customer_id FROM orders WHERE id = :o"), {"o": oid}
-            ).fetchone()
-            if not cust:
-                continue
-            customer_id = str(cust[0])
-            nseq = int(
-                conn.execute(
-                    text("SELECT COALESCE(MAX(job_seq),0) + 1 FROM job_sheets WHERE customer_id = :c"),
-                    {"c": customer_id},
-                ).fetchone()[0]
-            )
-            pfx = f"MIG-{str(customer_id).replace('-', '')[:4].upper()}"
-            jno = f"{pfx}_{nseq}"
-            new_js = str(uuid.uuid4())
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO job_sheets (
-                        id, job_no, job_seq, customer_id, product_id, product_version_id, due_date,
-                        quantity_value, quantity_unit, qty_type, num_product_units, weight_per_roll_kg, num_rolls,
-                        unit_rate, line_total, created_by, is_import_draft, created_at
-                    ) VALUES (
-                        :id, :jno, :nseq, :cid, :pid, :pvid, NULL,
-                        :qv, :qu, :qyt, NULL, NULL, 1,
-                        :ur, :lt, 'migration', 1, CURRENT_TIMESTAMP
-                    )
-                    """
-                ),
-                {
-                    "id": new_js,
-                    "jno": jno,
-                    "nseq": nseq,
-                    "cid": customer_id,
-                    "pid": PPID,
-                    "pvid": PVID,
-                    "qv": float(ship_quantity or 0),
-                    "qu": str(quantity_unit or "kg"),
-                    "qyt": str(qty_type or "kg"),
-                    "ur": unit_price,
-                    "lt": line_total,
-                },
-            )
-            jsid = new_js
-
-        if _is_postgres(conn) and payload_json is not None:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO order_items (
-                        id, order_id, job_sheet_id, line_index, line_kind,
-                        import_line_description, myob_row_id, myob_line_type, myob_item_uid, myob_item_number, myob_item_name,
-                        import_ship_quantity, import_unit_price, import_line_total, import_quantity_unit, import_qty_type,
-                        myob_item_sales_unit_raw, myob_item_json, import_requires_job_sheet
-                    ) VALUES (
-                        :id, :oid, :ejs, :li, 'myob_import',
-                        :desc, :mrid, :mlt, :mui, :mun, :mun2,
-                        :ship, :iup, :ilt, :iqu, :iqt, :sraw, CAST(:jp AS jsonb), :reqj
-                    )
-                    """
-                ),
-                {
-                    "id": mjid,
-                    "oid": oid,
-                    "ejs": jsid,
-                    "li": li,
-                    "desc": str(description or ""),
-                    "mrid": myob_row_id,
-                    "mlt": myob_line_type,
-                    "mui": str(myob_item_uid) if myob_item_uid is not None else None,
-                    "mun": str(myob_item_number) if myob_item_number is not None else None,
-                    "mun2": str(myob_item_name) if myob_item_name is not None else None,
-                    "ship": ship_quantity,
-                    "iup": unit_price,
-                    "ilt": line_total,
-                    "iqu": str(quantity_unit or "kg"),
-                    "iqt": str(qty_type or "kg"),
-                    "sraw": str(sales_raw) if sales_raw is not None else None,
-                    "jp": payload_json,
-                    "reqj": bool(requires_js),
-                },
-            )
-        else:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO order_items (
-                        id, order_id, job_sheet_id, line_index, line_kind,
-                        import_line_description, myob_row_id, myob_line_type, myob_item_uid, myob_item_number, myob_item_name,
-                        import_ship_quantity, import_unit_price, import_line_total, import_quantity_unit, import_qty_type,
-                        myob_item_sales_unit_raw, myob_item_json, import_requires_job_sheet
-                    ) VALUES (
-                        :id, :oid, :ejs, :li, 'myob_import',
-                        :desc, :mrid, :mlt, :mui, :mun, :mun2,
-                        :ship, :iup, :ilt, :iqu, :iqt, :sraw, :jp, :reqj
-                    )
-                    """
-                ),
-                {
-                    "id": mjid,
-                    "oid": oid,
-                    "ejs": jsid,
-                    "li": li,
-                    "desc": str(description or ""),
-                    "mrid": myob_row_id,
-                    "mlt": myob_line_type,
-                    "mui": str(myob_item_uid) if myob_item_uid is not None else None,
-                    "mun": str(myob_item_number) if myob_item_number is not None else None,
-                    "mun2": str(myob_item_name) if myob_item_name is not None else None,
-                    "ship": ship_quantity,
-                    "iup": unit_price,
-                    "ilt": line_total,
-                    "iqu": str(quantity_unit or "kg"),
-                    "iqt": str(qty_type or "kg"),
-                    "sraw": str(sales_raw) if sales_raw is not None else None,
-                    "jp": payload_json,
-                    "reqj": bool(requires_js),
-                },
-            )
-
-        if not needs_draft and existing_js_id is not None:
-            conn.execute(
-                text("UPDATE job_sheets SET is_import_draft = 0 WHERE id = :id"), {"id": str(existing_js_id)}
-            )
-
-    if _is_postgres(conn):
-        op.execute(text("DROP TABLE IF EXISTS order_resell_lines CASCADE"))
-        op.execute(text("DROP TABLE IF EXISTS order_myob_lines CASCADE"))
-    else:
-        for t in ("order_resell_lines", "order_myob_lines"):
-            try:
-                op.execute(text(f"DROP TABLE IF EXISTS {t}"))
-            except Exception:
-                pass
+    op.drop_table("order_resell_lines")
 
     if _is_sqlite(conn):
         op.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_order_items_order_line_index "
-            "ON order_items (order_id, line_index)"
+            "CREATE UNIQUE INDEX uq_order_items_order_line_index ON order_items (order_id, line_index)"
         )
     else:
         op.create_unique_constraint("uq_order_items_order_line_index", "order_items", ["order_id", "line_index"])
@@ -566,7 +266,7 @@ def upgrade() -> None:
         )
     else:
         op.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_order_items_job_sheet_id_notnull "
+            "CREATE UNIQUE INDEX uq_order_items_job_sheet_id_notnull "
             "ON order_items (job_sheet_id) WHERE job_sheet_id IS NOT NULL"
         )
 
