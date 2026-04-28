@@ -22,9 +22,40 @@ import {
   Link as MuiLink,
 } from '@mui/material'
 import { LIST_PAGE_SIZE, ListFiltersCard, ListPaginationBar, ListTableSurface } from '../../components/list'
+import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
 const ORDER_STATUSES = ['draft', 'confirmed', 'dispatched', 'closed', 'cancelled'] as const
+
+const ORDER_FILTER_DEFAULTS: Record<string, string> = {
+  search: '',
+  invoiceNumber: '',
+  customerPo: '',
+  customer: '',
+  product: '',
+  lineItemSearch: '',
+  orderTotalMin: '',
+  orderTotalMax: '',
+  statusFilter: '',
+  orderDateFrom: '',
+  orderDateTo: '',
+  advanced: '',
+}
+
+const ORDER_URL_KEYS: Record<string, string> = {
+  search: 'q',
+  invoiceNumber: 'inv',
+  customerPo: 'cpo',
+  customer: 'cust',
+  product: 'prod',
+  lineItemSearch: 'line',
+  orderTotalMin: 'tmin',
+  orderTotalMax: 'tmax',
+  statusFilter: 'st',
+  orderDateFrom: 'df',
+  orderDateTo: 'dt',
+  advanced: 'adv',
+}
 
 function ProductsSummary({
   firstManufacturedCode,
@@ -71,40 +102,31 @@ export function OrdersPage() {
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
 
-  const [search, setSearch] = useState('')
-  const [invoiceNumber, setInvoiceNumber] = useState('')
-  const [customerPo, setCustomerPo] = useState('')
-  const [customer, setCustomer] = useState('')
-  const [product, setProduct] = useState('')
-  const [lineItemSearch, setLineItemSearch] = useState('')
-  const [orderTotalMin, setOrderTotalMin] = useState('')
-  const [orderTotalMax, setOrderTotalMax] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [orderDateFrom, setOrderDateFrom] = useState('')
-  const [orderDateTo, setOrderDateTo] = useState('')
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
-  const [pageIdx, setPageIdx] = useState(0)
+  const { filters, setFilter, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
+    defaults: ORDER_FILTER_DEFAULTS,
+    urlKeys: ORDER_URL_KEYS,
+  })
 
   const query = useMemo((): OrdersListQuery => {
     const q: OrdersListQuery = {}
-    const s = search.trim()
+    const s = filters.search.trim()
     if (s) q.search = s
-    if (invoiceNumber.trim()) q.invoice_number = invoiceNumber.trim()
-    if (customerPo.trim()) q.customer_po = customerPo.trim()
-    if (customer.trim()) q.customer = customer.trim()
-    if (product.trim()) q.product = product.trim()
-    if (lineItemSearch.trim()) q.line_item_search = lineItemSearch.trim()
-    const min = parseOptionalNumber(orderTotalMin)
-    const max = parseOptionalNumber(orderTotalMax)
+    if (filters.invoiceNumber.trim()) q.invoice_number = filters.invoiceNumber.trim()
+    if (filters.customerPo.trim()) q.customer_po = filters.customerPo.trim()
+    if (filters.customer.trim()) q.customer = filters.customer.trim()
+    if (filters.product.trim()) q.product = filters.product.trim()
+    if (filters.lineItemSearch.trim()) q.line_item_search = filters.lineItemSearch.trim()
+    const min = parseOptionalNumber(filters.orderTotalMin)
+    const max = parseOptionalNumber(filters.orderTotalMax)
     if (min !== undefined) q.order_total_min = min
     if (max !== undefined) q.order_total_max = max
-    if (statusFilter) q.status = statusFilter
-    if (orderDateFrom) q.order_date_from = orderDateFrom
-    if (orderDateTo) q.order_date_to = orderDateTo
+    if (filters.statusFilter) q.status = filters.statusFilter
+    if (filters.orderDateFrom) q.order_date_from = filters.orderDateFrom
+    if (filters.orderDateTo) q.order_date_to = filters.orderDateTo
     q.page = pageIdx + 1
     q.page_size = LIST_PAGE_SIZE
     return q
-  }, [search, invoiceNumber, customerPo, customer, product, lineItemSearch, orderTotalMin, orderTotalMax, statusFilter, orderDateFrom, orderDateTo, pageIdx])
+  }, [filters, pageIdx])
 
   useEffect(() => {
     void dispatch(fetchOrdersBootstrap(undefined))
@@ -123,21 +145,6 @@ export function OrdersPage() {
   }, [dispatch, query])
 
   const searching = debouncing || loading
-
-  const clearFilters = () => {
-    setSearch('')
-    setInvoiceNumber('')
-    setCustomerPo('')
-    setCustomer('')
-    setProduct('')
-    setLineItemSearch('')
-    setOrderTotalMin('')
-    setOrderTotalMax('')
-    setStatusFilter('')
-    setOrderDateFrom('')
-    setOrderDateTo('')
-    setPageIdx(0)
-  }
 
   return (
     <Stack spacing={2}>
@@ -162,11 +169,8 @@ export function OrdersPage() {
         search={{
           label: 'Search orders',
           placeholder: 'Invoice, customer PO, customer, product, line items...',
-          value: search,
-          onChange: (v) => {
-            setPageIdx(0)
-            setSearch(v)
-          },
+          value: filters.search,
+          onChange: (v) => setFilter('search', v),
         }}
         advanced={
           <Box
@@ -179,20 +183,20 @@ export function OrdersPage() {
               },
             }}
           >
-            <TextField size="small" label="Invoice Number" value={invoiceNumber} onChange={(e) => { setPageIdx(0); setInvoiceNumber(e.target.value) }} />
-            <TextField size="small" label="Customer PO" value={customerPo} onChange={(e) => { setPageIdx(0); setCustomerPo(e.target.value) }} />
-            <TextField size="small" label="Customer" value={customer} onChange={(e) => { setPageIdx(0); setCustomer(e.target.value) }} />
-            <TextField size="small" label="Product" value={product} onChange={(e) => { setPageIdx(0); setProduct(e.target.value) }} />
-            <TextField size="small" label="Line item contains" value={lineItemSearch} onChange={(e) => { setPageIdx(0); setLineItemSearch(e.target.value) }} />
-            <TextField size="small" label="Order total min" type="number" value={orderTotalMin} onChange={(e) => { setPageIdx(0); setOrderTotalMin(e.target.value) }} />
-            <TextField size="small" label="Order total max" type="number" value={orderTotalMax} onChange={(e) => { setPageIdx(0); setOrderTotalMax(e.target.value) }} />
+            <TextField size="small" label="Invoice Number" value={filters.invoiceNumber} onChange={(e) => setFilter('invoiceNumber', e.target.value)} />
+            <TextField size="small" label="Customer PO" value={filters.customerPo} onChange={(e) => setFilter('customerPo', e.target.value)} />
+            <TextField size="small" label="Customer" value={filters.customer} onChange={(e) => setFilter('customer', e.target.value)} />
+            <TextField size="small" label="Product" value={filters.product} onChange={(e) => setFilter('product', e.target.value)} />
+            <TextField size="small" label="Line item contains" value={filters.lineItemSearch} onChange={(e) => setFilter('lineItemSearch', e.target.value)} />
+            <TextField size="small" label="Order total min" type="number" value={filters.orderTotalMin} onChange={(e) => setFilter('orderTotalMin', e.target.value)} />
+            <TextField size="small" label="Order total max" type="number" value={filters.orderTotalMax} onChange={(e) => setFilter('orderTotalMax', e.target.value)} />
             <FormControl size="small" fullWidth>
               <InputLabel id="orders-filter-status">Status</InputLabel>
               <Select
                 labelId="orders-filter-status"
                 label="Status"
-                value={statusFilter}
-                onChange={(e) => { setPageIdx(0); setStatusFilter(e.target.value) }}
+                value={filters.statusFilter}
+                onChange={(e) => setFilter('statusFilter', e.target.value)}
               >
                 <MenuItem value=""><em>Any</em></MenuItem>
                 {ORDER_STATUSES.map((s) => (
@@ -200,8 +204,8 @@ export function OrdersPage() {
                 ))}
               </Select>
             </FormControl>
-            <TextField size="small" type="date" label="Order Date from" InputLabelProps={{ shrink: true }} value={orderDateFrom} onChange={(e) => { setPageIdx(0); setOrderDateFrom(e.target.value) }} />
-            <TextField size="small" type="date" label="Order Date to" InputLabelProps={{ shrink: true }} value={orderDateTo} onChange={(e) => { setPageIdx(0); setOrderDateTo(e.target.value) }} />
+            <TextField size="small" type="date" label="Order Date from" InputLabelProps={{ shrink: true }} value={filters.orderDateFrom} onChange={(e) => setFilter('orderDateFrom', e.target.value)} />
+            <TextField size="small" type="date" label="Order Date to" InputLabelProps={{ shrink: true }} value={filters.orderDateTo} onChange={(e) => setFilter('orderDateTo', e.target.value)} />
             <TextField
               size="small"
               label="Customers loaded"
@@ -210,8 +214,8 @@ export function OrdersPage() {
             />
           </Box>
         }
-        advancedOpen={showAdvancedFilters}
-        onToggleAdvanced={() => setShowAdvancedFilters((v) => !v)}
+        advancedOpen={filters.advanced === '1'}
+        onToggleAdvanced={() => setFilter('advanced', filters.advanced === '1' ? '' : '1')}
         resultCount={total}
         onClearFilters={clearFilters}
       />

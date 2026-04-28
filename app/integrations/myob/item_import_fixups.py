@@ -6,7 +6,8 @@ from typing import Any
 
 # MYOB item "- ROLLS" / "Used for Quotes": incorrectly flagged IsBought in MYOB; treat as manufactured.
 QUOTE_ROLL_PLACEHOLDER_ITEM_UID = "c305b11b-562f-4584-b934-9d562f97f458"
-
+QUOTE_1000_PLACEHOLDER_ITEM_UID = "74484949-0dee-4a96-8cf5-5600b9debd2e"
+QUOTE_UNITS_PLACEHOLDER_ITEM_UID = "cff3d735-1b04-4cec-9e49-443baa405bc9"
 
 def normalize_myob_item_json_for_order_import(
     item_json: dict[str, Any] | None,
@@ -23,5 +24,9 @@ def normalize_myob_item_json_for_order_import(
     uid = (item_uid or out.get("UID") or "")
     uid_s = str(uid).strip().lower()
     if uid_s == QUOTE_ROLL_PLACEHOLDER_ITEM_UID.lower():
+        out["IsBought"] = False
+    elif uid_s == QUOTE_1000_PLACEHOLDER_ITEM_UID.lower():
+        out["IsBought"] = False
+    elif uid_s == QUOTE_UNITS_PLACEHOLDER_ITEM_UID.lower():
         out["IsBought"] = False
     return out

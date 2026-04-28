@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link as RouterLink, useSearchParams } from 'react-router-dom'
 import { Alert, Box, Button, Link, Paper, Stack, TextField, Typography } from '@mui/material'
-import { apiFetch } from '../../api/client'
+import { ApiError, apiFetch } from '../../api/client'
 import { AdminPageHeader } from './components/AdminPageHeader'
 
 type MyobStatus = {
@@ -112,6 +112,27 @@ type MyobImportPipelineResult = {
   orders: MyobImportAllResult | MyobImportFromListResult
 }
 
+type MyobPipelineStartResponse = {
+  job_id: string
+  status_path: string
+}
+
+/** ``GET /api/myob/import/jobs/{job_id}`` while a background pipeline runs. */
+type MyobImportJobStatus = {
+  job_id: string
+  status: 'running' | 'completed' | 'failed'
+  phase: 'customers' | 'item_cache' | 'orders' | 'done'
+  message: string
+  orders_mode: 'all' | 'page'
+  orders_top: number
+  orders_skip: number
+  created_at: string
+  updated_at: string
+  partial: Record<string, unknown>
+  result: MyobImportPipelineResult | null
+  error: string | null
+}
+
 export function MyobAdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<MyobStatus | null>(null)
@@ -141,6 +162,8 @@ export function MyobAdminPage() {
   const [itemUomSummary, setItemUomSummary] = useState<MyobItemUomSummary | null>(null)
   const [itemUomRebuildResult, setItemUomRebuildResult] = useState<MyobItemUomRebuildResult | null>(null)
   const [pipelineResult, setPipelineResult] = useState<MyobImportPipelineResult | null>(null)
+  const [pipelineJob, setPipelineJob] = useState<MyobImportJobStatus | null>(null)
+  const pipelinePollRef = useRef<number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -158,6 +181,15 @@ export function MyobAdminPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    return () => {
+      if (pipelinePollRef.current !== null) {
+        window.clearInterval(pipelinePollRef.current)
+        pipelinePollRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (status?.business_id_source === 'config') return
@@ -223,6 +255,11 @@ export function MyobAdminPage() {
     setItemUomSummary(null)
     setItemUomRebuildResult(null)
     setPipelineResult(null)
+    setPipelineJob(null)
+    if (pipelinePollRef.current !== null) {
+      window.clearInterval(pipelinePollRef.current)
+      pipelinePollRef.current = null
+    }
     try {
       await apiFetch<{ ok: boolean }>('/api/myob/disconnect', { method: 'POST' })
       setCompanyFileId('')
@@ -438,6 +475,7 @@ export function MyobAdminPage() {
             `3. Import every sale order (GET …/Sale/Order, $top=${topAll} per list page until empty)`,
             '',
             'This can take many minutes and performs many API calls.',
+            'The server runs the work in the background; this page polls for status.',
           ].join('\n')
         : [
             'Run the MYOB import pipeline for one order list page?',
@@ -445,30 +483,76 @@ export function MyobAdminPage() {
             '1. Sync customers from MYOB into this app',
             '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
             `3. Import sale orders from a single list page ($top=${topPage}, $skip=${skipPage})`,
+            'The server runs the work in the background; this page polls for status.',
           ].join('\n')
     if (!window.confirm(msg)) return
+    if (pipelinePollRef.current !== null) {
+      window.clearInterval(pipelinePollRef.current)
+      pipelinePollRef.current = null
+    }
     setBusy(mode === 'all' ? 'import-pipeline-all' : 'import-pipeline-page')
     setErr(null)
     setPipelineResult(null)
+    setPipelineJob(null)
     setSyncResult(null)
     setItemUomRebuildResult(null)
     setImportBatchResult(null)
     setImportAllResult(null)
+    const body =
+      mode === 'all'
+        ? { orders: 'all' as const, orders_top: topAll, orders_skip: 0 }
+        : { orders: 'page' as const, orders_top: topPage, orders_skip: skipPage }
     try {
-      const body =
-        mode === 'all'
-          ? { orders: 'all' as const, orders_top: topAll, orders_skip: 0 }
-          : { orders: 'page' as const, orders_top: topPage, orders_skip: skipPage }
-      const data = await apiFetch<MyobImportPipelineResult>('/api/myob/import/pipeline', {
+      const start = await apiFetch<MyobPipelineStartResponse>('/api/myob/import/pipeline/start', {
         method: 'POST',
         body: JSON.stringify(body),
       })
-      setPipelineResult(data)
-      await doLoadItemUomSummary()
+      const jobId = start.job_id
+
+      const finish = () => {
+        if (pipelinePollRef.current !== null) {
+          window.clearInterval(pipelinePollRef.current)
+          pipelinePollRef.current = null
+        }
+        setBusy(null)
+      }
+
+      const pollOnce = async () => {
+        try {
+          const st = await apiFetch<MyobImportJobStatus>(`/api/myob/import/jobs/${encodeURIComponent(jobId)}`)
+          setPipelineJob(st)
+          if (st.status === 'completed') {
+            finish()
+            if (st.result) setPipelineResult(st.result)
+            await doLoadItemUomSummary()
+          } else if (st.status === 'failed') {
+            finish()
+            setErr(st.error || st.message || 'MYOB import pipeline failed')
+          }
+        } catch (e) {
+          finish()
+          setErr(e instanceof Error ? e.message : 'MYOB import job poll failed')
+        }
+      }
+
+      await pollOnce()
+      pipelinePollRef.current = window.setInterval(() => void pollOnce(), 1500)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'MYOB import pipeline failed')
-    } finally {
       setBusy(null)
+      if (e instanceof ApiError && e.status === 409) {
+        const d = e.body?.detail
+        const msg =
+          typeof d === 'object' && d !== null && 'message' in d && typeof (d as { message: unknown }).message === 'string'
+            ? (d as { message: string }).message
+            : e.message
+        const rj =
+          typeof d === 'object' && d !== null && 'running_job' in d ? (d as { running_job: unknown }).running_job : null
+        setErr(
+          `${msg}${rj != null ? ` ${typeof rj === 'string' ? rj : JSON.stringify(rj)}` : ''}`,
+        )
+      } else {
+        setErr(e instanceof Error ? e.message : 'MYOB import pipeline failed to start')
+      }
     }
   }
 
@@ -558,6 +642,34 @@ export function MyobAdminPage() {
           {err}
         </Alert>
       )}
+      {pipelineJob && pipelineJob.status === 'running' ? (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            MYOB import pipeline (background)
+          </Typography>
+          <Typography variant="body2">{pipelineJob.message}</Typography>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+            Phase: <code>{pipelineJob.phase}</code> · job <code>{pipelineJob.job_id}</code>
+          </Typography>
+          {Object.keys(pipelineJob.partial).length > 0 ? (
+            <Paper
+              variant="outlined"
+              sx={{
+                mt: 1,
+                p: 1,
+                maxHeight: 200,
+                overflow: 'auto',
+                bgcolor: 'action.hover',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                fontSize: 11,
+              }}
+              component="pre"
+            >
+              {JSON.stringify(pipelineJob.partial, null, 2)}
+            </Paper>
+          ) : null}
+        </Alert>
+      ) : null}
       {importOneResult ? (
         <Alert severity="success" sx={{ mb: 2 }}>
           Order imported. MYOB UID {importOneResult.myob_order_uid} — {importOneResult.lines_synced} line(s) synced. Job
@@ -771,8 +883,10 @@ export function MyobAdminPage() {
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                   Runs in order: (1) sync customers from MYOB, (2) rebuild the local item UOM cache (full{' '}
-                  <code>Inventory/Item</code> list and income accounts), (3) import sale orders. Equivalent to running
-                  those three steps manually — use after a fresh database or reconnect.
+                  <code>Inventory/Item</code> list and income accounts), (3) import sale orders. Work runs on a{' '}
+                  <strong>background thread</strong> so the API stays responsive; this page polls for phase updates.
+                  (Job state is kept in server memory per process — use a single worker or sticky sessions if you scale
+                  horizontally.)
                 </Typography>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
                   <Button

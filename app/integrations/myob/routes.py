@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -19,6 +19,7 @@ from app.integrations.myob.item_selling_uom_cache import (
     rebuild_myob_item_selling_uom_cache,
 )
 from app.integrations.myob.order_import import import_one_myob_sale_order
+from app.integrations.myob.myob_import_job import get_import_job, start_import_job
 from app.integrations.myob.myob_import_pipeline import run_myob_import_pipeline
 from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
 from app.integrations.myob.service import (
@@ -267,6 +268,30 @@ class MyobImportPipelineBody(BaseModel):
     )
 
 
+class MyobImportPipelineStartResponse(BaseModel):
+    """Returned immediately when a background import job is queued."""
+
+    job_id: str = Field(..., description="Poll ``GET /api/myob/import/jobs/{job_id}`` until ``status`` is terminal.")
+    status_path: str = Field(..., description="Relative URL path for polling this job.")
+
+
+class MyobImportJobStatusDTO(BaseModel):
+    """Background MYOB import job state (in-memory on this server worker)."""
+
+    job_id: str
+    status: Literal["running", "completed", "failed"]
+    phase: Literal["customers", "item_cache", "orders", "done"]
+    message: str
+    orders_mode: Literal["all", "page"]
+    orders_top: int
+    orders_skip: int
+    created_at: str
+    updated_at: str
+    partial: dict[str, Any] = Field(default_factory=dict, description="Per-step summaries while running.")
+    result: dict[str, Any] | None = Field(None, description="Full pipeline outcome when ``status`` is ``completed``.")
+    error: str | None = Field(None, description="Set when ``status`` is ``failed``.")
+
+
 class MyobSaleOrderFetchBody(BaseModel):
     """Fetch one sale order document. Prefer ``order_uri`` from a list row when MYOB provides it."""
 
@@ -344,6 +369,47 @@ async def myob_import_pipeline(_identity: SysAdminIdentity, body: MyobImportPipe
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
         except MyobApiError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.post("/import/pipeline/start", dependencies=[Depends(csrf_protect())])
+async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImportPipelineBody):
+    """
+    Queue the same import pipeline as ``POST /import/pipeline`` on a **background thread** and return a ``job_id``.
+
+    Poll ``GET /api/myob/import/jobs/{job_id}`` for ``phase`` / ``message`` updates; when ``status`` is ``completed`` or
+    ``failed``, read ``result`` or ``error``. Only one import may run at a time **per server process**; if another job
+    is active, returns **409** with the running job snapshot in the response body.
+    """
+    del _identity
+    if not myob_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MYOB is not configured (set MYOB_APP_KEY and MYOB_APP_SECRET).",
+        )
+    job_id, conflict = start_import_job(
+        orders=body.orders,
+        orders_top=body.orders_top,
+        orders_skip=body.orders_skip,
+    )
+    if job_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Another MYOB import pipeline is already running on this server worker.",
+                "running_job": conflict,
+            },
+        )
+    return MyobImportPipelineStartResponse(job_id=job_id, status_path=f"/api/myob/import/jobs/{job_id}")
+
+
+@router.get("/import/jobs/{job_id}", response_model=MyobImportJobStatusDTO)
+async def myob_import_job_status(_identity: SysAdminIdentity, job_id: str):
+    """Poll background import job status (same worker that started the job must handle polls when using multiple workers)."""
+    del _identity
+    row = get_import_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown import job id.")
+    return MyobImportJobStatusDTO(**row)
 
 
 @router.post("/customers/sync", dependencies=[Depends(csrf_protect())])

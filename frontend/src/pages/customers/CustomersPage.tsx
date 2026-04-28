@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppSelector } from '../../store/hooks'
 import { useAppDispatch } from '../../store/hooks'
 import { can } from '../../auth/permissions'
 import { fetchCustomers } from '../../store/slices/customersSlice'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
+import { useCustomersListUrlSync } from '../../hooks/urlSearchParamsSync'
 import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
 import { Alert, Box, Button, Table, TableBody, TableCell, TableHead, TableRow, Typography, Link as MuiLink } from '@mui/material'
 
@@ -14,9 +15,8 @@ export function CustomersPage() {
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const canCreateOrder = can(roles, 'SALES', 'PROD_MANAGER')
 
-  const [searchInput, setSearchInput] = useState('')
+  const { searchInput, setSearchInput, pageIdx, setPageIdx, writeUrl } = useCustomersListUrlSync()
   const debouncedQ = useDebouncedValue(searchInput, 300)
-  const [pageIdx, setPageIdx] = useState(0)
 
   const items = useAppSelector((s) => s.customers.list.items)
   const total = useAppSelector((s) => s.customers.list.total)
@@ -30,7 +30,11 @@ export function CustomersPage() {
 
   useLayoutEffect(() => {
     setPageIdx(0)
-  }, [debouncedQ])
+  }, [debouncedQ, setPageIdx])
+
+  useEffect(() => {
+    writeUrl(debouncedQ, pageIdx)
+  }, [debouncedQ, pageIdx, writeUrl])
 
   useEffect(() => {
     void dispatch(

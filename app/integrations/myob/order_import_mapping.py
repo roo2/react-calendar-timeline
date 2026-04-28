@@ -19,25 +19,21 @@ from app.integrations.myob.item_selling_uom_cache import (
     is_sold_from_item_json,
 )
 
-# Income accounts that classify a bought MYOB line as outsourced manufacturing (resell catalog).
-OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS: frozenset[str] = frozenset(
-    {
-        "613ed84d-3545-462e-83f7-a5c83dc80605",  # 4-0003 Income - Sales - Outsoured - Manufacturing
-        "fd93417d-f1e2-4c09-8697-b177a04176f4",  # 4-0007 Income - Resale - Imported items (not inc cores) (CP & AP)
-    }
-)
 # MYOB ``IncomeAccount.DisplayID`` values (company file may use different UIDs than above).
 OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_DISPLAY_IDS: frozenset[str] = frozenset(
     {
+        "4-0002", # Income - Sales - Manufactured (CP & AP) (this should only be used for in-house manufacturing but that's not always the case)
+        "4-0003",
+        "4-0007",
+        "4-0009",
         "4-1112",
         "4-1111",
+        "4-1110",
         "4-0008",
         "4-1113",
         "5-0010",
     }
 )
-# Backwards compat for tests / callers that only referenced the original outsourced account.
-OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID = "613ed84d-3545-462e-83f7-a5c83dc80605"
 
 
 def _str_norm(x: Any) -> str:
@@ -188,8 +184,7 @@ def myob_resell_catalog_kind(item_json: dict[str, Any] | None) -> str:
     income = item_json.get("IncomeAccount") if isinstance(item_json, dict) else None
     inc_uid = str((income or {}).get("UID") or "").strip().lower() if isinstance(income, dict) else ""
     disp = _income_display_id_from_item_json(item_json)
-    uid_ok = inc_uid in OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UIDS
     display_ok = bool(disp) and disp in OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_DISPLAY_IDS
-    if not uid_ok and not display_ok:
+    if not display_ok:
         return "supply"
     return "outsourced_manufacturing"

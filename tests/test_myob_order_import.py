@@ -34,7 +34,6 @@ from app.integrations.myob import service as myob_service
 from app.integrations.myob.order_import import import_one_myob_sale_order
 from app.integrations.myob.item_import_fixups import QUOTE_ROLL_PLACEHOLDER_ITEM_UID
 from app.integrations.myob.order_import_mapping import (
-    OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID,
     map_myob_item_to_app_quantity,
     myob_resell_catalog_kind,
 )
@@ -408,7 +407,7 @@ def test_myob_resell_catalog_kind_classifies_outsourced_manufacturing():
         "IsBought": True,
         "IsSold": True,
         "IsInventoried": False,
-        "IncomeAccount": {"UID": OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID},
+        "IncomeAccount": {"DisplayID": "4-0003"},
     }
     assert myob_resell_catalog_kind(sample) == "outsourced_manufacturing"
     assert (
@@ -474,7 +473,7 @@ def _item_fetch_outsourced_roll():
                 "IsBought": True,
                 "IsSold": True,
                 "IsInventoried": False,
-                "IncomeAccount": {"UID": OUTSOURCED_MANUFACTURING_INCOME_ACCOUNT_UID},
+                "IncomeAccount": {"DisplayID": "4-0003"},
                 "SellingDetails": {"SellingUnitOfMeasure": "ROLL", "IsTaxInclusive": False},
             }
         return {}

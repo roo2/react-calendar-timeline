@@ -26,6 +26,7 @@ import {
   Typography,
 } from '@mui/material'
 import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
+import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
 import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
@@ -34,6 +35,44 @@ const PRINT_METHODS = ['None', 'Inline', 'Uteco'] as const
 const FINISH_MODES = ['Rolls', 'Cartons'] as const
 const ORDER_STATUSES = ['Draft', 'Confirmed', 'Dispatched', 'Closed', 'Cancelled'] as const
 const PRODUCTION_STATUSES = ['Planned', 'Scheduled', 'Running', 'Dispatched', 'Cancelled'] as const
+
+const JOB_SHEET_FILTER_DEFAULTS: Record<string, string> = {
+  search: '',
+  customerId: '',
+  productType: '',
+  printed: '',
+  finishMode: '',
+  widthMin: '',
+  widthMax: '',
+  lengthMin: '',
+  lengthMax: '',
+  gaugeMin: '',
+  gaugeMax: '',
+  fromDate: '',
+  toDate: '',
+  orderStatus: '',
+  productionStatus: '',
+  advanced: '',
+}
+
+const JOB_SHEET_URL_KEYS: Record<string, string> = {
+  search: 'q',
+  customerId: 'cid',
+  productType: 'ptype',
+  printed: 'prt',
+  finishMode: 'finish',
+  widthMin: 'wmin',
+  widthMax: 'wmax',
+  lengthMin: 'lmin',
+  lengthMax: 'lmax',
+  gaugeMin: 'gmin',
+  gaugeMax: 'gmax',
+  fromDate: 'df',
+  toDate: 'dt',
+  orderStatus: 'ost',
+  productionStatus: 'pst',
+  advanced: 'adv',
+}
 function fmtQty(v: number, u: string) {
   const unit =
     u === 'kg' ? 'kg' : u === 'rolls' ? 'rolls' : u === 'bags' ? 'bags' : u === 'meters' ? 'm' : u
@@ -66,52 +105,39 @@ export function JobSheetsPage() {
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
 
-  const [search, setSearch] = useState('')
-  const [customerId, setCustomerId] = useState<string>('')
-  const [productType, setProductType] = useState<string>('')
-  const [printed, setPrinted] = useState<string>('')
-  const [finishMode, setFinishMode] = useState<string>('')
-  const [widthMin, setWidthMin] = useState('')
-  const [widthMax, setWidthMax] = useState('')
-  const [lengthMin, setLengthMin] = useState('')
-  const [lengthMax, setLengthMax] = useState('')
-  const [gaugeMin, setGaugeMin] = useState('')
-  const [gaugeMax, setGaugeMax] = useState('')
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
-  const [orderStatus, setOrderStatus] = useState('')
-  const [productionStatus, setProductionStatus] = useState('')
-  const [pageIdx, setPageIdx] = useState(0)
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const { filters, setFilter, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
+    defaults: JOB_SHEET_FILTER_DEFAULTS,
+    urlKeys: JOB_SHEET_URL_KEYS,
+  })
 
   const query = useMemo((): JobSheetListQuery => {
     const q: JobSheetListQuery = {}
-    if (customerId) q.customer_id = customerId
-    const s = search.trim()
+    if (filters.customerId) q.customer_id = filters.customerId
+    const s = filters.search.trim()
     if (s) q.search = s
-    if (productType) q.product_type = productType
-    if (printed) q.printed = printed
-    if (finishMode) q.finish_mode = finishMode
-    const wmin = parseOptionalNumber(widthMin)
-    const wmax = parseOptionalNumber(widthMax)
-    const lmin = parseOptionalNumber(lengthMin)
-    const lmax = parseOptionalNumber(lengthMax)
-    const gmin = parseOptionalNumber(gaugeMin)
-    const gmax = parseOptionalNumber(gaugeMax)
+    if (filters.productType) q.product_type = filters.productType
+    if (filters.printed) q.printed = filters.printed
+    if (filters.finishMode) q.finish_mode = filters.finishMode
+    const wmin = parseOptionalNumber(filters.widthMin)
+    const wmax = parseOptionalNumber(filters.widthMax)
+    const lmin = parseOptionalNumber(filters.lengthMin)
+    const lmax = parseOptionalNumber(filters.lengthMax)
+    const gmin = parseOptionalNumber(filters.gaugeMin)
+    const gmax = parseOptionalNumber(filters.gaugeMax)
     if (wmin !== undefined) q.width_min_mm = wmin
     if (wmax !== undefined) q.width_max_mm = wmax
     if (lmin !== undefined) q.length_min_mm = lmin
     if (lmax !== undefined) q.length_max_mm = lmax
     if (gmin !== undefined) q.gauge_min_um = gmin
     if (gmax !== undefined) q.gauge_max_um = gmax
-    if (fromDate) q.from_date = fromDate
-    if (toDate) q.to_date = toDate
-    if (orderStatus) q.order_status = orderStatus
-    if (productionStatus) q.production_status = productionStatus
+    if (filters.fromDate) q.from_date = filters.fromDate
+    if (filters.toDate) q.to_date = filters.toDate
+    if (filters.orderStatus) q.order_status = filters.orderStatus
+    if (filters.productionStatus) q.production_status = filters.productionStatus
     q.page = pageIdx + 1
     q.page_size = LIST_PAGE_SIZE
     return q
-  }, [customerId, search, productType, printed, finishMode, widthMin, widthMax, lengthMin, lengthMax, gaugeMin, gaugeMax, fromDate, toDate, orderStatus, productionStatus, pageIdx])
+  }, [filters, pageIdx])
 
   useEffect(() => {
     void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
@@ -128,25 +154,6 @@ export function JobSheetsPage() {
       setDebouncing(false)
     }
   }, [dispatch, query])
-
-  const handleClearFilters = () => {
-    setSearch('')
-    setCustomerId('')
-    setProductType('')
-    setPrinted('')
-    setFinishMode('')
-    setWidthMin('')
-    setWidthMax('')
-    setLengthMin('')
-    setLengthMax('')
-    setGaugeMin('')
-    setGaugeMax('')
-    setFromDate('')
-    setToDate('')
-    setOrderStatus('')
-    setProductionStatus('')
-    setPageIdx(0)
-  }
 
   const colCount = 9
   const searching = debouncing || loading
@@ -168,11 +175,8 @@ export function JobSheetsPage() {
       <ListFiltersCard
         title="Match past orders"
         search={{
-          value: search,
-          onChange: (v) => {
-            setPageIdx(0)
-            setSearch(v)
-          },
+          value: filters.search,
+          onChange: (v) => setFilter('search', v),
         }}
         advanced={
           <Box>
@@ -190,22 +194,16 @@ export function JobSheetsPage() {
                   size="small"
                   label="From date"
                   type="date"
-                  value={fromDate}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setFromDate(e.target.value)
-                  }}
+                  value={filters.fromDate}
+                  onChange={(e) => setFilter('fromDate', e.target.value)}
                   InputLabelProps={{ shrink: true }}
                 />
                 <TextField
                   size="small"
                   label="To date"
                   type="date"
-                  value={toDate}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setToDate(e.target.value)
-                  }}
+                  value={filters.toDate}
+                  onChange={(e) => setFilter('toDate', e.target.value)}
                   InputLabelProps={{ shrink: true }}
                 />
                 <FormControl size="small" fullWidth>
@@ -213,11 +211,8 @@ export function JobSheetsPage() {
                   <Select
                     labelId="job-sheet-filter-order-status"
                     label="Order status"
-                    value={orderStatus}
-                    onChange={(e) => {
-                      setPageIdx(0)
-                      setOrderStatus(e.target.value)
-                    }}
+                    value={filters.orderStatus}
+                    onChange={(e) => setFilter('orderStatus', e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Any</em>
@@ -234,11 +229,8 @@ export function JobSheetsPage() {
                   <Select
                     labelId="job-sheet-filter-production-status"
                     label="Production status"
-                    value={productionStatus}
-                    onChange={(e) => {
-                      setPageIdx(0)
-                      setProductionStatus(e.target.value)
-                    }}
+                    value={filters.productionStatus}
+                    onChange={(e) => setFilter('productionStatus', e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Any</em>
@@ -267,11 +259,8 @@ export function JobSheetsPage() {
                   <Select
                     labelId="job-sheet-filter-customer"
                     label="Customer"
-                    value={customerId}
-                    onChange={(e) => {
-                      setPageIdx(0)
-                      setCustomerId(e.target.value)
-                    }}
+                    value={filters.customerId}
+                    onChange={(e) => setFilter('customerId', e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Any</em>
@@ -288,11 +277,8 @@ export function JobSheetsPage() {
                   <Select
                     labelId="job-sheet-filter-product-type"
                     label="Product type"
-                    value={productType}
-                    onChange={(e) => {
-                      setPageIdx(0)
-                      setProductType(e.target.value)
-                    }}
+                    value={filters.productType}
+                    onChange={(e) => setFilter('productType', e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Any</em>
@@ -309,11 +295,8 @@ export function JobSheetsPage() {
                   <Select
                     labelId="job-sheet-filter-printed"
                     label="Printed"
-                    value={printed}
-                    onChange={(e) => {
-                      setPageIdx(0)
-                      setPrinted(e.target.value)
-                    }}
+                    value={filters.printed}
+                    onChange={(e) => setFilter('printed', e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Any</em>
@@ -330,11 +313,8 @@ export function JobSheetsPage() {
                   <Select
                     labelId="job-sheet-filter-finish-mode"
                     label="Cartons / Rolls"
-                    value={finishMode}
-                    onChange={(e) => {
-                      setPageIdx(0)
-                      setFinishMode(e.target.value)
-                    }}
+                    value={filters.finishMode}
+                    onChange={(e) => setFilter('finishMode', e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Any</em>
@@ -361,70 +341,52 @@ export function JobSheetsPage() {
                 <TextField
                   size="small"
                   label="Width min (mm)"
-                  value={widthMin}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setWidthMin(e.target.value)
-                  }}
+                  value={filters.widthMin}
+                  onChange={(e) => setFilter('widthMin', e.target.value)}
                   inputProps={{ inputMode: 'decimal' }}
                 />
                 <TextField
                   size="small"
                   label="Width max (mm)"
-                  value={widthMax}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setWidthMax(e.target.value)
-                  }}
+                  value={filters.widthMax}
+                  onChange={(e) => setFilter('widthMax', e.target.value)}
                   inputProps={{ inputMode: 'decimal' }}
                 />
                 <TextField
                   size="small"
                   label="Length min (mm)"
-                  value={lengthMin}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setLengthMin(e.target.value)
-                  }}
+                  value={filters.lengthMin}
+                  onChange={(e) => setFilter('lengthMin', e.target.value)}
                   inputProps={{ inputMode: 'decimal' }}
                 />
                 <TextField
                   size="small"
                   label="Length max (mm)"
-                  value={lengthMax}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setLengthMax(e.target.value)
-                  }}
+                  value={filters.lengthMax}
+                  onChange={(e) => setFilter('lengthMax', e.target.value)}
                   inputProps={{ inputMode: 'decimal' }}
                 />
                 <TextField
                   size="small"
                   label="Gauge min (µm)"
-                  value={gaugeMin}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setGaugeMin(e.target.value)
-                  }}
+                  value={filters.gaugeMin}
+                  onChange={(e) => setFilter('gaugeMin', e.target.value)}
                   inputProps={{ inputMode: 'decimal' }}
                 />
                 <TextField
                   size="small"
                   label="Gauge max (µm)"
-                  value={gaugeMax}
-                  onChange={(e) => {
-                    setPageIdx(0)
-                    setGaugeMax(e.target.value)
-                  }}
+                  value={filters.gaugeMax}
+                  onChange={(e) => setFilter('gaugeMax', e.target.value)}
                   inputProps={{ inputMode: 'decimal' }}
                 />
               </Box>
             </Box>
         }
-        advancedOpen={showAdvancedFilters}
-        onToggleAdvanced={() => setShowAdvancedFilters((v) => !v)}
+        advancedOpen={filters.advanced === '1'}
+        onToggleAdvanced={() => setFilter('advanced', filters.advanced === '1' ? '' : '1')}
         resultCount={total}
-        onClearFilters={handleClearFilters}
+        onClearFilters={clearFilters}
         clearDisabled={loading}
       />
 
