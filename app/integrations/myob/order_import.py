@@ -6,6 +6,7 @@ Re-import updates header fields and per-line data while preserving links to ``Jo
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, date, datetime
 from typing import Any, Callable, Literal
@@ -146,6 +147,21 @@ def derive_order_status_for_invoice_only(invoice: dict[str, Any]) -> OrderStatus
     return OrderStatus.DISPATCHED
 
 
+def derive_order_status_for_sale_order_only(myob_order: dict[str, Any]) -> OrderStatus:
+    """
+    Map sale-order status without consulting invoices.
+
+    With the open-orders pipeline, we only import ``Open`` sale orders from the order list and import invoices
+    separately. This keeps order/invoice records independent.
+    """
+    st = str(myob_order.get("Status") or "").strip().lower()
+    if st in ("", "open"):
+        return OrderStatus.CONFIRMED
+    if st == "convertedtoinvoice":
+        return OrderStatus.DISPATCHED
+    return OrderStatus.CONFIRMED
+
+
 def _invoice_match_key(doc: dict[str, Any]) -> tuple[str, str]:
     number = str(doc.get("Number") or "").strip()
     cpo = str(doc.get("CustomerPurchaseOrderNumber") or "").strip()
@@ -217,12 +233,29 @@ def _is_credit_note_like_order(myob_order: dict[str, Any]) -> bool:
     return False
 
 
+# Pallets, cores, skids, etc.: sold as add-ons / resupply; no in-house production job sheet on import.
+_RESUPPLY_ITEM_RE = re.compile(
+    r"\b(PALLET|SKID|CORES?|DOLLY|SHIPPING\s+PALLET)\b",
+    re.IGNORECASE,
+)
+
+
+def _myob_item_looks_like_resell_supply(*, myob_item: dict | None) -> bool:
+    if not myob_item:
+        return False
+    name = str(myob_item.get("Name") or "")
+    num = str(myob_item.get("Number") or "")
+    return bool(_RESUPPLY_ITEM_RE.search(f"{name} {num}"))
+
+
 def _requires_job_sheet_for_line(*, myob_item: dict | None, line: dict) -> bool:
     if not myob_item or not myob_item.get("UID"):
         return False
     name = str(myob_item.get("Name") or "").strip().upper()
     num = str(myob_item.get("Number") or "").strip().upper()
     desc = str(line.get("Description") or "")
+    if _myob_item_looks_like_resell_supply(myob_item=myob_item):
+        return False
     if num == "PLAIN PALLET" or name == "PLAIN PALLET":
         return False
     if "PALLET" in name and "CHARGE" in (desc or "").upper():
@@ -393,20 +426,10 @@ def import_one_myob_sale_order(
 
     invoice_for_status: dict[str, Any] | None = None
     associated_invoices: list[dict[str, Any]] = []
-    if source_document == "order" and number_s:
-        if invoices is not None:
-            associated_invoices = find_associated_invoices_for_order(myob_order, invoices)
-            invoice_for_status = associated_invoices[0] if associated_invoices else None
-        elif str(myob_order.get("Status") or "").strip().lower() == "convertedtoinvoice":
-            from app.integrations.myob.service import fetch_sale_invoice_item_by_number_readonly
-
-            invoice_for_status = fetch_sale_invoice_item_by_number_readonly(
-                db,
-                number=number_s,
-                customer_purchase_order_number=customer_po_number,
-            )
-            if isinstance(invoice_for_status, dict):
-                associated_invoices = [invoice_for_status]
+    if source_document == "order":
+        # Sale orders are imported independently from invoices now.
+        invoice_for_status = None
+        associated_invoices = []
     elif source_document == "invoice":
         invoice_for_status = myob_order
         associated_invoices = [myob_order]
@@ -414,7 +437,7 @@ def import_one_myob_sale_order(
     derived_status = (
         derive_order_status_for_invoice_only(myob_order)
         if source_document == "invoice"
-        else derive_order_status_for_myob_import(myob_order, invoice_for_status)
+        else derive_order_status_for_sale_order_only(myob_order)
     )
 
     if item_fetch is None:
@@ -458,6 +481,7 @@ def import_one_myob_sale_order(
             status=derived_status,
             order_date=order_date,
             customer_purchase_order_number=customer_po_number,
+            import_review_status="incomplete",
         )
         db.add(order)
         db.flush()
@@ -480,7 +504,7 @@ def import_one_myob_sale_order(
         db.add(order)
         db.flush()
 
-    lines_source = invoice_for_status if isinstance(invoice_for_status, dict) else myob_order
+    lines_source = myob_order
     lines = lines_source.get("Lines") if isinstance(lines_source, dict) else None
     if not isinstance(lines, list):
         lines = []
@@ -821,15 +845,11 @@ def import_one_myob_sale_order(
         "myob_order_uid": myob_uid,
         "myob_all_job_sheets_entered": all_js,
         "lines_synced": n_lines,
-        "line_items_source": "invoice" if isinstance(invoice_for_status, dict) else "order",
+        "line_items_source": "order" if source_document == "order" else "invoice",
         "source_document": source_document,
         "app_order_status": derived_status.value,
         "myob_sale_order_status": str(myob_order.get("Status") or ""),
-        "myob_invoice_status": str(invoice_for_status.get("Status") or "")
-        if isinstance(invoice_for_status, dict)
-        else None,
+        "myob_invoice_status": str(invoice_for_status.get("Status") or "") if isinstance(invoice_for_status, dict) else None,
         "fulfillment_partial": part,
-        "matched_invoice_uid": str(invoice_for_status.get("UID") or "").strip()
-        if isinstance(invoice_for_status, dict) and invoice_for_status.get("UID")
-        else None,
+        "matched_invoice_uid": None,
     }

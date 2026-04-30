@@ -44,6 +44,9 @@ import {
 } from '@mui/material'
 import { UnsavedChangesProvider } from './contexts/UnsavedChangesContext'
 
+/** Main nav + content + footer max width (default MUI `lg` Container is 1200px). */
+const APP_MAIN_MAX_WIDTH_PX = 1400
+
 const ResinsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ResinsAdminPage')).ResinsAdminPage }))
 const ExtrusionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ExtrusionAdminPage')).ExtrusionAdminPage }))
 const ConversionAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ConversionAdminPage')).ConversionAdminPage }))
@@ -127,7 +130,7 @@ function App() {
     <>
       <AppBar position="sticky" color="inherit" elevation={1}>
         <Toolbar>
-          <Container maxWidth="lg" disableGutters>
+          <Container maxWidth={false} disableGutters sx={{ maxWidth: APP_MAIN_MAX_WIDTH_PX, mx: 'auto', width: '100%' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexGrow: 1 }}>
                 <Typography variant="body2" color="text.secondary">
@@ -195,11 +198,11 @@ function App() {
         }}
       >
         <Container
-          maxWidth={scheduleFullWidth ? false : 'lg'}
+          maxWidth={false}
           sx={
             scheduleFullWidth
               ? { px: { xs: 1, sm: 1.5, md: 2 }, width: '100%', maxWidth: '100%', boxSizing: 'border-box' }
-              : undefined
+              : { maxWidth: APP_MAIN_MAX_WIDTH_PX, mx: 'auto' }
           }
         >
           <UnsavedChangesProvider>
@@ -338,7 +341,7 @@ function App() {
           </UnsavedChangesProvider>
         </Container>
 
-        <Container maxWidth="lg" sx={{ mt: 6 }}>
+        <Container maxWidth={false} sx={{ maxWidth: APP_MAIN_MAX_WIDTH_PX, mx: 'auto', mt: 6 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary">
               © CrownPack — Built for manufacturing excellence

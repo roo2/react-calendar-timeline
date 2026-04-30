@@ -81,6 +81,15 @@ function isoToDatetimeLocalValue(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/** Internal placeholder `Product` row for MYOB import–linked draft job sheets. */
+const MYOB_IMPORT_PLACEHOLDER_DESC_RE = /^placeholder for myob import draft job sheets$/i
+
+function hideMyobProductPlaceholderText(s: string | null | undefined): string {
+  const t = String(s ?? '').trim()
+  if (!t) return ''
+  return MYOB_IMPORT_PLACEHOLDER_DESC_RE.test(t) ? '' : t
+}
+
 /** `datetime-local` (interpreted as local) → ISO UTC string, or null if empty. */
 function datetimeLocalToIsoUtc(s: string): string | null {
   const t = s.trim()
@@ -159,6 +168,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const [specFieldErrors, setSpecFieldErrors] = useState<Record<string, string>>({})
+  const [customerFacingDescription, setCustomerFacingDescription] = useState('')
 
   useEffect(() => {
     if (customersStatus !== 'idle') return
@@ -222,6 +232,15 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setInvoiceNo(js?.invoice_no ?? '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setOrderId(js?.order_id ? String(js.order_id) : '')
+    const importLineDesc =
+      res && typeof (res as { myob_import_line_description?: string }).myob_import_line_description === 'string'
+        ? String((res as { myob_import_line_description?: string }).myob_import_line_description).trim()
+        : ''
+    const dbCustFacingDesc =
+      js?.customer_facing_description != null && String(js.customer_facing_description).trim()
+        ? String(js.customer_facing_description).trim()
+        : ''
+    setCustomerFacingDescription(dbCustFacingDesc || importLineDesc)
     const rawPs =
       js?.production_status != null && String(js.production_status).trim() !== ''
         ? String(js.production_status).trim().toLowerCase()
@@ -325,6 +344,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionStatus('planned')
     setProductionStartedLocal('')
     setProductionFinishedLocal('')
+    setCustomerFacingDescription('')
     prevFinishModeForCartonWprRef.current = 'Rolls'
   }, [customerId, mode])
 
@@ -381,8 +401,13 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const jobSheetPrintingContext: JobSheetPrintingContext = useMemo(() => {
     const c = customers.find((x) => x.id === customerId)
     const customerLabel = (c?.name || '').trim() || '—'
-    const productDescription =
-      previewDescription.trim() || (productInfo?.description && String(productInfo.description).trim()) || '—'
+    const importLine = (jobSheetDetail?.data as { myob_import_line_description?: string } | null | undefined)
+      ?.myob_import_line_description
+    const fromImport = typeof importLine === 'string' && importLine.trim() ? importLine.trim() : ''
+    const fromSpec = hideMyobProductPlaceholderText(previewDescription)
+    const fromInfo = mode === 'edit' ? hideMyobProductPlaceholderText((productInfo?.description as string | null | undefined) || '') : ''
+    const fromUser = (customerFacingDescription || '').trim()
+    const productDescription = fromUser || fromImport || (fromSpec || fromInfo) || '—'
     return {
       customerLabel,
       productDescription,
@@ -391,7 +416,19 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       dueDateLabel: dueDate.trim() || '—',
       totalMetersLabel: totalMetersReadonly,
     }
-  }, [customers, customerId, previewDescription, productInfo, orderId, orderDate, dueDate, totalMetersReadonly])
+  }, [
+    customers,
+    customerId,
+    customerFacingDescription,
+    jobSheetDetail?.data,
+    mode,
+    previewDescription,
+    productInfo,
+    orderId,
+    orderDate,
+    dueDate,
+    totalMetersReadonly,
+  ])
 
   const derivedDisplay = derivedForDisplay
     ? {
@@ -539,6 +576,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     return raw.trim()
   }, [jobSheetDetail?.data?.myob_import_line_description])
 
+  const displayProductCode =
+    (previewProductCode.trim() || (mode === 'edit' ? (productInfo?.code || '').trim() : '')).trim() || '—'
+  const previewDescriptionForPanel = hideMyobProductPlaceholderText(previewDescription)
+
   async function onSave() {
     setSaveMsg(null)
     setSaveErr(null)
@@ -551,13 +592,17 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       setSaveErr(`Missing required fields: ${missing.join(', ')}`)
       return
     }
+    const totalKgForScheduling =
+      finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
+        ? Number(totalKgDisplay)
+        : totalKgNum
     const qtyErr = validateJobSheetQuantityInputs(
       finishMode,
       effectiveQtyType,
-      totalKgNum,
+      totalKgForScheduling,
       numUnitsNum,
       numRollsNum,
-      finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgNum, numRollsNum) ?? 0) : weightPerRollNum,
+      finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
       unitsPerRollNum,
     )
     if (qtyErr) {
@@ -582,7 +627,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       const persistedWpr = resolveWeightPerRollForPersistence(
         finishMode,
         effectiveQtyType,
-        totalKgNum,
+        totalKgForScheduling,
         numRollsNum,
         weightPerRollNum,
         derivedDisplay,
@@ -592,7 +637,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       const oq = getOrderQuantityFromJobSheetFields(
         effectiveQtyType,
         fallbackLegacy,
-        totalKgNum,
+        totalKgForScheduling,
         numUnitsNum,
         persistedRolls,
         finishMode,
@@ -670,6 +715,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             production_status: productionStatus,
             production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
             production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
+            ...(customerFacingDescription.trim()
+              ? { customer_facing_description: customerFacingDescription.trim() }
+              : {}),
           }),
         ).unwrap()
         const id = res?.job_sheet?.id
@@ -700,6 +748,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           production_status: productionStatus,
           production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
           production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
+          customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
         }
         if (specDirty) body.spec = spec
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
@@ -907,17 +956,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           {...jobSheetQuantityFieldsProps}
           productRow={
             <Box>
-              <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.5 }}>
-                {mode === 'new' ? 'Customer-facing product code (generated)' : 'Product'}
-              </Typography>
-              <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-word' }}>
-                {previewProductCode.trim() || (mode === 'edit' ? productInfo?.code?.trim() : '') || '—'}
-              </Typography>
-              {(previewDescription.trim() || (mode === 'edit' ? (productInfo?.description || '').trim() : '')) ? (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  {previewDescription.trim() || productInfo?.description}
+              <Box>
+                <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.5 }}>
+                  {mode === 'new' ? 'Customer-facing product code (generated)' : 'Customer-facing product code'}
                 </Typography>
-              ) : null}
+                <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-word' }}>
+                  {displayProductCode}
+                </Typography>
+              </Box>
               {mode === 'edit' && productId ? (
                 <MuiLink
                   component={Link}
@@ -942,8 +988,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             orderDate={orderDate}
             dueDate={dueDate}
             productCode={previewProductCode}
-            description={previewDescription}
+            description={previewDescriptionForPanel}
             myobImportLineDescription={myobImportLineDescription}
+            customerFacingDescription={customerFacingDescription}
           />
         ) : null}
 
@@ -958,6 +1005,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               printingSurface="job_sheet_summary"
               printingArtworkScope={mode === 'edit' && jobSheetId ? { kind: 'job_sheet', jobSheetId } : null}
               jobSheetPrintingContext={jobSheetPrintingContext}
+              customerFacingDescription={customerFacingDescription}
+              onCustomerFacingDescriptionChange={(v) => {
+                setCustomerFacingDescription(v)
+                setDirty(true)
+              }}
+              customerFacingDescriptionPlaceholder={previewDescriptionForPanel}
               value={spec}
               fieldErrors={specFieldErrors}
               onChange={(next) => {
@@ -992,8 +1045,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               orderDate={orderDate}
               dueDate={dueDate}
               productCode={previewProductCode}
-              description={previewDescription}
+              description={previewDescriptionForPanel}
               myobImportLineDescription={myobImportLineDescription}
+              customerFacingDescription={customerFacingDescription}
             />
           </StickySideAside>
         ) : null}

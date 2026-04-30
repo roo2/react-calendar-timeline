@@ -6,7 +6,7 @@ export function StickySideAside({ children }: { children: ReactNode }) {
   return (
     <Box
       sx={{
-        width: 380,
+        width: 480,
         flex: '0 0 auto',
         position: 'sticky',
         top: { xs: 72, sm: 80 },

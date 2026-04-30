@@ -25,6 +25,8 @@ export type OrderRow = {
   /** MYOB resell line_kind counts (outsourced vs supply catalog). */
   resell_outsourced_line_count?: number
   resell_supply_line_count?: number
+  /** Staff QA after import: incomplete | complete */
+  import_review_status?: 'incomplete' | 'complete' | null
 }
 
 export type OrdersBootstrapCustomer = { id: string; name: string }
@@ -408,6 +410,18 @@ const slice = createSlice({
     b.addCase(publishOrder.fulfilled, (s, a) => {
       const { orderId, order } = a.payload
       mergeOrderDetail(s, orderId, 'succeeded', null, order)
+    })
+
+    b.addCase(patchOrder.fulfilled, (s, a) => {
+      const id = a.meta.arg.orderId
+      const row = s.list.items.find((x) => x.id === id)
+      if (!row) return
+      const body = a.meta.arg.body
+      if (Object.prototype.hasOwnProperty.call(body, 'import_review_status')) {
+        const v = body.import_review_status as string | null | undefined
+        row.import_review_status =
+          v === 'complete' || v === 'incomplete' ? (v as 'complete' | 'incomplete') : null
+      }
     })
   },
 })

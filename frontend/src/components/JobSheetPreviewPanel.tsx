@@ -4,8 +4,10 @@ import { Link } from 'react-router-dom'
 export function JobSheetPreviewPanel(props: {
   productCode: string
   description: string
-  /** Original MYOB line description when completing an import draft job sheet. */
+  /** Original import / MYOB line text (order line). */
   myobImportLineDescription?: string | null
+  /** Optional override entered on the job sheet. */
+  customerFacingDescription?: string | null
   /** When false, hide invoice / order date / due date (e.g. product spec editor sidebar). */
   showJobFields?: boolean
   /** Job sheet job number (e.g. CUST_1); shown when editing an existing job sheet. */
@@ -20,6 +22,7 @@ export function JobSheetPreviewPanel(props: {
     productCode,
     description,
     myobImportLineDescription = '',
+    customerFacingDescription = '',
     showJobFields = true,
     jobCode = '',
     jobSheetId = null,
@@ -28,10 +31,11 @@ export function JobSheetPreviewPanel(props: {
     dueDate = '',
   } = props
   const dash = '—'
+  const user = String(customerFacingDescription || '').trim()
   const myob = String(myobImportLineDescription || '').trim()
   const specDesc = String(description || '').trim()
-  /** Prefer original MYOB line text when the job sheet was created from an import. */
-  const lineDescription = myob || specDesc
+  const effective = (user || myob || specDesc).trim()
+  const showSpecSecondary = Boolean(specDesc && specDesc !== effective)
   const sheetId = jobSheetId != null && String(jobSheetId).trim() ? String(jobSheetId).trim() : ''
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
@@ -107,19 +111,13 @@ export function JobSheetPreviewPanel(props: {
         ) : null}
         <div>
           <Typography variant="caption" color="text.secondary" display="block">
-            {myob ? (
-              <>
-                Line description <Box component="span" sx={{ color: 'text.disabled' }}>(from MYOB)</Box>
-              </>
-            ) : (
-              'Description'
-            )}
+            Customer-facing description
           </Typography>
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {lineDescription ? lineDescription : dash}
+            {effective ? effective : dash}
           </Typography>
         </div>
-        {myob && specDesc && specDesc !== myob ? (
+        {showSpecSecondary ? (
           <div>
             <Typography variant="caption" color="text.secondary" display="block">
               From product spec

@@ -194,6 +194,70 @@ def test_import_one_order_creates_rows_and_pallet_does_not_require_job_sheet():
     assert res2["order_id"] == res["order_id"]
 
 
+def test_import_core_like_item_name_suppresses_job_sheet_when_not_resell():
+    """Manufactured import lines that look like pallets/cores/skids skip draft job sheets."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(
+        id=str(uuid.uuid4()),
+        name="SANOFI (test)",
+        myob_customer_uid="4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+    )
+    db.add(cust)
+    db.commit()
+
+    core_uid = str(uuid.uuid4())
+    order = {
+        "UID": str(uuid.uuid4()),
+        "Number": "CORE-JS-1",
+        "Date": "2026-01-20T00:00:00",
+        "LastModified": "2026-01-20T00:48:40.333",
+        "Customer": {
+            "UID": "4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+            "Name": "SANOFI-AVENTIS HEALTHCARE PTY LTD - Code 2646",
+        },
+        "Lines": [
+            {
+                "RowID": 9001,
+                "Type": "Transaction",
+                "Description": "Steel core",
+                "ShipQuantity": 3.0,
+                "UnitPrice": 12.0,
+                "Total": 36.0,
+                "Item": {
+                    "UID": core_uid,
+                    "Number": "CORE-RTN",
+                    "Name": "Returnable steel core",
+                    "URI": f"https://api.myob.com/accountright/x/Inventory/Item/{core_uid}",
+                },
+            },
+        ],
+    }
+
+    def fetch(uri: str | None, fetched_uid: str | None) -> dict:
+        u = (fetched_uid or "").lower()
+        if u == core_uid.lower():
+            return {
+                "UID": core_uid,
+                "IsBought": False,
+                "IsSold": True,
+                "SellingDetails": {"SellingUnitOfMeasure": "EA"},
+            }
+        return {}
+
+    res = import_one_myob_sale_order(db, myob_order=order, item_fetch=fetch)
+    assert res["ok"] is True
+    oi = db.scalar(select(OrderItem).where(OrderItem.order_id == str(res["order_id"])))
+    assert oi is not None
+    assert oi.line_kind == "myob_import"
+    assert oi.import_requires_job_sheet is False
+    assert oi.job_sheet_id is None
+
+
 def test_import_skips_credit_note_like_negative_price_order():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -820,7 +884,7 @@ def test_derive_order_status_converted_invoice_closed_partial_still_closed():
     assert derive_order_status_for_myob_import(order, invoice) == OrderStatus.CLOSED
 
 
-def test_import_uses_invoice_lines_when_matching_invoice_exists():
+def test_import_uses_sale_order_lines_when_source_is_sale_order():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     Sess = sessionmaker(bind=engine)
@@ -837,51 +901,30 @@ def test_import_uses_invoice_lines_when_matching_invoice_exists():
     db.refresh(cust)
 
     order_payload = dict(SAMPLE_MYOB_ORDER)
-    order_payload["Status"] = "ConvertedToInvoice"
-    invoice_payload = {
-        "Number": order_payload["Number"],
-        "CustomerPurchaseOrderNumber": order_payload["CustomerPurchaseOrderNumber"],
-        "Status": "Open",
-        "Lines": [
-            {
-                "RowID": 9001,
-                "Type": "Transaction",
-                "Description": "ANTI -STATIC",
-                "ShipQuantity": 12.0,
-                "UnitPrice": 64.3,
-                "Total": 771.6,
-                "Item": {
-                    "UID": "951c35aa-9f4c-4acd-aae1-802d6d11be36",
-                    "Number": "S25035",
-                    "Name": "SANOFI",
-                },
-            }
-        ],
-    }
+    order_payload["Status"] = "Open"
 
     f = _item_fetch("951c35aa-9f4c-4acd-aae1-802d6d11be36", "4d3e1150-452d-47fc-a1ef-4561fba93cc3")
     res = import_one_myob_sale_order(
         db,
         myob_order=order_payload,
         item_fetch=f,
-        invoices=[invoice_payload],
     )
-    assert res["line_items_source"] == "invoice"
-    assert res["lines_synced"] == 1
+    assert res["line_items_source"] == "order"
+    assert res["lines_synced"] == 2
 
     order = db.get(Order, res["order_id"])
     assert order is not None
-    assert order.status == OrderStatus.PARTIALLY_FULFILLED
+    assert order.status == OrderStatus.CONFIRMED
     lines = list(
         db.query(OrderItem)
         .filter(OrderItem.order_id == str(order.id), OrderItem.line_kind == "myob_import")
         .order_by(OrderItem.line_index)
     )
-    assert len(lines) == 1
-    assert float(lines[0].import_ship_quantity or 0.0) == pytest.approx(12.0)
+    assert len(lines) == 2
+    assert any(float(x.import_ship_quantity or 0.0) == pytest.approx(120.0) for x in lines)
 
 
-def test_import_closed_invoice_is_authoritative_even_if_qty_looks_partial():
+def test_import_converted_sale_order_maps_to_dispatched_without_invoice_linking():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     Sess = sessionmaker(bind=engine)
@@ -899,37 +942,15 @@ def test_import_closed_invoice_is_authoritative_even_if_qty_looks_partial():
 
     order_payload = dict(SAMPLE_MYOB_ORDER)
     order_payload["Status"] = "ConvertedToInvoice"
-    invoice_payload = {
-        "Number": order_payload["Number"],
-        "CustomerPurchaseOrderNumber": order_payload["CustomerPurchaseOrderNumber"],
-        "Status": "Closed",
-        "Lines": [
-            {
-                "RowID": 9001,
-                "Type": "Transaction",
-                "Description": "ANTI -STATIC",
-                "ShipQuantity": 12.0,
-                "UnitPrice": 64.3,
-                "Total": 771.6,
-                "Item": {
-                    "UID": "951c35aa-9f4c-4acd-aae1-802d6d11be36",
-                    "Number": "S25035",
-                    "Name": "SANOFI",
-                },
-            }
-        ],
-    }
-
     f = _item_fetch("951c35aa-9f4c-4acd-aae1-802d6d11be36", "4d3e1150-452d-47fc-a1ef-4561fba93cc3")
     res = import_one_myob_sale_order(
         db,
         myob_order=order_payload,
         item_fetch=f,
-        invoices=[invoice_payload],
     )
     order = db.get(Order, res["order_id"])
     assert order is not None
-    assert order.status == OrderStatus.CLOSED
+    assert order.status == OrderStatus.DISPATCHED
 
 
 if __name__ == "__main__":

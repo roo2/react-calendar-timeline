@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.integrations.myob.customer_import import import_customers_from_myob
 from app.integrations.myob.item_selling_uom_cache import rebuild_myob_item_selling_uom_cache
-from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
+from app.integrations.myob.order_import_batch import import_all_myob_sale_orders
 
 PipelineStep = Literal["customers", "item_cache", "orders"]
 OnPipelineStep = Callable[[PipelineStep, dict[str, Any]], None]
@@ -60,7 +60,8 @@ def run_myob_import_pipeline(
     1. **Customers** — upsert local rows from MYOB Contact/Customer (same as ``POST /customers/sync``).
     2. **Item cache** — rebuild ``myob_item_selling_uoms`` (+ income accounts from item payloads); same as
        ``POST /item-selling-uoms/rebuild``.
-    3. **Orders** — either every sale order (``orders='all'``) or one OData list page (``orders='page'``).
+    3. **Orders + invoices** — list all sale orders, import only ``Open`` sale orders (detail fetch per open row),
+       then import all item invoices.
 
     The item cache step is committed before order import so the cache is persisted even when no orders are listed.
 
@@ -90,15 +91,10 @@ def run_myob_import_pipeline(
         item_cache = _skipped_step_result("item_cache")
 
     top_i = max(1, min(int(orders_top), 1000))
-    skip_i = max(0, int(orders_skip))
-
-    if orders == "all":
-        orders_result = import_all_myob_sale_orders(db, top=top_i)
-    else:
-        orders_result = import_myob_sale_orders_list_page(db, top=top_i, skip=skip_i)
+    orders_result = import_all_myob_sale_orders(db, top=top_i)
 
     if on_step is not None:
-        on_step("orders", {"result": _orders_progress_snapshot(orders_result, orders=orders)})
+        on_step("orders", {"result": _orders_progress_snapshot(orders_result, orders="all")})
 
     customers_ok = bool(customers.get("ok")) if not customers.get("skipped") else True
     item_ok = bool(item_cache.get("ok", True)) if not item_cache.get("skipped") else True
@@ -106,7 +102,7 @@ def run_myob_import_pipeline(
 
     return {
         "ok": overall_ok,
-        "orders_mode": orders,
+        "orders_mode": "all",
         "customers": customers,
         "item_cache": item_cache,
         "orders": orders_result,

@@ -30,6 +30,8 @@ class JobSheetCreateRequest(BaseModel):
     """Initial linked production `Job.status` after create (job row is ensured server-side)."""
     production_started_at: Optional[datetime] = None
     production_finished_at: Optional[datetime] = None
+    customer_facing_description: Optional[str] = None
+    """Short description shown to the customer; optional on create."""
 
 
 class JobSheetSummary(BaseModel):
@@ -72,6 +74,8 @@ class JobSheetSummary(BaseModel):
     unit_rate: Optional[float] = None
     line_total: Optional[float] = None
     price_per_kg: Optional[float] = None
+    customer_facing_description: Optional[str] = None
+    """Optional text override; when unset, UIs use import line (MYOB) / product spec."""
 
 
 class JobSheetDetail(BaseModel):
@@ -107,4 +111,6 @@ class JobSheetUpdateRequest(BaseModel):
     """Explicit start instant (UTC). Send `null` to clear. Applied after status-driven defaults."""
     production_finished_at: Optional[datetime] = None
     """Explicit finish instant (UTC). Send `null` to clear. Applied after status-driven defaults."""
+    customer_facing_description: Optional[str] = None
+    """Set or clear (send null / empty) the customer-facing description for this job sheet."""
 

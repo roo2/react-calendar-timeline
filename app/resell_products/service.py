@@ -26,7 +26,10 @@ def list_all(*, include_inactive: bool = False) -> List[ResellProduct]:
     with SessionLocal() as db:
         stmt = (
             select(ResellProduct)
-            .options(selectinload(ResellProduct.income_account))
+            .options(
+                selectinload(ResellProduct.income_account),
+                selectinload(ResellProduct.customer),
+            )
             .order_by(ResellProduct.description.asc())
         )
         if not include_inactive:
@@ -36,6 +39,7 @@ def list_all(*, include_inactive: bool = False) -> List[ResellProduct]:
         # works after the session closes (selectinload alone may not populate `state.dict` until read).
         for r in rows:
             _ = r.income_account
+            _ = r.customer
         return rows
 
 
@@ -82,11 +86,15 @@ def update_row(resell_product_id: str, payload: ResellProductUpdate) -> ResellPr
         rid = str(row.id)
         row2 = db.scalar(
             select(ResellProduct)
-            .options(selectinload(ResellProduct.income_account))
+            .options(
+                selectinload(ResellProduct.income_account),
+                selectinload(ResellProduct.customer),
+            )
             .where(ResellProduct.id == rid)
         )
         assert row2 is not None
         _ = row2.income_account
+        _ = row2.customer
         return row2
 
 

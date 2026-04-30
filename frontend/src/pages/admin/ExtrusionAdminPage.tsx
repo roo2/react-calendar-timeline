@@ -7,8 +7,11 @@ import {
   adminSaveExtruder,
   adminSaveExtrusionWasteFactor,
   adminSaveMaterialsRetailBands,
+  adminSaveQuoteDefaults,
   fetchAdminExtrusionTab,
+  fetchAdminQuoteDefaults,
   type MaterialsRetailBand,
+  type QuoteDefaultsSettings,
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
@@ -146,6 +149,11 @@ export function ExtrusionAdminPage() {
   const extruders = useAppSelector((s) => s.adminRateCards.extruders.items)
   const wasteFactors = useAppSelector((s) => s.adminRateCards.extrusionWasteFactors.items)
   const serverBands = useAppSelector((s) => s.adminRateCards.materialsRetailBands.items)
+  const {
+    data: quoteDefaults,
+    status: quoteDefaultsStatus,
+    error: quoteDefaultsErr,
+  } = useAppSelector((s) => s.adminRateCards.quoteDefaults)
   const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.extrusionTab)
   const loading = status === 'loading'
   const [err, setErr] = useState<string | null>(null)
@@ -163,17 +171,32 @@ export function ExtrusionAdminPage() {
   const [newExtruderAvgKgHr, setNewExtruderAvgKgHr] = useState<number | ''>('')
   const [newExtruderAveWidth, setNewExtruderAveWidth] = useState<number | ''>('')
   const [newExtruderCostPerHr, setNewExtruderCostPerHr] = useState<number | ''>('')
+  const [savingFeatureRetails, setSavingFeatureRetails] = useState(false)
+  const [gussetRetailPerKg, setGussetRetailPerKg] = useState('')
+  const [punchedRetailPerKg, setPunchedRetailPerKg] = useState('')
 
   const canCreateExtruder = useMemo(() => !!newExtruderCode.trim(), [newExtruderCode])
 
   useEffect(() => {
     void dispatch(fetchAdminExtrusionTab())
+    void dispatch(fetchAdminQuoteDefaults())
   }, [dispatch])
 
   useEffect(() => {
     setDraftBands((serverBands || []).map((b) => ({ ...b })))
     setRetailPriceText({})
   }, [serverBands])
+
+  useEffect(() => {
+    if (!quoteDefaults) return
+    setGussetRetailPerKg(String(quoteDefaults.extrusion_gusset_retail_per_kg))
+    setPunchedRetailPerKg(String(quoteDefaults.extrusion_punched_retail_per_kg))
+  }, [quoteDefaults])
+
+  const extrusionFeatureRetailDirty =
+    quoteDefaults != null &&
+    (Number(gussetRetailPerKg) !== quoteDefaults.extrusion_gusset_retail_per_kg ||
+      Number(punchedRetailPerKg) !== quoteDefaults.extrusion_punched_retail_per_kg)
 
   const bandsDirty = useMemo(() => {
     const a = JSON.stringify(draftBands || [])
@@ -182,7 +205,7 @@ export function ExtrusionAdminPage() {
     return a !== b || overlayDirty
   }, [draftBands, serverBands, retailPriceText])
 
-  const displayErr = err || tabErr
+  const displayErr = err || tabErr || quoteDefaultsErr
 
   function retailPricePerKgForSave(r: MaterialsRetailBand): number | null {
     if (Object.prototype.hasOwnProperty.call(retailPriceText, r.id)) {
@@ -192,6 +215,32 @@ export function ExtrusionAdminPage() {
       return Number.isFinite(n) ? n : r.retail_price_per_kg ?? null
     }
     return r.retail_price_per_kg ?? null
+  }
+
+  async function saveExtrusionFeatureRetails() {
+    const base = quoteDefaults
+    if (!base) return
+    const g = Number(gussetRetailPerKg)
+    const p = Number(punchedRetailPerKg)
+    if (!Number.isFinite(g) || g < 0 || !Number.isFinite(p) || p < 0) {
+      setErr('Gusset and punched rates must be non-negative numbers.')
+      return
+    }
+    try {
+      setErr(null)
+      setSavingFeatureRetails(true)
+      const payload: QuoteDefaultsSettings = {
+        ...base,
+        extrusion_gusset_retail_per_kg: g,
+        extrusion_punched_retail_per_kg: p,
+      }
+      await dispatch(adminSaveQuoteDefaults(payload)).unwrap()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save extrusion feature pricing')
+    } finally {
+      setSavingFeatureRetails(false)
+    }
   }
 
   async function saveMaterialsBands() {
@@ -305,6 +354,52 @@ export function ExtrusionAdminPage() {
         subtitle="Extruder properties, extrusion waste factors, and quote materials retail bands."
       />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
+
+      <Paper variant="outlined" sx={{ p: 2, maxWidth: 560 }}>
+        <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
+          Quote extrusion feature pricing
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Sell-side add-ons on quotes: <b>$/kg × billed job kg</b> when the product uses gusset geometry (with gusset width) or hole punching.
+        </Typography>
+        {quoteDefaultsStatus === 'loading' && !quoteDefaults ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : (
+          <Stack spacing={2}>
+            <TextField
+              size="small"
+              label="Gusset ($/kg)"
+              type="number"
+              inputProps={{ min: 0, step: 0.01 }}
+              value={gussetRetailPerKg}
+              onChange={(e) => {
+                setGussetRetailPerKg(e.target.value)
+                setDirty(true)
+              }}
+              helperText="Default 0.50 ($/kg)"
+            />
+            <TextField
+              size="small"
+              label="Hole punched ($/kg)"
+              type="number"
+              inputProps={{ min: 0, step: 0.01 }}
+              value={punchedRetailPerKg}
+              onChange={(e) => {
+                setPunchedRetailPerKg(e.target.value)
+                setDirty(true)
+              }}
+              helperText="Default 0.20 ($/kg)"
+            />
+            <Button
+              variant="contained"
+              disabled={savingFeatureRetails || !extrusionFeatureRetailDirty || !quoteDefaults}
+              onClick={() => void saveExtrusionFeatureRetails()}
+            >
+              {savingFeatureRetails ? 'Saving…' : 'Save extrusion feature pricing'}
+            </Button>
+          </Stack>
+        )}
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ sm: 'center' }} justifyContent="space-between" spacing={2} sx={{ mb: 1 }}>

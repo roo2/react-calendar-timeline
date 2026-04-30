@@ -25,6 +25,8 @@ from app.db.session import SessionLocal  # noqa: E402
 
 DEFAULT_EXTRUSION_RETAIL_ADDON_PER_KG = 1.8
 DEFAULT_FORMULATION_MARKUP = 0.25
+DEFAULT_EXTRUSION_GUSSET_RETAIL_PER_KG = 0.5
+DEFAULT_EXTRUSION_PUNCHED_RETAIL_PER_KG = 0.2
 
 
 def main() -> None:
@@ -38,6 +40,8 @@ def main() -> None:
                     formulation_colours_markup=DEFAULT_FORMULATION_MARKUP,
                     formulation_additives_markup=DEFAULT_FORMULATION_MARKUP,
                     formulation_custom_blend_markup=DEFAULT_FORMULATION_MARKUP,
+                    extrusion_gusset_retail_per_kg=DEFAULT_EXTRUSION_GUSSET_RETAIL_PER_KG,
+                    extrusion_punched_retail_per_kg=DEFAULT_EXTRUSION_PUNCHED_RETAIL_PER_KG,
                 )
             )
         else:
@@ -45,6 +49,8 @@ def main() -> None:
             row.formulation_colours_markup = DEFAULT_FORMULATION_MARKUP
             row.formulation_additives_markup = DEFAULT_FORMULATION_MARKUP
             row.formulation_custom_blend_markup = DEFAULT_FORMULATION_MARKUP
+            row.extrusion_gusset_retail_per_kg = DEFAULT_EXTRUSION_GUSSET_RETAIL_PER_KG
+            row.extrusion_punched_retail_per_kg = DEFAULT_EXTRUSION_PUNCHED_RETAIL_PER_KG
     print(
         "OK: quote_defaults id=1 "
         f"extrusion_retail_addon_per_kg={DEFAULT_EXTRUSION_RETAIL_ADDON_PER_KG} "

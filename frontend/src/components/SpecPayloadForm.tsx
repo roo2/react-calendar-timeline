@@ -39,7 +39,7 @@ import type { AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
 import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type PrintingArtworkScope } from './PrintingArtworkUploadSection'
-import { computeProductCodeFromSpec } from '../utils/productDescription'
+import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -88,6 +88,13 @@ function intOrDash(n: unknown): string {
   if (n == null || n === '') return '—'
   const x = typeof n === 'number' ? n : Number(String(n).trim())
   return Number.isFinite(x) && x > 0 ? String(Math.round(x)) : '—'
+}
+
+function resinLabelForBlendSummary(options: ResinOption[], code: string | null | undefined): string {
+  const c = String(code ?? '').trim()
+  if (!c) return '—'
+  const o = options.find((r) => r.resin_code === c)
+  return o ? `${o.name} (${c})` : c
 }
 
 /** Film supplied line from dimensions (e.g. "400mm 75µm L/F"). */
@@ -214,6 +221,11 @@ export function SpecPayloadForm(props: {
   jobSheetPrintingContext?: JobSheetPrintingContext
   /** When set, enables PDF artwork upload against a saved job sheet or product version. */
   printingArtworkScope?: PrintingArtworkScope | null
+  /** Job sheet only: editable customer-facing description beside customer-facing product code. */
+  customerFacingDescription?: string
+  onCustomerFacingDescriptionChange?: (value: string) => void
+  /** Placeholder when `customerFacingDescription` is empty (e.g. generated from product spec). */
+  customerFacingDescriptionPlaceholder?: string
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -229,6 +241,9 @@ export function SpecPayloadForm(props: {
     afterDimensionsSlot,
     jobSheetPrintingContext,
     printingArtworkScope = null,
+    customerFacingDescription = '',
+    onCustomerFacingDescriptionChange,
+    customerFacingDescriptionPlaceholder: customerFacingDescriptionPlaceholderProp,
   } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
@@ -266,6 +281,17 @@ export function SpecPayloadForm(props: {
       return '—'
     }
   }, [spec])
+
+  const customerFacingDescriptionPlaceholder = useMemo(() => {
+    if (customerFacingDescriptionPlaceholderProp != null && customerFacingDescriptionPlaceholderProp !== '') {
+      return customerFacingDescriptionPlaceholderProp
+    }
+    try {
+      return computeProductDescriptionFromSpec(spec).trim()
+    } catch {
+      return ''
+    }
+  }, [spec, customerFacingDescriptionPlaceholderProp])
 
   const industryFlags = new Set<string>(Array.isArray(identity.industry_flags) ? identity.industry_flags : [])
   const qualityFlags = new Set<string>(Array.isArray(quality.flags) ? quality.flags : [])
@@ -1185,7 +1211,19 @@ export function SpecPayloadForm(props: {
           Product Type
         </Typography>
 
-        <Box sx={{ mb: 2, maxWidth: { xs: '100%', sm: '50%' } }}>
+        <Box
+          sx={{
+            mb: 2,
+            display: 'grid',
+            gridTemplateColumns:
+              typeof onCustomerFacingDescriptionChange === 'function'
+                ? { xs: '1fr', md: 'minmax(0, 1fr) minmax(0, 2fr)' }
+                : '1fr',
+            gap: 2,
+            alignItems: 'flex-start',
+            maxWidth: typeof onCustomerFacingDescriptionChange === 'function' ? '100%' : { xs: '100%', sm: '50%' },
+          }}
+        >
           <TextField
             label="Customer-facing product code"
             placeholder={generatedProductCodePlaceholder}
@@ -1206,6 +1244,19 @@ export function SpecPayloadForm(props: {
                 : 'Shown to customers instead of the generated code.')
             }
           />
+          {typeof onCustomerFacingDescriptionChange === 'function' ? (
+            <TextField
+              label="Customer-facing description"
+              placeholder={customerFacingDescriptionPlaceholder}
+              value={customerFacingDescription}
+              onChange={(e) => onCustomerFacingDescriptionChange(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+              size="small"
+              InputLabelProps={{ shrink: true }}
+            />
+          ) : null}
         </Box>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
@@ -1634,110 +1685,151 @@ export function SpecPayloadForm(props: {
             </DefaultSelectField>
           </Box>
 
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Percentage (%)</TableCell>
-                <TableCell>Resin</TableCell>
-                <TableCell />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {blend.map((row: any, idx: number) => {
-                const selectedPreset =
-                  formulation.blend_type && formulation.blend_type !== 'Custom'
-                    ? resinBlends.find((b) => b.blend_code === formulation.blend_type)
-                    : null
-                const presetComponent = selectedPreset?.components?.[idx]
-                const isDefault =
-                  !!presetComponent &&
-                  (row.resin_code || '').trim() === (presetComponent.resin_code || '').trim() &&
-                  Number(row.pct) === Number(presetComponent.pct)
-                return (
-                  <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
-                    <TableCell sx={{ width: '35%' }}>
-                      <TextField
-                        size="small"
-                        label="%"
-                        type="number"
-                        inputProps={{ min: 0, step: 0.1 }}
-                        value={row.pct ?? ''}
-                        onChange={(e) =>
-                          update((d) => {
-                            d.formulation.blend_type = 'Custom'
-                            d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : null
-                          })
-                        }
-                        error={
-                          !!errorFor(`spec.formulation.blend[${idx}].pct`) ||
-                          !!firstErrorForPrefix('spec.formulation.blend')
-                        }
-                        helperText={errorFor(`spec.formulation.blend[${idx}].pct`) || ''}
-                        fullWidth
-                      />
-                    </TableCell>
-                    <TableCell sx={{ width: '55%' }}>
-                      <ResinSelect
-                        options={resins}
-                        valueCode={row.resin_code || ''}
-                        error={
-                          !!errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
-                          !!firstErrorForPrefix('spec.formulation.blend')
-                        }
-                        helperText={
-                          errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
-                          (idx === 0 ? firstErrorForPrefix('spec.formulation.blend') || '' : '')
-                        }
-                        onChangeCode={(nextCode) =>
-                          update((d) => {
-                            d.formulation.blend_type = 'Custom'
-                            d.formulation.blend[idx].resin_code = nextCode
-                          })
-                        }
-                      />
-                    </TableCell>
-                    <TableCell sx={{ width: '10%' }}>
-                      <Button
-                        size="small"
-                        color="inherit"
-                        onClick={() =>
-                          update((d) => {
-                            d.formulation.blend_type = 'Custom'
-                            d.formulation.blend.splice(idx, 1)
-                            if (d.formulation.blend.length === 0) d.formulation.blend.push({ resin_code: '', pct: 100 })
-                          })
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-          <Box sx={{ mt: 1 }}>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() =>
-                update((d) => {
-                  d.formulation.blend_type = 'Custom'
-                  d.formulation.blend.push({ resin_code: '', pct: null })
-                })
-              }
-            >
-              Add component
-            </Button>
-          </Box>
-
           {(() => {
-            const total = (blend || []).reduce((acc: number, r: any) => acc + Number(r?.pct || 0), 0)
-            const ok = Math.abs(total - 100) < 0.01
+            const selectedPreset =
+              formulation.blend_type && formulation.blend_type !== 'Custom'
+                ? resinBlends.find((b) => b.blend_code === formulation.blend_type)
+                : null
+            const isHouseBlend = (formulation.blend_type || 'LD') === 'LD'
+            const rowsToShow = isHouseBlend && selectedPreset ? selectedPreset.components : blend
+            const isCustomBlend = (formulation.blend_type || 'LD') === 'Custom'
+            const summaryComponents = (selectedPreset?.components ?? blend) as Array<{ resin_code?: string; pct?: number | null }>
+
+            if (!isCustomBlend) {
+              const total = (summaryComponents || []).reduce((acc: number, r) => acc + Number(r?.pct || 0), 0)
+              const ok = Math.abs(total - 100) < 0.01
+              return (
+                <Box
+                  sx={{
+                    py: 1.25,
+                    px: 1.5,
+                    borderRadius: 1,
+                    bgcolor: 'action.hover',
+                    border: 1,
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.5 }}>
+                    {(summaryComponents || []).map((row, idx) => {
+                      const pct = Number(row?.pct)
+                      const pctLabel = Number.isFinite(pct) ? `${pct}%` : '—%'
+                      const resinPart = resinLabelForBlendSummary(resins, row?.resin_code)
+                      return (
+                        <span key={idx}>
+                          {idx > 0 ? ' · ' : null}
+                          {pctLabel} {resinPart}
+                        </span>
+                      )
+                    })}
+                  </Typography>
+                  <Typography variant="caption" color={ok ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 0.75 }}>
+                    Total: {total.toFixed(2)}% {ok ? '(OK)' : '(must sum to 100%)'}
+                  </Typography>
+                </Box>
+              )
+            }
+
             return (
-              <Typography variant="caption" color={ok ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 1 }}>
-                Total: {total.toFixed(2)}% {ok ? '(OK)' : '(must sum to 100%)'}
-              </Typography>
+              <>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Percentage (%)</TableCell>
+                      <TableCell>Resin</TableCell>
+                      <TableCell />
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {rowsToShow.map((row: any, idx: number) => {
+                      const presetComponent = selectedPreset?.components?.[idx]
+                      const isDefault =
+                        !!presetComponent &&
+                        (row.resin_code || '').trim() === (presetComponent.resin_code || '').trim() &&
+                        Number(row.pct) === Number(presetComponent.pct)
+                      return (
+                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                          <TableCell sx={{ width: '35%' }}>
+                            <TextField
+                              size="small"
+                              label="%"
+                              type="number"
+                              inputProps={{ min: 0, step: 0.1 }}
+                              value={row.pct ?? ''}
+                              onChange={(e) =>
+                                update((d) => {
+                                  d.formulation.blend[idx].pct = e.target.value ? parseFloat(e.target.value) : null
+                                })
+                              }
+                              error={
+                                !!errorFor(`spec.formulation.blend[${idx}].pct`) ||
+                                !!firstErrorForPrefix('spec.formulation.blend')
+                              }
+                              helperText={errorFor(`spec.formulation.blend[${idx}].pct`) || ''}
+                              fullWidth
+                            />
+                          </TableCell>
+                          <TableCell sx={{ width: '55%' }}>
+                            <ResinSelect
+                              options={resins}
+                              valueCode={row.resin_code || ''}
+                              error={
+                                !!errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
+                                !!firstErrorForPrefix('spec.formulation.blend')
+                              }
+                              helperText={
+                                errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
+                                (idx === 0 ? firstErrorForPrefix('spec.formulation.blend') || '' : '')
+                              }
+                              onChangeCode={(nextCode) =>
+                                update((d) => {
+                                  d.formulation.blend[idx].resin_code = nextCode
+                                })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell sx={{ width: '10%' }}>
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() =>
+                                update((d) => {
+                                  d.formulation.blend.splice(idx, 1)
+                                  if (d.formulation.blend.length === 0) d.formulation.blend.push({ resin_code: '', pct: 100 })
+                                })
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+                <Box sx={{ mt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() =>
+                      update((d) => {
+                        d.formulation.blend.push({ resin_code: '', pct: null })
+                      })
+                    }
+                  >
+                    Add component
+                  </Button>
+                </Box>
+
+                {(() => {
+                  const total = (rowsToShow || []).reduce((acc: number, r: any) => acc + Number(r?.pct || 0), 0)
+                  const ok = Math.abs(total - 100) < 0.01
+                  return (
+                    <Typography variant="caption" color={ok ? 'text.secondary' : 'error'} sx={{ display: 'block', mt: 1 }}>
+                      Total: {total.toFixed(2)}% {ok ? '(OK)' : '(must sum to 100%)'}
+                    </Typography>
+                  )
+                })()}
+              </>
             )
           })()}
         </Box>

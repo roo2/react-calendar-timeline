@@ -131,7 +131,7 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
           helperText={weightPerRollField.helperText}
         />
         <TextField
-          label="No. of Rolls"
+          label={finishMode === 'Cartons' ? 'No. of Cartons' : 'No. of Rolls'}
           type="number"
           inputProps={{ min: 0, step: 1 }}
           value={numRollsField.value}
@@ -400,7 +400,7 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
               },
             }}
           >
-            <MenuItem value="planned">Planned</MenuItem>
+            <MenuItem value="planned">Backlog</MenuItem>
             <MenuItem value="scheduled">Scheduled</MenuItem>
             <MenuItem value="running">Running</MenuItem>
             <MenuItem value="dispatched">Dispatched</MenuItem>

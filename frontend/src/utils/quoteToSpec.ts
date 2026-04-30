@@ -40,6 +40,8 @@ export type QuotePayload = {
   qtyType?: 'kg' | 'units' | 'total_rolls' | 'rolls_units'
   /** When qtyType is rolls_units: products (e.g. bags) per roll. */
   unitsPerRoll?: string | number
+  /** Continuous-roll mode: linear meters per roll (used when qtyType is total_rolls on continuous web). */
+  metersPerRoll?: string | number
   totalKg?: string | number
   numUnits?: string | number
   numRolls?: string | number

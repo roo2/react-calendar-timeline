@@ -289,4 +289,12 @@ async def get_ratebook():
             if quote_defaults_row is not None
             else 0.25,
         },
+        "quote_extrusion_feature_retails": {
+            "gusset_per_kg": float(quote_defaults_row.extrusion_gusset_retail_per_kg)
+            if quote_defaults_row is not None
+            else 0.5,
+            "punched_per_kg": float(quote_defaults_row.extrusion_punched_retail_per_kg)
+            if quote_defaults_row is not None
+            else 0.2,
+        },
     }

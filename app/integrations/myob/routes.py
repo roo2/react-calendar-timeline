@@ -246,27 +246,27 @@ class MyobImportAllOrdersBody(BaseModel):
 
 class MyobImportPipelineBody(BaseModel):
     """
-    Run customer sync, rebuild the MYOB item UOM cache, then import sale orders — in that order, in one request.
+    Run customer sync, rebuild the MYOB item UOM cache, then import ``Open`` sale orders and all invoices.
     """
 
     orders: Literal["all", "page"] = Field(
         "all",
         description=(
-            "``all`` walks every ``GET …/Sale/Order`` page until empty (same as ``/orders/import-all``). "
-            "``page`` imports a single list page (same as ``/orders/import-from-list``)."
+            "Backward-compat field; pipeline always runs ``all`` mode now: list all sale orders, fetch/import only "
+            "``Open`` ones, then import all item invoices."
         ),
     )
     orders_top: int = Field(
         200,
         ge=1,
         le=1000,
-        description="OData ``$top`` for sale orders: page size when listing all pages, or rows for a single page.",
+        description="OData ``$top`` page size while listing all sale orders.",
     )
     orders_skip: int = Field(
         0,
         ge=0,
         le=10_000_000,
-        description="OData ``$skip`` when ``orders`` is ``page``; ignored when ``orders`` is ``all``.",
+        description="Backward-compat only; ignored by the pipeline.",
     )
 
 
@@ -346,10 +346,11 @@ async def myob_disconnect(_identity: SysAdminIdentity):
 @router.post("/import/pipeline", dependencies=[Depends(csrf_protect())])
 async def myob_import_pipeline(_identity: SysAdminIdentity, body: MyobImportPipelineBody):
     """
-    Consolidated MYOB import: **customers** → **item UOM cache rebuild** (incl. income accounts from items) → **sale orders**.
+    Consolidated MYOB import: **customers** → **item UOM cache rebuild** → **sale orders + invoices**.
 
-    Use ``orders: \"all\"`` for a full order walk (same behaviour as ``POST /orders/import-all``), or ``orders: \"page\"``
-    with ``orders_top`` / ``orders_skip`` for a single list page (same as ``POST /orders/import-from-list``).
+    Always lists all sale orders, fetches/imports only ``Open`` ones, then imports all sale invoices.
+    ``orders_top`` controls sale-order list page size. ``orders`` / ``orders_skip`` are accepted for backward
+    compatibility but ignored.
     """
     del _identity
     if not myob_configured():
@@ -361,9 +362,9 @@ async def myob_import_pipeline(_identity: SysAdminIdentity, body: MyobImportPipe
         try:
             return run_myob_import_pipeline(
                 db,
-                orders=body.orders,
+                orders="all",
                 orders_top=body.orders_top,
-                orders_skip=body.orders_skip,
+                orders_skip=0,
             )
         except MyobConfigError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -391,9 +392,9 @@ async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImpo
             detail="MYOB is not configured (set MYOB_APP_KEY and MYOB_APP_SECRET).",
         )
     job_id, conflict = start_import_job(
-        orders=body.orders,
+        orders="all",
         orders_top=body.orders_top,
-        orders_skip=body.orders_skip,
+        orders_skip=0,
     )
     if job_id is None:
         raise HTTPException(

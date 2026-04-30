@@ -31,6 +31,7 @@ export type JobSheetSummary = {
   unit_rate?: number | null
   line_total?: number | null
   price_per_kg?: number | null
+  customer_facing_description?: string | null
 }
 
 /** Query params for GET /api/job-sheets (match-style filters). */

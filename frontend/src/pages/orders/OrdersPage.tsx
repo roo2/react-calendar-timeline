@@ -21,6 +21,7 @@ import {
   TextField,
   Typography,
   Link as MuiLink,
+  Chip,
 } from '@mui/material'
 import { LIST_PAGE_SIZE, ListFiltersCard, ListPaginationBar, ListTableSurface } from '../../components/list'
 import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
@@ -275,6 +276,7 @@ export function OrdersPage() {
                 <TableCell sx={{ minWidth: 220 }}>Products</TableCell>
                 <TableCell align="right">Order total</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell sx={{ minWidth: 140 }}>Import review</TableCell>
                 <TableCell>Order Date</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -303,13 +305,26 @@ export function OrdersPage() {
                       : '—'}
                   </TableCell>
                   <TableCell>{o.status}</TableCell>
+                  <TableCell>
+                    {o.import_source ? (
+                      o.import_review_status === 'complete' ? (
+                        <Chip size="small" color="success" label="Done" />
+                      ) : (
+                        <Chip size="small" color="warning" label="Pending" variant="outlined" />
+                      )
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        —
+                      </Typography>
+                    )}
+                  </TableCell>
                   <TableCell>{formatDateDMYShort(o.order_date || o.created_at, '')}</TableCell>
                   <TableCell align="right">
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
                       <Button size="small" variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(o.id)}`}>
                         View
                       </Button>
-                      {canEdit && (o.status === 'draft' || o.status === 'confirmed') ? (
+                      {canEdit ? (
                         <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
                           Edit
                         </Button>

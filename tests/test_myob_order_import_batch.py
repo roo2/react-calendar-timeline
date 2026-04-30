@@ -202,7 +202,7 @@ def test_import_all_truncated_when_page_cap_reached():
     m_url.assert_not_called()
 
 
-def test_import_order_invoice_match_requires_number_and_customer_po():
+def test_import_list_page_imports_open_sale_orders_only():
     db = MagicMock()
     with (
         patch("app.integrations.myob.order_import_batch.fetch_sale_orders_list_readonly") as m_list,
@@ -216,24 +216,20 @@ def test_import_order_invoice_match_requires_number_and_customer_po():
             "skip": 0,
             "myob": {"Items": [{"UID": "o-1"}]},
         }
-        m_inv.return_value = [
-            {"UID": "inv-1", "Number": "EP1", "CustomerPurchaseOrderNumber": "PO-A"},
-            {"UID": "inv-2", "Number": "EP1", "CustomerPurchaseOrderNumber": "PO-B"},
-        ]
+        m_inv.return_value = []
         m_det.return_value = {
             "myob": {
                 "UID": "o-1",
                 "Number": "EP1",
+                "Status": "Open",
                 "CustomerPurchaseOrderNumber": "PO-B",
                 "Customer": {"UID": "c1"},
             }
         }
-        m_one.return_value = {"ok": True, "order_id": "ord-1", "matched_invoice_uid": "inv-2"}
+        m_one.return_value = {"ok": True, "order_id": "ord-1"}
         out = import_myob_sale_orders_list_page(db, top=1, skip=0)
     assert out["imported"] == 1
-    kwargs = m_one.call_args.kwargs
-    assert isinstance(kwargs.get("invoices"), list)
-    assert len(kwargs["invoices"]) == 2
+    m_one.assert_called_once()
 
 
 def test_import_all_adds_unmatched_invoice_as_new_order():
@@ -280,5 +276,5 @@ def test_import_all_adds_unmatched_invoice_as_new_order():
 
         m_one.side_effect = one_side_effect
         out = import_all_myob_sale_orders(db, top=1)
-    assert out["imported"] == 2
-    assert any(r.get("source_document") == "invoice" for r in out["results"])
+    assert out["imported"] == 3
+    assert sum(1 for r in out["results"] if r.get("source_document") == "invoice") == 2

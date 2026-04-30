@@ -11,7 +11,10 @@ import {
   adminSaveColour,
   adminSaveResin,
   adminSaveResinBlend,
+  adminSaveQuoteDefaults,
+  fetchAdminQuoteDefaults,
   fetchAdminResinsMaterials,
+  type QuoteDefaultsSettings,
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
@@ -28,10 +31,19 @@ export function ResinsAdminPage() {
   const colours = useAppSelector((s) => s.adminRateCards.colours.items)
   const blends = useAppSelector((s) => s.adminRateCards.resinBlends.items)
   const { status, error: tabErr } = useAppSelector((s) => s.adminRateCards.resinsMaterials)
+  const {
+    data: quoteDefaults,
+    status: quoteDefaultsStatus,
+    error: quoteDefaultsErr,
+  } = useAppSelector((s) => s.adminRateCards.quoteDefaults)
   const loading = status === 'loading'
 
   const [err, setErr] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState<string | null>(null)
+  const [savingQuoteDefaults, setSavingQuoteDefaults] = useState(false)
+  const [formColoursMk, setFormColoursMk] = useState('')
+  const [formAdditivesMk, setFormAdditivesMk] = useState('')
+  const [formBlendMk, setFormBlendMk] = useState('')
 
   // Resins add row
   const [newResinCode, setNewResinCode] = useState('')
@@ -81,9 +93,23 @@ export function ResinsAdminPage() {
 
   useEffect(() => {
     void dispatch(fetchAdminResinsMaterials())
+    void dispatch(fetchAdminQuoteDefaults())
   }, [dispatch])
 
-  const displayErr = err || tabErr
+  useEffect(() => {
+    if (!quoteDefaults) return
+    setFormColoursMk(String(quoteDefaults.formulation_colours_markup))
+    setFormAdditivesMk(String(quoteDefaults.formulation_additives_markup))
+    setFormBlendMk(String(quoteDefaults.formulation_custom_blend_markup))
+  }, [quoteDefaults])
+
+  const formulationMarkupDirty =
+    quoteDefaults != null &&
+    (Number(formColoursMk) !== quoteDefaults.formulation_colours_markup ||
+      Number(formAdditivesMk) !== quoteDefaults.formulation_additives_markup ||
+      Number(formBlendMk) !== quoteDefaults.formulation_custom_blend_markup)
+
+  const displayErr = err || tabErr || quoteDefaultsErr
 
   async function saveResin(code: string, patch: Omit<Resin, 'resin_code'>) {
     const trimmed = code.trim()
@@ -217,10 +243,101 @@ export function ResinsAdminPage() {
     }
   }
 
+  async function saveFormulationMarkups() {
+    const base = quoteDefaults
+    if (!base) return
+    const colours = Number(formColoursMk)
+    const additives = Number(formAdditivesMk)
+    const blend = Number(formBlendMk)
+    if (
+      !Number.isFinite(colours) ||
+      colours < 0 ||
+      !Number.isFinite(additives) ||
+      additives < 0 ||
+      !Number.isFinite(blend) ||
+      blend < 0
+    ) {
+      setErr('Formulation markups must be non-negative numbers.')
+      return
+    }
+    try {
+      setErr(null)
+      setSavingQuoteDefaults(true)
+      const payload: QuoteDefaultsSettings = {
+        ...base,
+        formulation_colours_markup: colours,
+        formulation_additives_markup: additives,
+        formulation_custom_blend_markup: blend,
+      }
+      await dispatch(adminSaveQuoteDefaults(payload)).unwrap()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save quote formulation markups')
+    } finally {
+      setSavingQuoteDefaults(false)
+    }
+  }
+
   return (
     <Stack spacing={2}>
       <AdminPageHeader title="Resins" subtitle="Resins, additives, colours, and resin blends." />
       {displayErr ? <Alert severity="error">{displayErr}</Alert> : null}
+
+      <Paper variant="outlined" sx={{ p: 2, maxWidth: 560 }}>
+        <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
+          Quote formulation markups
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Sell-side add-on applied to incremental formulation <b>cost</b> for colours, additives, and non-standard resin blends (e.g.{' '}
+          <code>0.25</code> adds 25% of that cost to the quote).
+        </Typography>
+        {quoteDefaultsStatus === 'loading' && !quoteDefaults ? (
+          <Typography color="text.secondary">Loading…</Typography>
+        ) : (
+          <Stack spacing={2}>
+            <TextField
+              size="small"
+              label="Colours markup (rate on colour cost)"
+              type="number"
+              inputProps={{ min: 0, step: 0.01 }}
+              value={formColoursMk}
+              onChange={(e) => {
+                setFormColoursMk(e.target.value)
+                setDirty(true)
+              }}
+            />
+            <TextField
+              size="small"
+              label="Additives markup (rate on additive cost)"
+              type="number"
+              inputProps={{ min: 0, step: 0.01 }}
+              value={formAdditivesMk}
+              onChange={(e) => {
+                setFormAdditivesMk(e.target.value)
+                setDirty(true)
+              }}
+            />
+            <TextField
+              size="small"
+              label="Custom resin blend markup (rate on LD uplift)"
+              type="number"
+              inputProps={{ min: 0, step: 0.01 }}
+              value={formBlendMk}
+              onChange={(e) => {
+                setFormBlendMk(e.target.value)
+                setDirty(true)
+              }}
+            />
+            <Button
+              variant="contained"
+              disabled={savingQuoteDefaults || !formulationMarkupDirty || !quoteDefaults}
+              onClick={() => void saveFormulationMarkups()}
+            >
+              {savingQuoteDefaults ? 'Saving…' : 'Save formulation markups'}
+            </Button>
+          </Stack>
+        )}
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>

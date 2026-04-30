@@ -461,36 +461,25 @@ export function MyobAdminPage() {
     }
   }
 
-  async function doImportPipeline(mode: 'all' | 'page') {
+  async function doImportPipeline() {
     const topAll = Number.isFinite(importAllTop) ? Math.min(1000, Math.max(1, importAllTop)) : 200
-    const topPage = Number.isFinite(saleOrdersTop) ? Math.min(1000, Math.max(1, saleOrdersTop)) : 50
-    const skipPage = Number.isFinite(saleOrdersSkip) ? Math.max(0, saleOrdersSkip) : 0
-    const msg =
-      mode === 'all'
-        ? [
-            'Run the full MYOB import pipeline?',
-            '',
-            '1. Sync customers from MYOB into this app',
-            '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
-            `3. Import every sale order (GET …/Sale/Order, $top=${topAll} per list page until empty)`,
-            '',
-            'This can take many minutes and performs many API calls.',
-            'The server runs the work in the background; this page polls for status.',
-          ].join('\n')
-        : [
-            'Run the MYOB import pipeline for one order list page?',
-            '',
-            '1. Sync customers from MYOB into this app',
-            '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
-            `3. Import sale orders from a single list page ($top=${topPage}, $skip=${skipPage})`,
-            'The server runs the work in the background; this page polls for status.',
-          ].join('\n')
+    const msg = [
+      'Run the full MYOB import pipeline?',
+      '',
+      '1. Sync customers from MYOB into this app',
+      '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
+      `3. List all sale orders (GET …/Sale/Order, $top=${topAll} per list page), fetch/import only Open orders`,
+      '4. Import all sale invoices',
+      '',
+      'This can take many minutes and performs many API calls.',
+      'The server runs the work in the background; this page polls for status.',
+    ].join('\n')
     if (!window.confirm(msg)) return
     if (pipelinePollRef.current !== null) {
       window.clearInterval(pipelinePollRef.current)
       pipelinePollRef.current = null
     }
-    setBusy(mode === 'all' ? 'import-pipeline-all' : 'import-pipeline-page')
+    setBusy('import-pipeline-all')
     setErr(null)
     setPipelineResult(null)
     setPipelineJob(null)
@@ -498,10 +487,7 @@ export function MyobAdminPage() {
     setItemUomRebuildResult(null)
     setImportBatchResult(null)
     setImportAllResult(null)
-    const body =
-      mode === 'all'
-        ? { orders: 'all' as const, orders_top: topAll, orders_skip: 0 }
-        : { orders: 'page' as const, orders_top: topPage, orders_skip: skipPage }
+    const body = { orders: 'all' as const, orders_top: topAll, orders_skip: 0 }
     try {
       const start = await apiFetch<MyobPipelineStartResponse>('/api/myob/import/pipeline/start', {
         method: 'POST',
@@ -776,60 +762,31 @@ export function MyobAdminPage() {
             if (!pipelineResult.ok) return 'warning'
             if (!pipelineResult.customers.ok || pipelineResult.customers.errors.length > 0) return 'warning'
             if (pipelineResult.item_cache.truncated) return 'warning'
-            if (pipelineResult.orders_mode === 'all') {
-              const o = pipelineResult.orders as MyobImportAllResult
-              if (o.truncated || o.failed > 0) return 'warning'
-            } else {
-              const o = pipelineResult.orders as MyobImportFromListResult
-              if (!o.ok || o.failed > 0) return 'warning'
-            }
+            const o = pipelineResult.orders as MyobImportAllResult
+            if (o.truncated || o.failed > 0) return 'warning'
             return 'success'
           })()}
           sx={{ mb: 2 }}
         >
           <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-            Import pipeline finished ({pipelineResult.orders_mode === 'all' ? 'all orders' : 'one list page'})
+            Import pipeline finished (all orders + invoices)
           </Typography>
           <Typography variant="body2" component="div">
             Customers: {pipelineResult.customers.created} created, {pipelineResult.customers.updated} updated
             {pipelineResult.customers.truncated ? ' (customer fetch truncated)' : ''}. Item cache:{' '}
             {pipelineResult.item_cache.rows_inserted} row(s), {pipelineResult.item_cache.pages_fetched} MYOB page(s)
             {pipelineResult.item_cache.truncated ? ' (cache rebuild hit page cap)' : ''}.
-            {pipelineResult.orders_mode === 'all' ? (
-              <>
-                {' '}
-                Orders: {(pipelineResult.orders as MyobImportAllResult).imported} imported,{' '}
-                {(pipelineResult.orders as MyobImportAllResult).skipped} skipped,{' '}
-                {(pipelineResult.orders as MyobImportAllResult).failed} failed (
-                {(pipelineResult.orders as MyobImportAllResult).pages_fetched} list page(s)).
-              </>
-            ) : (
-              <>
-                {' '}
-                Orders: {(pipelineResult.orders as MyobImportFromListResult).imported} imported,{' '}
-                {(pipelineResult.orders as MyobImportFromListResult).failed} failed of{' '}
-                {(pipelineResult.orders as MyobImportFromListResult).list_item_count} list row(s).
-              </>
-            )}
+            {' '}
+            Orders/invoices: {(pipelineResult.orders as MyobImportAllResult).imported} imported,{' '}
+            {(pipelineResult.orders as MyobImportAllResult).skipped} skipped,{' '}
+            {(pipelineResult.orders as MyobImportAllResult).failed} failed (
+            {(pipelineResult.orders as MyobImportAllResult).pages_fetched} sale-order list page(s)).
           </Typography>
-          {pipelineResult.orders_mode === 'all' &&
-          (pipelineResult.orders as MyobImportAllResult).results[0] ? (
+          {(pipelineResult.orders as MyobImportAllResult).results[0] ? (
             <Button
               size="small"
               component={RouterLink}
               to={`/orders/${encodeURIComponent((pipelineResult.orders as MyobImportAllResult).results[0].order_id)}`}
-              variant="outlined"
-              sx={{ mt: 1 }}
-            >
-              Open first imported order
-            </Button>
-          ) : null}
-          {pipelineResult.orders_mode === 'page' &&
-          (pipelineResult.orders as MyobImportFromListResult).results[0] ? (
-            <Button
-              size="small"
-              component={RouterLink}
-              to={`/orders/${encodeURIComponent((pipelineResult.orders as MyobImportFromListResult).results[0].order_id)}`}
               variant="outlined"
               sx={{ mt: 1 }}
             >
@@ -883,7 +840,8 @@ export function MyobAdminPage() {
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                   Runs in order: (1) sync customers from MYOB, (2) rebuild the local item UOM cache (full{' '}
-                  <code>Inventory/Item</code> list and income accounts), (3) import sale orders. Work runs on a{' '}
+                  <code>Inventory/Item</code> list and income accounts), (3) list all sale orders and import only{' '}
+                  <strong>Open</strong> ones, then (4) import all sale invoices. Work runs on a{' '}
                   <strong>background thread</strong> so the API stays responsive; this page polls for phase updates.
                   (Job state is kept in server memory per process — use a single worker or sticky sessions if you scale
                   horizontally.)
@@ -892,27 +850,16 @@ export function MyobAdminPage() {
                   <Button
                     variant="contained"
                     color="primary"
-                    onClick={() => void doImportPipeline('all')}
+                    onClick={() => void doImportPipeline()}
                     disabled={busy !== null}
                   >
                     {busy === 'import-pipeline-all'
-                      ? 'Running pipeline (all orders)…'
-                      : 'Pipeline: customers → items → ALL sale orders'}
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    color="primary"
-                    onClick={() => void doImportPipeline('page')}
-                    disabled={busy !== null}
-                  >
-                    {busy === 'import-pipeline-page'
-                      ? 'Running pipeline (one page)…'
-                      : 'Pipeline: customers → items → one order list page'}
+                      ? 'Running pipeline (open orders + invoices)…'
+                      : 'Pipeline: customers → items → OPEN sale orders + ALL invoices'}
                   </Button>
                 </Stack>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                  &quot;ALL sale orders&quot; uses the <strong>Import-all $top</strong> field further down. &quot;One
-                  list page&quot; uses <strong>Orders $top</strong> and <strong>Orders $skip</strong>.
+                  Uses the <strong>Import-all $top</strong> field further down as sale-order list page size.
                 </Typography>
               </Paper>
             ) : null}

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
-import { fetchOrder, publishOrder } from '../../store/slices/ordersSlice'
-import { can } from '../../auth/permissions'
+import { fetchOrder } from '../../store/slices/ordersSlice'
+import { OrderFormFooter } from './components/OrderFormFooter'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import {
   Alert,
@@ -23,26 +23,21 @@ import { formatDateDMYShort } from '../../utils/dateFormat'
 export function OrderShowPage() {
   const { orderId } = useParams()
   const loc = useLocation()
+  const debugEnabled = (new URLSearchParams(loc.search).get('debug') || '').toLowerCase() === 'true'
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
   const dispatch = useAppDispatch()
-  const roles = useAppSelector((s) => s.auth.identity?.roles || [])
+  const nav = useNavigate()
   const detailEntry = useAppSelector((s) => (orderId ? s.orders.detail.byId[orderId] : undefined))
   const order = detailEntry?.order
   const loadErr = detailEntry?.error
   const loading = detailEntry?.status === 'loading' || detailEntry?.status === 'idle'
-
-  const canPublish = can(roles, 'SALES', 'PROD_MANAGER')
-  const canEdit = canPublish
-
-  const [publishErr, setPublishErr] = useState<string | null>(null)
-  const [publishing, setPublishing] = useState(false)
 
   useEffect(() => {
     if (!orderId) return
     void dispatch(fetchOrder(orderId))
   }, [orderId, dispatch])
 
-  const err = loadErr || publishErr
+  const err = loadErr
 
   if (err && !order && detailEntry?.status === 'failed') {
     return (
@@ -124,20 +119,6 @@ export function OrderShowPage() {
     return u || '—'
   }
 
-  async function onPublish() {
-    if (!orderId) return
-    if (publishing) return
-    try {
-      setPublishErr(null)
-      setPublishing(true)
-      await dispatch(publishOrder(orderId)).unwrap()
-    } catch (e) {
-      setPublishErr(e instanceof Error ? e.message : 'Failed to confirm order')
-    } finally {
-      setPublishing(false)
-    }
-  }
-
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 1 }}>
@@ -174,7 +155,7 @@ export function OrderShowPage() {
         </Alert>
       ) : null}
 
-      {order.import_source === 'MYOB' ? (
+      {order.import_source === 'MYOB' && debugEnabled ? (
         <Paper variant="outlined" sx={{ mb: 2, p: 2 }}>
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
             MYOB source JSON
@@ -223,28 +204,6 @@ export function OrderShowPage() {
           </Box>
         </Paper>
       ) : null}
-
-      {publishErr && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {publishErr}
-        </Alert>
-      )}
-
-      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-        <Button component={Link} to="/orders" variant="text" color="primary">
-          Back to Orders
-        </Button>
-        {canEdit && (order.status === 'draft' || order.status === 'confirmed') && (
-          <Button variant="outlined" component={Link} to={`/orders/${encodeURIComponent(order.id)}/edit`}>
-            Edit Order
-          </Button>
-        )}
-        {canPublish && order.status === 'draft' && (
-          <Button variant="contained" onClick={onPublish} disabled={publishing}>
-            {publishing ? 'Confirming…' : 'Confirm Order'}
-          </Button>
-        )}
-      </Box>
 
       <Paper variant="outlined" sx={{ mb: 2 }}>
         <Typography variant="subtitle2" sx={{ px: 2, pt: 2, pb: 1 }}>
@@ -375,6 +334,31 @@ export function OrderShowPage() {
           </TableBody>
         </Table>
       </Paper>
+
+      {orderId ? (
+        <OrderFormFooter
+          variant="view"
+          orderId={orderId}
+          orderStatus={String(order.status || '')}
+          importSource={order.import_source}
+          importReviewStatus={
+            order.import_review_status === 'complete' || order.import_review_status === 'incomplete'
+              ? order.import_review_status
+              : null
+          }
+          orderLocked={!['draft', 'confirmed'].includes(String(order.status || '').trim().toLowerCase())}
+          onCancel={() => {
+            if (typeof window !== 'undefined' && window.history.length > 1) {
+              nav(-1)
+              return
+            }
+            nav('/orders')
+          }}
+          onAfterPatch={async () => {
+            if (orderId) await dispatch(fetchOrder(orderId)).unwrap()
+          }}
+        />
+      ) : null}
     </Box>
   )
 }

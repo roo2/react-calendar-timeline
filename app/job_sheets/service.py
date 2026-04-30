@@ -157,6 +157,11 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
         if payload.due_date is not None:
             due_dt = datetime.combine(payload.due_date, time.min)
 
+        cfd: Optional[str] = None
+        if payload.customer_facing_description is not None:
+            t = str(payload.customer_facing_description).strip()
+            cfd = t or None
+
         # Allocate a per-customer sequence; retry on unique conflict (rare, but possible).
         js: Optional[JobSheet] = None
         last_err: Optional[Exception] = None
@@ -179,6 +184,7 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
                         weight_per_roll_kg=payload.weight_per_roll_kg,
                         num_rolls=int(payload.num_rolls),
                         created_by=created_by or "system",
+                        customer_facing_description=cfd,
                     )
                     db.add(js)
                     db.flush()
@@ -480,6 +486,14 @@ def list_job_sheets(
         ):
             return rows, len(rows)
 
+        oi_by_js: dict[str, str] = {}
+        if q_f and rows:
+            js_ids = [str(x.id) for x in rows]
+            for oi in db.execute(select(OrderItem).where(OrderItem.job_sheet_id.in_(js_ids))).scalars().all():
+                sid = str(oi.job_sheet_id) if getattr(oi, "job_sheet_id", None) else ""
+                if sid and sid not in oi_by_js:
+                    oi_by_js[sid] = str(getattr(oi, "import_line_description", "") or "")
+
         filtered: List[JobSheet] = []
         for js in rows:
             v = getattr(js, "version", None)
@@ -545,7 +559,9 @@ def list_job_sheets(
                         long_desc = str(computed).casefold()
                     pr = spec.get("printing") if isinstance(spec.get("printing"), dict) else {}
                     print_desc = str(pr.get("print_description") or "").casefold()
-                blob = f"{code} {desc} {customer_name} {jno} {long_desc} {print_desc}"
+                import_line = str(oi_by_js.get(str(js.id), "")).casefold()
+                cface = str(getattr(js, "customer_facing_description", None) or "").casefold()
+                blob = f"{code} {desc} {customer_name} {jno} {long_desc} {print_desc} {import_line} {cface}"
                 if q_f not in blob:
                     continue
             filtered.append(js)
@@ -707,6 +723,14 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
             js.unit_rate = upd["unit_rate"]
         if "line_total" in upd:
             js.line_total = upd["line_total"]
+
+        if "customer_facing_description" in upd:
+            v = payload.customer_facing_description
+            if v is None:
+                js.customer_facing_description = None
+            else:
+                t = str(v).strip()
+                js.customer_facing_description = t if t else None
 
         # Optionally create a new product version + repoint job sheet
         if payload.spec is not None:

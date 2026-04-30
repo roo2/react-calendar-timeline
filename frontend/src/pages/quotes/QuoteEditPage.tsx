@@ -37,6 +37,7 @@ export function QuoteEditPage() {
 
   const initialData: SavedQuoteInitialData = {
     customer_id: quote.customer_id,
+    customer_name: quote.customer_name ?? null,
     payload: quote.payload || {},
     cost_per_kg: quote.cost_per_kg,
     price_per_kg: quote.price_per_kg,

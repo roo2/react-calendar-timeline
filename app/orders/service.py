@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any, List, Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import func, nulls_last, select
 from sqlalchemy.orm import joinedload
 
 from app.db.session import SessionLocal
@@ -32,14 +32,10 @@ from app.orders.schemas import (
 )
 from app.job_sheets import service as job_sheets_service
 
-def _order_status_token(o: OrderModel) -> str:
-    raw = getattr(o.status, "value", o.status)
-    return str(raw or "").strip().lower()
-
-
 def _require_order_editable(o: OrderModel) -> None:
-    if _order_status_token(o) not in ("draft", "confirmed"):
-        raise DomainError("Only draft or confirmed orders can be edited")
+    """Orders may be edited in any status (e.g. dispatched); reserved for future policy hooks."""
+    _ = o
+    return
 
 
 def _new_order_code() -> str:
@@ -217,7 +213,7 @@ def list_orders(
             .options(joinedload(OrderModel.customer))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.job_sheet).joinedload(JobSheet.product))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.resell_product))
-            .order_by(OrderModel.created_at.desc())
+            .order_by(nulls_last(OrderModel.order_date.desc()), OrderModel.created_at.desc())
         )
         if effective_brand_id:
             stmt = stmt.where(
@@ -400,7 +396,11 @@ def update_order(order_id: str, payload: UpdateOrderRequest) -> OrderModel:
         o = db.get(OrderModel, str(order_id))
         if not o:
             raise DomainError("Order not found")
-        _require_order_editable(o)
+        needs_editable = bool(
+            {"invoice_number", "customer_purchase_order_number", "order_date", "status"} & set(updates.keys())
+        )
+        if needs_editable:
+            _require_order_editable(o)
         if "invoice_number" in updates:
             code = str(payload.invoice_number or "").strip()
             o.code = code[:32] if code else o.code
@@ -409,6 +409,22 @@ def update_order(order_id: str, payload: UpdateOrderRequest) -> OrderModel:
             o.customer_purchase_order_number = cpo[:128] if cpo else None
         if "order_date" in updates:
             o.order_date = payload.order_date
+        if "status" in updates:
+            raw = str(payload.status or "").strip().lower()
+            try:
+                o.status = OrderStatus(raw)
+            except ValueError as e:
+                allowed = ", ".join(sorted({x.value for x in OrderStatus}))
+                raise DomainError(f"Invalid order status (expected one of: {allowed})") from e
+        if "import_review_status" in updates:
+            irs = payload.import_review_status
+            if irs is None:
+                o.import_review_status = None
+            else:
+                s = str(irs).strip().lower()
+                if s not in ("incomplete", "complete"):
+                    raise DomainError("import_review_status must be 'incomplete' or 'complete'")
+                o.import_review_status = s
         db.add(o)
         db.flush()
         db.refresh(o)
@@ -617,6 +633,15 @@ def convert_resell_line_to_myob_import_job_sheet(order_id: str, line_id: str, *,
             raise DomainError("Order line not found")
         if str(getattr(oi, "line_kind", "") or "") != "resell":
             raise DomainError("Only resell lines can be converted")
+
+        rp_id = getattr(oi, "resell_product_id", None)
+        if rp_id:
+            rp = db.get(ResellProduct, str(rp_id))
+            if rp is not None and str(getattr(rp, "catalog_kind", None) or "") != "outsourced_manufacturing":
+                raise DomainError(
+                    "Only outsourced manufacturing resell lines can be converted to a job sheet. "
+                    "Supply resell lines (pallets, cores, fees, etc.) stay on the order without a job sheet."
+                )
 
         uid = str(getattr(oi, "myob_item_uid", None) or "").strip()
         rid = getattr(oi, "myob_row_id", None)

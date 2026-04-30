@@ -14,6 +14,7 @@ class ResellProductDTO(BaseModel):
     active: bool = True
     catalog_kind: str = "supply"
     customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
     myob_item_uid: Optional[str] = None
     myob_income_account_uid: Optional[str] = None
     income_account_display_id: Optional[str] = None

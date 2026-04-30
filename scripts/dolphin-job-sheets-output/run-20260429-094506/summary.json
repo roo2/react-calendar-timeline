@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "input_dir": "/Users/erupenkman/id-sw/crownpack/Production_software/scripts/dolphin-job-sheets",
+  "output_dir": "/Users/erupenkman/id-sw/crownpack/Production_software/scripts/dolphin-job-sheets-output/run-20260429-094506",
+  "files_seen": 8,
+  "files_parsed": 8,
+  "parse_errors": 0,
+  "candidate_order_lines": 17738,
+  "matched": 2,
+  "ambiguous": 1,
+  "unmatched": 5,
+  "high_threshold": 90.0,
+  "ambiguous_gap": 15.0,
+  "write_mode": false,
+  "apply_summary": {}
+}

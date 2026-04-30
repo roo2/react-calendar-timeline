@@ -286,6 +286,10 @@ class QuoteDefaults(Base):
     formulation_colours_markup: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.25)
     formulation_additives_markup: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.25)
     formulation_custom_blend_markup: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.25)
+    # Sell-side add-on ($/kg × billed job kg) when geometry is gusset with positive gusset width.
+    extrusion_gusset_retail_per_kg: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.5)
+    # Sell-side add-on ($/kg × billed job kg) when hole punching is selected.
+    extrusion_punched_retail_per_kg: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.2)
 
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_quote_defaults_singleton"),
@@ -293,6 +297,8 @@ class QuoteDefaults(Base):
         CheckConstraint("formulation_colours_markup >= 0", name="ck_quote_defaults_form_colours_markup_nonneg"),
         CheckConstraint("formulation_additives_markup >= 0", name="ck_quote_defaults_form_additives_markup_nonneg"),
         CheckConstraint("formulation_custom_blend_markup >= 0", name="ck_quote_defaults_form_custom_blend_markup_nonneg"),
+        CheckConstraint("extrusion_gusset_retail_per_kg >= 0", name="ck_quote_defaults_extrusion_gusset_retail_nonneg"),
+        CheckConstraint("extrusion_punched_retail_per_kg >= 0", name="ck_quote_defaults_extrusion_punched_retail_nonneg"),
     )
 
 

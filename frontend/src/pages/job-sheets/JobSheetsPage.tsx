@@ -6,9 +6,16 @@ import {
   type JobSheetListQuery,
   type JobSheetSummary,
 } from '../../store/slices/jobSheetsSlice'
+import {
+  CUSTOMER_PICKER_PAGE_SIZE,
+  fetchCustomer,
+  fetchCustomers,
+  type CustomerSummary,
+} from '../../store/slices/customersSlice'
 import { fmtDollarsLineItem, fmtDollarsPreview } from '../../utils/quoteFormat'
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   FormControl,
@@ -27,7 +34,6 @@ import {
 } from '@mui/material'
 import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
 import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
-import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
 const PRODUCT_TYPES = ['Bag', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'] as const
@@ -41,7 +47,22 @@ const ORDER_STATUSES = [
   'Closed',
   'Cancelled',
 ] as const
-const PRODUCTION_STATUSES = ['Planned', 'Scheduled', 'Running', 'Dispatched', 'Cancelled'] as const
+const PRODUCTION_STATUS_FILTER_OPTIONS = [
+  { value: 'planned', label: 'Backlog' },
+  { value: 'scheduled', label: 'Scheduled' },
+  { value: 'running', label: 'Running' },
+  { value: 'dispatched', label: 'Dispatched' },
+  { value: 'cancelled', label: 'Cancelled' },
+] as const
+
+function formatProductionStatusForDisplay(raw: string | null | undefined): string {
+  const t = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+  if (!t) return ''
+  if (t === 'planned') return 'Backlog'
+  return t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
 
 const JOB_SHEET_FILTER_DEFAULTS: Record<string, string> = {
   search: '',
@@ -109,8 +130,11 @@ export function JobSheetsPage() {
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
   const { items, status, error, total } = useAppSelector((s) => s.jobSheets.list)
   const customers = useAppSelector((s) => s.customers.list.items)
+  const customersStatus = useAppSelector((s) => s.customers.list.status)
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
+  const [customerSearchQ, setCustomerSearchQ] = useState('')
+  const [unlistedFilterCustomer, setUnlistedFilterCustomer] = useState<CustomerSummary | null>(null)
 
   const { filters, setFilter, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
     defaults: JOB_SHEET_FILTER_DEFAULTS,
@@ -147,8 +171,56 @@ export function JobSheetsPage() {
   }, [filters, pageIdx])
 
   useEffect(() => {
-    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
-  }, [dispatch])
+    const t = window.setTimeout(() => {
+      void dispatch(
+        fetchCustomers({
+          q: customerSearchQ,
+          page: 1,
+          page_size: Math.min(200, CUSTOMER_PICKER_PAGE_SIZE),
+        }),
+      )
+    }, 300)
+    return () => window.clearTimeout(t)
+  }, [customerSearchQ, dispatch])
+
+  useEffect(() => {
+    const id = (filters.customerId || '').trim()
+    if (!id) {
+      setUnlistedFilterCustomer(null)
+      return
+    }
+    if (customers.some((c) => c.id === id)) {
+      setUnlistedFilterCustomer(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const a = await dispatch(fetchCustomer(id))
+      if (cancelled) return
+      if (fetchCustomer.fulfilled.match(a) && a.payload?.customer) {
+        const c = a.payload.customer
+        setUnlistedFilterCustomer({ id: c.id, name: c.name, status: c.status || 'Active' })
+      } else {
+        setUnlistedFilterCustomer(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [filters.customerId, customers, dispatch])
+
+  const customerFilterOptions = useMemo(() => {
+    const m = new Map<string, CustomerSummary>()
+    for (const c of customers) m.set(c.id, c)
+    if (unlistedFilterCustomer) m.set(unlistedFilterCustomer.id, unlistedFilterCustomer)
+    return Array.from(m.values())
+  }, [customers, unlistedFilterCustomer])
+
+  const selectedFilterCustomer: CustomerSummary | null = useMemo(() => {
+    const id = (filters.customerId || '').trim()
+    if (!id) return null
+    return customerFilterOptions.find((c) => c.id === id) || null
+  }, [filters.customerId, customerFilterOptions])
 
   useEffect(() => {
     setDebouncing(true)
@@ -245,9 +317,9 @@ export function JobSheetsPage() {
                     <MenuItem value="">
                       <em>Any</em>
                     </MenuItem>
-                    {PRODUCTION_STATUSES.map((s) => (
-                      <MenuItem key={s} value={s.toLowerCase()}>
-                        {s}
+                    {PRODUCTION_STATUS_FILTER_OPTIONS.map((o) => (
+                      <MenuItem key={o.value} value={o.value}>
+                        {o.label}
                       </MenuItem>
                     ))}
                   </Select>
@@ -264,24 +336,35 @@ export function JobSheetsPage() {
                   },
                 }}
               >
-                <FormControl size="small" fullWidth>
-                  <InputLabel id="job-sheet-filter-customer">Customer</InputLabel>
-                  <Select
-                    labelId="job-sheet-filter-customer"
-                    label="Customer"
-                    value={filters.customerId}
-                    onChange={(e) => setFilter('customerId', e.target.value)}
-                  >
-                    <MenuItem value="">
-                      <em>Any</em>
-                    </MenuItem>
-                    {customers.map((c) => (
-                      <MenuItem key={c.id} value={c.id}>
-                        {c.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete<CustomerSummary, false, false, false>
+                  size="small"
+                  fullWidth
+                  options={customerFilterOptions}
+                  getOptionLabel={(c) => (c.name || c.id).trim() || c.id}
+                  isOptionEqualToValue={(a, b) => a.id === b.id}
+                  value={selectedFilterCustomer}
+                  onChange={(_e, v) => {
+                    setFilter('customerId', v?.id || '')
+                  }}
+                  onInputChange={(_e, v, reason) => {
+                    if (reason === 'input' || reason === 'clear' || reason === 'reset') {
+                      setCustomerSearchQ(v)
+                    }
+                  }}
+                  onOpen={() => {
+                    void dispatch(
+                      fetchCustomers({
+                        q: customerSearchQ,
+                        page: 1,
+                        page_size: Math.min(200, CUSTOMER_PICKER_PAGE_SIZE),
+                      }),
+                    )
+                  }}
+                  filterOptions={(opts) => opts}
+                  loading={customersStatus === 'loading'}
+                  noOptionsText={customerSearchQ.trim() ? 'No customers' : 'Type to search'}
+                  renderInput={(params) => <TextField {...params} label="Customer" placeholder="Search…" />}
+                />
                 <FormControl size="small" fullWidth>
                   <InputLabel id="job-sheet-filter-product-type">Product type</InputLabel>
                   <Select
@@ -430,9 +513,17 @@ export function JobSheetsPage() {
                 {(items as JobSheetSummary[]).map((r) => {
                   const statusText =
                     (r.status_label && String(r.status_label).trim()) ||
-                    [r.order_status, r.production_status].filter(Boolean).join(' · ') ||
+                    [r.order_status, r.production_status ? formatProductionStatusForDisplay(r.production_status) : '']
+                      .filter(Boolean)
+                      .join(' · ') ||
                     '—'
-                  const statusTitle = [r.order_status, r.production_status].filter(Boolean).join(' · ') || undefined
+                  const statusTitle =
+                    [r.order_status, r.production_status ? formatProductionStatusForDisplay(r.production_status) : '']
+                      .filter(Boolean)
+                      .join(' · ') || undefined
+                  const productCode = String(r.product_code || '').trim()
+                  const productDesc = String(r.product_description || '').trim()
+                  const productPlaceholderMyob = productCode.toLowerCase() === 'myob' && Boolean(productDesc)
                   return (
                     <TableRow key={r.id} hover>
                       <TableCell sx={{ fontFamily: 'monospace' }}>{r.invoice_no ?? ''}</TableCell>
@@ -443,14 +534,22 @@ export function JobSheetsPage() {
                         {r.customer_name || '—'}
                       </TableCell>
                       <TableCell sx={{ minWidth: 220, verticalAlign: 'top' }}>
-                        <Typography variant="body2" component="div" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
-                          {r.product_code}
-                        </Typography>
-                        {r.product_description ? (
-                          <Typography variant="body2" component="div" color="text.secondary" sx={{ mt: 0.5 }}>
+                        {productPlaceholderMyob ? (
+                          <Typography variant="body2" component="div" sx={{ wordBreak: 'break-word' }}>
                             {r.product_description}
                           </Typography>
-                        ) : null}
+                        ) : (
+                          <>
+                            <Typography variant="body2" component="div" sx={{ fontWeight: 700, fontFamily: 'monospace' }}>
+                              {r.product_code}
+                            </Typography>
+                            {r.product_description ? (
+                              <Typography variant="body2" component="div" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {r.product_description}
+                              </Typography>
+                            ) : null}
+                          </>
+                        )}
                       </TableCell>
                       <TableCell
                         sx={{

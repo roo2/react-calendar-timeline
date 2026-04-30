@@ -22,6 +22,16 @@ export type PackagingSettings = {
   pallet_volume_m3: number
 }
 
+/** Singleton quote_defaults row (formulation markups, extrusion retail add-ons). */
+export type QuoteDefaultsSettings = {
+  extrusion_retail_addon_per_kg: number
+  formulation_colours_markup: number
+  formulation_additives_markup: number
+  formulation_custom_blend_markup: number
+  extrusion_gusset_retail_per_kg: number
+  extrusion_punched_retail_per_kg: number
+}
+
 export type MaterialsRetailBand = {
   id: number
   product_group: string
@@ -71,6 +81,11 @@ type AdminRateCardsState = {
     error: string | null
     data: PackagingSettings | null
   }
+  quoteDefaults: {
+    status: Status
+    error: string | null
+    data: QuoteDefaultsSettings | null
+  }
   /** Used by mega AdminPage load (parallel). */
   hub: { status: Status; error: string | null }
   /** Printing sub-page bundle (tiers + inks + plates). */
@@ -100,6 +115,7 @@ const initialState: AdminRateCardsState = {
   conversionSpeeds: listInit(),
   conversionFactors: listInit(),
   packaging: { status: 'idle', error: null, data: null },
+  quoteDefaults: { status: 'idle', error: null, data: null },
   hub: { status: 'idle', error: null },
   printingBundle: { status: 'idle', error: null },
   resinsMaterials: { status: 'idle', error: null },
@@ -127,6 +143,10 @@ export const fetchAdminCores = createAsyncThunk('adminRateCards/cores/list', asy
 
 export const fetchAdminPackagingSettings = createAsyncThunk('adminRateCards/packaging/get', async () => {
   return await apiFetch<PackagingSettings>('/api/admin/rate-cards/packaging-settings')
+})
+
+export const fetchAdminQuoteDefaults = createAsyncThunk('adminRateCards/quoteDefaults/get', async () => {
+  return await apiFetch<QuoteDefaultsSettings>('/api/admin/rate-cards/quote-defaults')
 })
 
 // --- Bundled fetches ---
@@ -470,6 +490,16 @@ export const adminSavePackagingSettings = createAsyncThunk(
   },
 )
 
+export const adminSaveQuoteDefaults = createAsyncThunk(
+  'adminRateCards/quoteDefaults/save',
+  async (payload: QuoteDefaultsSettings) => {
+    return await apiFetch<QuoteDefaultsSettings>('/api/admin/rate-cards/quote-defaults', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+)
+
 function mergeBy<T>(items: T[], saved: T, match: (a: T, b: T) => boolean, sort?: (a: T, b: T) => number) {
   const idx = items.findIndex((x) => match(x, saved))
   let next: T[]
@@ -519,6 +549,20 @@ const slice = createSlice({
     b.addCase(fetchAdminPackagingSettings.rejected, (s, a) => {
       s.packaging.status = 'failed'
       s.packaging.error = a.error.message || 'Failed to load packaging settings'
+    })
+
+    b.addCase(fetchAdminQuoteDefaults.pending, (s) => {
+      s.quoteDefaults.status = 'loading'
+      s.quoteDefaults.error = null
+    })
+    b.addCase(fetchAdminQuoteDefaults.fulfilled, (s, a) => {
+      s.quoteDefaults.status = 'succeeded'
+      s.quoteDefaults.data = a.payload
+      s.quoteDefaults.error = null
+    })
+    b.addCase(fetchAdminQuoteDefaults.rejected, (s, a) => {
+      s.quoteDefaults.status = 'failed'
+      s.quoteDefaults.error = a.error.message || 'Failed to load quote defaults'
     })
 
     b.addCase(fetchAdminResinsMaterials.pending, (s) => {
@@ -780,6 +824,12 @@ const slice = createSlice({
       s.packaging.data = a.payload
       s.packaging.status = 'succeeded'
       s.packaging.error = null
+    })
+
+    b.addCase(adminSaveQuoteDefaults.fulfilled, (s, a) => {
+      s.quoteDefaults.data = a.payload
+      s.quoteDefaults.status = 'succeeded'
+      s.quoteDefaults.error = null
     })
 
     b.addCase(adminSaveMaterialsRetailBands.fulfilled, (s, a) => {

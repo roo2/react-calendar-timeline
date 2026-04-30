@@ -26,6 +26,11 @@ export type QuoteRatebook = {
     additives_markup?: number
     custom_resin_blend_markup?: number
   }
+  /** Sell-side add-ons ($/kg × billed job kg) for gusset geometry and hole punching (quote_defaults). */
+  quote_extrusion_feature_retails?: {
+    gusset_per_kg?: number
+    punched_per_kg?: number
+  }
   extruders?: Array<{
     extruder_code: string
     model: string | null
@@ -130,11 +135,17 @@ export type QuotePreview = {
   extrusion_waste_minutes: number
   /** Productive plastic (derived) plus kg run to waste during extrusion downtime (ratebook waste adders + extrusion waste minutes × throughput). */
   total_extruded_kg: number | null
+  /** Kg of material attributed to extrusion waste (downtime × throughput); same basis as `cost_breakdown.waste_cost`. */
+  waste_kg: number | null
+  /** Metres of core (rolls × layflat width) when Rolls + core; for breakdown labelling. */
+  core_length_m: number | null
   conversion_minutes_total?: number | null
   conversion_minutes_run?: number | null
   conversion_minutes_roll_changes?: number | null
   cartons?: number | null
   kg_per_carton?: number | null
+  /** Printing colours from quote inputs (for breakdown labelling). */
+  num_colours: number
   printing_unavailable_reason?: string | null
   /** Single-line MOQ hint for the current plain/printed selection (product width band). */
   materials_moq_summary_line?: string | null
@@ -156,6 +167,10 @@ export type QuotePreview = {
     /** Sell-side pass-through: incremental formulation cost × configured markups (not included in material_price). */
     formulation_line_price: number
     extrusion_price: number
+    /** Sell-side add-on from configured $/kg × job kg when geometry is gusset with positive gusset width. */
+    gusset_retail_price: number
+    /** Sell-side add-on from configured $/kg × job kg when hole punching is selected. */
+    punched_retail_price: number
     printing_price: number
     conversion_price: number
     core_price: number
@@ -287,6 +302,20 @@ function readFormulationMargins(ratebook: QuoteRatebook): {
     colours_markup: num(m?.colours_markup, DEFAULT_FORMULATION_MARKUP),
     additives_markup: num(m?.additives_markup, DEFAULT_FORMULATION_MARKUP),
     custom_resin_blend_markup: num(m?.custom_resin_blend_markup, DEFAULT_FORMULATION_MARKUP),
+  }
+}
+
+const DEFAULT_EXTRUSION_FEATURE_RETAIL_PER_KG = { gusset_per_kg: 0.5, punched_per_kg: 0.2 }
+
+function readExtrusionFeatureRetails(ratebook: QuoteRatebook): { gusset_per_kg: number; punched_per_kg: number } {
+  const x = ratebook.quote_extrusion_feature_retails
+  const num = (v: unknown, fallback: number) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : fallback
+  }
+  return {
+    gusset_per_kg: num(x?.gusset_per_kg, DEFAULT_EXTRUSION_FEATURE_RETAIL_PER_KG.gusset_per_kg),
+    punched_per_kg: num(x?.punched_per_kg, DEFAULT_EXTRUSION_FEATURE_RETAIL_PER_KG.punched_per_kg),
   }
 }
 
@@ -1092,10 +1121,12 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // Core cost (only for rolls):
   // cores are cut to film width, so meters of core used = rolls * width_m.
   let coreCost = 0
+  let coreLengthM: number | null = null
   if (inputs.finish_mode === 'Rolls' && inputs.core_type && rolls != null && rolls > 0 && layflatMm > 0) {
     const c = ratebook.cores?.[inputs.core_type]
     if (c) {
       const coreMeters = rolls * mmToM(layflatMm)
+      coreLengthM = coreMeters > 0 ? coreMeters : null
       coreCost = Number(c.cost_per_meter || 0) * coreMeters
     }
   }
@@ -1128,6 +1159,18 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const extrusionPrice = 0
   const corePrice = 0
 
+  const kgRetailBaseForFeatures = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
+  const xf = readExtrusionFeatureRetails(ratebook)
+  const hasGussetGeometry =
+    String(inputs.geometry || '').toLowerCase() === 'gusset' && Number(inputs.gusset_mm || 0) > 0
+  const punchedSelected = !!inputs.hole_punched
+  let gussetRetailPrice = 0
+  let punchedRetailPrice = 0
+  if (kgRetailBaseForFeatures > 0) {
+    if (hasGussetGeometry) gussetRetailPrice = roundMoney(xf.gusset_per_kg * kgRetailBaseForFeatures)
+    if (punchedSelected) punchedRetailPrice = roundMoney(xf.punched_per_kg * kgRetailBaseForFeatures)
+  }
+
   const totalCost = materialCost + extrusionCost + printingCost + conversionCost + coreCost + wasteCost
   const totalPriceRetail =
     materialPrice +
@@ -1136,7 +1179,9 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     conversionPrice +
     extrusionPrice +
     corePrice +
-    wastePrice
+    wastePrice +
+    gussetRetailPrice +
+    punchedRetailPrice
 
   const billedTotalsKg = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
   const overridePk = toNum(inputs.override_price_per_kg)
@@ -1175,11 +1220,14 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     extrusion_hours: extrusionHours,
     extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
     total_extruded_kg: totalExtrudedKg > 0 ? roundMoney(totalExtrudedKg) : null,
+    waste_kg: extrusionWasteKg > 0 ? roundMoney(extrusionWasteKg) : null,
+    core_length_m: coreLengthM != null && coreLengthM > 0 ? roundMoney(coreLengthM) : null,
     conversion_minutes_total: conversionTotalMinutes,
     conversion_minutes_run: conversionRunMinutes,
     conversion_minutes_roll_changes: conversionRollChangeMinutes,
     cartons,
     kg_per_carton: kgPerCarton,
+    num_colours: Math.max(0, Math.round(Number(inputs.num_colours || 0))),
     printing_unavailable_reason: printingUnavailableReason,
     materials_moq_summary_line: materialsMoqSummaryLine,
     materials_moq_warning: materialsMoqWarning,
@@ -1197,6 +1245,8 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
       material_price: roundMoney(materialPrice),
       formulation_line_price: formulationLinePriceR,
       extrusion_price: roundMoney(extrusionPrice),
+      gusset_retail_price: gussetRetailPrice,
+      punched_retail_price: punchedRetailPrice,
       printing_price: roundMoney(printingPrice),
       conversion_price: roundMoney(conversionPrice),
       core_price: roundMoney(corePrice),
@@ -1210,5 +1260,72 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     final_price: roundMoney(finalPrice),
     unit_price: unitPrice != null ? roundMoney(unitPrice) : null,
   }
+}
+
+export type MaterialsMoqDenomKg = {
+  kgPerRoll: number | null
+  kgPerProduct: number | null
+  kgPerCarton: number | null
+}
+
+/**
+ * kg per roll / product / carton from geometry + nominal roll weight (`nominal_weight_per_roll_kg` or conversion `roll_weight_avg`),
+ * so materials MOQ can be shown in the selected quantity unit before job quantities are entered.
+ */
+export function computeMaterialsMoqDenomKg(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): MaterialsMoqDenomKg {
+  const rollRefKg =
+    inputs.nominal_weight_per_roll_kg != null &&
+    Number.isFinite(Number(inputs.nominal_weight_per_roll_kg)) &&
+    Number(inputs.nominal_weight_per_roll_kg) > 0
+      ? Number(inputs.nominal_weight_per_roll_kg)
+      : getRollWeightAvgKg(ratebook) > 0
+        ? getRollWeightAvgKg(ratebook)
+        : null
+
+  const mergeQty = (q: Record<string, unknown>): QuickQuoteInputs => ({
+    ...inputs,
+    quantity: { ...(inputs.quantity as Record<string, unknown>), ...q },
+  })
+
+  let kgPerRoll: number | null = null
+  let kgPerProduct: number | null = null
+  let kgPerCarton: number | null = null
+
+  try {
+    // Use a quantity with **only** rolls + total_kg. Merging onto existing `quantity.units` would make
+    // `computeDerivedGeometryAndTotals` prefer units × kg/product and ignore roll mass (wrong kg/roll for MOQ).
+    if (inputs.finish_mode === 'Rolls' && rollRefKg != null && rollRefKg > 0) {
+      const p = computeQuickQuotePreview({ ...inputs, quantity: { rolls: 1, total_kg: rollRefKg } }, ratebook)
+      const kr = p.kg_per_roll
+      if (kr != null && Number.isFinite(Number(kr)) && Number(kr) > 0) kgPerRoll = Number(kr)
+    }
+
+    if (!inputs.continuous_roll) {
+      const p = computeQuickQuotePreview(mergeQty({ units: 1 }), ratebook)
+      const ku = p.kg_per_unit
+      if (ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) kgPerProduct = Number(ku)
+      if (inputs.finish_mode === 'Cartons') {
+        const kc = p.kg_per_carton
+        if (kc != null && Number.isFinite(Number(kc)) && Number(kc) > 0) kgPerCarton = Number(kc)
+      }
+    } else if (inputs.finish_mode === 'Rolls' && rollRefKg != null && rollRefKg > 0) {
+      const p = computeQuickQuotePreview(mergeQty({ rolls: 1, units: 1, total_kg: rollRefKg }), ratebook)
+      const ku = p.kg_per_unit
+      if (ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) kgPerProduct = Number(ku)
+    } else if (inputs.finish_mode === 'Cartons') {
+      const bpc = inputs.bags_per_carton != null ? Math.max(0, Math.round(Number(inputs.bags_per_carton))) : 0
+      if (bpc > 0 && rollRefKg != null && rollRefKg > 0) {
+        const p = computeQuickQuotePreview(mergeQty({ units: bpc, total_kg: rollRefKg }), ratebook)
+        const ku = p.kg_per_unit
+        if (ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) kgPerProduct = Number(ku)
+        const kc = p.kg_per_carton
+        if (kc != null && Number.isFinite(Number(kc)) && Number(kc) > 0) kgPerCarton = Number(kc)
+      }
+    }
+  } catch {
+    // leave nulls
+  }
+
+  return { kgPerRoll, kgPerProduct, kgPerCarton }
 }
 

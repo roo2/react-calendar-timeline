@@ -625,5 +625,9 @@
     "colours_markup": 0.25,
     "additives_markup": 0.25,
     "custom_resin_blend_markup": 0.25
+  },
+  "quote_extrusion_feature_retails": {
+    "gusset_per_kg": 0.5,
+    "punched_per_kg": 0.2
   }
 }

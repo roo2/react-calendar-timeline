@@ -55,6 +55,28 @@ def _float_safe(s: str | None) -> float | None:
         return None
 
 
+def _invoice_balance_aud(lines: list[DolphinLine]) -> float | None:
+    """MYOB invoice ``Balance (AUD)`` is repeated on each line; use the first parsable value."""
+    for ln in lines:
+        b = _float_safe(ln.balance)
+        if b is not None:
+            return b
+    return None
+
+
+def _dolphin_order_status_from_balance(balance_aud: float | None) -> OrderStatus:
+    """
+    Historic receivable invoices: paid (zero balance) → closed; outstanding → dispatched.
+
+    If balance is missing from the export, prefer dispatched (invoice may still be open).
+    """
+    if balance_aud is None:
+        return OrderStatus.DISPATCHED
+    if abs(float(balance_aud)) < 0.005:
+        return OrderStatus.CLOSED
+    return OrderStatus.DISPATCHED
+
+
 def synthetic_dolphin_order_uid(*, customer_id: str, invoice_number: str) -> str:
     key = f"crownpack:dolphin-order:{str(customer_id).strip()}:{str(invoice_number).strip()}"
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
@@ -201,6 +223,7 @@ def import_dolphin_tsv(
         "orders_upserted": 0,
         "order_items": 0,
         "skipped": skipped,
+        "skipped_line_sync_import_review_complete": 0,
     }
 
     for (_section, inv), g_lines in sorted(groups.items(), key=lambda x: (x[0][0], x[0][1])):
@@ -220,6 +243,8 @@ def import_dolphin_tsv(
         code = _allocate_order_code(db, invoice=inv, myob_order_uid=duid)
         od0 = _parse_invoice_date(g_lines[0].invoice_date)
         cpo = _customer_po_from_lines(g_lines)
+        balance_aud = _invoice_balance_aud(g_lines)
+        dolphin_status = _dolphin_order_status_from_balance(balance_aud)
         if dry_run:
             out["orders_upserted"] = int(out["orders_upserted"]) + 1
             out["order_items"] = int(out["order_items"]) + len(g_lines)
@@ -232,7 +257,7 @@ def import_dolphin_tsv(
                 id=str(uuid.uuid4()),
                 code=code,
                 customer_id=str(cust.id),
-                status=OrderStatus.DRAFT,
+                status=dolphin_status,
                 order_date=od0,
                 customer_purchase_order_number=cpo,
                 import_source=DOLPHIN_IMPORT_SOURCE,
@@ -246,6 +271,7 @@ def import_dolphin_tsv(
         else:
             order.code = code
             order.customer_id = str(cust.id)
+            order.status = dolphin_status
             if od0 is not None:
                 order.order_date = od0
             order.customer_purchase_order_number = cpo
@@ -253,6 +279,14 @@ def import_dolphin_tsv(
             order.myob_synced_at = now
             db.add(order)
             db.flush()
+
+        review_locked = str(getattr(order, "import_review_status", None) or "").strip().lower() == "complete"
+        if review_locked:
+            out["skipped_line_sync_import_review_complete"] = (
+                int(out["skipped_line_sync_import_review_complete"]) + 1
+            )
+            out["orders_upserted"] = int(out["orders_upserted"]) + 1
+            continue
 
         db.execute(delete(OrderItem).where(OrderItem.order_id == str(order.id)))
         db.flush()
@@ -305,6 +339,9 @@ def import_dolphin_tsv(
             )
             db.add(oi)
             out["order_items"] = int(out["order_items"]) + 1
+        db.flush()
+        order.import_review_status = "incomplete"
+        db.add(order)
         db.flush()
 
         for oi2 in list(

@@ -17,9 +17,15 @@ router = APIRouter(prefix="/api/admin/resell-products", tags=["admin-resell-prod
 
 
 def _to_dto(r) -> ResellProductDTO:
-    # Avoid lazy-loading `income_account` on detached instances (e.g. after create_row).
+    # Avoid lazy-loading `income_account` / `customer` on detached instances (e.g. after create_row).
     lv = sa_inspect(r).attrs.income_account.loaded_value
     ia = None if lv is NO_VALUE else lv
+    cv = sa_inspect(r).attrs.customer.loaded_value
+    cust = None if cv is NO_VALUE else cv
+    customer_name: str | None = None
+    if cust is not None:
+        nm = str(getattr(cust, "name", "") or "").strip()
+        customer_name = nm or None
     return ResellProductDTO(
         id=str(r.id),
         description=strip_trailing_dash_suffix(str(r.description)),
@@ -27,6 +33,7 @@ def _to_dto(r) -> ResellProductDTO:
         active=bool(r.active),
         catalog_kind=str(getattr(r, "catalog_kind", None) or "supply"),
         customer_id=str(r.customer_id) if getattr(r, "customer_id", None) else None,
+        customer_name=customer_name,
         myob_item_uid=getattr(r, "myob_item_uid", None),
         myob_income_account_uid=getattr(r, "myob_income_account_uid", None),
         income_account_display_id=getattr(ia, "display_id", None) if ia is not None else None,

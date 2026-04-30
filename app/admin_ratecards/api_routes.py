@@ -21,6 +21,7 @@ from app.db.models.rate_cards import (
     Ink,
     Plate,
     PrintingPricingTier,
+    QuoteDefaults,
     Resin,
     ResinBlend,
     ResinBlendComponent,
@@ -230,6 +231,24 @@ class QuotePackagingSettingsUpsertRequest(BaseModel):
     packing_factor_rolls: float = Field(..., gt=0, le=1)
     packing_factor_cartons: float = Field(..., gt=0, le=1)
     pallet_volume_m3: float = Field(..., gt=0)
+
+
+class QuoteDefaultsDTO(BaseModel):
+    extrusion_retail_addon_per_kg: float
+    formulation_colours_markup: float
+    formulation_additives_markup: float
+    formulation_custom_blend_markup: float
+    extrusion_gusset_retail_per_kg: float
+    extrusion_punched_retail_per_kg: float
+
+
+class QuoteDefaultsUpsertRequest(BaseModel):
+    extrusion_retail_addon_per_kg: float = Field(..., ge=0)
+    formulation_colours_markup: float = Field(..., ge=0)
+    formulation_additives_markup: float = Field(..., ge=0)
+    formulation_custom_blend_markup: float = Field(..., ge=0)
+    extrusion_gusset_retail_per_kg: float = Field(..., ge=0)
+    extrusion_punched_retail_per_kg: float = Field(..., ge=0)
 
 
 @router.get(
@@ -749,6 +768,81 @@ async def replace_materials_retail_bands(payload: MaterialsRetailBandsUpsertRequ
             )
             for r in rows
         ]
+
+
+@router.get(
+    "/quote-defaults",
+    response_model=QuoteDefaultsDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def get_quote_defaults():
+    with SessionLocal() as db:
+        row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        if not row:
+            return QuoteDefaultsDTO(
+                extrusion_retail_addon_per_kg=1.8,
+                formulation_colours_markup=0.25,
+                formulation_additives_markup=0.25,
+                formulation_custom_blend_markup=0.25,
+                extrusion_gusset_retail_per_kg=0.5,
+                extrusion_punched_retail_per_kg=0.2,
+            )
+        return QuoteDefaultsDTO(
+            extrusion_retail_addon_per_kg=float(row.extrusion_retail_addon_per_kg),
+            formulation_colours_markup=float(row.formulation_colours_markup),
+            formulation_additives_markup=float(row.formulation_additives_markup),
+            formulation_custom_blend_markup=float(row.formulation_custom_blend_markup),
+            extrusion_gusset_retail_per_kg=float(row.extrusion_gusset_retail_per_kg),
+            extrusion_punched_retail_per_kg=float(row.extrusion_punched_retail_per_kg),
+        )
+
+
+@router.put(
+    "/quote-defaults",
+    response_model=QuoteDefaultsDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
+    with SessionLocal.begin() as db:
+        row = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        if not row:
+            row = QuoteDefaults(
+                id=1,
+                extrusion_retail_addon_per_kg=payload.extrusion_retail_addon_per_kg,
+                formulation_colours_markup=payload.formulation_colours_markup,
+                formulation_additives_markup=payload.formulation_additives_markup,
+                formulation_custom_blend_markup=payload.formulation_custom_blend_markup,
+                extrusion_gusset_retail_per_kg=payload.extrusion_gusset_retail_per_kg,
+                extrusion_punched_retail_per_kg=payload.extrusion_punched_retail_per_kg,
+            )
+            db.add(row)
+        else:
+            row.extrusion_retail_addon_per_kg = payload.extrusion_retail_addon_per_kg
+            row.formulation_colours_markup = payload.formulation_colours_markup
+            row.formulation_additives_markup = payload.formulation_additives_markup
+            row.formulation_custom_blend_markup = payload.formulation_custom_blend_markup
+            row.extrusion_gusset_retail_per_kg = payload.extrusion_gusset_retail_per_kg
+            row.extrusion_punched_retail_per_kg = payload.extrusion_punched_retail_per_kg
+
+    with SessionLocal() as db:
+        row2 = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
+        if not row2:
+            return QuoteDefaultsDTO(
+                extrusion_retail_addon_per_kg=1.8,
+                formulation_colours_markup=0.25,
+                formulation_additives_markup=0.25,
+                formulation_custom_blend_markup=0.25,
+                extrusion_gusset_retail_per_kg=0.5,
+                extrusion_punched_retail_per_kg=0.2,
+            )
+        return QuoteDefaultsDTO(
+            extrusion_retail_addon_per_kg=float(row2.extrusion_retail_addon_per_kg),
+            formulation_colours_markup=float(row2.formulation_colours_markup),
+            formulation_additives_markup=float(row2.formulation_additives_markup),
+            formulation_custom_blend_markup=float(row2.formulation_custom_blend_markup),
+            extrusion_gusset_retail_per_kg=float(row2.extrusion_gusset_retail_per_kg),
+            extrusion_punched_retail_per_kg=float(row2.extrusion_punched_retail_per_kg),
+        )
 
 
 @router.get(

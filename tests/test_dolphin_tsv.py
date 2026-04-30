@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+import textwrap
+import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+import app.db.models.domain  # noqa: F401 — register metadata
+from app.db.models import Base
+from app.db.models.domain import Customer, Order, OrderItem
+from app.db.models.enums import OrderStatus
+from app.integrations.dolphin.import_orders import (
+    DOLPHIN_IMPORT_SOURCE,
+    _dolphin_order_status_from_balance,
+    _invoice_balance_aud,
+    import_dolphin_tsv,
+    synthetic_dolphin_order_uid,
+)
 
 from app.integrations.dolphin.description_uom import (
     build_synthetic_item_json_for_dolphin_uom,
@@ -114,6 +130,57 @@ def test_only_receivable_invoice_in_group():
     assert len(g2[("C", "1")]) == 1
 
 
+def test_dolphin_balance_maps_to_closed_or_dispatched():
+    assert _dolphin_order_status_from_balance(0.0).value == "closed"
+    assert _dolphin_order_status_from_balance(0.001).value == "closed"
+    assert _dolphin_order_status_from_balance(50.0).value == "dispatched"
+    assert _dolphin_order_status_from_balance(None).value == "dispatched"
+
+    paid = DolphinLine(
+        "S",
+        "1",
+        "1 Jan 2020",
+        RECEIVABLE_INVOICE,
+        "",
+        "",
+        "X",
+        "1",
+        "0",
+        "0",
+        "0",
+        "1",
+        "1",
+        "0.00",
+        "",
+        "",
+        "4030",
+        "Sales",
+    )
+    assert _invoice_balance_aud([paid]) == 0.0
+
+    owing = DolphinLine(
+        "S",
+        "2",
+        "1 Jan 2020",
+        RECEIVABLE_INVOICE,
+        "",
+        "",
+        "X",
+        "1",
+        "0",
+        "0",
+        "0",
+        "1",
+        "1",
+        "12.50",
+        "",
+        "",
+        "4030",
+        "Sales",
+    )
+    assert _invoice_balance_aud([owing]) == 12.5
+
+
 def test_dolphin_line_ordering_job_sheet_then_outsourced_then_fees():
     def mk(desc: str, code: str, account_name: str) -> DolphinLine:
         return DolphinLine(
@@ -143,3 +210,63 @@ def test_dolphin_line_ordering_job_sheet_then_outsourced_then_fees():
 
     ordered = order_dolphin_lines_for_import([fee, outsourced, inhouse])
     assert [x.item_code for x in ordered] == ["MFG", "OUT", "FEE"]
+
+
+def test_dolphin_import_skips_line_sync_when_import_review_complete(tmp_path: Path):
+    """Re-import must not delete/rebuild order lines when staff marked import review complete."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+
+    cust_id = str(uuid.uuid4())
+    db.add(Customer(id=cust_id, name="LockTest", myob_display_id="7612"))
+    db.commit()
+
+    inv = "ZZ90001"
+    duid = synthetic_dolphin_order_uid(customer_id=cust_id, invoice_number=inv)
+    oid = str(uuid.uuid4())
+    oi_id = str(uuid.uuid4())
+    db.add(
+        Order(
+            id=oid,
+            code=inv,
+            customer_id=cust_id,
+            status=OrderStatus.DRAFT,
+            import_source=DOLPHIN_IMPORT_SOURCE,
+            myob_order_uid=duid,
+            import_review_status="complete",
+        )
+    )
+    db.add(
+        OrderItem(
+            id=oi_id,
+            order_id=oid,
+            line_index=0,
+            line_kind="myob_import",
+            import_line_description="KEEP ME",
+            myob_row_id=0,
+            import_requires_job_sheet=False,
+        )
+    )
+    db.commit()
+
+    tsv = textwrap.dedent(
+        """
+        Receivable Invoice Detail
+
+        Invoice Number\tInvoice Date\tSource\tReference\tItem Code\tDescription\tQuantity\tUnit Price (ex) (AUD)\tDiscount (ex) (AUD)\tGST (AUD)\tGross (AUD)\tInvoice Total (AUD)\tBalance (AUD)\tContact Account Number\tContact Group\tAccount Code\tAccount
+
+        SecA
+        ZZ90001\t1 Jan 2026\tReceivable Invoice\t\tX\tDifferent desc\t99\t1\t0\t0\t99\t99\t0\t7612\t\t4030\tIncome - Sales - Manufactured (CP & AP)
+        """
+    ).lstrip()
+    path = tmp_path / "lock.tsv"
+    path.write_text(tsv, encoding="utf-8")
+
+    out = import_dolphin_tsv(db, str(path), dry_run=False)
+    assert int(out.get("skipped_line_sync_import_review_complete", 0)) >= 1
+    row = db.scalar(select(OrderItem).where(OrderItem.order_id == oid))
+    assert row is not None
+    assert str(row.id) == oi_id
+    assert row.import_line_description == "KEEP ME"

@@ -158,6 +158,8 @@ class JobSheet(Base):
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_import_draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Override for quotes / job sheet UI; when null, fall back to order import line or product spec text."""
+    customer_facing_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     customer: Mapped["Customer"] = relationship()
     product: Mapped["Product"] = relationship()
@@ -223,6 +225,8 @@ class Order(Base):
     myob_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     myob_source_sales_order_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     myob_source_invoices_json: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
+    # Staff import QA: ``incomplete`` | ``complete``; Dolphin re-import skips line replacement when ``complete``.
+    import_review_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")

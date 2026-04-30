@@ -1,14 +1,27 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Box, Divider, IconButton, Paper, SvgIcon, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  Box,
+  Button,
+  Divider,
+  IconButton,
+  Paper,
+  Stack,
+  SvgIcon,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material'
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import {
   fmtCount,
   fmtDollarsLineItem,
   fmtDollarsPreview,
-  fmtHoursMinutesPreview,
   fmtQtyNumber,
 } from '../../../utils/quoteFormat'
-import type { QtyType } from '../../../utils/quantityRollFields'
-
 /** Brief yellow highlight when `watch` (serialized) changes — skips first paint. */
 function FlashSpan(props: { watch: unknown; children: ReactNode }) {
   const { watch, children } = props
@@ -47,6 +60,41 @@ function FlashSpan(props: { watch: unknown; children: ReactNode }) {
   )
 }
 
+/** Renders a band MOQ line with the part after the first `:` in bold. */
+function MaterialsMoqLineText(props: { line: string }) {
+  const { line } = props
+  const t = line.trim()
+  const i = t.indexOf(':')
+  if (i === -1) {
+    return <>{t}</>
+  }
+  const lead = t.slice(0, i + 1)
+  const value = t.slice(i + 1).trim()
+  if (!value) {
+    return <>{t}</>
+  }
+  return (
+    <>
+      {lead}{' '}
+      <Box component="strong" sx={{ fontWeight: 700 }}>
+        {value}
+      </Box>
+    </>
+  )
+}
+
+/** Compact duration for breakdown row labels, e.g. `6hr, 33m` (`totalMinutes` rounded). */
+function fmtBreakdownDurationMinutes(totalMinutes: unknown): string | null {
+  const n = Number(totalMinutes)
+  if (!Number.isFinite(n) || n <= 0) return null
+  const total = Math.max(0, Math.round(n))
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (h === 0) return `${m}m`
+  if (m === 0) return `${h}hr`
+  return `${h}hr, ${m}m`
+}
+
 export function QuotePreviewPanel(props: {
   preview: any
   loading: boolean
@@ -54,13 +102,16 @@ export function QuotePreviewPanel(props: {
   missing: string[]
   finishMode: 'Rolls' | 'Cartons'
   productType: string
-  estimatedPallets: number | null
-  /** From {@link computeProductDescriptionFromSpec} on the current quote spec (same as product list / editor). */
-  productDescription?: string
   /** Clears the optional Price per kg override (e.g. from the Adjustments row). */
   onClearPricePerKgOverride?: () => void
-  /** When `units` (total product count), show **per 1000** in the breakdown next to per Kg / per Roll / per Carton. */
-  qtyType?: QtyType
+  /** Top-of-panel row for email: description, min order, price (header includes unit, e.g. Price per kg). */
+  emailQuoteTable: { description: string; minOrder: string; price: string; priceHeader: string }
+  /** One line for width-based materials MOQ (shown under the email table with yield), e.g. `Minimum order quantity (plain): 350.00kg`. */
+  materialsMoqLine?: string | null
+  /** Continuous web (e.g. Tube): totals row uses per m instead of per 1000. */
+  isContinuousLength?: boolean
+  /** With continuous length + units qty: yield uses kg/ea instead of kg per 1000 products. */
+  yieldPerEa?: boolean
 }) {
   const {
     preview,
@@ -69,26 +120,128 @@ export function QuotePreviewPanel(props: {
     missing,
     finishMode,
     productType,
-    estimatedPallets,
-    productDescription = '',
     onClearPricePerKgOverride,
-    qtyType,
+    emailQuoteTable,
+    materialsMoqLine = null,
+    isContinuousLength = false,
+    yieldPerEa = false,
   } = props
   const p = preview
+  const materialsMoqLineTrimmed =
+    materialsMoqLine != null && String(materialsMoqLine).trim() ? String(materialsMoqLine).trim() : null
+  const yieldEstimateNode =
+    p != null
+      ? (() => {
+          const kgPerUnit =
+            p.kg_per_unit != null
+              ? Number(p.kg_per_unit)
+              : Number(p.totals_units || 0) > 0 && p.totals_kg != null
+                ? Number(p.totals_kg) / Number(p.totals_units || 1)
+                : null
+          if (yieldPerEa) {
+            if (kgPerUnit == null || !Number.isFinite(kgPerUnit) || kgPerUnit <= 0) return null
+            return (
+              <Typography variant="body2">
+                Yield estimate: {fmtQtyNumber(kgPerUnit, 2)}kg / ea
+              </Typography>
+            )
+          }
+          const kgPer1000 = kgPerUnit != null && Number.isFinite(kgPerUnit) ? kgPerUnit * 1000 : null
+          if (kgPer1000 == null || !Number.isFinite(kgPer1000)) return null
+          return (
+            <Typography variant="body2">
+              Yield estimate: {fmtQtyNumber(kgPer1000, 2)}kg / {fmtCount(1000)} products
+            </Typography>
+          )
+        })()
+      : null
+  const showYieldAndMoqBlock = Boolean(yieldEstimateNode || materialsMoqLineTrimmed)
   const dash = '—'
-  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
+  const [emailCopyDone, setEmailCopyDone] = useState(false)
+  const onCopyEmailQuote = useCallback(async () => {
+    const { description, minOrder, price, priceHeader } = emailQuoteTable
+    const plain = `Description\tMin QTY\t${priceHeader}\n${description}\t${minOrder}\t${price}`
+    const esc = (s: string) =>
+      s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+    const html = `<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px"><thead><tr><th align="left">Description</th><th align="left">Min QTY</th><th align="left">${esc(
+      priceHeader,
+    )}</th></tr></thead><tbody><tr><td>${esc(description)}</td><td>${esc(minOrder)}</td><td>${esc(price)}</td></tr></tbody></table>`
+    try {
+      if (typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': new Blob([plain], { type: 'text/plain' }),
+            'text/html': new Blob([html], { type: 'text/html' }),
+          }),
+        ])
+      } else {
+        await navigator.clipboard.writeText(plain)
+      }
+      setEmailCopyDone(true)
+      window.setTimeout(() => setEmailCopyDone(false), 2000)
+    } catch {
+      try {
+        await navigator.clipboard.writeText(plain)
+        setEmailCopyDone(true)
+        window.setTimeout(() => setEmailCopyDone(false), 2000)
+      } catch {
+        // ignore
+      }
+    }
+  }, [emailQuoteTable])
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h6">Live Quote</Typography>
-        <Typography variant="caption" color="text.secondary">
-          {loading ? 'Calculating…' : p ? 'Up to date' : canCalculate ? 'Ready' : 'Incomplete'}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <Typography variant="caption" color="text.secondary">
+            {loading ? 'Calculating…' : p ? 'Up to date' : canCalculate ? 'Ready' : 'Incomplete'}
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<ContentCopyIcon fontSize="small" />}
+            onClick={() => void onCopyEmailQuote()}
+          >
+            {emailCopyDone ? 'Copied' : 'Copy table'}
+          </Button>
+        </Box>
       </Box>
 
-      <Typography variant="body2" sx={{ mt: 1.5, wordBreak: 'break-word' }}>
-        {productDescription.trim() ? productDescription.trim() : '—'}
-      </Typography>
+      <TableContainer
+        sx={{
+          mt: 1.5,
+          mb: 1.5,
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1,
+          overflow: 'hidden',
+          '& .MuiTableCell-head': { fontWeight: 600, bgcolor: 'action.hover' },
+        }}
+      >
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Description</TableCell>
+              <TableCell>Min QTY</TableCell>
+              <TableCell>{emailQuoteTable.priceHeader}</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            <TableRow>
+              <TableCell sx={{ wordBreak: 'break-word', maxWidth: 320, verticalAlign: 'top' }}>
+                {emailQuoteTable.description}
+              </TableCell>
+              <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.minOrder}</TableCell>
+              <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.price}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </TableContainer>
 
       <Divider sx={{ mt: 2, mb: 1 }} />
 
@@ -99,48 +252,18 @@ export function QuotePreviewPanel(props: {
       ) : null}
 
       <Box>
+        {showYieldAndMoqBlock ? (
+          <Stack component="div" spacing={0.75} sx={{ mb: 0.5 }}>
+            {yieldEstimateNode}
+            {materialsMoqLineTrimmed ? (
+              <Typography variant="body2" component="div" sx={{ lineHeight: 1.4 }}>
+                <MaterialsMoqLineText line={materialsMoqLineTrimmed} />
+              </Typography>
+            ) : null}
+          </Stack>
+        ) : null}
         {p ? (
           <>
-            {(() => {
-              const kgPerUnit =
-                p.kg_per_unit != null
-                  ? Number(p.kg_per_unit)
-                  : Number(p.totals_units || 0) > 0 && p.totals_kg != null
-                    ? Number(p.totals_kg) / Number(p.totals_units || 1)
-                    : null
-              const kgPer1000 = kgPerUnit != null && Number.isFinite(kgPerUnit) ? kgPerUnit * 1000 : null
-              if (kgPer1000 == null || !Number.isFinite(kgPer1000)) return null
-              return (
-                <Typography variant="body2">
-                  Yield estimate: {fmtQtyNumber(kgPer1000, 2)}kg / {fmtCount(1000)} products
-                </Typography>
-              )
-            })()}
-            {p.extrusion_hours != null ? (
-              <Typography variant="body2">
-                Extrusion time: {fmtHoursMinutesPreview(Number(p.extrusion_hours) * 60)}
-              </Typography>
-            ) : null}
-            {Number(p.extrusion_waste_minutes || 0) > 0 ? (
-              <Typography variant="body2">
-                Wasted extrusion time: {fmtHoursMinutesPreview(Number(p.extrusion_waste_minutes || 0))}
-              </Typography>
-            ) : null}
-            {p.total_extruded_kg != null && Number(p.total_extruded_kg) > 0 ? (
-              <Typography variant="body2">
-                Total extruded KGs: {fmtQtyNumber(Number(p.total_extruded_kg), 2)} kg
-              </Typography>
-            ) : null}
-            {finishMode === 'Rolls' && p.kg_per_roll != null && (
-              <Typography variant="body2">
-                Weight / Roll: {fmtQtyNumber(Number(p.kg_per_roll), 2)}kg
-              </Typography>
-            )}
-            {finishMode === 'Rolls' && p.units_per_roll != null && (
-              <Typography variant="body2">
-                {productUnitLabel} / Roll: {fmtQtyNumber(Number(p.units_per_roll), 2)}
-              </Typography>
-            )}
             {p.unit_price != null &&
             productType !== 'Bag' &&
             productType !== 'Centerfold' &&
@@ -155,44 +278,23 @@ export function QuotePreviewPanel(props: {
                 {p.totals_units != null && Number(p.totals_units) > 0 ? fmtCount(Number(p.totals_units)) : dash}
               </Typography>
             ) : null}
-            {p.totals_m != null && Number(p.totals_m) > 0 && (
-              <Typography variant="body2">
-                Total meters: {fmtQtyNumber(Number(p.totals_m), 2)}m
-              </Typography>
-            )}
-            {p.cartons != null && (
-              <Typography variant="body2">
-                Cartons: {fmtCount(Number(p.cartons))}
-                {p.kg_per_carton != null ? ` (${fmtQtyNumber(Number(p.kg_per_carton), 2)}kg/carton)` : ''}
-              </Typography>
-            )}
-            {estimatedPallets != null && (
-              <Typography variant="body2">
-                Estimated pallets: {fmtCount(estimatedPallets)}
-              </Typography>
-            )}
-            {p.conversion_minutes_total != null && (
-              <Typography variant="body2">
-                Conversion time: {fmtHoursMinutesPreview(Number(p.conversion_minutes_total))}
-                {p.conversion_minutes_run != null && p.conversion_minutes_roll_changes != null
-                  ? ` (${fmtHoursMinutesPreview(Number(p.conversion_minutes_run))} run + ${fmtHoursMinutesPreview(Number(p.conversion_minutes_roll_changes))} change)`
-                  : ''}
-              </Typography>
-            )}
           </>
-        ) : (
+        ) : !materialsMoqLineTrimmed ? (
           <Typography variant="body2" color="text.secondary">
             {canCalculate ? 'Ready to calculate.' : 'Add more details to see pricing.'}
           </Typography>
-        )}
+        ) : null}
       </Box>
 
       <Divider sx={{ my: 2 }} />
 
-      <Typography variant="subtitle1" sx={{ mb: 1 }}>
-        Breakdown
-      </Typography>
-      <Table size="small">
+      <Table
+        size="small"
+        sx={{
+          '& .MuiTableCell-root:first-of-type': { pl: 0 },
+          '& .MuiTableCell-root:last-of-type': { pr: 0 },
+        }}
+      >
         <TableHead>
           <TableRow>
             <TableCell>Stage</TableCell>
@@ -202,7 +304,12 @@ export function QuotePreviewPanel(props: {
         </TableHead>
         <TableBody>
           <TableRow>
-            <TableCell>Material</TableCell>
+            <TableCell>
+              {(() => {
+                const kg = p?.totals_kg != null && Number(p.totals_kg) > 0 ? Number(p.totals_kg) : null
+                return kg != null ? `Material (${fmtQtyNumber(kg, 0)}kg)` : 'Material'
+              })()}
+            </TableCell>
             <TableCell align="right">
               {p ? (
                 <FlashSpan watch={p.cost_breakdown?.material_cost}>{fmtDollarsLineItem(p.cost_breakdown?.material_cost)}</FlashSpan>
@@ -219,7 +326,7 @@ export function QuotePreviewPanel(props: {
             </TableCell>
           </TableRow>
           <TableRow>
-            <TableCell sx={{ pl: 2, color: 'text.secondary' }}>Colours / additives / blend</TableCell>
+            <TableCell sx={{ color: 'text.secondary' }}>Custom Blend</TableCell>
             <TableCell align="right">
               {p ? (
                 <FlashSpan watch={p.cost_breakdown?.formulation_line_cost}>
@@ -240,7 +347,17 @@ export function QuotePreviewPanel(props: {
             </TableCell>
           </TableRow>
           <TableRow>
-            <TableCell>Extrusion</TableCell>
+            <TableCell>
+              {(() => {
+                const extrusionMin =
+                  p?.extrusion_hours != null && Number.isFinite(Number(p.extrusion_hours))
+                    ? Number(p.extrusion_hours) * 60
+                    : null
+                const dur =
+                  extrusionMin != null && extrusionMin > 0 ? fmtBreakdownDurationMinutes(extrusionMin) : null
+                return dur ? `Extrusion (${dur})` : 'Extrusion'
+              })()}
+            </TableCell>
             <TableCell align="right">
               {p ? (
                 <FlashSpan watch={p.cost_breakdown?.extrusion_cost}>{fmtDollarsLineItem(p.cost_breakdown?.extrusion_cost)}</FlashSpan>
@@ -256,8 +373,43 @@ export function QuotePreviewPanel(props: {
               )}
             </TableCell>
           </TableRow>
+          {(p?.price_breakdown?.gusset_retail_price ?? 0) > 0 ? (
+            <TableRow>
+              <TableCell sx={{ pl: 2, color: 'text.secondary' }}>Gusset</TableCell>
+              <TableCell align="right">{dash}</TableCell>
+              <TableCell align="right">
+                <FlashSpan watch={p.price_breakdown?.gusset_retail_price}>
+                  {fmtDollarsLineItem(p.price_breakdown?.gusset_retail_price)}
+                </FlashSpan>
+              </TableCell>
+            </TableRow>
+          ) : null}
+          {(p?.price_breakdown?.punched_retail_price ?? 0) > 0 ? (
+            <TableRow>
+              <TableCell sx={{ pl: 2, color: 'text.secondary' }}>Hole punched</TableCell>
+              <TableCell align="right">{dash}</TableCell>
+              <TableCell align="right">
+                <FlashSpan watch={p.price_breakdown?.punched_retail_price}>
+                  {fmtDollarsLineItem(p.price_breakdown?.punched_retail_price)}
+                </FlashSpan>
+              </TableCell>
+            </TableRow>
+          ) : null}
           <TableRow>
-            <TableCell>Printing</TableCell>
+            <TableCell>
+              {(() => {
+                const m =
+                  p != null && p.totals_m != null && Number.isFinite(Number(p.totals_m)) && Number(p.totals_m) > 0
+                    ? Number(p.totals_m)
+                    : null
+                const n = p != null && p.num_colours != null ? Number(p.num_colours) : null
+                const colsOk = n != null && Number.isFinite(n) && n > 0
+                const parts: string[] = []
+                if (m != null) parts.push(`${fmtQtyNumber(Math.round(m), 0)}m`)
+                if (colsOk && n != null) parts.push(`${fmtCount(n)} Col`)
+                return parts.length > 0 ? `Printing (${parts.join(' x ')})` : 'Printing'
+              })()}
+            </TableCell>
             <TableCell align="right">
               {p ? (
                 <FlashSpan watch={p.cost_breakdown?.printing_cost}>{fmtDollarsLineItem(p.cost_breakdown?.printing_cost)}</FlashSpan>
@@ -283,7 +435,15 @@ export function QuotePreviewPanel(props: {
             </TableRow>
           ) : null}
           <TableRow>
-            <TableCell>Conversion</TableCell>
+            <TableCell>
+              {(() => {
+                const dur =
+                  p?.conversion_minutes_total != null && Number(p.conversion_minutes_total) > 0
+                    ? fmtBreakdownDurationMinutes(Number(p.conversion_minutes_total))
+                    : null
+                return dur ? `Conversion (${dur})` : 'Conversion'
+              })()}
+            </TableCell>
             <TableCell align="right">
               {p ? (
                 <FlashSpan watch={p.cost_breakdown?.conversion_cost}>{fmtDollarsLineItem(p.cost_breakdown?.conversion_cost)}</FlashSpan>
@@ -301,7 +461,12 @@ export function QuotePreviewPanel(props: {
           </TableRow>
           {finishMode === 'Rolls' ? (
             <TableRow>
-              <TableCell>Core</TableCell>
+              <TableCell>
+                {(() => {
+                  const m = p?.core_length_m != null && Number(p.core_length_m) > 0 ? Number(p.core_length_m) : null
+                  return m != null ? `Core (${fmtQtyNumber(m, 1)}m)` : 'Core'
+                })()}
+              </TableCell>
               <TableCell align="right">
                 {p ? <FlashSpan watch={p.cost_breakdown?.core_cost}>{fmtDollarsLineItem(p.cost_breakdown?.core_cost)}</FlashSpan> : dash}
               </TableCell>
@@ -311,7 +476,11 @@ export function QuotePreviewPanel(props: {
             </TableRow>
           ) : null}
           <TableRow>
-            <TableCell>Waste</TableCell>
+            <TableCell>
+              {p && p.waste_kg != null && Number(p.waste_kg) > 0
+                ? `Waste (${fmtQtyNumber(Number(p.waste_kg), 0)}kg)`
+                : 'Waste'}
+            </TableCell>
             <TableCell align="right">
               {p ? <FlashSpan watch={p.cost_breakdown?.waste_cost}>{fmtDollarsLineItem(p.cost_breakdown?.waste_cost)}</FlashSpan> : dash}
             </TableCell>
@@ -350,9 +519,6 @@ export function QuotePreviewPanel(props: {
           ) : null}
 
           <TableRow>
-            <TableCell colSpan={3} sx={{ py: 0.5 }} />
-          </TableRow>
-          <TableRow>
             <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
             <TableCell align="right" sx={{ fontWeight: 400 }}>
               {p ? <FlashSpan watch={p.total_cost}>{fmtDollarsLineItem(p.total_cost)}</FlashSpan> : dash}
@@ -379,81 +545,141 @@ export function QuotePreviewPanel(props: {
           </TableRow>
           {(() => {
             const kgOk = p && Number(p.totals_kg || 0) > 0 && p.cost_per_kg != null && p.price_per_kg != null
-            if (!kgOk) return null
             return (
               <TableRow>
                 <TableCell sx={{ fontWeight: 600 }}>per Kg</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  <FlashSpan watch={p.cost_per_kg}>{fmtDollarsLineItem(Number(p.cost_per_kg))}</FlashSpan>
+                  {kgOk ? (
+                    <FlashSpan watch={p.cost_per_kg}>{fmtDollarsLineItem(Number(p.cost_per_kg))}</FlashSpan>
+                  ) : (
+                    dash
+                  )}
                 </TableCell>
                 <TableCell align="right">
-                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                    <FlashSpan watch={p.price_per_kg}>{fmtDollarsLineItem(Number(p.price_per_kg))}</FlashSpan>
-                  </Typography>
+                  {kgOk ? (
+                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                      <FlashSpan watch={p.price_per_kg}>{fmtDollarsLineItem(Number(p.price_per_kg))}</FlashSpan>
+                    </Typography>
+                  ) : (
+                    dash
+                  )}
                 </TableCell>
               </TableRow>
             )
           })()}
           {(() => {
-            if (!p || qtyType !== 'units') return null
+            if (!p) {
+              return (
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 600 }}>{isContinuousLength ? 'per m' : 'per 1000'}</TableCell>
+                  <TableCell align="right">{dash}</TableCell>
+                  <TableCell align="right">{dash}</TableCell>
+                </TableRow>
+              )
+            }
+            if (isContinuousLength) {
+              const m = Number(p.totals_m || 0)
+              const okM = m > 0 && Number.isFinite(m)
+              const cM = okM ? Number(p.total_cost) / m : null
+              const prM = okM ? Number(p.final_price) / m : null
+              const showM = cM != null && prM != null && Number.isFinite(cM) && Number.isFinite(prM)
+              return (
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 600 }}>per m</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 400 }}>
+                    {showM ? <FlashSpan watch={`${p.total_cost}|${m}`}>{fmtDollarsLineItem(cM)}</FlashSpan> : dash}
+                  </TableCell>
+                  <TableCell align="right">
+                    {showM ? (
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                        <FlashSpan watch={`${p.final_price}|${m}`}>{fmtDollarsLineItem(prM)}</FlashSpan>
+                      </Typography>
+                    ) : (
+                      dash
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            }
             const u = Number(p.totals_units || 0)
-            if (!(u > 0)) return null
-            const per1000 = u / 1000
-            const c = Number(p.total_cost) / per1000
-            const pr = Number(p.final_price) / per1000
-            if (!Number.isFinite(c) || !Number.isFinite(pr)) return null
+            const ok = u > 0
+            const per1000 = ok ? u / 1000 : 0
+            const c = ok && per1000 > 0 ? Number(p.total_cost) / per1000 : null
+            const pr = ok && per1000 > 0 ? Number(p.final_price) / per1000 : null
+            const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr)
             return (
               <TableRow>
                 <TableCell sx={{ fontWeight: 600 }}>per 1000</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  <FlashSpan watch={`${p.total_cost}|${u}`}>{fmtDollarsLineItem(c)}</FlashSpan>
+                  {show ? <FlashSpan watch={`${p.total_cost}|${u}`}>{fmtDollarsLineItem(c)}</FlashSpan> : dash}
                 </TableCell>
                 <TableCell align="right">
-                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                    <FlashSpan watch={`${p.final_price}|${u}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
-                  </Typography>
+                  {show ? (
+                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                      <FlashSpan watch={`${p.final_price}|${u}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
+                    </Typography>
+                  ) : (
+                    dash
+                  )}
                 </TableCell>
               </TableRow>
             )
           })()}
           {(() => {
-            if (!p || finishMode !== 'Rolls') return null
+            if (!p) {
+              return (
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 600 }}>{finishMode === 'Cartons' ? 'per Carton' : 'per Roll'}</TableCell>
+                  <TableCell align="right">{dash}</TableCell>
+                  <TableCell align="right">{dash}</TableCell>
+                </TableRow>
+              )
+            }
+            if (finishMode === 'Cartons') {
+              const n = Number(p.cartons || 0)
+              const c = n > 0 ? Number(p.total_cost) / n : null
+              const pr = n > 0 ? Number(p.final_price) / n : null
+              const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr) && n > 0
+              const cN = show ? c : null
+              const prN = show ? pr : null
+              return (
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 600 }}>per Carton</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 400 }}>
+                    {cN != null ? <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(cN)}</FlashSpan> : dash}
+                  </TableCell>
+                  <TableCell align="right">
+                    {prN != null ? (
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                        <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(prN)}</FlashSpan>
+                      </Typography>
+                    ) : (
+                      dash
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            }
             const n = Number(p.rolls || 0)
-            if (!(n > 0)) return null
-            const c = Number(p.total_cost) / n
-            const pr = Number(p.final_price) / n
-            if (!Number.isFinite(c) || !Number.isFinite(pr)) return null
+            const c = n > 0 ? Number(p.total_cost) / n : null
+            const pr = n > 0 ? Number(p.final_price) / n : null
+            const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr) && n > 0
+            const cN = show ? c : null
+            const prN = show ? pr : null
             return (
               <TableRow>
                 <TableCell sx={{ fontWeight: 600 }}>per Roll</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(c)}</FlashSpan>
+                  {cN != null ? <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(cN)}</FlashSpan> : dash}
                 </TableCell>
                 <TableCell align="right">
-                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                    <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )
-          })()}
-          {(() => {
-            if (!p || finishMode !== 'Cartons') return null
-            const n = Number(p.cartons || 0)
-            if (!(n > 0)) return null
-            const c = Number(p.total_cost) / n
-            const pr = Number(p.final_price) / n
-            if (!Number.isFinite(c) || !Number.isFinite(pr)) return null
-            return (
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>per Carton</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(c)}</FlashSpan>
-                </TableCell>
-                <TableCell align="right">
-                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                    <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
-                  </Typography>
+                  {prN != null ? (
+                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                      <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(prN)}</FlashSpan>
+                    </Typography>
+                  ) : (
+                    dash
+                  )}
                 </TableCell>
               </TableRow>
             )

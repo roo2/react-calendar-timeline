@@ -226,6 +226,11 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
             o.myob_synced_at.isoformat() if getattr(o, "myob_synced_at", None) is not None else None
         ),
         myob_all_job_sheets_entered=_myob_all_job_sheets_flag(o),
+        import_review_status=(
+            v
+            if (v := getattr(o, "import_review_status", None)) in ("incomplete", "complete")
+            else None
+        ),
     )
 
 

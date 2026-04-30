@@ -28,6 +28,8 @@ type Row = {
   unit_price: number
   active: boolean
   catalog_kind?: string | null
+  customer_id?: string | null
+  customer_name?: string | null
   myob_item_uid?: string | null
   myob_income_account_uid?: string | null
   income_account_display_id?: string | null
@@ -164,6 +166,7 @@ export function ResellProductsAdminPage() {
                 <ResellRow
                   key={r.id}
                   row={r}
+                  includeCustomerColumn={false}
                   saving={savingId === r.id}
                   onSave={saveRow}
                   onDelete={deleteRow}
@@ -218,8 +221,8 @@ export function ResellProductsAdminPage() {
         Outsourced manufacturing (from MYOB)
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ pb: 0.5 }}>
-        Rows are created when a matching MYOB order line is imported. Edit price or description here; catalog kind is
-        determined from the MYOB item.
+        Rows are created when a matching MYOB order line is imported. Each row is scoped to the customer on that
+        order. Edit price or description here; catalog kind is determined from the MYOB item.
       </Typography>
       <Paper variant="outlined" sx={{ p: 2 }}>
         {loading && rows.length === 0 ? (
@@ -233,6 +236,7 @@ export function ResellProductsAdminPage() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: DESCRIPTION_COL_WIDTH, maxWidth: DESCRIPTION_COL_WIDTH }}>Description</TableCell>
+                <TableCell sx={{ minWidth: 160 }}>Customer</TableCell>
                 <TableCell sx={{ minWidth: 200 }}>MYOB income account</TableCell>
                 <TableCell sx={{ width: 140 }}>Unit price ($)</TableCell>
                 <TableCell sx={{ width: 100 }}>Active</TableCell>
@@ -244,6 +248,7 @@ export function ResellProductsAdminPage() {
                 <ResellRow
                   key={r.id}
                   row={r}
+                  includeCustomerColumn
                   saving={savingId === r.id}
                   onSave={saveRow}
                   onDelete={deleteRow}
@@ -259,11 +264,13 @@ export function ResellProductsAdminPage() {
 
 function ResellRow(props: {
   row: Row
+  /** Outsourced manufacturing table: show which customer the catalog row belongs to. */
+  includeCustomerColumn?: boolean
   saving: boolean
   onSave: (id: string, patch: Partial<Pick<Row, 'description' | 'unit_price' | 'active'>>) => void
   onDelete: (id: string, description: string) => void
 }) {
-  const { row, saving, onSave, onDelete } = props
+  const { row, includeCustomerColumn, saving, onSave, onDelete } = props
   const [desc, setDesc] = useState(row.description)
   const [price, setPrice] = useState<number | ''>(row.unit_price)
   const [active, setActive] = useState(row.active)
@@ -296,6 +303,13 @@ function ResellRow(props: {
           disabled={saving}
         />
       </TableCell>
+      {includeCustomerColumn ? (
+        <TableCell>
+          <Typography variant="body2" color="text.secondary" title={row.customer_id || undefined}>
+            {(row.customer_name || '').trim() || '—'}
+          </Typography>
+        </TableCell>
+      ) : null}
       <TableCell>
         <Typography variant="body2" color="text.secondary" title={row.myob_income_account_uid || undefined}>
           {acctLabel}

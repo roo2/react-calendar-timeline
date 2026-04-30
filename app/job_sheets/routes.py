@@ -64,10 +64,22 @@ def _pretty_status_token(s: str | None) -> str | None:
     return t.replace("_", " ").title()
 
 
+def _pretty_production_status(s: str | None) -> str | None:
+    """Human label for job production status (API values stay snake_case)."""
+    if not s:
+        return None
+    t = str(s).strip().lower()
+    if not t:
+        return None
+    if t == "planned":
+        return "Backlog"
+    return t.replace("_", " ").title()
+
+
 def _status_label(order_status: str | None, production_status: str | None) -> str | None:
     parts: list[str] = []
     o = _pretty_status_token(order_status)
-    p = _pretty_status_token(production_status)
+    p = _pretty_production_status(production_status)
     if o:
         parts.append(f"Order: {o}")
     if p:
@@ -154,6 +166,7 @@ def _to_summary(
         unit_rate=ur,
         line_total=lt,
         price_per_kg=ppk,
+        customer_facing_description=str(getattr(js, "customer_facing_description", None) or "").strip() or None,
     )
 
 

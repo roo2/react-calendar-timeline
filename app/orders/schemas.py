@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from app.job_sheets.schemas import QuantityUnit
 
@@ -68,10 +68,12 @@ class JobDTO(BaseModel):
 
 
 class UpdateOrderRequest(BaseModel):
-    """Update order header (draft or confirmed)."""
+    """Update order header."""
     invoice_number: Optional[str] = None
     customer_purchase_order_number: Optional[str] = None
     order_date: Optional[date] = None
+    status: Optional[str] = None
+    import_review_status: Optional[Literal["incomplete", "complete"]] = None
 
 
 class LinkMyobImportLineRequest(BaseModel):
@@ -102,6 +104,7 @@ class OrderListItemDTO(BaseModel):
     # Resell line breakdown (line_kind == "resell" only; for list UX).
     resell_outsourced_line_count: int = 0
     resell_supply_line_count: int = 0
+    import_review_status: Optional[Literal["incomplete", "complete"]] = None
 
 
 class OrderDetailDTO(OrderListItemDTO):

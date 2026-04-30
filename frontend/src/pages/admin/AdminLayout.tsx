@@ -5,6 +5,7 @@ import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 const items = [
   { to: '/admin/myob', label: 'MYOB' },
   { to: '/admin/myob-data', label: 'MYOB data' },
+  { to: '/admin/resell-products', label: 'Resell / supplies' },
   { to: '/admin/resins', label: 'Resins' },
   { to: '/admin/extrusion', label: 'Extrusion' },
   { to: '/admin/printing', label: 'Printing' },
@@ -12,7 +13,6 @@ const items = [
   { to: '/admin/tools', label: 'Tools' },
   { to: '/admin/conversion', label: 'Packing / Conversion' },
   { to: '/admin/packaging', label: 'Shipping / Pallets' },
-  { to: '/admin/resell-products', label: 'Resell / supplies' },
   { to: '/admin/production-calendar', label: 'Production hours' },
 ]
 
