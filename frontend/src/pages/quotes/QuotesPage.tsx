@@ -2884,17 +2884,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                           ? 'Length (m)'
                           : 'Length (mm)'
                     }
-                    type="number"
-                    value={isContinuousLength ? '' : length}
+                    type={isContinuousLength ? 'text' : 'number'}
+                    value={isContinuousLength ? 'Continuous' : length}
                     onChange={(e) => setLength(e.target.value)}
                     disabled={isContinuousLength}
-                    helperText={
-                      isTubeProduct
-                        ? 'Tubes use continuous length'
-                        : isContinuousLength
-                          ? 'Continuous length (no fixed product length)'
-                          : undefined
-                    }
+                    helperText={isTubeProduct ? 'Tubes use continuous length' : undefined}
                   />
                 </Box>
 

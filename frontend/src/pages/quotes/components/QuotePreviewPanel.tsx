@@ -157,10 +157,12 @@ export function QuotePreviewPanel(props: {
     onApplyTableUnitPrice,
   } = props
   const p = preview
-  /** Breakdown footer: bold only the row that matches the active quantity basis. */
+  /** Breakdown footer: bold only rows that match the active quantity basis. */
   const breakdownBold = {
     perKg: qtyMode === 'kg',
-    perM: qtyMode === 'units' && isContinuousLength,
+    /** Continuous + units qty: Live Quote headline is $/ea. */
+    perEa: qtyMode === 'units' && isContinuousLength,
+    /** Discrete + units qty: Live Quote headline is $/1000 products. */
     per1000: qtyMode === 'units' && !isContinuousLength,
     perCarton: qtyMode === 'ctn',
     perRoll: qtyMode === 'roll',
@@ -294,7 +296,18 @@ export function QuotePreviewPanel(props: {
         <Table
           size="small"
           sx={{
-            '& .MuiTableCell-root': { verticalAlign: 'middle' },
+            '& .MuiTableCell-root': {
+              verticalAlign: 'middle',
+              py: '8px',
+              pl: '8px',
+              pr: '8px',
+            },
+            '& .MuiTableCell-root:first-of-type': {
+              pl: '16px',
+            },
+            '& .MuiTableCell-root:last-of-type': {
+              pr: '16px',
+            },
           }}
         >
           <TableHead>
@@ -429,12 +442,18 @@ export function QuotePreviewPanel(props: {
       <Table
         size="small"
         sx={{
-          '& .MuiTableCell-root:first-of-type': { pl: 0 },
-          '& .MuiTableCell-root:last-of-type': { pr: 0 },
+          '& .MuiTableCell-root': { py: '4px' },
         }}
       >
         <TableHead>
-          <TableRow>
+          <TableRow
+            sx={{
+              '& .MuiTableCell-root': {
+                fontWeight: 700,
+                borderBottom: '1px solid #000',
+              },
+            }}
+          >
             <TableCell>Stage</TableCell>
             <TableCell align="right">Cost</TableCell>
             <TableCell align="right">Price</TableCell>
@@ -626,39 +645,51 @@ export function QuotePreviewPanel(props: {
               {p ? <FlashSpan watch={p.price_breakdown?.waste_price}>{fmtDollarsLineItem(p.price_breakdown?.waste_price)}</FlashSpan> : dash}
             </TableCell>
           </TableRow>
-          {p?.price_override_active ? (
-            <TableRow>
-              <TableCell>
-                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, verticalAlign: 'middle' }}>
-                  {adjustmentsLockedRateLabel
-                    ? `Adjustments (${adjustmentsLockedRateLabel})`
-                    : 'Adjustments'}
-                  {onClearPricePerKgOverride ? (
-                    <IconButton
-                      size="small"
-                      aria-label="Clear locked price override"
-                      onClick={onClearPricePerKgOverride}
-                      sx={{ p: 0.25, ml: 0.25, color: 'error.main', '&:hover': { color: 'error.dark' } }}
-                    >
-                      <SvgIcon fontSize="small" viewBox="0 0 24 24" aria-hidden>
-                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-                      </SvgIcon>
-                    </IconButton>
-                  ) : null}
-                </Box>
-              </TableCell>
-              <TableCell align="right">{dash}</TableCell>
-              <TableCell align="right">
-                {p.adjustments_price != null ? (
-                  <FlashSpan watch={p.adjustments_price}>{fmtDollarsPreview(p.adjustments_price)}</FlashSpan>
-                ) : (
-                  dash
-                )}
-              </TableCell>
-            </TableRow>
-          ) : null}
+          <TableRow
+            sx={{
+              '& .MuiTableCell-root': {
+                borderBottom: '1px solid #000',
+              },
+            }}
+          >
+            <TableCell>
+              <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, verticalAlign: 'middle' }}>
+                {p?.price_override_active && adjustmentsLockedRateLabel
+                  ? `Adjustments (${adjustmentsLockedRateLabel})`
+                  : 'Adjustments'}
+                {p?.price_override_active && onClearPricePerKgOverride ? (
+                  <IconButton
+                    size="small"
+                    aria-label="Clear locked price override"
+                    onClick={onClearPricePerKgOverride}
+                    sx={{ p: 0.25, ml: 0.25, color: 'error.main', '&:hover': { color: 'error.dark' } }}
+                  >
+                    <SvgIcon fontSize="small" viewBox="0 0 24 24" aria-hidden>
+                      <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </SvgIcon>
+                  </IconButton>
+                ) : null}
+              </Box>
+            </TableCell>
+            <TableCell align="right" />
+            <TableCell align="right">
+              {p && p.price_override_active && p.adjustments_price != null ? (
+                <FlashSpan watch={p.adjustments_price}>{fmtDollarsPreview(p.adjustments_price)}</FlashSpan>
+              ) : (
+                dash
+              )}
+            </TableCell>
+          </TableRow>
 
-          <TableRow>
+          <TableRow
+            sx={{
+              '& .MuiTableCell-root': {
+                borderBottom: '1px solid #000',
+                bgcolor: (theme) =>
+                  theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+              },
+            }}
+          >
             <TableCell sx={{ fontWeight: 600 }}>Total</TableCell>
             <TableCell align="right" sx={{ fontWeight: 400 }}>
               {p ? <FlashSpan watch={p.total_cost}>{fmtDollarsLineItem(p.total_cost)}</FlashSpan> : dash}
@@ -684,19 +715,17 @@ export function QuotePreviewPanel(props: {
             </TableCell>
           </TableRow>
           {(() => {
-            const kgOk = p && Number(p.totals_kg || 0) > 0 && p.cost_per_kg != null && p.price_per_kg != null
+            const priceKgOk =
+              p &&
+              Number(p.totals_kg || 0) > 0 &&
+              p.price_per_kg != null &&
+              Number.isFinite(Number(p.price_per_kg))
             return (
               <TableRow>
                 <TableCell sx={{ fontWeight: breakdownBold.perKg ? 600 : 400 }}>per Kg</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  {kgOk ? (
-                    <FlashSpan watch={p.cost_per_kg}>{fmtDollarsLineItem(Number(p.cost_per_kg))}</FlashSpan>
-                  ) : (
-                    dash
-                  )}
-                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: 400 }} />
                 <TableCell align="right">
-                  {kgOk ? (
+                  {priceKgOk ? (
                     <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perKg ? 600 : 400 }}>
                       <FlashSpan watch={p.price_per_kg}>{fmtDollarsLineItem(Number(p.price_per_kg))}</FlashSpan>
                     </Typography>
@@ -710,60 +739,67 @@ export function QuotePreviewPanel(props: {
           {(() => {
             if (!p) {
               return (
-                <TableRow>
-                  <TableCell sx={{ fontWeight: 400 }}>{isContinuousLength ? 'per m' : 'per 1000'}</TableCell>
-                  <TableCell align="right">{dash}</TableCell>
-                  <TableCell align="right">{dash}</TableCell>
-                </TableRow>
+                <>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 400 }}>per 1000m</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 400 }} />
+                    <TableCell align="right">{dash}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 400 }}>{isContinuousLength ? 'per ea' : 'per 1000'}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 400 }} />
+                    <TableCell align="right">{dash}</TableCell>
+                  </TableRow>
+                </>
               )
             }
-            if (isContinuousLength) {
-              const m = Number(p.totals_m || 0)
-              const okM = m > 0 && Number.isFinite(m)
-              const per1000m = okM ? m / 1000 : 0
-              const cM = okM && per1000m > 0 ? Number(p.total_cost) / per1000m : null
-              const prM = okM && per1000m > 0 ? Number(p.final_price) / per1000m : null
-              const showM = cM != null && prM != null && Number.isFinite(cM) && Number.isFinite(prM)
-              return (
+            const m = Number(p.totals_m || 0)
+            const okM = m > 0 && Number.isFinite(m)
+            const per1000mBlock = okM ? m / 1000 : 0
+            const pr1000m = okM && per1000mBlock > 0 ? Number(p.final_price) / per1000mBlock : null
+            const showPrice1000m = pr1000m != null && Number.isFinite(pr1000m)
+
+            const u = Number(p.totals_units || 0)
+            const okU = u > 0
+            const prEaOr1000 =
+              okU && isContinuousLength
+                ? Number(p.final_price) / u
+                : okU
+                  ? Number(p.final_price) / (u / 1000)
+                  : null
+            const showPriceEaOr1000 = prEaOr1000 != null && Number.isFinite(prEaOr1000)
+            const countLabel = isContinuousLength ? 'per ea' : 'per 1000'
+            const boldCountRow = isContinuousLength ? breakdownBold.perEa : breakdownBold.per1000
+
+            return (
+              <>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: breakdownBold.perM ? 600 : 400 }}>per 1000m</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 400 }}>
-                    {showM ? <FlashSpan watch={`${p.total_cost}|${m}`}>{fmtDollarsLineItem(cM)}</FlashSpan> : dash}
-                  </TableCell>
+                  <TableCell sx={{ fontWeight: 400 }}>per 1000m</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 400 }} />
                   <TableCell align="right">
-                    {showM ? (
-                      <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perM ? 600 : 400 }}>
-                        <FlashSpan watch={`${p.final_price}|${m}`}>{fmtDollarsLineItem(prM)}</FlashSpan>
+                    {showPrice1000m ? (
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 400 }}>
+                        <FlashSpan watch={`${p.final_price}|${m}`}>{fmtDollarsLineItem(pr1000m)}</FlashSpan>
                       </Typography>
                     ) : (
                       dash
                     )}
                   </TableCell>
                 </TableRow>
-              )
-            }
-            const u = Number(p.totals_units || 0)
-            const ok = u > 0
-            const per1000 = ok ? u / 1000 : 0
-            const c = ok && per1000 > 0 ? Number(p.total_cost) / per1000 : null
-            const pr = ok && per1000 > 0 ? Number(p.final_price) / per1000 : null
-            const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr)
-            return (
-              <TableRow>
-                <TableCell sx={{ fontWeight: breakdownBold.per1000 ? 600 : 400 }}>per 1000</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  {show ? <FlashSpan watch={`${p.total_cost}|${u}`}>{fmtDollarsLineItem(c)}</FlashSpan> : dash}
-                </TableCell>
-                <TableCell align="right">
-                  {show ? (
-                    <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.per1000 ? 600 : 400 }}>
-                      <FlashSpan watch={`${p.final_price}|${u}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
-                    </Typography>
-                  ) : (
-                    dash
-                  )}
-                </TableCell>
-              </TableRow>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: boldCountRow ? 600 : 400 }}>{countLabel}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 400 }} />
+                  <TableCell align="right">
+                    {showPriceEaOr1000 ? (
+                      <Typography component="span" variant="body2" sx={{ fontWeight: boldCountRow ? 600 : 400 }}>
+                        <FlashSpan watch={`${p.final_price}|${u}|${countLabel}`}>{fmtDollarsLineItem(prEaOr1000)}</FlashSpan>
+                      </Typography>
+                    ) : (
+                      dash
+                    )}
+                  </TableCell>
+                </TableRow>
+              </>
             )
           })()}
           {(() => {
@@ -771,24 +807,20 @@ export function QuotePreviewPanel(props: {
               return (
                 <TableRow>
                   <TableCell sx={{ fontWeight: 400 }}>{finishMode === 'Cartons' ? 'per Carton' : 'per Roll'}</TableCell>
-                  <TableCell align="right">{dash}</TableCell>
+                  <TableCell align="right" />
                   <TableCell align="right">{dash}</TableCell>
                 </TableRow>
               )
             }
             if (finishMode === 'Cartons') {
               const n = Number(p.cartons || 0)
-              const c = n > 0 ? Number(p.total_cost) / n : null
               const pr = n > 0 ? Number(p.final_price) / n : null
-              const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr) && n > 0
-              const cN = show ? c : null
-              const prN = show ? pr : null
+              const showPrice = pr != null && Number.isFinite(pr) && n > 0
+              const prN = showPrice ? pr : null
               return (
                 <TableRow>
                   <TableCell sx={{ fontWeight: breakdownBold.perCarton ? 600 : 400 }}>per Carton</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 400 }}>
-                    {cN != null ? <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(cN)}</FlashSpan> : dash}
-                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 400 }} />
                   <TableCell align="right">
                     {prN != null ? (
                       <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perCarton ? 600 : 400 }}>
@@ -802,17 +834,13 @@ export function QuotePreviewPanel(props: {
               )
             }
             const n = Number(p.rolls || 0)
-            const c = n > 0 ? Number(p.total_cost) / n : null
             const pr = n > 0 ? Number(p.final_price) / n : null
-            const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr) && n > 0
-            const cN = show ? c : null
-            const prN = show ? pr : null
+            const showPrice = pr != null && Number.isFinite(pr) && n > 0
+            const prN = showPrice ? pr : null
             return (
               <TableRow>
                 <TableCell sx={{ fontWeight: breakdownBold.perRoll ? 600 : 400 }}>per Roll</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 400 }}>
-                  {cN != null ? <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(cN)}</FlashSpan> : dash}
-                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: 400 }} />
                 <TableCell align="right">
                   {prN != null ? (
                     <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perRoll ? 600 : 400 }}>
