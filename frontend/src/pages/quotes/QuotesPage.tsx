@@ -884,7 +884,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
             isContinuousLength,
             baseLengthMm,
             unitsPerRollNum,
-            ratebook,
           })
           if (syn) {
             for (const k of Object.keys(qty)) delete (qty as Record<string, unknown>)[k]

@@ -84,7 +84,6 @@ export function synthesizeMoqQuantity(args: {
   isContinuousLength: boolean
   baseLengthMm: number
   unitsPerRollNum: number
-  ratebook: QuoteRatebook
 }): Record<string, number> | null {
   const {
     moqKg,
@@ -98,7 +97,6 @@ export function synthesizeMoqQuantity(args: {
     isContinuousLength,
     baseLengthMm,
     unitsPerRollNum,
-    ratebook,
   } = args
   if (!(moqKg > 0) || !Number.isFinite(moqKg)) return null
 
