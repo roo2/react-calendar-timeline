@@ -70,7 +70,6 @@ import {
   moqDiscreteProductCountCoveringMoq,
   resolveBandMoqKgFromQuoteForm,
   roundToDecimalPlaces,
-  roundToSignificantFigures,
   synthesizeMoqQuantity,
 } from './moqQuoteQuantity'
 import { QuotePreviewPanel } from './components/QuotePreviewPanel'
@@ -2282,10 +2281,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       const billedKg = Number(p.totals_kg || 0)
       if (!(billedKg > 0)) return
 
-      const unitRate =
-        qtyMode === 'roll'
-          ? roundToDecimalPlaces(rawUnitPrice, 2)
-          : roundToSignificantFigures(rawUnitPrice, 4)
+      const unitRate = roundToDecimalPlaces(rawUnitPrice, 2)
       if (!Number.isFinite(unitRate) || unitRate <= 0) return
 
       let targetTotal: number | null = null
@@ -3503,7 +3499,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               yieldPerEa={isContinuousLength && qtyType === 'units'}
               adjustmentsLockedRateLabel={adjustmentsLockedRateLabel}
               onApplyTableUnitPrice={qtyMode === 'kg' ? applyTableKgPriceOverride : applyTableUnitPriceOverride}
-              tableUnitRateRoundToTwoDecimals={qtyMode === 'roll' || qtyMode === 'kg'}
             />
           </StickySideAside>
         ) : null}
@@ -3526,7 +3521,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
             yieldPerEa={isContinuousLength && qtyType === 'units'}
             adjustmentsLockedRateLabel={adjustmentsLockedRateLabel}
             onApplyTableUnitPrice={qtyMode === 'kg' ? applyTableKgPriceOverride : applyTableUnitPriceOverride}
-            tableUnitRateRoundToTwoDecimals={qtyMode === 'roll' || qtyMode === 'kg'}
           />
         </MobileFixedBottomAside>
       ) : null}

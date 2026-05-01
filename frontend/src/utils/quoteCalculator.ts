@@ -837,9 +837,24 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
           ? Math.max(0, Math.round(trimmedTotalKg / kgPerUnit))
           : null
 
-  const canComputeRollStats = rolls != null && rolls > 0 && kgPerLinearM > 0 && trimmedTotalKg > 0 && derivedTotalM > 0
-  const kgPerRoll = canComputeRollStats ? trimmedTotalKg / rolls : null
-  const mPerRoll = canComputeRollStats ? derivedTotalM / rolls : null
+  // When quantity is entered as total products (e.g. Qty Type "1000") without `quantity.rolls`, infer roll count
+  // from plastic kg ÷ nominal kg/roll so per-roll preview rows ($/roll, kg/roll) match the form weight/roll.
+  const nominalWpr = toNum(inputs.nominal_weight_per_roll_kg)
+  const rollsInferred =
+    rolls == null &&
+    inputs.finish_mode === 'Rolls' &&
+    !inputs.continuous_roll &&
+    trimmedTotalKg > 0 &&
+    nominalWpr != null &&
+    nominalWpr > 0
+      ? Math.max(1, Math.round(trimmedTotalKg / nominalWpr))
+      : null
+  const rollsEffective = rolls != null && rolls > 0 ? rolls : rollsInferred
+
+  const canComputeKgPerRoll = rollsEffective != null && rollsEffective > 0 && trimmedTotalKg > 0
+  const kgPerRoll = canComputeKgPerRoll ? trimmedTotalKg / rollsEffective : null
+  const canComputeMPerRoll = canComputeKgPerRoll && kgPerLinearM > 0 && derivedTotalM > 0
+  const mPerRoll = canComputeMPerRoll ? derivedTotalM / rollsEffective! : null
 
   // Billed / scale weight (e.g. rolls with core included): customer total_kg includes core; plastic mass is lower.
   // Costs use trimmedTotalKg (plastic); quotes should show and price per kg using billedTotalsKg.
@@ -851,11 +866,12 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   } else {
     billedTotalsKg = trimmedTotalKg
   }
-  const billedKgPerRoll = rolls != null && rolls > 0 && billedTotalsKg > 0 ? billedTotalsKg / rolls : null
+  const billedKgPerRoll =
+    rollsEffective != null && rollsEffective > 0 && billedTotalsKg > 0 ? billedTotalsKg / rollsEffective : null
 
   return {
     units,
-    rolls,
+    rolls: rollsEffective,
     layflatMm: layflatMmExtrusion,
     /** Layflat for kg/m and per-roll core length (single-lane product strip); see `layflatMm` for die width incl. run-up. */
     layflatMassMm,

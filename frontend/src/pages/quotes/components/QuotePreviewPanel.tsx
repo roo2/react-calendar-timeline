@@ -25,28 +25,14 @@ import {
   fmtDollarsPreview,
   fmtQtyNumber,
 } from '../../../utils/quoteFormat'
-import { roundToDecimalPlaces, roundToSignificantFigures } from '../moqQuoteQuantity'
+import { roundToDecimalPlaces } from '../moqQuoteQuantity'
 
-/**
- * Shown in the live-quote unit-rate editor: for $/ROLL or $/kg, 2 d.p.; otherwise 4 s.f., no grouping, no float tail
- * (e.g. 120.08 not 120.08000000002).
- */
-function formatTableUnitRateDraft(n: number, roundToTwoDecimals: boolean): string {
+/** Live-quote unit-rate editor draft: 2 d.p., no grouping float tail (e.g. 120.08 not 120.08000000002). */
+function formatTableUnitRateDraft(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return ''
-  if (roundToTwoDecimals) {
-    const r = roundToDecimalPlaces(n, 2)
-    if (!Number.isFinite(r) || r <= 0) return ''
-    return r.toFixed(2)
-  }
-  const r = roundToSignificantFigures(n, 4)
+  const r = roundToDecimalPlaces(n, 2)
   if (!Number.isFinite(r) || r <= 0) return ''
-  let s = r.toPrecision(4)
-  if (/[eE]/.test(s)) {
-    return r.toLocaleString('en-US', { maximumFractionDigits: 6, useGrouping: false })
-  }
-  const out = parseFloat(s)
-  if (!Number.isFinite(out)) return ''
-  return out.toString()
+  return r.toFixed(2)
 }
 /** Brief yellow highlight when `watch` (serialized) changes — skips first paint. */
 function FlashSpan(props: { watch: unknown; children: ReactNode }) {
@@ -153,8 +139,6 @@ export function QuotePreviewPanel(props: {
   adjustmentsLockedRateLabel?: string | null
   /** When set, user can edit the table price cell; parent applies (e.g. $/kg override in KG mode, or implied $/kg from $/ROLL etc.). */
   onApplyTableUnitPrice?: (value: number) => void
-  /** When true ($/ROLL or $/kg), draft + apply use 2 decimal places instead of 4 significant figures. */
-  tableUnitRateRoundToTwoDecimals?: boolean
 }) {
   const {
     preview,
@@ -171,7 +155,6 @@ export function QuotePreviewPanel(props: {
     yieldPerEa = false,
     adjustmentsLockedRateLabel = null,
     onApplyTableUnitPrice,
-    tableUnitRateRoundToTwoDecimals = false,
   } = props
   const p = preview
   /** Breakdown footer: bold only the row that matches the active quantity basis. */
@@ -308,7 +291,12 @@ export function QuotePreviewPanel(props: {
           '& .MuiTableCell-head': { fontWeight: 600, bgcolor: 'action.hover' },
         }}
       >
-        <Table size="small">
+        <Table
+          size="small"
+          sx={{
+            '& .MuiTableCell-root': { verticalAlign: 'middle' },
+          }}
+        >
           <TableHead>
             <TableRow>
               <TableCell>Description</TableCell>
@@ -319,11 +307,9 @@ export function QuotePreviewPanel(props: {
           </TableHead>
           <TableBody>
             <TableRow>
-              <TableCell sx={{ wordBreak: 'break-word', maxWidth: 320, verticalAlign: 'top' }}>
-                {emailQuoteTable.description}
-              </TableCell>
-              <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.minOrder}</TableCell>
-              <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+              <TableCell sx={{ wordBreak: 'break-word', maxWidth: 320 }}>{emailQuoteTable.description}</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>{emailQuoteTable.minOrder}</TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>
                 {unitPriceEditing ? (
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, maxWidth: 280 }}>
                     <TextField
@@ -337,7 +323,9 @@ export function QuotePreviewPanel(props: {
                         e.preventDefault()
                         const n = Number(unitPriceDraft.trim().replace(/[$,]/g, ''))
                         if (!Number.isFinite(n) || n <= 0) return
-                        onApplyTableUnitPrice?.(n)
+                        const v = roundToDecimalPlaces(n, 2)
+                        if (!Number.isFinite(v) || v <= 0) return
+                        onApplyTableUnitPrice?.(v)
                         setUnitPriceEditing(false)
                       }}
                       onBlur={() => {
@@ -345,7 +333,7 @@ export function QuotePreviewPanel(props: {
                         if (t === '') return
                         const n = Number(t)
                         if (!Number.isFinite(n) || n <= 0) return
-                        setUnitPriceDraft(formatTableUnitRateDraft(n, tableUnitRateRoundToTwoDecimals))
+                        setUnitPriceDraft(formatTableUnitRateDraft(n))
                       }}
                       placeholder="0.00"
                       InputProps={{
@@ -359,7 +347,9 @@ export function QuotePreviewPanel(props: {
                       onClick={() => {
                         const n = Number(unitPriceDraft.trim().replace(/[$,]/g, ''))
                         if (!Number.isFinite(n) || n <= 0) return
-                        onApplyTableUnitPrice?.(n)
+                        const v = roundToDecimalPlaces(n, 2)
+                        if (!Number.isFinite(v) || v <= 0) return
+                        onApplyTableUnitPrice?.(v)
                         setUnitPriceEditing(false)
                       }}
                     >
@@ -378,11 +368,7 @@ export function QuotePreviewPanel(props: {
                         aria-label={`Edit ${emailQuoteTable.priceHeader}`}
                         onClick={() => {
                           const u = emailQuoteTable.unitRateNumber
-                          setUnitPriceDraft(
-                            u != null && Number.isFinite(u) && u > 0
-                              ? formatTableUnitRateDraft(u, tableUnitRateRoundToTwoDecimals)
-                              : '',
-                          )
+                          setUnitPriceDraft(u != null && Number.isFinite(u) && u > 0 ? formatTableUnitRateDraft(u) : '')
                           setUnitPriceEditing(true)
                         }}
                       >
@@ -393,7 +379,7 @@ export function QuotePreviewPanel(props: {
                 )}
               </TableCell>
               {emailQuoteTable.total != null && emailQuoteTable.total !== '' ? (
-                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.total}</TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>{emailQuoteTable.total}</TableCell>
               ) : null}
             </TableRow>
           </TableBody>
@@ -427,7 +413,7 @@ export function QuotePreviewPanel(props: {
             productType !== 'Sleeve' &&
             productType !== 'Tube' ? (
               <Typography variant="body2">
-                Price per {productType}: {fmtDollarsLineItem(p.unit_price, 4)}
+                Price per {productType}: {fmtDollarsLineItem(p.unit_price)}
               </Typography>
             ) : null}
           </>
