@@ -460,6 +460,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     numRollsNum,
     weightPerRollNum,
     derivedDisplay,
+    isContinuousLength && effectiveQtyType === 'total_rolls',
   )
 
   const productsPerRollDerived = useMemo(() => {

@@ -67,14 +67,13 @@ def run_up_lane_count_from_spec(spec: dict) -> int:
 	return 0
 
 
-def printing_run_up_length_multiplier_from_spec(spec: dict) -> float:
-	"""Extruded metres × this = printed web metres (min length / Uteco duration). See ``printingWebLengthMultiplierFromRunUp`` in the frontend."""
-	ru = run_up_lane_count_from_spec(spec)
-	return float(ru) if ru > 0 else 1.0
+def printing_run_up_length_multiplier_from_spec(_spec: dict) -> float:
+	"""Run-up widens the die and slits lanes; it does not multiply product web metres for printing/Uteco (matches frontend)."""
+	return 1.0
 
 
 def layflat_mm_from_spec(spec: dict) -> float:
-	"""Match ``computeLayflatMm`` in the quotes UI."""
+	"""Die / extrusion layflat (includes Sheet/Centerfold run-up width). Match ``computeLayflatMm`` in the quotes UI."""
 	identity = spec.get("identity") or {}
 	dims = spec.get("dimensions") or {}
 	pt = str(identity.get("product_type") or "")
@@ -90,6 +89,31 @@ def layflat_mm_from_spec(spec: dict) -> float:
 	ru = run_up_lane_count_from_spec(spec)
 	if (pt == "Sheet" or pt == "Centerfold") and ru > 0:
 		return w * (ru / 2.0)
+	if pt == "Centerfold" or geom in ("centrefold", "centre_fold", "centerfold"):
+		return 0.5 * w
+	if pt == "U-Film":
+		lw = float(dims.get("ufilm_left_width_mm") or 0)
+		rw = float(dims.get("ufilm_right_width_mm") or 0)
+		return w + lw + rw
+	if geom == "gusset":
+		return w + g
+	return w
+
+
+def layflat_mm_mass_from_spec(spec: dict) -> float:
+	"""Layflat for polymer kg/m (per finished strip); excludes run-up width inflation. Match ``computeLayflatMmForMass`` in the frontend."""
+	identity = spec.get("identity") or {}
+	dims = spec.get("dimensions") or {}
+	pt = str(identity.get("product_type") or "")
+	geom = str(dims.get("geometry") or "Flat").lower()
+	try:
+		w = float(dims.get("base_width_mm") or 0)
+	except (TypeError, ValueError):
+		w = 0.0
+	try:
+		g = float(dims.get("gusset_mm") or 0)
+	except (TypeError, ValueError):
+		g = 0.0
 	if pt == "Centerfold" or geom in ("centrefold", "centre_fold", "centerfold"):
 		return 0.5 * w
 	if pt == "U-Film":
@@ -195,7 +219,7 @@ def web_length_meters_from_spec_and_quantity(session: Session, spec: dict, qty: 
 	dims = spec.get("dimensions") or {}
 	finish = str(identity.get("finish_mode") or "Rolls")
 	pt = str(identity.get("product_type") or "")
-	layflat_mm = layflat_mm_from_spec(spec)
+	layflat_mm = layflat_mm_mass_from_spec(spec)
 	base_len_raw = dims.get("base_length_mm")
 	continuous = finish == "Rolls" and (pt == "Tube" or base_len_raw is None)
 	if continuous:

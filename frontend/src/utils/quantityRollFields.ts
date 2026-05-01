@@ -164,12 +164,46 @@ export function computeWeightPerRollDisplay(
   numRollsNum: number,
   weightPerRollNum: number,
   derived: DerivedDisplay,
+  /** Continuous web + total rolls: kg/roll follows billed job mass from metres/roll (ignore stale stored weight). */
+  continuousWebTotalRolls?: boolean,
 ): number | null {
-  if (qtyType === 'total_rolls') {
-    const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll
-    if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) return Number(w)
-    return weightPerRollNum > 0 ? weightPerRollNum : null
+  /**
+   * Rolls × bags/roll: job kg ÷ rolls must track geometry when bags/roll (or roll count) changes.
+   * A stale `weightPerRoll` value carried from KG / total rolls must not mask the live derived mass.
+   */
+  if (qtyType === 'rolls_units' && numRollsNum > 0) {
+    const mass = derived?.derivedTotalKg
+    if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
+      return Number(mass) / numRollsNum
+    }
   }
+
+  /**
+   * Continuous tube (etc.) on total rolls: metres/roll drives billed kg → show job kg ÷ rolls before any
+   * leftover nominal weight from other qty modes.
+   */
+  if (qtyType === 'total_rolls' && continuousWebTotalRolls && numRollsNum > 0) {
+    const mass = derived?.derivedTotalKg
+    if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
+      return Number(mass) / numRollsNum
+    }
+  }
+
+  /** Nominal / user weight wins for discrete total rolls and other modes (or before derived kg exists). */
+  if (weightPerRollNum > 0) return weightPerRollNum
+
+  /**
+   * Total rolls (discrete): job mass ÷ rolls when weight field is empty.
+   * Do **not** use `billedKgPerRoll` / `kgPerRoll` here — those are conversion estimates, not priced roll mass.
+   */
+  if (qtyType === 'total_rolls' && numRollsNum > 0) {
+    const mass = derived?.derivedTotalKg
+    if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
+      return Number(mass) / numRollsNum
+    }
+  }
+
+  /** Other modes (e.g. units + rolls): fall back to geometry-based kg/roll when nothing else is set. */
   if (finishMode === 'Rolls' && numRollsNum > 0) {
     const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll
     if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) return Number(w)

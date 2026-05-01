@@ -4,6 +4,7 @@ import {
   Button,
   Divider,
   IconButton,
+  InputAdornment,
   Paper,
   Stack,
   SvgIcon,
@@ -13,15 +14,40 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from '@mui/material'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import EditIcon from '@mui/icons-material/Edit'
 import {
   fmtCount,
   fmtDollarsLineItem,
   fmtDollarsPreview,
   fmtQtyNumber,
 } from '../../../utils/quoteFormat'
+import { roundToDecimalPlaces, roundToSignificantFigures } from '../moqQuoteQuantity'
+
+/**
+ * Shown in the live-quote unit-rate editor: for $/ROLL or $/kg, 2 d.p.; otherwise 4 s.f., no grouping, no float tail
+ * (e.g. 120.08 not 120.08000000002).
+ */
+function formatTableUnitRateDraft(n: number, roundToTwoDecimals: boolean): string {
+  if (!Number.isFinite(n) || n <= 0) return ''
+  if (roundToTwoDecimals) {
+    const r = roundToDecimalPlaces(n, 2)
+    if (!Number.isFinite(r) || r <= 0) return ''
+    return r.toFixed(2)
+  }
+  const r = roundToSignificantFigures(n, 4)
+  if (!Number.isFinite(r) || r <= 0) return ''
+  let s = r.toPrecision(4)
+  if (/[eE]/.test(s)) {
+    return r.toLocaleString('en-US', { maximumFractionDigits: 6, useGrouping: false })
+  }
+  const out = parseFloat(s)
+  if (!Number.isFinite(out)) return ''
+  return out.toString()
+}
 /** Brief yellow highlight when `watch` (serialized) changes — skips first paint. */
 function FlashSpan(props: { watch: unknown; children: ReactNode }) {
   const { watch, children } = props
@@ -104,14 +130,31 @@ export function QuotePreviewPanel(props: {
   productType: string
   /** Clears the optional Price per kg override (e.g. from the Adjustments row). */
   onClearPricePerKgOverride?: () => void
-  /** Top-of-panel row for email: description, min order, price (header includes unit, e.g. Price per kg). */
-  emailQuoteTable: { description: string; minOrder: string; price: string; priceHeader: string }
+  /** Top-of-panel row for email: description, min order or job QTY, price; optional Total when job quantity is used. */
+  emailQuoteTable: {
+    description: string
+    minOrder: string
+    price: string
+    priceHeader: string
+    middleColumnHeader: 'Min QTY' | 'QTY'
+    total: string | null
+    /** Numeric unit rate backing `price` (e.g. $/ROLL); null when not priced. */
+    unitRateNumber: number | null
+  }
   /** One line for width-based materials MOQ (shown under the email table with yield), e.g. `Minimum order quantity (plain): 350.00kg`. */
   materialsMoqLine?: string | null
   /** Continuous web (e.g. Tube): totals row uses per m instead of per 1000. */
   isContinuousLength?: boolean
+  /** Quote Qty Type basis (from parent): used to bold only the matching per‑unit row in the breakdown footer. */
+  qtyMode: 'units' | 'kg' | 'roll' | 'ctn'
   /** With continuous length + units qty: yield uses kg/ea instead of kg per 1000 products. */
   yieldPerEa?: boolean
+  /** When price override is active: locked rate with unit, e.g. `$8.01/kg` or `$120.08/ROLL` (matches quote price basis). */
+  adjustmentsLockedRateLabel?: string | null
+  /** When set, user can edit the table price cell; parent applies (e.g. $/kg override in KG mode, or implied $/kg from $/ROLL etc.). */
+  onApplyTableUnitPrice?: (value: number) => void
+  /** When true ($/ROLL or $/kg), draft + apply use 2 decimal places instead of 4 significant figures. */
+  tableUnitRateRoundToTwoDecimals?: boolean
 }) {
   const {
     preview,
@@ -124,9 +167,21 @@ export function QuotePreviewPanel(props: {
     emailQuoteTable,
     materialsMoqLine = null,
     isContinuousLength = false,
+    qtyMode,
     yieldPerEa = false,
+    adjustmentsLockedRateLabel = null,
+    onApplyTableUnitPrice,
+    tableUnitRateRoundToTwoDecimals = false,
   } = props
   const p = preview
+  /** Breakdown footer: bold only the row that matches the active quantity basis. */
+  const breakdownBold = {
+    perKg: qtyMode === 'kg',
+    perM: qtyMode === 'units' && isContinuousLength,
+    per1000: qtyMode === 'units' && !isContinuousLength,
+    perCarton: qtyMode === 'ctn',
+    perRoll: qtyMode === 'roll',
+  }
   const materialsMoqLineTrimmed =
     materialsMoqLine != null && String(materialsMoqLine).trim() ? String(materialsMoqLine).trim() : null
   const yieldEstimateNode =
@@ -158,18 +213,42 @@ export function QuotePreviewPanel(props: {
   const showYieldAndMoqBlock = Boolean(yieldEstimateNode || materialsMoqLineTrimmed)
   const dash = '—'
   const [emailCopyDone, setEmailCopyDone] = useState(false)
+  const [unitPriceEditing, setUnitPriceEditing] = useState(false)
+  const [unitPriceDraft, setUnitPriceDraft] = useState('')
+  const canEditTableUnitPrice =
+    typeof onApplyTableUnitPrice === 'function' &&
+    emailQuoteTable.unitRateNumber != null &&
+    Number.isFinite(Number(emailQuoteTable.unitRateNumber)) &&
+    Number(emailQuoteTable.unitRateNumber) > 0 &&
+    emailQuoteTable.price !== '—'
+
+  useEffect(() => {
+    if (!canEditTableUnitPrice) setUnitPriceEditing(false)
+  }, [canEditTableUnitPrice])
+
   const onCopyEmailQuote = useCallback(async () => {
-    const { description, minOrder, price, priceHeader } = emailQuoteTable
-    const plain = `Description\tMin QTY\t${priceHeader}\n${description}\t${minOrder}\t${price}`
+    const { description, minOrder, price, priceHeader, middleColumnHeader, total } = emailQuoteTable
+    const hasTotal = total != null && total !== ''
+    const plain = hasTotal
+      ? `Description\t${middleColumnHeader}\t${priceHeader}\tTotal\n${description}\t${minOrder}\t${price}\t${total}`
+      : `Description\t${middleColumnHeader}\t${priceHeader}\n${description}\t${minOrder}\t${price}`
     const esc = (s: string) =>
       s
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
-    const html = `<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px"><thead><tr><th align="left">Description</th><th align="left">Min QTY</th><th align="left">${esc(
-      priceHeader,
-    )}</th></tr></thead><tbody><tr><td>${esc(description)}</td><td>${esc(minOrder)}</td><td>${esc(price)}</td></tr></tbody></table>`
+    const html = hasTotal
+      ? `<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px"><thead><tr><th align="left">Description</th><th align="left">${esc(
+          middleColumnHeader,
+        )}</th><th align="left">${esc(priceHeader)}</th><th align="left">Total</th></tr></thead><tbody><tr><td>${esc(
+          description,
+        )}</td><td>${esc(minOrder)}</td><td>${esc(price)}</td><td>${esc(total)}</td></tr></tbody></table>`
+      : `<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px"><thead><tr><th align="left">Description</th><th align="left">${esc(
+          middleColumnHeader,
+        )}</th><th align="left">${esc(priceHeader)}</th></tr></thead><tbody><tr><td>${esc(description)}</td><td>${esc(
+          minOrder,
+        )}</td><td>${esc(price)}</td></tr></tbody></table>`
     try {
       if (typeof ClipboardItem !== 'undefined') {
         await navigator.clipboard.write([
@@ -198,16 +277,22 @@ export function QuotePreviewPanel(props: {
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
         <Typography variant="h6">Live Quote</Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <Typography variant="caption" color="text.secondary">
-            {loading ? 'Calculating…' : p ? 'Up to date' : canCalculate ? 'Ready' : 'Incomplete'}
-          </Typography>
+          {loading ? (
+            <Typography variant="caption" color="text.secondary">
+              Calculating…
+            </Typography>
+          ) : !p ? (
+            <Typography variant="caption" color="text.secondary">
+              {canCalculate ? 'Ready' : 'Incomplete'}
+            </Typography>
+          ) : null}
           <Button
             variant="outlined"
             size="small"
             startIcon={<ContentCopyIcon fontSize="small" />}
             onClick={() => void onCopyEmailQuote()}
           >
-            {emailCopyDone ? 'Copied' : 'Copy table'}
+            {emailCopyDone ? 'Copied' : 'Copy Quote Summary'}
           </Button>
         </Box>
       </Box>
@@ -227,8 +312,9 @@ export function QuotePreviewPanel(props: {
           <TableHead>
             <TableRow>
               <TableCell>Description</TableCell>
-              <TableCell>Min QTY</TableCell>
+              <TableCell>{emailQuoteTable.middleColumnHeader}</TableCell>
               <TableCell>{emailQuoteTable.priceHeader}</TableCell>
+              {emailQuoteTable.total != null && emailQuoteTable.total !== '' ? <TableCell>Total</TableCell> : null}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -237,7 +323,78 @@ export function QuotePreviewPanel(props: {
                 {emailQuoteTable.description}
               </TableCell>
               <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.minOrder}</TableCell>
-              <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.price}</TableCell>
+              <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                {unitPriceEditing ? (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, maxWidth: 280 }}>
+                    <TextField
+                      size="small"
+                      type="text"
+                      inputMode="decimal"
+                      value={unitPriceDraft}
+                      onChange={(e) => setUnitPriceDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return
+                        e.preventDefault()
+                        const n = Number(unitPriceDraft.trim().replace(/[$,]/g, ''))
+                        if (!Number.isFinite(n) || n <= 0) return
+                        onApplyTableUnitPrice?.(n)
+                        setUnitPriceEditing(false)
+                      }}
+                      onBlur={() => {
+                        const t = unitPriceDraft.trim().replace(/[$,]/g, '')
+                        if (t === '') return
+                        const n = Number(t)
+                        if (!Number.isFinite(n) || n <= 0) return
+                        setUnitPriceDraft(formatTableUnitRateDraft(n, tableUnitRateRoundToTwoDecimals))
+                      }}
+                      placeholder="0.00"
+                      InputProps={{
+                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                      }}
+                      sx={{ width: 128 }}
+                    />
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={() => {
+                        const n = Number(unitPriceDraft.trim().replace(/[$,]/g, ''))
+                        if (!Number.isFinite(n) || n <= 0) return
+                        onApplyTableUnitPrice?.(n)
+                        setUnitPriceEditing(false)
+                      }}
+                    >
+                      Apply
+                    </Button>
+                    <Button size="small" variant="text" onClick={() => setUnitPriceEditing(false)}>
+                      Cancel
+                    </Button>
+                  </Box>
+                ) : (
+                  <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    <span>{emailQuoteTable.price}</span>
+                    {canEditTableUnitPrice ? (
+                      <IconButton
+                        size="small"
+                        aria-label={`Edit ${emailQuoteTable.priceHeader}`}
+                        onClick={() => {
+                          const u = emailQuoteTable.unitRateNumber
+                          setUnitPriceDraft(
+                            u != null && Number.isFinite(u) && u > 0
+                              ? formatTableUnitRateDraft(u, tableUnitRateRoundToTwoDecimals)
+                              : '',
+                          )
+                          setUnitPriceEditing(true)
+                        }}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    ) : null}
+                  </Box>
+                )}
+              </TableCell>
+              {emailQuoteTable.total != null && emailQuoteTable.total !== '' ? (
+                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>{emailQuoteTable.total}</TableCell>
+              ) : null}
             </TableRow>
           </TableBody>
         </Table>
@@ -267,15 +424,10 @@ export function QuotePreviewPanel(props: {
             {p.unit_price != null &&
             productType !== 'Bag' &&
             productType !== 'Centerfold' &&
-            productType !== 'Sleeve' ? (
+            productType !== 'Sleeve' &&
+            productType !== 'Tube' ? (
               <Typography variant="body2">
                 Price per {productType}: {fmtDollarsLineItem(p.unit_price, 4)}
-              </Typography>
-            ) : null}
-            {productType === 'Centerfold' ? (
-              <Typography variant="body2">
-                Total Centerfolds:{' '}
-                {p.totals_units != null && Number(p.totals_units) > 0 ? fmtCount(Number(p.totals_units)) : dash}
               </Typography>
             ) : null}
           </>
@@ -492,13 +644,15 @@ export function QuotePreviewPanel(props: {
             <TableRow>
               <TableCell>
                 <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, verticalAlign: 'middle' }}>
-                  Adjustments
+                  {adjustmentsLockedRateLabel
+                    ? `Adjustments (${adjustmentsLockedRateLabel})`
+                    : 'Adjustments'}
                   {onClearPricePerKgOverride ? (
                     <IconButton
                       size="small"
-                      aria-label="Clear price per kg override"
+                      aria-label="Clear locked price override"
                       onClick={onClearPricePerKgOverride}
-                      sx={{ p: 0.25, ml: 0.25, color: 'text.secondary', '&:hover': { color: 'text.primary' } }}
+                      sx={{ p: 0.25, ml: 0.25, color: 'error.main', '&:hover': { color: 'error.dark' } }}
                     >
                       <SvgIcon fontSize="small" viewBox="0 0 24 24" aria-hidden>
                         <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
@@ -528,13 +682,13 @@ export function QuotePreviewPanel(props: {
             </TableCell>
           </TableRow>
           <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Margin (%)</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 600 }} colSpan={2}>
+            <TableCell sx={{ fontWeight: 400 }}>Margin (%)</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 400 }} colSpan={2}>
               {p ? (
                 <Typography
                   component="span"
                   variant="body2"
-                  sx={{ fontWeight: 600, color: Number(p.margin) < 0 ? 'error.main' : 'inherit' }}
+                  sx={{ fontWeight: 400, color: Number(p.margin) < 0 ? 'error.main' : 'inherit' }}
                 >
                   <FlashSpan watch={p.margin}>{`${fmtQtyNumber(Number(p.margin || 0) * 100, 2)}%`}</FlashSpan>
                 </Typography>
@@ -547,7 +701,7 @@ export function QuotePreviewPanel(props: {
             const kgOk = p && Number(p.totals_kg || 0) > 0 && p.cost_per_kg != null && p.price_per_kg != null
             return (
               <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>per Kg</TableCell>
+                <TableCell sx={{ fontWeight: breakdownBold.perKg ? 600 : 400 }}>per Kg</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 400 }}>
                   {kgOk ? (
                     <FlashSpan watch={p.cost_per_kg}>{fmtDollarsLineItem(Number(p.cost_per_kg))}</FlashSpan>
@@ -557,7 +711,7 @@ export function QuotePreviewPanel(props: {
                 </TableCell>
                 <TableCell align="right">
                   {kgOk ? (
-                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perKg ? 600 : 400 }}>
                       <FlashSpan watch={p.price_per_kg}>{fmtDollarsLineItem(Number(p.price_per_kg))}</FlashSpan>
                     </Typography>
                   ) : (
@@ -571,7 +725,7 @@ export function QuotePreviewPanel(props: {
             if (!p) {
               return (
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>{isContinuousLength ? 'per m' : 'per 1000'}</TableCell>
+                  <TableCell sx={{ fontWeight: 400 }}>{isContinuousLength ? 'per m' : 'per 1000'}</TableCell>
                   <TableCell align="right">{dash}</TableCell>
                   <TableCell align="right">{dash}</TableCell>
                 </TableRow>
@@ -580,18 +734,19 @@ export function QuotePreviewPanel(props: {
             if (isContinuousLength) {
               const m = Number(p.totals_m || 0)
               const okM = m > 0 && Number.isFinite(m)
-              const cM = okM ? Number(p.total_cost) / m : null
-              const prM = okM ? Number(p.final_price) / m : null
+              const per1000m = okM ? m / 1000 : 0
+              const cM = okM && per1000m > 0 ? Number(p.total_cost) / per1000m : null
+              const prM = okM && per1000m > 0 ? Number(p.final_price) / per1000m : null
               const showM = cM != null && prM != null && Number.isFinite(cM) && Number.isFinite(prM)
               return (
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>per m</TableCell>
+                  <TableCell sx={{ fontWeight: breakdownBold.perM ? 600 : 400 }}>per 1000m</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 400 }}>
                     {showM ? <FlashSpan watch={`${p.total_cost}|${m}`}>{fmtDollarsLineItem(cM)}</FlashSpan> : dash}
                   </TableCell>
                   <TableCell align="right">
                     {showM ? (
-                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                      <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perM ? 600 : 400 }}>
                         <FlashSpan watch={`${p.final_price}|${m}`}>{fmtDollarsLineItem(prM)}</FlashSpan>
                       </Typography>
                     ) : (
@@ -609,13 +764,13 @@ export function QuotePreviewPanel(props: {
             const show = c != null && pr != null && Number.isFinite(c) && Number.isFinite(pr)
             return (
               <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>per 1000</TableCell>
+                <TableCell sx={{ fontWeight: breakdownBold.per1000 ? 600 : 400 }}>per 1000</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 400 }}>
                   {show ? <FlashSpan watch={`${p.total_cost}|${u}`}>{fmtDollarsLineItem(c)}</FlashSpan> : dash}
                 </TableCell>
                 <TableCell align="right">
                   {show ? (
-                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.per1000 ? 600 : 400 }}>
                       <FlashSpan watch={`${p.final_price}|${u}`}>{fmtDollarsLineItem(pr)}</FlashSpan>
                     </Typography>
                   ) : (
@@ -629,7 +784,7 @@ export function QuotePreviewPanel(props: {
             if (!p) {
               return (
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>{finishMode === 'Cartons' ? 'per Carton' : 'per Roll'}</TableCell>
+                  <TableCell sx={{ fontWeight: 400 }}>{finishMode === 'Cartons' ? 'per Carton' : 'per Roll'}</TableCell>
                   <TableCell align="right">{dash}</TableCell>
                   <TableCell align="right">{dash}</TableCell>
                 </TableRow>
@@ -644,13 +799,13 @@ export function QuotePreviewPanel(props: {
               const prN = show ? pr : null
               return (
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>per Carton</TableCell>
+                  <TableCell sx={{ fontWeight: breakdownBold.perCarton ? 600 : 400 }}>per Carton</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 400 }}>
                     {cN != null ? <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(cN)}</FlashSpan> : dash}
                   </TableCell>
                   <TableCell align="right">
                     {prN != null ? (
-                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                      <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perCarton ? 600 : 400 }}>
                         <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(prN)}</FlashSpan>
                       </Typography>
                     ) : (
@@ -668,13 +823,13 @@ export function QuotePreviewPanel(props: {
             const prN = show ? pr : null
             return (
               <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>per Roll</TableCell>
+                <TableCell sx={{ fontWeight: breakdownBold.perRoll ? 600 : 400 }}>per Roll</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 400 }}>
                   {cN != null ? <FlashSpan watch={`${p.total_cost}|${n}`}>{fmtDollarsLineItem(cN)}</FlashSpan> : dash}
                 </TableCell>
                 <TableCell align="right">
                   {prN != null ? (
-                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    <Typography component="span" variant="body2" sx={{ fontWeight: breakdownBold.perRoll ? 600 : 400 }}>
                       <FlashSpan watch={`${p.final_price}|${n}`}>{fmtDollarsLineItem(prN)}</FlashSpan>
                     </Typography>
                   ) : (

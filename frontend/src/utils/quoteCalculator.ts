@@ -420,15 +420,47 @@ function computeLayflatMm(spec: {
 }
 
 /**
- * Sheet/Centerfold run-up: one extruded metre is slit into `run_up` lanes along the tube,
- * so printed web length (min charge / min metres / per-1000m) scales with extruded metres × run_up.
+ * Layflat used for **polymer mass** (kg/m, kg per product): per finished strip, independent of Sheet/Centerfold
+ * run-up. Run-up widens the die to slit multiple lanes from one extrusion; it does not multiply plastic for the
+ * same product output (waste/time may differ — see extrusion throughput lane multiplier).
  */
-function printingWebLengthMultiplierFromRunUp(inputs: QuickQuoteInputs): number {
+function computeLayflatMmForMass(spec: {
+  product_type: string
+  geometry: string
+  base_width_mm: number
+  gusset_mm: number | null
+  ufilm_left_width_mm?: number | null
+  ufilm_right_width_mm?: number | null
+}): number {
+  const pt = String(spec.product_type || '')
+  const geom = String(spec.geometry || '').toLowerCase()
+  const w = Number(spec.base_width_mm || 0)
+  const g = Number(spec.gusset_mm || 0)
+  if (pt === 'Centerfold' || geom === 'centrefold' || geom === 'centre_fold' || geom === 'centerfold') return 0.5 * w
+  if (pt === 'U-Film') {
+    const l = Number(spec.ufilm_left_width_mm || 0)
+    const r = Number(spec.ufilm_right_width_mm || 0)
+    return w + l + r
+  }
+  if (geom === 'gusset') return w + g
+  return w
+}
+
+/** Sheet/Centerfold: effective output kg/hr scales with run-up lanes on one extrusion (same job kg, less line time). */
+function extrusionRunUpLaneMultiplier(inputs: QuickQuoteInputs): number {
   const pt = String(inputs.product_type || '')
   if (pt !== 'Sheet' && pt !== 'Centerfold') return 1
   const ru = Number(inputs.run_up ?? 0)
-  if (!Number.isFinite(ru) || ru <= 0) return 1
+  if (!Number.isFinite(ru) || ru < 1) return 1
   return ru
+}
+
+/**
+ * @deprecated Run-up no longer multiplies quoted print metres; printing uses job web length from mass geometry.
+ * Kept as `1` so any stale call sites do not change behaviour.
+ */
+function printingWebLengthMultiplierFromRunUp(_inputs: QuickQuoteInputs): number {
+  return 1
 }
 
 export function computeLayflatWidthMm(spec: {
@@ -685,11 +717,19 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const totalMReq = totalMN != null && totalMN > 0 ? totalMN : null
   const rolls = rollsN != null && rollsN > 0 ? Math.round(rollsN) : null
 
-  const layflatMm = computeLayflatMm({
+  const layflatMmExtrusion = computeLayflatMm({
     product_type: inputs.product_type,
     geometry: inputs.geometry,
     base_width_mm: inputs.base_width_mm,
     run_up: (inputs as any).run_up ?? null,
+    gusset_mm: inputs.gusset_mm,
+    ufilm_left_width_mm: inputs.ufilm_left_width_mm,
+    ufilm_right_width_mm: inputs.ufilm_right_width_mm,
+  })
+  const layflatMassMm = computeLayflatMmForMass({
+    product_type: inputs.product_type,
+    geometry: inputs.geometry,
+    base_width_mm: inputs.base_width_mm,
     gusset_mm: inputs.gusset_mm,
     ufilm_left_width_mm: inputs.ufilm_left_width_mm,
     ufilm_right_width_mm: inputs.ufilm_right_width_mm,
@@ -715,7 +755,7 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const density = blendDensity(blend)
   const thicknessM = umToM(Number(inputs.thickness_um || 0))
   const kgPerM2 = density * thicknessM
-  const kgPerLinearM = kgPerM2 * mmToM(layflatMm)
+  const kgPerLinearM = kgPerM2 * mmToM(layflatMassMm)
 
   // Continuous length: one "unit" of product length = web length that holds one roll/carton billed mass
   // (e.g. 20kg roll → metres = 20 / kgPerLinearM), not a fixed 1m stub.
@@ -730,7 +770,7 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   } else {
     effectiveLenM = mmToM(unitLengthMm || 0)
   }
-  const areaPerUnitM2 = effectiveLenM * mmToM(layflatMm)
+  const areaPerUnitM2 = effectiveLenM * mmToM(layflatMassMm)
   const kgPerUnit = areaPerUnitM2 * kgPerM2
 
   // If quoting by total KG in Rolls mode, adjust "plastic produced" by core billing.
@@ -743,13 +783,13 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     inputs.core_type &&
     rolls != null &&
     rolls > 0 &&
-    layflatMm > 0 &&
+    layflatMassMm > 0 &&
     inputs.roll_weight_billing &&
     inputs.roll_weight_billing !== 'core_off'
   ) {
     const core = ratebook.cores?.[inputs.core_type]
     if (core && Number(core.kg_per_meter || 0) > 0) {
-      const coreMeters = rolls * mmToM(layflatMm)
+      const coreMeters = rolls * mmToM(layflatMassMm)
       const coreKg = coreMeters * Number(core.kg_per_meter || 0)
       const frac = inputs.roll_weight_billing === 'core_half_off' ? 0.5 : 1
       totalKgReqPlastic = Math.max(0, totalKgReq - frac * coreKg)
@@ -816,7 +856,9 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   return {
     units,
     rolls,
-    layflatMm,
+    layflatMm: layflatMmExtrusion,
+    /** Layflat for kg/m and per-roll core length (single-lane product strip); see `layflatMm` for die width incl. run-up. */
+    layflatMassMm,
     blend,
     density,
     kgPerM2,
@@ -940,7 +982,7 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const d = computeDerivedGeometryAndTotals(inputs, ratebook)
   const units = d.units
   const rolls = d.rolls
-  const layflatMm = d.layflatMm
+  const layflatMassMm = d.layflatMassMm
   const blend = d.blend
   const kgPerUnit = d.kgPerUnit
   const derivedTotalKg = d.derivedTotalKg
@@ -1057,12 +1099,15 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // cost = hours * cost_per_hr
   let extrusionHours: number | null = null
   let extrusionCost = 0
+  const runUpLaneM = extrusionRunUpLaneMultiplier(inputs)
+
   if (inputs.extruder_code && Array.isArray(ratebook.extruders) && derivedTotalKg > 0) {
     const ex = ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))
     const avg = ex?.average_kg_hr != null ? Number(ex.average_kg_hr) : null
     const cph = ex?.cost_per_hr != null ? Number(ex.cost_per_hr) : null
     if (avg != null && avg > 0 && cph != null && cph >= 0) {
-      const baseHours = derivedTotalKg / avg
+      const effectiveKgHr = avg * runUpLaneM
+      const baseHours = derivedTotalKg / effectiveKgHr
       const extraHours = extrusionExtraMinutes > 0 ? extrusionExtraMinutes / 60 : 0
       extrusionHours = baseHours + extraHours
       extrusionCost = extrusionHours * cph
@@ -1122,10 +1167,10 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // cores are cut to film width, so meters of core used = rolls * width_m.
   let coreCost = 0
   let coreLengthM: number | null = null
-  if (inputs.finish_mode === 'Rolls' && inputs.core_type && rolls != null && rolls > 0 && layflatMm > 0) {
+  if (inputs.finish_mode === 'Rolls' && inputs.core_type && rolls != null && rolls > 0 && layflatMassMm > 0) {
     const c = ratebook.cores?.[inputs.core_type]
     if (c) {
-      const coreMeters = rolls * mmToM(layflatMm)
+      const coreMeters = rolls * mmToM(layflatMassMm)
       coreLengthM = coreMeters > 0 ? coreMeters : null
       coreCost = Number(c.cost_per_meter || 0) * coreMeters
     }
@@ -1136,10 +1181,11 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // Extrusion waste factors add BOTH:
   // - time (handled above via extrusionExtraMinutes -> extrusionHours)
   // - wasted material (handled here via extrusionWasteKg -> wasteCost)
-  const throughput =
+  const throughputBase =
     inputs.extruder_code && Array.isArray(ratebook.extruders)
       ? Number(ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))?.average_kg_hr || 0)
       : Number(ratebook.extrusion_throughput_kg_per_hr || 0)
+  const throughput = throughputBase * runUpLaneM
   const baseWasteAdderMinutes = (Array.isArray(ratebook.waste_adders) ? ratebook.waste_adders : []).reduce(
     (acc, w) => acc + Number(w?.waste_minutes || 0),
     0,

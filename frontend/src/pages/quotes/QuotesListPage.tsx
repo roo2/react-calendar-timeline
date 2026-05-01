@@ -5,6 +5,11 @@ import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { can } from '../../auth/permissions'
 import { buildSpecFromQuotePayload, type QuotePayload } from '../../utils/quoteToSpec'
 import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import {
+  joinQuoteDescriptionWithPackagingTail,
+  quotePackagingPerUnitTailFromPayload,
+  quoteTotalQuantityLabelFromPayload,
+} from '../../utils/quoteQuantityDescriptors'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 import {
   Alert,
@@ -32,20 +37,64 @@ function productDescriptionFromSavedPayload(payload: Record<string, unknown> | u
   }
 }
 
-function fmtQuotedKg(payload: Record<string, unknown> | undefined | null): string {
-  const v = payload?.quoted_totals_kg
-  if (v == null || v === '') return '—'
-  const n = Number(v)
-  if (!Number.isFinite(n) || n <= 0) return '—'
-  return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg`
-}
-
 function fmtQuotedTotalPrice(payload: Record<string, unknown> | undefined | null): string {
   const v = payload?.quoted_total_price
   if (v == null || v === '') return '—'
   const n = Number(v)
   if (!Number.isFinite(n)) return '—'
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function fmtPricePerUnit(row: { payload: Record<string, unknown> | null | undefined; price_per_kg?: string | null }): string {
+  const payload = row.payload
+  if (!payload || typeof payload !== 'object') return '—'
+  const qtyType = String((payload as { qtyType?: unknown }).qtyType ?? '').trim()
+  const finishMode = String((payload as { finishMode?: unknown }).finishMode ?? '').trim()
+  const cartonQtyMode = String((payload as { cartonQtyMode?: unknown }).cartonQtyMode ?? '').trim()
+  const lengthUnits = String((payload as { lengthUnits?: unknown }).lengthUnits ?? '').trim().toLowerCase()
+  const quotedTotal = Number((payload as { quoted_total_price?: unknown }).quoted_total_price ?? 0)
+  const quotedKg = Number((payload as { quoted_totals_kg?: unknown }).quoted_totals_kg ?? 0)
+  const quantity = (payload as { quantity?: Record<string, unknown> }).quantity
+  const numRolls = Number((payload as { numRolls?: unknown }).numRolls ?? quantity?.rolls ?? 0)
+  const numUnits = Number((payload as { numUnits?: unknown }).numUnits ?? quantity?.units ?? 0)
+  const numCartons = Number((payload as { numCartons?: unknown }).numCartons ?? 0)
+
+  const fmt = (n: number, unit: string) =>
+    `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per ${unit}`
+
+  if (qtyType === 'kg') {
+    const ppk = row.price_per_kg != null ? Number(row.price_per_kg) : NaN
+    if (Number.isFinite(ppk) && ppk > 0) return fmt(ppk, 'KG')
+    if (quotedTotal > 0 && quotedKg > 0) return fmt(quotedTotal / quotedKg, 'KG')
+    return '—'
+  }
+
+  if (qtyType === 'total_rolls' && finishMode === 'Rolls' && quotedTotal > 0 && numRolls > 0) {
+    return fmt(quotedTotal / numRolls, 'ROLL')
+  }
+
+  if (qtyType === 'units' && finishMode === 'Cartons' && cartonQtyMode === 'ctn' && quotedTotal > 0 && numCartons > 0) {
+    return fmt(quotedTotal / numCartons, 'CTN')
+  }
+
+  if (qtyType === 'units' && quotedTotal > 0 && numUnits > 0) {
+    if (lengthUnits === 'continuous') return fmt(quotedTotal / numUnits, 'ea')
+    return fmt(quotedTotal / (numUnits / 1000), '1000')
+  }
+
+  if (quotedTotal > 0 && quotedKg > 0) return fmt(quotedTotal / quotedKg, 'KG')
+  return '—'
+}
+
+function fmtPricePerKg(row: { payload: Record<string, unknown> | null | undefined; price_per_kg?: string | null }): string {
+  const payload = row.payload
+  if (!payload || typeof payload !== 'object') return '—'
+  const quotedTotal = Number((payload as { quoted_total_price?: unknown }).quoted_total_price ?? 0)
+  const quotedKg = Number((payload as { quoted_totals_kg?: unknown }).quoted_totals_kg ?? 0)
+  const ppk = row.price_per_kg != null ? Number(row.price_per_kg) : NaN
+  if (Number.isFinite(ppk) && ppk > 0) return `$${ppk.toFixed(2)}`
+  if (quotedTotal > 0 && quotedKg > 0) return `$${(quotedTotal / quotedKg).toFixed(2)}`
+  return '—'
 }
 
 export function QuotesListPage() {
@@ -91,13 +140,16 @@ export function QuotesListPage() {
                   <TableCell>Customer</TableCell>
                   <TableCell sx={{ minWidth: 200, maxWidth: 420 }}>Description</TableCell>
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                    Total kg
+                    Total qty
+                  </TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                    Price per Unit
                   </TableCell>
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                     Total price
                   </TableCell>
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                    Price/kg
+                    Price per KG
                   </TableCell>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>Created</TableCell>
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
@@ -121,18 +173,27 @@ export function QuotesListPage() {
                         fontSize: '0.8125rem',
                       }}
                     >
-                      {productDescriptionFromSavedPayload(q.payload)}
+                      {(() => {
+                        const base = productDescriptionFromSavedPayload(q.payload)
+                        const hasProductLine = Boolean((base || '').trim() && base !== '—')
+                        if (!hasProductLine) return base
+                        return joinQuoteDescriptionWithPackagingTail(
+                          base,
+                          quotePackagingPerUnitTailFromPayload(q.payload),
+                        )
+                      })()}
                     </TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                      {fmtQuotedKg(q.payload)}
+                      {quoteTotalQuantityLabelFromPayload(q.payload)}
+                    </TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      {fmtPricePerUnit(q)}
                     </TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
                       {fmtQuotedTotalPrice(q.payload)}
                     </TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                      {q.price_per_kg != null && Number.isFinite(Number(q.price_per_kg))
-                        ? `$${Number(q.price_per_kg).toFixed(2)}`
-                        : '—'}
+                      {fmtPricePerKg(q)}
                     </TableCell>
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       {formatDateDMYShort(q.created_at, '-')}
@@ -153,7 +214,7 @@ export function QuotesListPage() {
                 ))}
                 {items.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={7}>
+                    <TableCell colSpan={8}>
                       <Typography color="text.secondary">No quotes.</Typography>
                     </TableCell>
                   </TableRow>

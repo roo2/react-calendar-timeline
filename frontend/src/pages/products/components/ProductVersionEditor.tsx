@@ -441,6 +441,7 @@ export function ProductVersionEditor(props: {
     numRollsNum,
     weightPerRollNum,
     derivedDisplay,
+    false,
   )
 
   const productsPerRollDerived = useMemo(() => {

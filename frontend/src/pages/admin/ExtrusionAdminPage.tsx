@@ -441,7 +441,7 @@ export function ExtrusionAdminPage() {
                     </TableHead>
                     <TableBody>
                       {rows.map((r) => (
-                          <TableRow key={`${r.id}-${r.product_group}-${r.width_min_mm}-${r.width_max_mm}`} hover>
+                          <TableRow key={r.id} hover>
                             <TableCell>
                               <TextField
                                 size="small"
