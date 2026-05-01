@@ -25,7 +25,7 @@ def upgrade() -> None:
                 "extrusion_gusset_retail_per_kg",
                 sa.Numeric(12, 4),
                 nullable=False,
-                server_default=sa.text("0.5"),
+                server_default=sa.text("0.4"),
             ),
         )
     if "extrusion_punched_retail_per_kg" not in existing_cols:

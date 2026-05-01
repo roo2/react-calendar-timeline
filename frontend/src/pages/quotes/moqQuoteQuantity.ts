@@ -1,6 +1,5 @@
 import type { QtyType } from '../../utils/quantityRollFields'
 import {
-  getRollWeightAvgKg,
   mapProductTypeToMaterialsRetailGroup,
   resolveMaterialsRetailBand,
   type MaterialsMoqDenomKg,
@@ -119,7 +118,7 @@ export function synthesizeMoqQuantity(args: {
       const bpc = Math.max(1, bagsPerCartonNum || 1)
       const units = cartons * bpc
       const q: Record<string, number> = { units }
-      const perCartonKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+      const perCartonKg = weightPerRollNum
       if (perCartonKg > 0) q.total_kg = cartons * perCartonKg
       return q
     }
@@ -134,12 +133,12 @@ export function synthesizeMoqQuantity(args: {
       q.rolls = units
       if (metersPerRollNum > 0) q.total_m = units * metersPerRollNum
       else {
-        const perRollKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+        const perRollKg = weightPerRollNum
         if (perRollKg > 0) q.total_kg = units * perRollKg
       }
     } else if (finishMode === 'Cartons') {
       const bpc = Math.max(1, bagsPerCartonNum || 1)
-      const perCartonKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+      const perCartonKg = weightPerRollNum
       if (perCartonKg > 0) {
         const cartons = Math.max(1, Math.ceil(units / bpc))
         q.total_kg = cartons * perCartonKg
@@ -152,11 +151,7 @@ export function synthesizeMoqQuantity(args: {
     const kgPerRoll =
       denom.kgPerRoll != null && denom.kgPerRoll > 0
         ? denom.kgPerRoll
-        : weightPerRollNum > 0
-          ? weightPerRollNum
-          : getRollWeightAvgKg(ratebook) > 0
-            ? getRollWeightAvgKg(ratebook)
-            : null
+        : weightPerRollNum
     if (!(kgPerRoll != null && kgPerRoll > 0)) return null
     const rolls = Math.max(1, Math.ceil(moqKg / kgPerRoll))
     if (isContinuousLength) {

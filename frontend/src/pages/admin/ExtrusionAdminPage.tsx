@@ -357,7 +357,7 @@ export function ExtrusionAdminPage() {
 
       <Paper variant="outlined" sx={{ p: 2, maxWidth: 560 }}>
         <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
-          Quote extrusion feature pricing
+          Quote gusset and hole punch retail
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Sell-side add-ons on quotes: <b>$/kg × billed job kg</b> when the product uses gusset geometry (with gusset width) or hole punching.
@@ -376,7 +376,6 @@ export function ExtrusionAdminPage() {
                 setGussetRetailPerKg(e.target.value)
                 setDirty(true)
               }}
-              helperText="Default 0.50 ($/kg)"
             />
             <TextField
               size="small"
@@ -388,14 +387,13 @@ export function ExtrusionAdminPage() {
                 setPunchedRetailPerKg(e.target.value)
                 setDirty(true)
               }}
-              helperText="Default 0.20 ($/kg)"
             />
             <Button
               variant="contained"
               disabled={savingFeatureRetails || !extrusionFeatureRetailDirty || !quoteDefaults}
               onClick={() => void saveExtrusionFeatureRetails()}
             >
-              {savingFeatureRetails ? 'Saving…' : 'Save extrusion feature pricing'}
+              {savingFeatureRetails ? 'Saving…' : 'Save gusset and hole punch retail'}
             </Button>
           </Stack>
         )}

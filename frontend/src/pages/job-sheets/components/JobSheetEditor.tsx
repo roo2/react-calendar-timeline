@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProductListItem } from '../../../store/slices/productsSlice'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
-import { computeDerivedGeometryAndTotals, getRollWeightAvgKg } from '../../../utils/quoteCalculator'
+import { computeDerivedGeometryAndTotals } from '../../../utils/quoteCalculator'
 import { buildQuickQuoteInputsFromSpec } from '../../../utils/specToQuoteInputs'
 import {
   coerceQtyTypeForFinishMode,
@@ -184,12 +184,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   /** Re-hydrate when fetch returns a new detail payload (same id, fresher object). */
   const lastJobDetailDataRef = useRef<unknown>(null)
-  /** After server hydrate, avoid treating loaded Cartons as Rolls → Cartons (would overwrite weight with conversion default). */
-  const prevFinishModeForCartonWprRef = useRef<FinishMode | null>(null)
 
   useEffect(() => {
     lastJobDetailDataRef.current = null
-    prevFinishModeForCartonWprRef.current = null
   }, [jobSheetId])
 
   useEffect(() => {
@@ -345,7 +342,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionStartedLocal('')
     setProductionFinishedLocal('')
     setCustomerFacingDescription('')
-    prevFinishModeForCartonWprRef.current = 'Rolls'
   }, [customerId, mode])
 
   const theme = useTheme()
@@ -523,16 +519,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   useEffect(() => {
     setQtyType((t) => coerceQtyTypeForFinishMode(finishMode, t))
   }, [finishMode])
-
-  /** Carton finish: default weight/roll to conversion factor `roll_weight_avg` (Average Roll Weight in admin). */
-  useEffect(() => {
-    const prev = prevFinishModeForCartonWprRef.current
-    if (finishMode === 'Cartons' && prev === 'Rolls') {
-      const avg = getRollWeightAvgKg(ratebook)
-      if (avg > 0) setWeightPerRoll(roundTo2Decimals(String(avg)))
-    }
-    prevFinishModeForCartonWprRef.current = finishMode
-  }, [finishMode, ratebook])
 
   useEffect(() => {
     if (effectiveQtyType === 'units' || effectiveQtyType === 'rolls_units') return

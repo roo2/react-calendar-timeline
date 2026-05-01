@@ -32,7 +32,7 @@ def upgrade() -> None:
                 "formulation_colours_markup",
                 sa.Numeric(12, 4),
                 nullable=False,
-                server_default=sa.text("0.25"),
+                server_default=sa.text("0.5"),
             ),
         )
     if "formulation_additives_markup" not in existing_cols:
@@ -42,7 +42,7 @@ def upgrade() -> None:
                 "formulation_additives_markup",
                 sa.Numeric(12, 4),
                 nullable=False,
-                server_default=sa.text("0.25"),
+                server_default=sa.text("0.5"),
             ),
         )
     if "formulation_custom_blend_markup" not in existing_cols:
@@ -52,7 +52,7 @@ def upgrade() -> None:
                 "formulation_custom_blend_markup",
                 sa.Numeric(12, 4),
                 nullable=False,
-                server_default=sa.text("0.25"),
+                server_default=sa.text("0.5"),
             ),
         )
 

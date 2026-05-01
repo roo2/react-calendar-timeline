@@ -53,10 +53,28 @@ export function buildQuantityObjectForCalculator(
       qty.total_m = (totalUnits * baseLengthMm) / 1000
     }
   }
+  /** Discrete "1000" (units) on rolls: roll count from bags/roll so mass/roll is not inferred from a circular weight. */
+  if (
+    qtyType === 'units' &&
+    finishMode === 'Rolls' &&
+    !opts?.continuousLength &&
+    numUnitsNum > 0 &&
+    unitsPerRollNum > 0
+  ) {
+    const bags = Math.max(1, Math.round(unitsPerRollNum))
+    const rollsFromBags = Math.ceil(numUnitsNum / bags)
+    if (rollsFromBags > 0) qty.rolls = rollsFromBags
+  }
   if (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
     qty.total_kg = numRollsNum * weightPerRollNum
     qty.rolls = numRollsNum
-  } else if (finishMode === 'Rolls' && qtyType !== 'kg' && qtyType !== 'rolls_units' && numRollsNum > 0) {
+  } else if (
+    finishMode === 'Rolls' &&
+    qtyType !== 'kg' &&
+    qtyType !== 'rolls_units' &&
+    numRollsNum > 0 &&
+    !(qtyType === 'units' && !opts?.continuousLength && numUnitsNum > 0 && unitsPerRollNum > 0)
+  ) {
     qty.rolls = numRollsNum
   }
 
@@ -172,6 +190,17 @@ export function computeWeightPerRollDisplay(
    * A stale `weightPerRoll` value carried from KG / total rolls must not mask the live derived mass.
    */
   if (qtyType === 'rolls_units' && numRollsNum > 0) {
+    const mass = derived?.derivedTotalKg
+    if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
+      return Number(mass) / numRollsNum
+    }
+  }
+
+  /**
+   * Qty "1000" (units) + discrete rolls: job kg ÷ roll count when rolls come from bags/roll × total products
+   * (caller passes roll count as `numRollsNum`). Must precede the stale nominal-weight early return.
+   */
+  if (qtyType === 'units' && finishMode === 'Rolls' && !continuousWebTotalRolls && numRollsNum > 0) {
     const mass = derived?.derivedTotalKg
     if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
       return Number(mass) / numRollsNum

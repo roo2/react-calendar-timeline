@@ -5,7 +5,7 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import {
   getDefaultResinCodeFromRatebook,
-  getRollWeightAvgKg,
+  getRollWeightAvgForCartonsInKg,
   type QuickQuoteInputs,
   type QuoteRatebook,
 } from './quoteCalculator'
@@ -139,7 +139,7 @@ export function buildQuickQuoteInputsFromSpec(
       continuousLength: continuousRoll,
       bagsPerCarton: bagsPerCartonNum > 0 ? bagsPerCartonNum : undefined,
       /** Matches QuotesPage calcPayload when weight/roll is blank (Tube on continuous web). */
-      rollWeightAvgKg: getRollWeightAvgKg(opts?.ratebook ?? null),
+      rollWeightAvgKg: getRollWeightAvgForCartonsInKg(opts?.ratebook ?? null),
     },
   )
 

@@ -26,7 +26,7 @@ import {
   JobSheetQuantityPaper,
   type JobSheetQuantityFieldsProps,
 } from '../../job-sheets/components/JobSheetIdentityQuantitySection'
-import { computeDerivedGeometryAndTotals, getRollWeightAvgKg } from '../../../utils/quoteCalculator'
+import { computeDerivedGeometryAndTotals } from '../../../utils/quoteCalculator'
 import { buildQuickQuoteInputsFromSpec } from '../../../utils/specToQuoteInputs'
 import {
   cartonsWeightPerRollKg,
@@ -505,15 +505,12 @@ export function ProductVersionEditor(props: {
     setQtyType((t) => coerceQtyTypeForFinishMode(finishMode, t))
   }, [finishMode])
 
-  /** Carton finish: default weight/roll to conversion factor `roll_weight_avg` (Average Roll Weight in admin). */
+  /** Carton finish: default weight/roll to user-edited value. */
   useEffect(() => {
-    const prev = prevFinishModeForCartonWprRef.current
-    if (finishMode === 'Cartons' && prev === 'Rolls') {
-      const avg = getRollWeightAvgKg(ratebook)
-      if (avg > 0) setWeightPerRoll(roundTo2Decimals(String(avg)))
+    if (finishMode === 'Cartons') {
+      setWeightPerRoll(roundTo2Decimals(String(weightPerRollNum)))
     }
-    prevFinishModeForCartonWprRef.current = finishMode
-  }, [finishMode, ratebook])
+  }, [finishMode, weightPerRollNum])
 
   useEffect(() => {
     if (!jobSheetId && !embedded) return

@@ -23,6 +23,20 @@ import { BlendComponentsEditor, type BlendComponentDraft } from './components/Bl
 import type { Additive, Colour, Resin, ResinBlend } from './types'
 import type { ResinOption } from '../../components/ResinSelect'
 
+/** Stored quote defaults use a fraction (e.g. 0.25); the admin form edits percent (25). */
+function formulationMarkupFractionToPctField(f: number): string {
+  if (!Number.isFinite(f) || f < 0) return ''
+  const pct = f * 100
+  const rounded = Math.round(pct * 100) / 100
+  return String(rounded)
+}
+
+function formulationPctFieldToFraction(s: string): number {
+  const n = Number(String(s).trim())
+  if (!Number.isFinite(n) || n < 0) return NaN
+  return n / 100
+}
+
 export function ResinsAdminPage() {
   const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
@@ -98,16 +112,23 @@ export function ResinsAdminPage() {
 
   useEffect(() => {
     if (!quoteDefaults) return
-    setFormColoursMk(String(quoteDefaults.formulation_colours_markup))
-    setFormAdditivesMk(String(quoteDefaults.formulation_additives_markup))
-    setFormBlendMk(String(quoteDefaults.formulation_custom_blend_markup))
+    setFormColoursMk(formulationMarkupFractionToPctField(quoteDefaults.formulation_colours_markup))
+    setFormAdditivesMk(formulationMarkupFractionToPctField(quoteDefaults.formulation_additives_markup))
+    setFormBlendMk(formulationMarkupFractionToPctField(quoteDefaults.formulation_custom_blend_markup))
   }, [quoteDefaults])
 
-  const formulationMarkupDirty =
-    quoteDefaults != null &&
-    (Number(formColoursMk) !== quoteDefaults.formulation_colours_markup ||
-      Number(formAdditivesMk) !== quoteDefaults.formulation_additives_markup ||
-      Number(formBlendMk) !== quoteDefaults.formulation_custom_blend_markup)
+  const formulationMarkupDirty = (() => {
+    if (!quoteDefaults) return false
+    const c = formulationPctFieldToFraction(formColoursMk)
+    const a = formulationPctFieldToFraction(formAdditivesMk)
+    const b = formulationPctFieldToFraction(formBlendMk)
+    if (!Number.isFinite(c) || !Number.isFinite(a) || !Number.isFinite(b)) return true
+    return (
+      Math.abs(c - quoteDefaults.formulation_colours_markup) > 1e-9 ||
+      Math.abs(a - quoteDefaults.formulation_additives_markup) > 1e-9 ||
+      Math.abs(b - quoteDefaults.formulation_custom_blend_markup) > 1e-9
+    )
+  })()
 
   const displayErr = err || tabErr || quoteDefaultsErr
 
@@ -246,9 +267,9 @@ export function ResinsAdminPage() {
   async function saveFormulationMarkups() {
     const base = quoteDefaults
     if (!base) return
-    const colours = Number(formColoursMk)
-    const additives = Number(formAdditivesMk)
-    const blend = Number(formBlendMk)
+    const colours = formulationPctFieldToFraction(formColoursMk)
+    const additives = formulationPctFieldToFraction(formAdditivesMk)
+    const blend = formulationPctFieldToFraction(formBlendMk)
     if (
       !Number.isFinite(colours) ||
       colours < 0 ||
@@ -257,7 +278,7 @@ export function ResinsAdminPage() {
       !Number.isFinite(blend) ||
       blend < 0
     ) {
-      setErr('Formulation markups must be non-negative numbers.')
+      setErr('Formulation markups must be non-negative percentages.')
       return
     }
     try {
@@ -288,8 +309,8 @@ export function ResinsAdminPage() {
           Quote formulation markups
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Sell-side add-on applied to incremental formulation <b>cost</b> for colours, additives, and non-standard resin blends (e.g.{' '}
-          <code>0.25</code> adds 25% of that cost to the quote).
+          Sell-side add-on applied to incremental formulation <b>cost</b> for colours, additives, and non-standard resin blends. Enter each value
+          as a <b>percentage</b> of that incremental cost (e.g. <code>25</code> adds 25% of the colour cost to the quote).
         </Typography>
         {quoteDefaultsStatus === 'loading' && !quoteDefaults ? (
           <Typography color="text.secondary">Loading…</Typography>
@@ -297,7 +318,7 @@ export function ResinsAdminPage() {
           <Stack spacing={2}>
             <TextField
               size="small"
-              label="Colours markup (rate on colour cost)"
+              label="Colours markup (% of colour cost)"
               type="number"
               inputProps={{ min: 0, step: 0.01 }}
               value={formColoursMk}
@@ -308,7 +329,7 @@ export function ResinsAdminPage() {
             />
             <TextField
               size="small"
-              label="Additives markup (rate on additive cost)"
+              label="Additives markup (% of additive cost)"
               type="number"
               inputProps={{ min: 0, step: 0.01 }}
               value={formAdditivesMk}
@@ -319,7 +340,7 @@ export function ResinsAdminPage() {
             />
             <TextField
               size="small"
-              label="Custom resin blend markup (rate on LD uplift)"
+              label="Custom resin blend markup (% of LD uplift)"
               type="number"
               inputProps={{ min: 0, step: 0.01 }}
               value={formBlendMk}

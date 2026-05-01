@@ -669,7 +669,7 @@ function buildMaterialsMoqSummaryLine(band: MaterialsRetailBand | null, hasPrint
 }
 
 /** Conversion factor `roll_weight_avg` (kg) — admin Conversion → Production Factors (e.g. Average Roll Weight). */
-export function getRollWeightAvgKg(ratebook: QuoteRatebook | null | undefined): number {
+export function getRollWeightAvgForCartonsInKg(ratebook: QuoteRatebook | null | undefined): number {
   if (!ratebook) return 0
   return convFactor(ratebook, 'roll_weight_avg', 0)
 }
@@ -1339,10 +1339,7 @@ export function computeMaterialsMoqDenomKg(inputs: QuickQuoteInputs, ratebook: Q
     inputs.nominal_weight_per_roll_kg != null &&
     Number.isFinite(Number(inputs.nominal_weight_per_roll_kg)) &&
     Number(inputs.nominal_weight_per_roll_kg) > 0
-      ? Number(inputs.nominal_weight_per_roll_kg)
-      : getRollWeightAvgKg(ratebook) > 0
-        ? getRollWeightAvgKg(ratebook)
-        : null
+      ? Number(inputs.nominal_weight_per_roll_kg) : 0
 
   const mergeQty = (q: Record<string, unknown>): QuickQuoteInputs => ({
     ...inputs,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
@@ -53,7 +54,6 @@ import {
   computePrintingUnavailableReason,
   computeQuickQuotePreview,
   computeMaterialsMoqDenomKg,
-  getRollWeightAvgKg,
   mapProductTypeToMaterialsRetailGroup,
   resolveMaterialsRetailBand,
   type AppliedExtrusionWasteFactor,
@@ -94,6 +94,16 @@ function roundTo2Decimals(s: string): string {
 /** Same cents rule as `roundMoney` in `quoteCalculator.ts` (preview job total / $/kg reconciliation). */
 function roundMoneyCents(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+/** Debounce for quantity-field cascades (multi setState + derived recompute) — same delay everywhere in this form. */
+const QTY_FIELD_DEBOUNCE_MS = 120
+
+function kgDisplayStringsCloseEnough(a: string, b: string): boolean {
+  const na = Number(a)
+  const nb = Number(b)
+  if (!Number.isFinite(na) || !Number.isFinite(nb)) return String(a).trim() === String(b).trim()
+  return Math.abs(na - nb) < 1e-6
 }
 
 /**
@@ -225,6 +235,14 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     unitsPerRollFromUi: null as number | null,
     metersPerRollFromUi: null as number | null,
   })
+  /** Cartons + KG: last total kg / kg-per-carton seen — only then sync `numCartons` so CTN→KG does not clobber carton count. */
+  const prevCartonKgMassDriversRef = useRef<{ tk: number; wpr: number } | null>(null)
+  /** Rolls + KG (discrete): last total kg / kg-per-roll — sync rolls + total products after first edit. */
+  const prevRollsKgMassDriversRef = useRef<{ tk: number; wpr: number } | null>(null)
+  /** Discrete Rolls + "1000": last kg/product — resync derived kg/rolls/weight only when geometry-derived kg/product changes (not on every units/bags keystroke). */
+  const prevDiscreteUnitsRollsKpuRef = useRef<number | undefined>(undefined)
+  /** Latest Total KG string for effect comparisons without listing `totalKg` in dependency arrays (avoids sync loops). */
+  const totalKgStrRef = useRef('')
 
   // Quantity (values shared across qty types; qtyType controls which fields are editable vs computed)
   const [qtyType, setQtyType] = useState<QtyType>('kg')
@@ -539,7 +557,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
   const lengthAllowsContinuous = productType !== 'Bag' && productType !== 'Sleeve'
   const isTubeProduct = productType === 'Tube'
-  const effectiveLengthUnits: 'mm' | 'm' | 'continuous' = isTubeProduct ? 'continuous' : lengthUnits
+  /** Continuous web applies to Tube on **Rolls** only; carton packing uses discrete cut length (mm/m). */
+  const effectiveLengthUnits: 'mm' | 'm' | 'continuous' =
+    isTubeProduct && finishMode === 'Rolls' ? 'continuous' : lengthUnits
   const isContinuousLength = effectiveLengthUnits === 'continuous'
   const baseLengthMm = isContinuousLength ? 0 : Math.round(toMm(length, effectiveLengthUnits === 'm' ? 'm' : 'mm'))
   const widthMmNum = Math.round(Number(widthMm || 0))
@@ -548,6 +568,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const thicknessUmNum = Math.round(Number(thicknessUm || 0))
   const gussetReturnMmNum = Math.round(Number(gussetReturnMm || 0))
   const totalKgNum = Number(totalKg || 0)
+  totalKgStrRef.current = totalKg
   const numUnitsNum = Math.round(Number(numUnits || 0))
   const numCartonsNum = Math.round(Number(numCartons || 0))
   const numRollsNum = Math.round(Number(numRolls || 0))
@@ -576,12 +597,25 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productType, showRunUp])
 
+  /** Tube is continuous web on rolls only; snap away from Cartons when product type is Tube. */
   useEffect(() => {
-    if (isTubeProduct) {
-      setLengthUnits('continuous')
-      setLength('')
+    if (!isTubeProduct) return
+    if (finishMode !== 'Cartons') return
+    setFinishMode('Rolls')
+  }, [isTubeProduct, finishMode])
+
+  useEffect(() => {
+    if (!isTubeProduct) return
+    if (finishMode !== 'Rolls') return
+    setLengthUnits('continuous')
+    setLength('')
+  }, [isTubeProduct, finishMode])
+
+  useEffect(() => {
+    if (finishMode === 'Cartons' && lengthUnits === 'continuous') {
+      setLengthUnits('mm')
     }
-  }, [isTubeProduct])
+  }, [finishMode, lengthUnits])
 
   useEffect(() => {
     if ((productType === 'Bag' || productType === 'Sleeve') && lengthUnits === 'continuous') {
@@ -617,12 +651,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     setNumUnits(String(numCartonsNum * bagsPerCartonNum))
   }, [finishMode, qtyType, cartonQtyMode, numCartonsNum, bagsPerCartonNum])
 
-  /** Carton finish: default weight/roll to conversion factor `roll_weight_avg` (Average Roll Weight in admin). */
+  /** Carton finish: default weight/roll to user-edited value. */
   useEffect(() => {
     const prev = prevFinishModeForCartonWprRef.current
     if (finishMode === 'Cartons' && prev === 'Rolls') {
-      const avg = getRollWeightAvgKg(ratebook)
-      if (avg > 0) setWeightPerRoll(roundTo2Decimals(String(avg)))
+      setWeightPerRoll(roundTo2Decimals(String(weightPerRollNum)))
     }
     prevFinishModeForCartonWprRef.current = finishMode
   }, [finishMode, ratebook])
@@ -643,6 +676,17 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       if (baseLengthMm > 0) {
         qty.total_m = (totalUnits * baseLengthMm) / 1000
       }
+    }
+    if (
+      qtyType === 'units' &&
+      finishMode === 'Rolls' &&
+      !isContinuousLength &&
+      numUnitsNum > 0 &&
+      unitsPerRollNum > 0
+    ) {
+      const bags = Math.max(1, unitsPerRollNum)
+      const rollsFromBags = Math.ceil(numUnitsNum / bags)
+      if (rollsFromBags > 0) qty.rolls = rollsFromBags
     }
     // Discrete rolls: mass from kg/roll. Continuous (Tube): web length from rolls × m/roll — do **not** require weight first,
     // or Total KG never updates until weight/roll is filled (derived kg comes from total_m × kg/m).
@@ -683,7 +727,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           // Drive mass from web length (m/roll × rolls); calculator derives kg from total_m × kg/m.
           qty.total_m = numUnitsNum * metersPerRollNum
         } else {
-          const perRollKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+          const perRollKg = weightPerRollNum
           if (perRollKg > 0) {
             qty.total_kg = numUnitsNum * perRollKg
           }
@@ -692,7 +736,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         const bpc = bagsPerCarton.trim() !== '' ? Math.max(1, Math.round(Number(bagsPerCarton))) : 0
         if (bpc > 0) {
           const cartons = Math.ceil(numUnitsNum / bpc)
-          const perCartonKg = weightPerRollNum > 0 ? weightPerRollNum : getRollWeightAvgKg(ratebook)
+          const perCartonKg = weightPerRollNum
           if (perCartonKg > 0) {
             qty.total_kg = cartons * perCartonKg
           }
@@ -719,6 +763,66 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       }))
       .filter((r) => r.additive_code)
 
+    /**
+     * Cartons + KG: bags/carton is implied by (kg/carton) ÷ (kg per single product), so conversion + carton counts
+     * stay consistent while Total KG and Weight per Carton are edited.
+     */
+    let bagsPerCartonResolved: number | null =
+      finishMode === 'Cartons' && bagsPerCarton.trim() !== ''
+        ? Math.max(1, Math.round(Number(bagsPerCarton)))
+        : null
+    const hasExplicitBagsPerCarton =
+      finishMode === 'Cartons' && bagsPerCarton.trim() !== '' && bagsPerCartonResolved != null && bagsPerCartonResolved > 0
+    if (
+      finishMode === 'Cartons' &&
+      qtyType === 'kg' &&
+      ratebook &&
+      totalKgNum > 0 &&
+      weightPerRollNum > 0 &&
+      !hasExplicitBagsPerCarton
+    ) {
+      try {
+        const probeInputs: QuickQuoteInputs = {
+          override_price_per_kg: null,
+          product_type: productType,
+          geometry: derivedGeometry,
+          base_width_mm: widthMmNum,
+          run_up: showRunUp ? runUp : null,
+          ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
+          ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+          thickness_um: thicknessUmNum,
+          base_length_mm: baseLengthMm,
+          continuous_roll: isContinuousLength,
+          inline_perforation: flagPerforated,
+          inline_seal: flagSealed,
+          hole_punched: flagPunched,
+          gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
+          trim_pct: null,
+          resin_blend_code: resinBlendCode,
+          print_method: printMethod,
+          num_colours: showNumColours ? Number(numColours || 0) : 0,
+          finish_mode: 'Cartons',
+          bags_per_carton: null,
+          core_type: coreType,
+          roll_weight_billing: null,
+          extruder_code: null,
+          colour_components: colourComponents,
+          additives: additivesList,
+          blend,
+          resin_code: blend.length === 0 ? fallbackResinCode : null,
+          quantity: { total_kg: totalKgNum },
+          nominal_weight_per_roll_kg: null,
+        }
+        const dProbe = computeDerivedGeometryAndTotals(probeInputs, ratebook)
+        const ku = dProbe.kgPerUnit
+        if (ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) {
+          bagsPerCartonResolved = Math.max(1, Math.round(weightPerRollNum / ku))
+        }
+      } catch {
+        // keep parsed bags from the form when geometry probe fails
+      }
+    }
+
     if (quoteUsesMoqOnly && ratebook) {
       const denomInputs: QuickQuoteInputs = {
         override_price_per_kg: null,
@@ -740,7 +844,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         print_method: printMethod,
         num_colours: showNumColours ? Number(numColours || 0) : 0,
         finish_mode: finishMode,
-        bags_per_carton: finishMode === 'Cartons' ? (bagsPerCarton ? Number(bagsPerCarton) : null) : null,
+        bags_per_carton: finishMode === 'Cartons' ? bagsPerCartonResolved : null,
         core_type: coreType,
         roll_weight_billing: finishMode === 'Rolls' ? rollWeightBilling : null,
         extruder_code: null,
@@ -771,7 +875,10 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
             qtyType,
             finishMode,
             cartonQtyMode,
-            bagsPerCartonNum,
+            bagsPerCartonNum:
+              finishMode === 'Cartons' && qtyType === 'kg' && bagsPerCartonResolved != null
+                ? bagsPerCartonResolved
+                : bagsPerCartonNum,
             weightPerRollNum,
             metersPerRollNum,
             isContinuousLength,
@@ -821,7 +928,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       finish_mode: finishMode,
       core_type: coreType,
       roll_weight_billing: finishMode === 'Rolls' ? rollWeightBilling : null,
-      bags_per_carton: finishMode === 'Cartons' ? (bagsPerCarton ? Number(bagsPerCarton) : null) : null,
+      bags_per_carton: finishMode === 'Cartons' ? bagsPerCartonResolved : null,
       pallet_type: palletType,
 
       quantity: qty,
@@ -975,6 +1082,134 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     }
   }, [ratebook, calcPayload, suggestedPricePerKg])
 
+  /**
+   * Cartons + KG: when Total KG or Weight per Carton changes, update carton count, total products (÷ kg/product),
+   * and keep drivers coherent. Skip the first render so CTN→KG keeps the prior carton count until a driver edit.
+   * (Placed after `derivedForDisplay` — uses kg/product from geometry.)
+   */
+  useEffect(() => {
+    if (!(finishMode === 'Cartons' && qtyType === 'kg')) {
+      prevCartonKgMassDriversRef.current = null
+      return
+    }
+    if (!(totalKgNum > 0 && weightPerRollNum > 0)) {
+      prevCartonKgMassDriversRef.current = null
+      return
+    }
+    const cur = { tk: totalKgNum, wpr: weightPerRollNum }
+    const prev = prevCartonKgMassDriversRef.current
+    prevCartonKgMassDriversRef.current = cur
+    if (prev == null) return
+    if (prev.tk === cur.tk && prev.wpr === cur.wpr) return
+    const n = Math.max(1, Math.round(cur.tk / cur.wpr))
+    const next = String(n)
+    if (numCartons !== next) setNumCartons(next)
+    const ku = derivedForDisplay?.kgPerUnit
+    if (ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) {
+      const nu = Math.max(0, Math.round(cur.tk / Number(ku)))
+      const nextU = String(nu)
+      if (numUnits !== nextU) setNumUnits(nextU)
+    }
+  }, [finishMode, qtyType, totalKgNum, weightPerRollNum, numCartons, numUnits, derivedForDisplay?.kgPerUnit])
+
+  /**
+   * Rolls + KG (discrete length): Total KG + Weight per Roll drive roll count and implied total products (÷ kg/product).
+   */
+  useEffect(() => {
+    if (!(finishMode === 'Rolls' && qtyType === 'kg' && !isContinuousLength)) {
+      prevRollsKgMassDriversRef.current = null
+      return
+    }
+    if (!(totalKgNum > 0 && weightPerRollNum > 0)) {
+      prevRollsKgMassDriversRef.current = null
+      return
+    }
+    const cur = { tk: totalKgNum, wpr: weightPerRollNum }
+    const prev = prevRollsKgMassDriversRef.current
+    prevRollsKgMassDriversRef.current = cur
+    if (prev == null) return
+    if (prev.tk === cur.tk && prev.wpr === cur.wpr) return
+    const nr = Math.max(1, Math.round(cur.tk / cur.wpr))
+    if (numRolls !== String(nr)) setNumRolls(String(nr))
+    const kpu = derivedForDisplay?.kgPerUnit
+    if (kpu != null && Number.isFinite(Number(kpu)) && Number(kpu) > 0) {
+      const nu = Math.max(0, Math.round(cur.tk / Number(kpu)))
+      if (numUnits !== String(nu)) setNumUnits(String(nu))
+    }
+  }, [finishMode, qtyType, isContinuousLength, totalKgNum, weightPerRollNum, numRolls, numUnits, derivedForDisplay?.kgPerUnit])
+
+  /**
+   * Cartons + CTN only: nominal kg/carton in state follows bags/carton × kg/product (read-only weight field).
+   * "1000 (total bags)" updates weight/cartons from the Bags field `onChange` instead — an effect here caused
+   * update loops with derived totals and moved Total KG via cartons×weight display logic.
+   */
+  useEffect(() => {
+    if (!(finishMode === 'Cartons' && qtyType === 'units' && cartonQtyMode === 'ctn')) return
+    const ku = derivedForDisplay?.kgPerUnit
+    if (!(bagsPerCartonNum > 0 && ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0)) return
+    const next = bagsPerCartonNum * Number(ku)
+    if (!(next > 0) || !Number.isFinite(next)) return
+    const formatted = formatKgDisplay(next)
+    if (weightPerRoll !== formatted) setWeightPerRoll(formatted)
+  }, [finishMode, qtyType, cartonQtyMode, bagsPerCartonNum, derivedForDisplay?.kgPerUnit, weightPerRoll])
+
+  /** Carton finish: derived carton count for read-only "No. of Cartons" when not in CTN qty mode. */
+  const cartonCountForDisplay = useMemo(() => {
+    if (finishMode !== 'Cartons') return null
+    if (cartonQtyMode === 'ctn' && numCartonsNum > 0) return numCartonsNum
+    if (qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0) {
+      return Math.max(1, Math.round(totalKgNum / weightPerRollNum))
+    }
+    const qp = quickPreview?.cartons
+    if (qp != null && Number.isFinite(Number(qp)) && Number(qp) > 0) return Math.round(Number(qp))
+    if (bagsPerCartonNum > 0 && numUnitsNum > 0) return Math.ceil(numUnitsNum / bagsPerCartonNum)
+    return null
+  }, [
+    finishMode,
+    cartonQtyMode,
+    numCartonsNum,
+    qtyType,
+    totalKgNum,
+    weightPerRollNum,
+    quickPreview?.cartons,
+    bagsPerCartonNum,
+    numUnitsNum,
+  ])
+
+  /** Carton finish: kg/carton from preview, else job kg ÷ cartons, else ratebook average (same field as Rolls weight). */
+  const cartonWeightKgForDisplay = useMemo(() => {
+    if (finishMode !== 'Cartons') return null
+    /** 1000 (total products) or CTN: kg/carton follows editable bags/carton × geometry kg/product. */
+    if (qtyType === 'units' && (cartonQtyMode === 'ctn' || cartonQtyMode === '1000')) {
+      const ku = derivedForDisplay?.kgPerUnit
+      if (bagsPerCartonNum > 0 && ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) {
+        return bagsPerCartonNum * Number(ku)
+      }
+      const kpc = quickPreview?.kg_per_carton
+      if (kpc != null && Number.isFinite(Number(kpc)) && Number(kpc) > 0) return Number(kpc)
+      const dkg = derivedForDisplay?.derivedTotalKg
+      const c = cartonCountForDisplay
+      if (dkg != null && c != null && c > 0 && Number.isFinite(Number(dkg)) && Number(dkg) > 0) return Number(dkg) / c
+    }
+    if (weightPerRollNum > 0) return weightPerRollNum
+    const kpc = quickPreview?.kg_per_carton
+    if (kpc != null && Number.isFinite(Number(kpc)) && Number(kpc) > 0) return Number(kpc)
+    const dkg = derivedForDisplay?.derivedTotalKg
+    const c = cartonCountForDisplay
+    if (dkg != null && c != null && c > 0 && Number.isFinite(Number(dkg)) && Number(dkg) > 0) return Number(dkg) / c
+  }, [
+    finishMode,
+    qtyType,
+    cartonQtyMode,
+    bagsPerCartonNum,
+    derivedForDisplay?.kgPerUnit,
+    weightPerRollNum,
+    quickPreview?.kg_per_carton,
+    derivedForDisplay?.derivedTotalKg,
+    cartonCountForDisplay,
+    ratebook,
+  ])
+
   const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
 
   /**
@@ -1027,7 +1262,31 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     qtyType === 'kg'
       ? totalKgNum
       : qtyType === 'units'
-        ? (storedTotalKgForDisplay ?? derivedForDisplay?.derivedTotalKg ?? null)
+        ? (() => {
+            const d = derivedForDisplay?.derivedTotalKg
+            const dOk = d != null && Number.isFinite(Number(d)) && Number(d) > 0
+            // Cartons (1000 or CTN): don't replace explicit mass from KG mode with geometry-derived kg once
+            // units/cartons are populated — that was resetting Total KG and fighting stored weight/carton.
+            if (finishMode === 'Cartons') {
+              /** 1000 qty: job kg follows total products × kg/product — not cartons×kg/carton (those track bags edits). */
+              if (qtyType === 'units' && cartonQtyMode === '1000') {
+                if (storedTotalKgForDisplay != null) return storedTotalKgForDisplay
+                if (numUnitsNum > 0 && dOk) return Number(d)
+                return dOk ? Number(d) : null
+              }
+              if (numCartonsNum > 0 && weightPerRollNum > 0) {
+                const prod = numCartonsNum * weightPerRollNum
+                if (prod > 0 && Number.isFinite(prod)) return prod
+              }
+              if (storedTotalKgForDisplay != null) return storedTotalKgForDisplay
+              if (numUnitsNum > 0 && dOk) return Number(d)
+              return dOk ? Number(d) : null
+            }
+            // Prefer live geometry job kg when product count is set so Total KG tracks Total Products (stored
+            // total_kg from hydrate would otherwise stay stale until Qty Type is toggled).
+            if (numUnitsNum > 0 && dOk) return Number(d)
+            return storedTotalKgForDisplay ?? (dOk ? Number(d) : null)
+          })()
       : qtyType === 'rolls_units'
         ? (() => {
             const d = derivedForDisplay?.derivedTotalKg
@@ -1041,8 +1300,20 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                 if (d != null && Number.isFinite(Number(d)) && Number(d) > 0) return Number(d)
                 return storedTotalKgForDisplay ?? null
               })()
-            : storedTotalKgForDisplay ??
-              (numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : null)
+            : (() => {
+                const implied =
+                  numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : null
+                const d = derivedForDisplay?.derivedTotalKg
+                const dOk = d != null && Number.isFinite(Number(d)) && Number(d) > 0
+                // Prefer live geometry or rolls × kg/roll so Total KG tracks No. of Rolls (stored total_kg from
+                // hydrate would otherwise stay stale in ROLL qty mode).
+                if (numRollsNum > 0 && weightPerRollNum > 0) {
+                  if (dOk) return Number(d)
+                  if (implied != null && implied > 0 && Number.isFinite(implied)) return implied
+                }
+                if (dOk) return Number(d)
+                return storedTotalKgForDisplay ?? null
+              })()
           : null
   const unitsDisplay =
     qtyType === 'units'
@@ -1050,16 +1321,32 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       : qtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0
         ? numRollsNum * unitsPerRollNum
         : (derivedForDisplay?.units != null ? derivedForDisplay.units : null)
-  const rollsDisplay =
+  /** Discrete "1000" (units) on rolls: rolls = ceil(total products ÷ bags/roll) — avoids inferring rolls from weight (circular). */
+  const discreteUnitsRollsFromBags =
+    qtyType === 'units' &&
+    finishMode === 'Rolls' &&
+    !isContinuousLength &&
+    numUnitsNum > 0 &&
+    unitsPerRollNum > 0
+      ? Math.ceil(numUnitsNum / Math.max(1, unitsPerRollNum))
+      : null
+
+  const rollsCountForRollsDisplay =
     finishMode === 'Rolls'
-      ? isContinuousLength && (qtyType === 'units') && numUnitsNum > 0
+      ? isContinuousLength && qtyType === 'units' && numUnitsNum > 0
         ? numUnitsNum
         : qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
           ? Math.round(totalKgNum / weightPerRollNum)
-          : (qtyType === 'units') && derivedForDisplay?.derivedTotalKg != null && weightPerRollNum > 0
-            ? Math.round(derivedForDisplay.derivedTotalKg / weightPerRollNum)
-            : numRollsNum
+          : discreteUnitsRollsFromBags != null
+            ? discreteUnitsRollsFromBags
+            : qtyType === 'units' &&
+                !isContinuousLength &&
+                derivedForDisplay?.derivedTotalKg != null &&
+                weightPerRollNum > 0
+              ? Math.round(derivedForDisplay.derivedTotalKg / weightPerRollNum)
+              : numRollsNum
       : null
+  const rollsDisplay = finishMode === 'Rolls' ? rollsCountForRollsDisplay : null
 
   /**
    * Roll count for syncing Total KG when weight or metres/roll change on continuous web (same idea as Roll qty:
@@ -1104,10 +1391,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         billedKgPerRoll: derivedForDisplay.billedKgPerRoll ?? null,
       }
     : null
+  const rollsCountForWeightPerRollDisplay =
+    rollsCountForRollsDisplay != null && rollsCountForRollsDisplay > 0 ? rollsCountForRollsDisplay : numRollsNum
+
   const weightPerRollDisplay = computeWeightPerRollDisplay(
     qtyType,
     finishMode,
-    numRollsNum,
+    rollsCountForWeightPerRollDisplay,
     weightPerRollNum,
     derivedDisplayForQty,
     isContinuousLength && qtyType === 'total_rolls',
@@ -1166,8 +1456,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const unitsEditable = qtyType === 'units'
   const rollsEditable = finishMode === 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')
   const weightPerRollEditable =
-    finishMode === 'Rolls' &&
-    (qtyType === 'units' || qtyType === 'kg' || (qtyType === 'total_rolls' && !isContinuousLength))
+    (finishMode === 'Rolls' &&
+      (qtyType === 'kg' ||
+        // Discrete ROLL (`total_rolls` / `rolls_units`): weight is derived from bags × kg/product — not user-edited.
+        (qtyType === 'units' && isContinuousLength))) ||
+    (finishMode === 'Cartons' && qtyType === 'kg')
 
   // Only show computed value when the inputs that drive it are set; otherwise keep showing the field's stored value (so changing Qty Type doesn't wipe the display).
   const haveDriverForTotalKg =
@@ -1176,11 +1469,134 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     (qtyType === 'total_rolls' && numRollsNum > 0 && (isContinuousLength ? metersPerRollNum > 0 : weightPerRollNum > 0))
   const haveDriverForWeightPerRoll =
     finishMode === 'Rolls' &&
-    (numRollsNum > 0 || (isContinuousLength && (qtyType === 'units') && numUnitsNum > 0)) &&
+    (numRollsNum > 0 ||
+      (isContinuousLength && qtyType === 'units' && numUnitsNum > 0) ||
+      (qtyType === 'units' && !isContinuousLength && numUnitsNum > 0 && unitsPerRollNum > 0)) &&
     ((qtyType === 'kg' && totalKgNum > 0) ||
-      ((qtyType === 'units') && numUnitsNum > 0) ||
+      (qtyType === 'units' && numUnitsNum > 0) ||
       (qtyType === 'rolls_units' && unitsPerRollNum > 0) ||
       (qtyType === 'total_rolls' && isContinuousLength && metersPerRollNum > 0))
+
+  /** Latest values for debounced quantity cascades (avoid stale closures). */
+  const qtyCascadeCtxRef = useRef({
+    finishMode,
+    isContinuousLength,
+    qtyType,
+    ratebook,
+    cartonQtyMode,
+    bagsPerCartonNum,
+    numCartonsNum,
+    unitsPerRollNum,
+    numRollsNum,
+    derivedKpu: null as number | null,
+  })
+  const numUnitsForCascadeRef = useRef(numUnitsNum)
+  const lastNumUnitsRawRef = useRef('')
+  const lastUnitsPerRollRawRef = useRef('')
+  const lastBagsPerCartonRawRef = useRef('')
+  qtyCascadeCtxRef.current = {
+    finishMode,
+    isContinuousLength,
+    qtyType,
+    ratebook,
+    cartonQtyMode,
+    bagsPerCartonNum,
+    numCartonsNum,
+    unitsPerRollNum,
+    numRollsNum,
+    derivedKpu:
+      derivedForDisplay?.kgPerUnit != null &&
+      Number.isFinite(Number(derivedForDisplay.kgPerUnit)) &&
+      Number(derivedForDisplay.kgPerUnit) > 0
+        ? Number(derivedForDisplay.kgPerUnit)
+        : null,
+  }
+  numUnitsForCascadeRef.current = numUnitsNum
+
+  const debouncedTotalProductsCascade = useDebouncedCallback(() => {
+    const raw = lastNumUnitsRawRef.current
+    const s = qtyCascadeCtxRef.current
+    const u = raw.trim() !== '' ? Math.max(0, Math.round(Number(raw))) : 0
+    if (s.finishMode === 'Cartons' && s.qtyType === 'units' && s.cartonQtyMode === '1000' && s.ratebook) {
+      const kpu = s.derivedKpu
+      if (u > 0 && kpu != null && kpu > 0) setTotalKg(formatKgDisplay(u * kpu))
+      if (u > 0 && s.bagsPerCartonNum > 0) {
+        setNumCartons(String(Math.max(1, Math.ceil(u / s.bagsPerCartonNum))))
+      }
+    }
+    if (s.finishMode === 'Rolls' && !s.isContinuousLength && s.qtyType === 'units' && s.ratebook) {
+      const bags = s.unitsPerRollNum
+      const kpu = s.derivedKpu
+      if (u > 0 && kpu != null && kpu > 0) setTotalKg(formatKgDisplay(u * kpu))
+      if (u > 0 && bags > 0) setNumRolls(String(Math.max(1, Math.ceil(u / bags))))
+      if (u > 0 && bags > 0 && kpu != null && kpu > 0) {
+        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+      }
+    }
+  }, QTY_FIELD_DEBOUNCE_MS)
+
+  const debouncedUnitsPerRollCascade = useDebouncedCallback(() => {
+    const raw = lastUnitsPerRollRawRef.current
+    const s = qtyCascadeCtxRef.current
+    const uProducts = numUnitsForCascadeRef.current
+    const stayDiscreteRollQty = s.finishMode === 'Rolls' && !s.isContinuousLength && s.qtyType === 'total_rolls'
+    if (stayDiscreteRollQty && s.ratebook) {
+      const bags = Math.max(1, Math.round(Number(raw || 0)))
+      const rolls = s.numRollsNum
+      const kpu = s.derivedKpu
+      if (bags > 0 && rolls > 0 && kpu != null && kpu > 0) {
+        setNumUnits(String(rolls * bags))
+        setTotalKg(formatKgDisplay(rolls * bags * kpu))
+        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+      }
+    }
+    if (s.finishMode === 'Rolls' && !s.isContinuousLength && s.qtyType === 'units' && s.ratebook) {
+      const bags = Math.max(1, Math.round(Number(raw || 0)))
+      const kpu = s.derivedKpu
+      if (bags > 0 && uProducts > 0 && kpu != null && kpu > 0) {
+        const rolls = Math.max(1, Math.ceil(uProducts / bags))
+        setNumRolls(String(rolls))
+        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+        setTotalKg(formatKgDisplay(uProducts * kpu))
+      }
+    }
+  }, QTY_FIELD_DEBOUNCE_MS)
+
+  const debouncedBagsPerCartonCascade = useDebouncedCallback(() => {
+    const raw = lastBagsPerCartonRawRef.current
+    const s = qtyCascadeCtxRef.current
+    const bpc = raw.trim() !== '' ? Math.max(1, Math.round(Number(raw))) : 0
+    const ku = s.derivedKpu
+    if (
+      s.finishMode === 'Cartons' &&
+      s.qtyType === 'units' &&
+      s.cartonQtyMode === '1000' &&
+      s.ratebook
+    ) {
+      if (bpc > 0 && ku != null && ku > 0) {
+        setWeightPerRoll(formatKgDisplay(bpc * ku))
+      }
+      if (bpc > 0 && numUnitsForCascadeRef.current > 0) {
+        setNumCartons(String(Math.max(1, Math.ceil(numUnitsForCascadeRef.current / bpc))))
+      }
+    }
+    if (
+      s.finishMode === 'Cartons' &&
+      s.qtyType === 'units' &&
+      s.cartonQtyMode === 'ctn' &&
+      s.ratebook &&
+      bpc > 0 &&
+      ku != null &&
+      ku > 0
+    ) {
+      const wKg = bpc * ku
+      setWeightPerRoll(formatKgDisplay(wKg))
+      if (s.numCartonsNum > 0) {
+        setTotalKg(formatKgDisplay(s.numCartonsNum * wKg))
+        setNumUnits(String(s.numCartonsNum * bpc))
+      }
+    }
+  }, QTY_FIELD_DEBOUNCE_MS)
 
   const qtyTypeTransitionSnapshot = useMemo(() => {
     let totalKgFromUi: number | null = null
@@ -1193,16 +1609,28 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     }
 
     let weightPerRollFromUi: number | null = null
-    if (weightPerRollEditable) {
-      if (weightPerRollNum > 0) weightPerRollFromUi = weightPerRollNum
-    } else if (
-      weightPerRollDisplay != null &&
-      Number.isFinite(Number(weightPerRollDisplay)) &&
-      Number(weightPerRollDisplay) > 0
+    if (
+      finishMode === 'Cartons' &&
+      qtyType === 'units' &&
+      (cartonQtyMode === 'ctn' || cartonQtyMode === '1000')
     ) {
-      weightPerRollFromUi = Number(weightPerRollDisplay)
-    } else if (weightPerRollNum > 0) {
-      weightPerRollFromUi = weightPerRollNum
+      const ku = derivedForDisplay?.kgPerUnit
+      if (bagsPerCartonNum > 0 && ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) {
+        weightPerRollFromUi = bagsPerCartonNum * Number(ku)
+      }
+    }
+    if (weightPerRollEditable) {
+      if (weightPerRollFromUi == null && weightPerRollNum > 0) weightPerRollFromUi = weightPerRollNum
+    } else if (weightPerRollFromUi == null) {
+      if (
+        weightPerRollDisplay != null &&
+        Number.isFinite(Number(weightPerRollDisplay)) &&
+        Number(weightPerRollDisplay) > 0
+      ) {
+        weightPerRollFromUi = Number(weightPerRollDisplay)
+      } else if (weightPerRollNum > 0) {
+        weightPerRollFromUi = weightPerRollNum
+      }
     }
 
     let rollsFromUi: number | null = null
@@ -1288,6 +1716,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     metersPerRollCalculatedText,
     calcPayload.quantity,
     quickPreview?.rolls,
+    bagsPerCartonNum,
+    derivedForDisplay?.kgPerUnit,
   ])
   qtyTypeCarrySnapRef.current = qtyTypeTransitionSnapshot
 
@@ -1333,7 +1763,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
     if (nextQtyType === 'kg') {
       if (snap.totalKgFromUi != null && snap.totalKgFromUi > 0) setTotalKg(formatKgDisplay(snap.totalKgFromUi))
-      if (finishMode === 'Rolls' && snap.weightPerRollFromUi != null && snap.weightPerRollFromUi > 0) {
+      if (
+        (finishMode === 'Rolls' || finishMode === 'Cartons') &&
+        snap.weightPerRollFromUi != null &&
+        snap.weightPerRollFromUi > 0
+      ) {
         setWeightPerRoll(formatKgDisplay(snap.weightPerRollFromUi))
       }
       return
@@ -1400,6 +1834,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       if ((numUnits == null || String(numUnits).trim() === '') && unitsDisplay != null && Number.isFinite(Number(unitsDisplay))) {
         setNumUnits(String(Math.round(Number(unitsDisplay))))
       }
+      // Discrete Rolls + "1000": do not backfill rolls or bags/roll from derived display — those paths used
+      // stale weight-based roll counts and fought the editable Total products / Bags per roll handlers.
       return
     }
     if (qtyType === 'rolls_units') {
@@ -1443,6 +1879,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     metersPerRoll,
     weightPerRoll,
     isContinuousLength,
+    finishMode,
     numRollsNum,
     totalKgDisplay,
     unitsDisplay,
@@ -1467,7 +1904,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       Number(derivedForDisplay.rolls) > 0
     if (!(fromKgOrRollsMode || fromContinuousRolls)) return
     const computed = Math.round(Number(derivedForDisplay.units))
-    setNumUnits(Number.isFinite(computed) && computed >= 0 ? String(computed) : '')
+    const nextU = Number.isFinite(computed) && computed >= 0 ? String(computed) : ''
+    if (numUnits === nextU) return
+    setNumUnits(nextU)
   }, [
     qtyType,
     totalKgNum,
@@ -1495,6 +1934,68 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (String(weightPerRoll).trim() === next) return
     setWeightPerRoll(next)
   }, [qtyType, weightPerRoll, numRollsNum, derivedForDisplay?.derivedTotalKg])
+
+  /**
+   * Discrete ROLL qty mode (`total_rolls`): Total KG is driven by rolls × kg/roll (and geometry when available).
+   * Keep `totalKg` state aligned so the disabled field, MOQ carry, and save payload match live rolls/weight.
+   */
+  useEffect(() => {
+    if (quoteUsesMoqOnly) return
+    if (qtyType !== 'total_rolls') return
+    if (isContinuousLength) return
+    if (!(numRollsNum > 0 && weightPerRollNum > 0)) return
+    const dkg = derivedForDisplay?.derivedTotalKg
+    const next =
+      dkg != null && Number.isFinite(Number(dkg)) && Number(dkg) > 0
+        ? formatKgDisplay(Number(dkg))
+        : formatKgDisplay(numRollsNum * weightPerRollNum)
+    if (!kgDisplayStringsCloseEnough(totalKgStrRef.current, next)) setTotalKg(next)
+  }, [quoteUsesMoqOnly, qtyType, isContinuousLength, numRollsNum, weightPerRollNum, derivedForDisplay?.derivedTotalKg])
+
+  /**
+   * Qty Type "1000" (units) + Rolls + discrete length: when kg/product changes (geometry, ratebook), resync Total KG
+   * and (when bags/roll is set) rolls + weight per roll from total products × kg/product. User edits to total
+   * products / bags per roll update state in `onChange` only — syncing on every `numUnits`/`unitsPerRoll` change
+   * caused feedback loops and overwrote in-progress input for Bag-on-Roll quotes.
+   */
+  useEffect(() => {
+    if (quoteUsesMoqOnly) {
+      prevDiscreteUnitsRollsKpuRef.current = undefined
+      return
+    }
+    if (qtyType !== 'units' || finishMode !== 'Rolls' || isContinuousLength) {
+      prevDiscreteUnitsRollsKpuRef.current = undefined
+      return
+    }
+    if (numUnitsNum <= 0) return
+    const kpu = derivedForDisplay?.kgPerUnit
+    if (kpu == null || !Number.isFinite(Number(kpu)) || Number(kpu) <= 0) return
+    const kpuNum = Number(kpu)
+    const prevKpu = prevDiscreteUnitsRollsKpuRef.current
+    const kpuChanged = prevKpu === undefined || prevKpu !== kpuNum
+    if (!kpuChanged) return
+    prevDiscreteUnitsRollsKpuRef.current = kpuNum
+
+    const nextTotal = formatKgDisplay(numUnitsNum * kpuNum)
+    if (totalKg !== nextTotal) setTotalKg(nextTotal)
+
+    if (unitsPerRollNum > 0) {
+      const rolls = Math.max(1, Math.ceil(numUnitsNum / unitsPerRollNum))
+      if (numRolls !== String(rolls)) setNumRolls(String(rolls))
+      const nextWpr = roundTo2Decimals(String(unitsPerRollNum * kpuNum))
+      if (weightPerRoll !== nextWpr) setWeightPerRoll(nextWpr)
+    }
+    // Do not depend on `numRolls`/`totalKg`/`weightPerRoll`: this block only runs when kg/product changes; listing
+    // those fields re-ran the effect on every derived-field sync and contributed to update-depth loops.
+  }, [
+    quoteUsesMoqOnly,
+    qtyType,
+    finishMode,
+    isContinuousLength,
+    numUnitsNum,
+    unitsPerRollNum,
+    derivedForDisplay?.kgPerUnit,
+  ])
 
   const layflatWidthMm = useMemo(() => {
     try {
@@ -1820,7 +2321,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.kg_per_roll != null && Number(p.kg_per_roll) > 0) kgPerRoll = Number(p.kg_per_roll)
     if (kgPerRoll == null && denom?.kgPerRoll != null && denom.kgPerRoll > 0) kgPerRoll = denom.kgPerRoll
     if (kgPerRoll == null && finishMode === 'Rolls' && weightPerRollNum > 0) kgPerRoll = weightPerRollNum
-    if (kgPerRoll == null && finishMode === 'Rolls' && getRollWeightAvgKg(ratebook) > 0) kgPerRoll = getRollWeightAvgKg(ratebook)
     if (kgPerRoll == null && totKg > 0 && rolls > 0) kgPerRoll = totKg / rolls
 
     let kgPerUnit: number | null = null
@@ -2004,10 +2504,10 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         : qtyType === 'units'
           ? numUnitsNum > 0 &&
             (!isContinuousLength ||
-              (finishMode === 'Rolls' && (weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)) ||
+              (finishMode === 'Rolls' && (weightPerRollNum > 0 )) ||
               (finishMode === 'Cartons' &&
                 Number(bagsPerCarton || 0) >= 1 &&
-                (weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)))
+                (weightPerRollNum > 0 )))
           : qtyType === 'kg'
             ? totalKg.trim() !== '' && (finishMode !== 'Rolls' || weightPerRollNum > 0)
             : false
@@ -2035,7 +2535,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         isContinuousLength &&
         finishMode === 'Rolls' &&
         numUnitsNum > 0 &&
-        !(weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)
+        !(weightPerRollNum > 0 )
       ) {
         missing.push('Weight per roll (or conversion average roll weight)')
       } else if (qtyType === 'kg') {
@@ -2058,7 +2558,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         if (
           !isContinuousLength &&
           !(weightPerRollNum > 0) &&
-          !(getRollWeightAvgKg(ratebook) > 0) &&
           !(materialsMoqDenomKg?.kgPerRoll != null && materialsMoqDenomKg.kgPerRoll > 0)
         ) {
           missing.push('Weight per roll (or conversion average roll weight)')
@@ -2075,7 +2574,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         isContinuousLength &&
         finishMode === 'Rolls' &&
         !(metersPerRollNum > 0) &&
-        !(weightPerRollNum > 0 || getRollWeightAvgKg(ratebook) > 0)
+        !(weightPerRollNum > 0 )
       ) {
         missing.push('Meters per roll or weight per roll')
       }
@@ -2731,9 +3230,20 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     </MenuItem>
                   ))}
                 </DefaultSelectField>
-                <DefaultSelectField defaultValue="Rolls" label="Finish Mode" value={finishMode} onChange={(e) => setFinishMode(e.target.value as any)}>
+                <DefaultSelectField
+                  defaultValue="Rolls"
+                  label="Finish Mode"
+                  value={finishMode}
+                  onChange={(e) => {
+                    const v = e.target.value as 'Rolls' | 'Cartons'
+                    setFinishMode(v)
+                    if (v === 'Cartons' && lengthUnits === 'continuous') setLengthUnits('mm')
+                  }}
+                >
                   <MenuItem value="Rolls">Rolls</MenuItem>
-                  <MenuItem value="Cartons">Cartons</MenuItem>
+                  <MenuItem value="Cartons" disabled={isTubeProduct}>
+                    Cartons
+                  </MenuItem>
                 </DefaultSelectField>
               </Box>
             </Paper>
@@ -2870,11 +3380,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       setLengthUnits(v)
                       if (v === 'continuous') setLength('')
                     }}
-                    disabled={isTubeProduct}
+                    disabled={isTubeProduct && finishMode === 'Rolls'}
                   >
                     <MenuItem value="mm">mm</MenuItem>
                     <MenuItem value="m">m</MenuItem>
-                    {lengthAllowsContinuous ? <MenuItem value="continuous">Continuous</MenuItem> : null}
+                    {lengthAllowsContinuous && finishMode !== 'Cartons' ? (
+                      <MenuItem value="continuous">Continuous</MenuItem>
+                    ) : null}
                   </DefaultSelectField>
                   <TextField
                     label={
@@ -2888,7 +3400,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     value={isContinuousLength ? 'Continuous' : length}
                     onChange={(e) => setLength(e.target.value)}
                     disabled={isContinuousLength}
-                    helperText={isTubeProduct ? 'Tubes use continuous length' : undefined}
+                    helperText={
+                      isTubeProduct && finishMode === 'Rolls' ? 'Tubes use continuous length' : undefined
+                    }
                   />
                 </Box>
 
@@ -2993,18 +3507,47 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       value={
                         qtyType === 'rolls_units'
                           ? unitsPerRoll
-                          : productsPerRollDerived != null
-                            ? String(Math.max(0, Math.floor(productsPerRollDerived)))
-                            : ''
+                          : qtyType === 'total_rolls' && finishMode === 'Rolls' && !isContinuousLength
+                            ? // ROLL + discrete: drive the field from state — showing `productsPerRollDerived` here
+                              // ignored `unitsPerRoll` and made the box fight the user on every render.
+                              unitsPerRoll.trim() !== ''
+                              ? unitsPerRoll
+                              : productsPerRollDerived != null
+                                ? String(Math.max(0, Math.floor(productsPerRollDerived)))
+                                : ''
+                            : qtyType === 'units' && finishMode === 'Rolls' && !isContinuousLength
+                              ? unitsPerRoll.trim() !== ''
+                                ? unitsPerRoll
+                                : productsPerRollDerived != null
+                                  ? String(Math.max(0, Math.floor(productsPerRollDerived)))
+                                  : ''
+                              : productsPerRollDerived != null
+                                ? String(Math.max(0, Math.floor(productsPerRollDerived)))
+                                : ''
                       }
                       onChange={(e) => {
                         setQuoteUsesMoqOnly(false)
-                        setUnitsPerRoll(e.target.value)
-                        setQtyType('rolls_units')
+                        const raw = e.target.value
+                        lastUnitsPerRollRawRef.current = raw
+                        setUnitsPerRoll(raw)
+                        const stayDiscreteRollQty =
+                          finishMode === 'Rolls' && !isContinuousLength && qtyType === 'total_rolls'
+                        if (
+                          !(qtyType === 'units' && finishMode === 'Rolls' && !isContinuousLength) &&
+                          !stayDiscreteRollQty
+                        ) {
+                          setQtyType('rolls_units')
+                        }
+                        debouncedUnitsPerRollCascade()
                       }}
+                      onBlur={() => debouncedUnitsPerRollCascade.flush()}
                       disabled={
                         (qtyType === 'total_rolls' && isContinuousLength) ||
-                        !(qtyMode === 'roll' || qtyType === 'rolls_units')
+                        !(
+                          qtyMode === 'roll' ||
+                          qtyType === 'rolls_units' ||
+                          (qtyType === 'units' && finishMode === 'Rolls' && !isContinuousLength)
+                        )
                       }
                     />
                   ) : (
@@ -3012,8 +3555,22 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       label={`${productUnitLabel} per Carton`}
                       type="number"
                       inputProps={{ min: 1, step: 1 }}
-                      value={bagsPerCarton}
-                      onChange={(e) => setBagsPerCarton(e.target.value)}
+                      value={
+                        finishMode === 'Cartons' && qtyType === 'kg'
+                          ? calcPayload?.bags_per_carton != null && Number.isFinite(Number(calcPayload.bags_per_carton))
+                            ? String(Math.round(Number(calcPayload.bags_per_carton)))
+                            : bagsPerCarton
+                          : bagsPerCarton
+                      }
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        lastBagsPerCartonRawRef.current = raw
+                        setQuoteUsesMoqOnly(false)
+                        setBagsPerCarton(raw)
+                        debouncedBagsPerCartonCascade()
+                      }}
+                      onBlur={() => debouncedBagsPerCartonCascade.flush()}
+                      disabled={finishMode === 'Cartons' && qtyType === 'kg'}
                     />
                   )}
                   <TextField
@@ -3030,7 +3587,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                           : haveDriverForWeightPerRoll && weightPerRollDisplay != null
                             ? formatKgDisplay(weightPerRollDisplay)
                             : finishMode === 'Cartons'
-                              ? '—'
+                              ? cartonWeightKgForDisplay != null
+                                ? formatKgDisplay(cartonWeightKgForDisplay)
+                                : ''
                               : weightPerRoll !== '' && Number.isFinite(Number(weightPerRoll))
                                 ? formatKgDisplay(Number(weightPerRoll))
                                 : weightPerRoll
@@ -3041,8 +3600,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                             setQuoteUsesMoqOnly(false)
                             setWeightPerRoll(e.target.value)
                             setQtyType('total_rolls')
+                            const nextWpr = Number(e.target.value || 0)
                             if (isContinuousLength) {
-                              const nextWpr = Number(e.target.value || 0)
                               const totalM =
                                 quickPreview?.totals_m != null && Number.isFinite(Number(quickPreview.totals_m))
                                   ? Number(quickPreview.totals_m)
@@ -3063,6 +3622,10 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                               if (rcRoll != null && rcRoll > 0 && nextWpr > 0) {
                                 setTotalKg(formatKgDisplay(nextWpr * rcRoll))
                               }
+                            } else if (finishMode === 'Rolls' && numRollsNum > 0 && nextWpr > 0) {
+                              setTotalKg(formatKgDisplay(numRollsNum * nextWpr))
+                              const b = unitsPerRollNum
+                              if (b > 0) setNumUnits(String(numRollsNum * b))
                             }
                           }
                         : isContinuousLength && finishMode === 'Rolls' && weightPerRollEditable
@@ -3092,10 +3655,57 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                               }
                             }
                           : weightPerRollEditable
-                            ? (e) => setWeightPerRoll(e.target.value)
+                            ? (e) => {
+                                setQuoteUsesMoqOnly(false)
+                                const raw = e.target.value
+                                setWeightPerRoll(raw)
+                                if (finishMode === 'Cartons' && qtyType === 'kg' && ratebook) {
+                                  const ku = derivedForDisplay?.kgPerUnit
+                                  const w = Number(raw)
+                                  if (
+                                    raw.trim() !== '' &&
+                                    Number.isFinite(w) &&
+                                    w > 0 &&
+                                    ku != null &&
+                                    Number.isFinite(Number(ku)) &&
+                                    Number(ku) > 0
+                                  ) {
+                                    setBagsPerCarton(String(Math.max(1, Math.round(w / Number(ku)))))
+                                  }
+                                }
+                                if (
+                                  finishMode === 'Rolls' &&
+                                  qtyType === 'kg' &&
+                                  !isContinuousLength &&
+                                  ratebook
+                                ) {
+                                  const w = Number(raw)
+                                  const kpu = derivedForDisplay?.kgPerUnit
+                                  const tk = totalKgNum
+                                  if (
+                                    raw.trim() !== '' &&
+                                    Number.isFinite(w) &&
+                                    w > 0 &&
+                                    kpu != null &&
+                                    Number.isFinite(Number(kpu)) &&
+                                    Number(kpu) > 0
+                                  ) {
+                                    setUnitsPerRoll(String(Math.max(1, Math.round(w / Number(kpu)))))
+                                  }
+                                  if (raw.trim() !== '' && Number.isFinite(w) && w > 0 && tk > 0) {
+                                    setNumRolls(String(Math.max(1, Math.round(tk / w))))
+                                  }
+                                }
+                              }
                             : undefined
                     }
-                    disabled={qtyMode === 'roll' ? false : !weightPerRollEditable}
+                    disabled={
+                      finishMode === 'Rolls' && qtyMode === 'roll' && !isContinuousLength
+                        ? true
+                        : qtyMode === 'roll'
+                          ? false
+                          : !weightPerRollEditable
+                    }
                   />
                   <TextField
                     label={finishMode === 'Cartons' ? 'No. of Cartons' : 'No. of Rolls'}
@@ -3105,19 +3715,58 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       finishMode === 'Cartons' && qtyMode === 'ctn'
                         ? numCartons
                         : rollsEditable
-                        ? numRolls
-                        : (rollsDisplay != null ? rollsDisplay : finishMode === 'Cartons' ? '—' : numRolls)
+                          ? numRolls
+                          : rollsDisplay != null
+                            ? rollsDisplay
+                            : finishMode === 'Cartons' && cartonCountForDisplay != null
+                              ? String(cartonCountForDisplay)
+                              : numRolls
                     }
                     onChange={
                       finishMode === 'Cartons' && qtyMode === 'ctn'
                         ? (e) => {
                             setQuoteUsesMoqOnly(false)
-                            setNumCartons(e.target.value)
+                            const raw = e.target.value
+                            setNumCartons(raw)
+                            const c = raw.trim() !== '' ? Math.max(0, Math.round(Number(raw))) : 0
+                            const bpc = bagsPerCartonNum
+                            const kpu = derivedForDisplay?.kgPerUnit
+                            if (
+                              c > 0 &&
+                              bpc > 0 &&
+                              kpu != null &&
+                              Number.isFinite(Number(kpu)) &&
+                              Number(kpu) > 0
+                            ) {
+                              const wKg = bpc * Number(kpu)
+                              setWeightPerRoll(formatKgDisplay(wKg))
+                              setNumUnits(String(c * bpc))
+                              setTotalKg(formatKgDisplay(c * wKg))
+                            }
                           }
                         : rollsEditable
                           ? (e) => {
                               setQuoteUsesMoqOnly(false)
-                              setNumRolls(e.target.value)
+                              const raw = e.target.value
+                              setNumRolls(raw)
+                              const r = raw.trim() !== '' ? Math.max(0, Math.round(Number(raw))) : 0
+                              if (
+                                finishMode === 'Rolls' &&
+                                !isContinuousLength &&
+                                qtyType === 'total_rolls' &&
+                                unitsPerRollNum > 0 &&
+                                r > 0 &&
+                                ratebook
+                              ) {
+                                const b = unitsPerRollNum
+                                setNumUnits(String(r * b))
+                                const kpu = derivedForDisplay?.kgPerUnit
+                                if (kpu != null && Number.isFinite(Number(kpu)) && Number(kpu) > 0) {
+                                  setTotalKg(formatKgDisplay(r * b * Number(kpu)))
+                                } else if (weightPerRollNum > 0) {
+                                  setTotalKg(formatKgDisplay(r * weightPerRollNum))
+                                }
+                              }
                             }
                           : undefined
                     }
@@ -3141,8 +3790,16 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       unitsEditable && !(finishMode === 'Cartons' && qtyMode === 'ctn')
                         ? (e) => {
                             setQuoteUsesMoqOnly(false)
-                            setNumUnits(e.target.value)
+                            const raw = e.target.value
+                            lastNumUnitsRawRef.current = raw
+                            setNumUnits(raw)
+                            debouncedTotalProductsCascade()
                           }
+                        : undefined
+                    }
+                    onBlur={
+                      unitsEditable && !(finishMode === 'Cartons' && qtyMode === 'ctn')
+                        ? () => debouncedTotalProductsCascade.flush()
                         : undefined
                     }
                     disabled={!unitsEditable || (finishMode === 'Cartons' && qtyMode === 'ctn')}
