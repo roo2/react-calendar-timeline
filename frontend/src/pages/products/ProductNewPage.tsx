@@ -51,13 +51,14 @@ export function ProductNewPage() {
 
   useEffect(() => {
     const v = (code || '').trim()
-    if (!v) {
+    const cid = (customerId || '').trim()
+    if (!v || !cid) {
       setCodeExists(false)
       return
     }
     const t = window.setTimeout(() => {
       const id = ++codeExistsReq.current
-      void dispatch(checkProductCodeExists(v))
+      void dispatch(checkProductCodeExists({ code: v, customer_id: cid }))
         .unwrap()
         .then((r) => {
           if (id !== codeExistsReq.current) return
@@ -71,7 +72,7 @@ export function ProductNewPage() {
     return () => {
       window.clearTimeout(t)
     }
-  }, [code, dispatch])
+  }, [code, customerId, dispatch])
 
   useEffect(() => {
     // Reset product create errors when entering the page.

@@ -94,10 +94,10 @@ class Customer(Base):
 
 class Product(Base):
     __tablename__ = "products"
-    __table_args__ = (UniqueConstraint("code", name="uq_product_code"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    # Display / MYOB-facing label; not globally unique (different customers may reuse the same code).
+    code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
     active_version_id: Mapped[Optional[str]] = mapped_column(

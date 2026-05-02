@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -107,8 +108,15 @@ async def list_products(
 
 
 @router.get("/code-exists", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
-async def product_code_exists(code: str = Query(..., min_length=1)):
-    return {"exists": service.product_code_exists(code)}
+async def product_code_exists(
+    code: str = Query(..., min_length=1),
+    customer_id: str = Query(..., min_length=1),
+):
+    try:
+        cid = str(uuid.UUID(customer_id))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid customer_id")
+    return {"exists": service.product_code_exists(code, customer_id=cid)}
 
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])

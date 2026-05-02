@@ -174,13 +174,20 @@ export const fetchProductVersion = createAsyncThunk(
   },
 )
 
-/** Debounced uniqueness check; use with request-id in UI to ignore stale responses. */
-export const checkProductCodeExists = createAsyncThunk('products/codeExists', async (code: string, { signal }) => {
-  const v = (code || '').trim()
-  if (!v) return { exists: false }
-  const res = await apiFetch<{ exists: boolean }>(`/api/products/code-exists?code=${encodeURIComponent(v)}`, { signal })
-  return { exists: !!res?.exists }
-})
+/** Debounced uniqueness check per customer; use with request-id in UI to ignore stale responses. */
+export const checkProductCodeExists = createAsyncThunk(
+  'products/codeExists',
+  async (payload: { code: string; customer_id: string }, { signal }) => {
+    const v = (payload.code || '').trim()
+    const cid = (payload.customer_id || '').trim()
+    if (!v || !cid) return { exists: false }
+    const sp = new URLSearchParams()
+    sp.set('code', v)
+    sp.set('customer_id', cid)
+    const res = await apiFetch<{ exists: boolean }>(`/api/products/code-exists?${sp.toString()}`, { signal })
+    return { exists: !!res?.exists }
+  },
+)
 
 const slice = createSlice({
   name: 'products',

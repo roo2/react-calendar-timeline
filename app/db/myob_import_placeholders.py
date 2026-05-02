@@ -7,7 +7,7 @@ MYOB_DRAFT_INTERNAL_CUSTOMER_ID = "a0000001-0000-4000-8000-000000000001"
 MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID = "a0000001-0000-4000-8000-000000000002"
 MYOB_DRAFT_PLACEHOLDER_VERSION_ID = "a0000001-0000-4000-8000-000000000003"
 
-# Placeholder product code must be unique (matches migration seed).
+# Reserved placeholder code on the internal draft customer (display-only codes may repeat across real customers).
 MYOB_DRAFT_PRODUCT_CODE = "__MYOB_IMPORT__"
 
 # Minimal spec for the placeholder product version; real production uses a new version.

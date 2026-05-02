@@ -386,36 +386,39 @@ def _try_update_product_code(db: Session, product: Product, new_code: str) -> No
         return
     if getattr(product, "code", None) == new_code:
         return
-    original = product.code
     product.code = new_code
-    try:
-        db.flush()
-    except IntegrityError:
-        # Best-effort: keep the old code if the computed one would collide.
-        db.rollback()
-        product.code = original
 
 
-def product_code_exists(code: str) -> bool:
+def product_code_exists(code: str, *, customer_id: str) -> bool:
+    """True if any product for this customer already uses this code (case-insensitive). Informational only."""
     code_in = (code or "").strip()
     if not code_in:
         return False
-    code_l = code_in.lower()
+    try:
+        cid = str(uuid.UUID(customer_id))
+    except Exception:
+        return False
     with SessionLocal() as db:
-        existing = db.scalar(select(func.count()).select_from(Product).where(func.lower(Product.code) == code_l)) or 0
-        return existing > 0
+        return product_code_taken_in_session(db, code_in, customer_id=cid)
 
 
-def product_code_taken_in_session(db: Session, code: str) -> bool:
+def product_code_taken_in_session(
+    db: Session,
+    code: str,
+    *,
+    customer_id: str,
+    exclude_product_id: Optional[str] = None,
+) -> bool:
     code_in = (code or "").strip()
     if not code_in:
         return True
-    n = (
-        db.scalar(
-            select(func.count()).select_from(Product).where(func.lower(Product.code) == code_in.lower())
-        )
-        or 0
+    stmt = select(func.count()).select_from(Product).where(
+        func.lower(Product.code) == code_in.lower(),
+        Product.customer_id == str(customer_id),
     )
+    if exclude_product_id:
+        stmt = stmt.where(Product.id != str(exclude_product_id))
+    n = db.scalar(stmt) or 0
     return int(n) > 0
 
 
@@ -432,16 +435,7 @@ def create_product_v1_in_session(
     cid = str(uuid.UUID(customer_id))
     spec_dict = spec.model_dump() if hasattr(spec, "model_dump") else spec.dict()
     base = (compute_product_code_base(spec_dict) or "").strip()[:32]
-    code = base
-    if not code:
-        code = f"IMP-{str(uuid.uuid4())[:8].upper()}"[:32]
-    n = 0
-    while product_code_taken_in_session(db, code) and n < 32:
-        n += 1
-        suffix = f"-{n}"
-        code = f"{(base or 'IMP')[: 32 - len(suffix)]}{suffix}" if base else f"IMP-{str(uuid.uuid4())[:6]}-{n}"[:32]
-    if product_code_taken_in_session(db, code):
-        raise DomainError("Could not allocate a unique customer-facing product code for this spec.")
+    code = base if base else f"IMP-{str(uuid.uuid4())[:8].upper()}"[:32]
 
     product = Product(
         code=code,
@@ -459,7 +453,7 @@ def create_product_v1_in_session(
     db.add(version)
     db.flush()
     new_code = compute_product_code_full(product, spec_dict)
-    if new_code and new_code != product.code and len(new_code) <= 32 and not product_code_taken_in_session(db, new_code):
+    if new_code and new_code != product.code and len(new_code) <= 32:
         _try_update_product_code(db, product, new_code)
     product.active_version_id = version.id
     db.add(product)
@@ -491,9 +485,6 @@ def create_product_with_version(payload: CreateProductRequest, created_by: str) 
         _ensure_customer_exists(db, payload.customer_id)
         cid = str(uuid.UUID(payload.customer_id))
         code_in = (payload.code or "").strip()
-        # Ensure unique product code
-        if product_code_exists(code_in):
-            raise DomainError("Customer-facing product code already exists")
         spec_dict = payload.spec.dict()
         product = Product(
             code=code_in,
