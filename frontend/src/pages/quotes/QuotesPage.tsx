@@ -3237,6 +3237,16 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     const v = e.target.value as 'Rolls' | 'Cartons'
                     setFinishMode(v)
                     if (v === 'Cartons' && lengthUnits === 'continuous') setLengthUnits('mm')
+                    if (v === 'Cartons') {
+                      applyQuantityCarryForNewQtyType('units', '1000')
+                      setQtyType('units')
+                      setCartonQtyMode('1000')
+                    } else if (v === 'Rolls') {
+                      // Always default to KG on Rolls (including continuous web): MOQ needs m/roll context; users
+                      // can switch to ROLL qty type when ready.
+                      applyQuantityCarryForNewQtyType('kg')
+                      setQtyType('kg')
+                    }
                   }}
                 >
                   <MenuItem value="Rolls">Rolls</MenuItem>
