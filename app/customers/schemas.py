@@ -114,8 +114,17 @@ class DeliveryPreferencesInput(BaseModel):
         return v
 
 
+class PricingTierBrief(BaseModel):
+    """Subset of customer_pricing_tiers for API responses."""
+
+    id: str
+    name: str
+    discount_percent: float
+
+
 class CustomerCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Customer name")
+    pricing_tier_id: Optional[str] = Field(None, description="Optional quote pricing tier (customer_pricing_tiers.id)")
     brand_id: Optional[str] = Field(None, description="Optional brand (brands.id)")
     priority_rank: Optional[int] = Field(None, description="Optional sales priority (lower = higher priority)")
     abn: Optional[str] = Field(None, description="Business Registration/ABN")
@@ -159,6 +168,8 @@ class CustomerUpdateRequest(CustomerCreateRequest):
 class CustomerResponse(BaseModel):
     id: str
     name: str
+    pricing_tier_id: Optional[str] = None
+    pricing_tier: Optional[PricingTierBrief] = None
     brand_id: Optional[str] = None
     brand_code: Optional[str] = None
     brand_name: Optional[str] = None

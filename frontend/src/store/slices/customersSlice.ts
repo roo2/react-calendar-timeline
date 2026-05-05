@@ -14,10 +14,18 @@ export type CustomerSummary = {
   quotes_count?: number
 }
 
+export type CustomerPricingTierBrief = {
+  id: string
+  name: string
+  discount_percent: number
+}
+
 export type CustomerDetail = {
   id: string
   name: string
   status: string
+  pricing_tier_id?: string | null
+  pricing_tier?: CustomerPricingTierBrief | null
   brand_id?: string | null
   brand_code?: string | null
   brand_name?: string | null
@@ -42,6 +50,7 @@ export type CustomerDetail = {
 
 export type CustomerUpsertPayload = {
   name: string
+  pricing_tier_id: string | null
   brand_id: string | null
   priority_rank: number | null
   abn: string | null

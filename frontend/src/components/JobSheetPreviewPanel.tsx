@@ -17,6 +17,8 @@ export function JobSheetPreviewPanel(props: {
   invoiceNo?: string
   orderDate?: string
   dueDate?: string
+  /** Optional hook before opening print preview; return false to cancel navigation. */
+  onBeforeOpenPrint?: () => Promise<boolean> | boolean
 }) {
   const {
     productCode,
@@ -29,6 +31,7 @@ export function JobSheetPreviewPanel(props: {
     invoiceNo = '',
     orderDate = '',
     dueDate = '',
+    onBeforeOpenPrint,
   } = props
   const dash = '—'
   const user = String(customerFacingDescription || '').trim()
@@ -37,6 +40,7 @@ export function JobSheetPreviewPanel(props: {
   const effective = (user || myob || specDesc).trim()
   const showSpecSecondary = Boolean(specDesc && specDesc !== effective)
   const sheetId = jobSheetId != null && String(jobSheetId).trim() ? String(jobSheetId).trim() : ''
+  const printHref = sheetId ? `/job-sheets/${encodeURIComponent(sheetId)}/print` : ''
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Box
@@ -53,14 +57,21 @@ export function JobSheetPreviewPanel(props: {
         {sheetId ? (
           <MuiLink
             component={Link}
-            to={`/job-sheets/${encodeURIComponent(sheetId)}`}
+            to={printHref}
             target="_blank"
             rel="noreferrer"
             underline="hover"
             variant="body2"
             sx={{ flexShrink: 0 }}
+            onClick={async (e) => {
+              if (!onBeforeOpenPrint) return
+              e.preventDefault()
+              const ok = await onBeforeOpenPrint()
+              if (!ok || !printHref) return
+              window.open(printHref, '_blank', 'noopener,noreferrer')
+            }}
           >
-            Open job sheet
+            Print preview
           </MuiLink>
         ) : null}
       </Box>

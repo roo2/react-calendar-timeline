@@ -567,7 +567,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     (previewProductCode.trim() || (mode === 'edit' ? (productInfo?.code || '').trim() : '')).trim() || '—'
   const previewDescriptionForPanel = hideMyobProductPlaceholderText(previewDescription)
 
-  async function onSave() {
+  async function onSave(): Promise<boolean> {
     setSaveMsg(null)
     setSaveErr(null)
     setSpecFieldErrors({})
@@ -577,7 +577,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (!productId) missing.push('Product')
     if (missing.length > 0) {
       setSaveErr(`Missing required fields: ${missing.join(', ')}`)
-      return
+      return false
     }
     const totalKgForScheduling =
       finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
@@ -594,9 +594,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     )
     if (qtyErr) {
       setSaveErr(qtyErr)
-      return
+      return false
     }
-    if (savingJobSheet) return
+    if (savingJobSheet) return false
 
     const sendProdDates = productionStatusShowsDatetimeFields(productionStatus)
 
@@ -637,7 +637,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         if (!code) {
           setSaveErr('Complete the product spec so a product code is generated before saving.')
           setSavingJobSheet(false)
-          return
+          return false
         }
         dispatch(clearCreateErrors())
         try {
@@ -676,7 +676,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             setSaveErr(e instanceof Error ? e.message : 'Failed to create product')
           }
           setSavingJobSheet(false)
-          return
+        return false
         }
       }
 
@@ -715,7 +715,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         }
         setSaveMsg('Saved job sheet.')
         setDirty(false)
-        if (id) nav(returnTo || `/job-sheets/${id}`)
+        if (id) nav(returnTo || `/job-sheets/${encodeURIComponent(id)}/edit`)
+        return true
       } else {
         if (!jobSheetId) throw new Error('Missing job sheet id')
         const body: Record<string, unknown> = {
@@ -739,7 +740,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         }
         if (specDirty) body.spec = spec
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
-        const id = res?.job_sheet?.id
         if (res?.job_sheet?.order_id) setOrderId(String(res.job_sheet.order_id))
         if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
         if (res?.job_sheet?.invoice_no != null && res?.job_sheet?.invoice_no !== undefined) {
@@ -748,7 +748,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         setSaveMsg('Saved job sheet.')
         setSpecDirty(false)
         setDirty(false)
-        if (id) nav(returnTo || `/job-sheets/${id}`)
+        void dispatch(fetchJobSheet(jobSheetId))
+        return true
       }
     } catch (e: unknown) {
       if (isRejectedWithValue(e)) {
@@ -763,10 +764,41 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         setSpecFieldErrors({})
         setSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
       }
+      return false
     } finally {
       setSavingJobSheet(false)
     }
   }
+
+  async function onBeforeOpenPrintPreview(): Promise<boolean> {
+    if (savingJobSheet) return false
+    if (mode !== 'edit' || !jobSheetId) return true
+    // Always save first on edit before opening print preview.
+    return await onSave()
+  }
+
+  const onBeforeOpenPrintPreviewRef = useRef(onBeforeOpenPrintPreview)
+  onBeforeOpenPrintPreviewRef.current = onBeforeOpenPrintPreview
+
+  useEffect(() => {
+    if (mode !== 'edit' || !jobSheetId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'p' && e.key !== 'P') return
+      if (!e.metaKey && !e.ctrlKey) return
+      e.preventDefault()
+      void (async () => {
+        const ok = await onBeforeOpenPrintPreviewRef.current()
+        if (!ok) return
+        window.open(
+          `/job-sheets/${encodeURIComponent(jobSheetId)}/print`,
+          '_blank',
+          'noopener,noreferrer',
+        )
+      })()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [mode, jobSheetId])
 
   const disableIdentity = mode === 'edit'
   /** Quantity is always edited in the Product Spec area (embedded paper), not in the header card. */
@@ -978,6 +1010,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             description={previewDescriptionForPanel}
             myobImportLineDescription={myobImportLineDescription}
             customerFacingDescription={customerFacingDescription}
+            onBeforeOpenPrint={onBeforeOpenPrintPreview}
           />
         ) : null}
 
@@ -1035,6 +1068,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               description={previewDescriptionForPanel}
               myobImportLineDescription={myobImportLineDescription}
               customerFacingDescription={customerFacingDescription}
+              onBeforeOpenPrint={onBeforeOpenPrintPreview}
             />
           </StickySideAside>
         ) : null}

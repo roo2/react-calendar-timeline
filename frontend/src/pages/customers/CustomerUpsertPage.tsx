@@ -111,6 +111,12 @@ type BrandOption = {
   name: string
 }
 
+type PricingTierOption = {
+  id: string
+  name: string
+  discount_percent: number
+}
+
 function coerceContact(x: any): Contact {
   return {
     type: String(x?.type ?? 'Other'),
@@ -157,6 +163,8 @@ export function CustomerUpsertPage() {
   const [contactPhone, setContactPhone] = useState('')
   const [status, setStatus] = useState<'Active' | 'Inactive' | 'Archived'>('Active')
   const [brandOptions, setBrandOptions] = useState<BrandOption[]>([])
+  const [pricingTierOptions, setPricingTierOptions] = useState<PricingTierOption[]>([])
+  const [pricingTierId, setPricingTierId] = useState('')
 
   const [contacts, setContacts] = useState<Contact[]>([
     {
@@ -250,6 +258,21 @@ export function CustomerUpsertPage() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await apiFetch<PricingTierOption[]>('/api/customer-pricing-tiers')
+        if (!cancelled) setPricingTierOptions(Array.isArray(res) ? res : [])
+      } catch {
+        if (!cancelled) setPricingTierOptions([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     if (!customerId) return
     const c = detailEntry?.customer as CustomerDetail | undefined
     if (!c) return
@@ -281,6 +304,7 @@ export function CustomerUpsertPage() {
 
     setPaymentTerms(paymentTermsFromApi(c.payment_terms))
     setNotes(c.notes || '')
+    setPricingTierId((c as { pricing_tier_id?: string | null }).pricing_tier_id || '')
 
     setHydratedId(customerId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,6 +314,7 @@ export function CustomerUpsertPage() {
     try {
       const payload = {
         name,
+        pricing_tier_id: pricingTierId.trim() || null,
         brand_id: brandId || null,
         priority_rank: priorityRank ? Number(priorityRank) : null,
         abn: abn || null,
@@ -379,6 +404,34 @@ export function CustomerUpsertPage() {
               {brandOptions.map((b) => (
                 <MenuItem key={b.id} value={b.id}>
                   {b.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Quote pricing tier"
+              value={pricingTierId}
+              onChange={(e) => {
+                setPricingTierId(e.target.value)
+                clearFieldError('pricing_tier_id')
+              }}
+              error={!!fieldErrors['pricing_tier_id']}
+              helperText={
+                fieldErrors['pricing_tier_id'] ||
+                'Discount off retail list job total before optional price/kg overrides. Leave blank for list (retail) pricing.'
+              }
+            >
+              <MenuItem value="">
+                <em>Retail / list price (no tier)</em>
+              </MenuItem>
+              {pricingTierOptions.map((t) => (
+                <MenuItem key={t.id} value={t.id}>
+                  {t.name}
+                  {typeof t.discount_percent === 'number' && Number.isFinite(t.discount_percent) && t.discount_percent > 0
+                    ? ` (${Number.isInteger(t.discount_percent) ? String(t.discount_percent) : t.discount_percent.toFixed(2)}% off)`
+                    : t.discount_percent === 0
+                      ? ' (list price)'
+                      : ''}
                 </MenuItem>
               ))}
             </TextField>

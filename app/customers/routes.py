@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import inspect as sa_inspect
 
 from app.auth.deps import allow_roles_any, csrf_protect
 from app.customers import service
@@ -12,17 +13,36 @@ from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
 
+def _pricing_tier_brief_for_customer(c) -> dict | None:
+    st = sa_inspect(c)
+    if "pricing_tier" in st.unloaded:
+        return None
+    t = getattr(c, "pricing_tier", None)
+    if t is None:
+        return None
+    dp = getattr(t, "discount_percent", 0)
+    try:
+        dpf = float(dp)
+    except Exception:
+        dpf = 0.0
+    return {"id": str(t.id), "name": str(t.name), "discount_percent": dpf}
+
+
 def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int | None = None) -> dict:
     b = getattr(c, "brand", None)
     d = {
         "id": c.id,
         "name": c.name,
         "status": c.status,
+        "pricing_tier_id": getattr(c, "pricing_tier_id", None),
         "brand_id": getattr(c, "brand_id", None),
         "brand_code": b.code if b else None,
         "brand_name": b.name if b else None,
         "priority_rank": getattr(c, "priority_rank", None),
     }
+    brief = _pricing_tier_brief_for_customer(c)
+    if brief is not None:
+        d["pricing_tier"] = brief
     if orders_count is not None:
         d["orders_count"] = orders_count
     if quotes_count is not None:
@@ -62,7 +82,13 @@ async def list_customer_brands():
 
 @router.post("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def create_customer(payload: CustomerCreateRequest):
-    c = service.create_customer(payload)
+    try:
+        c = service.create_customer(payload)
+    except ValueError as e:
+        msg = str(e)
+        if "Invalid pricing_tier_id" in msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+        raise
     return {"ok": True, "customer": _customer_summary(c)}
 
 
@@ -107,5 +133,8 @@ async def update_customer(customer_id: str, payload: CustomerUpdateRequest):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
         c = service.update_customer(customer_id, payload)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        msg = str(e)
+        if "Invalid pricing_tier_id" in msg:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
     return {"ok": True, "customer": _customer_summary(c)}

@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Suspense, lazy, useEffect } from 'react'
 import { useAppDispatch, useAppSelector } from './store/hooks'
 import { fetchMe, logout } from './store/slices/authSlice'
@@ -17,8 +17,8 @@ import { SchedulePage } from './pages/schedule/SchedulePage'
 import { AdminLayout } from './pages/admin/AdminLayout'
 import { JobSheetNewPage } from './pages/job-sheets/JobSheetNewPage'
 import { JobSheetsPage } from './pages/job-sheets/JobSheetsPage'
-import { JobSheetShowPage } from './pages/job-sheets/JobSheetShowPage'
 import { JobSheetEditPage } from './pages/job-sheets/JobSheetEditPage'
+import { JobSheetPrintPage } from './pages/job-sheets/JobSheetPrintPage'
 import { CustomerShowPage } from './pages/customers/CustomerShowPage'
 import { CustomerUpsertPage } from './pages/customers/CustomerUpsertPage'
 import { ProductShowPage } from './pages/products/ProductShowPage'
@@ -64,6 +64,9 @@ const MyobAdminPage = lazy(async () => ({ default: (await import('./pages/admin/
 const MyobDataAdminPage = lazy(async () => ({
   default: (await import('./pages/admin/MyobDataAdminPage')).MyobDataAdminPage,
 }))
+const CustomerPricingTiersAdminPage = lazy(async () => ({
+  default: (await import('./pages/admin/CustomerPricingTiersAdminPage')).CustomerPricingTiersAdminPage,
+}))
 
 function PageLoading() {
   return (
@@ -71,6 +74,14 @@ function PageLoading() {
       <Typography color="text.secondary">Loading…</Typography>
     </Box>
   )
+}
+
+/** `/job-sheets/:id` is no longer a separate view — send users straight to edit (bookmark-safe). */
+function JobSheetRedirectToEdit() {
+  const { jobSheetId } = useParams()
+  const id = (jobSheetId || '').trim()
+  if (!id) return <Navigate to="/job-sheets" replace />
+  return <Navigate to={`/job-sheets/${encodeURIComponent(id)}/edit`} replace />
 }
 
 function RequireAuth() {
@@ -99,6 +110,7 @@ function App() {
   const location = useLocation()
   const auth = useAppSelector((s) => s.auth)
   const scheduleFullWidth = location.pathname === '/schedule'
+  const isJobSheetPrintRoute = /^\/job-sheets\/[^/]+\/print$/.test(location.pathname)
   const roles = auth.identity?.roles || []
   const isSalesOrPm = can(roles, 'SALES', 'PROD_MANAGER')
   const isPm = can(roles, 'PROD_MANAGER')
@@ -128,7 +140,12 @@ function App() {
 
   return (
     <>
-      <AppBar position="sticky" color="inherit" elevation={1}>
+      <AppBar
+        position="sticky"
+        color="inherit"
+        elevation={1}
+        sx={isJobSheetPrintRoute ? { '@media print': { display: 'none !important' } } : undefined}
+      >
         <Toolbar>
           <Container maxWidth={false} disableGutters sx={{ maxWidth: APP_MAIN_MAX_WIDTH_PX, mx: 'auto', width: '100%' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -195,6 +212,9 @@ function App() {
           bgcolor: 'background.default',
           py: scheduleFullWidth ? 2 : 3,
           ...(scheduleFullWidth ? { overflow: 'hidden', minHeight: 0 } : {}),
+          ...(isJobSheetPrintRoute
+            ? { '@media print': { py: 0, bgcolor: '#fff', '& .MuiContainer-root': { maxWidth: '100% !important' } } }
+            : {}),
         }}
       >
         <Container
@@ -202,7 +222,13 @@ function App() {
           sx={
             scheduleFullWidth
               ? { px: { xs: 1, sm: 1.5, md: 2 }, width: '100%', maxWidth: '100%', boxSizing: 'border-box' }
-              : { maxWidth: APP_MAIN_MAX_WIDTH_PX, mx: 'auto' }
+              : {
+                  maxWidth: APP_MAIN_MAX_WIDTH_PX,
+                  mx: 'auto',
+                  ...(isJobSheetPrintRoute
+                    ? { '@media print': { maxWidth: '100% !important', width: '100%', px: '0 !important', py: '0 !important' } }
+                    : {}),
+                }
           }
         >
           <UnsavedChangesProvider>
@@ -236,8 +262,9 @@ function App() {
               <Route path="/quotes/:id/edit" element={<QuoteEditPage />} />
               <Route path="/job-sheets" element={<JobSheetsPage />} />
               <Route path="/job-sheets/new" element={<JobSheetNewPage />} />
-              <Route path="/job-sheets/:jobSheetId" element={<JobSheetShowPage />} />
+              <Route path="/job-sheets/:jobSheetId" element={<JobSheetRedirectToEdit />} />
               <Route path="/job-sheets/:jobSheetId/edit" element={<JobSheetEditPage />} />
+              <Route path="/job-sheets/:jobSheetId/print" element={<JobSheetPrintPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<Navigate to="resins" replace />} />
@@ -256,6 +283,14 @@ function App() {
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <MyobDataAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="customer-pricing-tiers"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <CustomerPricingTiersAdminPage />
                     </Suspense>
                   }
                 />
@@ -341,7 +376,15 @@ function App() {
           </UnsavedChangesProvider>
         </Container>
 
-        <Container maxWidth={false} sx={{ maxWidth: APP_MAIN_MAX_WIDTH_PX, mx: 'auto', mt: 6 }}>
+        <Container
+          maxWidth={false}
+          sx={{
+            maxWidth: APP_MAIN_MAX_WIDTH_PX,
+            mx: 'auto',
+            mt: 6,
+            ...(isJobSheetPrintRoute ? { '@media print': { display: 'none !important' } } : {}),
+          }}
+        >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary">
               © CrownPack — Built for manufacturing excellence

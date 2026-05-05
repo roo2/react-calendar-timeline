@@ -645,6 +645,19 @@ export function QuotePreviewPanel(props: {
               {p ? <FlashSpan watch={p.price_breakdown?.waste_price}>{fmtDollarsLineItem(p.price_breakdown?.waste_price)}</FlashSpan> : dash}
             </TableCell>
           </TableRow>
+          {p &&
+          p.tier_discount_adjustment != null &&
+          Number.isFinite(Number(p.tier_discount_adjustment)) &&
+          Number(p.tier_discount_adjustment) < 0 &&
+          p.tier_discount_label ? (
+            <TableRow>
+              <TableCell>{p.tier_discount_label}</TableCell>
+              <TableCell align="right">{dash}</TableCell>
+              <TableCell align="right">
+                <FlashSpan watch={p.tier_discount_adjustment}>{fmtDollarsPreview(p.tier_discount_adjustment)}</FlashSpan>
+              </TableCell>
+            </TableRow>
+          ) : null}
           <TableRow
             sx={{
               '& .MuiTableCell-root': {

@@ -111,6 +111,11 @@ export type QuickQuoteInputs = {
    * Used when resolving reference mass per "product" if `quantity.total_kg` is missing or not yet wired.
    */
   nominal_weight_per_roll_kg?: number | null
+  /**
+   * Customer tier: `discount_percent` off the retail list job subtotal (`total_price_retail`)
+   * before optional `override_price_per_kg` adjustments. Retail = 0% discount (base).
+   */
+  customer_pricing_tier?: { name: string; discount_percent: number } | null
 }
 
 export type MaterialsMoqMinimumHint =
@@ -176,10 +181,14 @@ export type QuotePreview = {
     core_price: number
     waste_price: number
   }
-  /** Sell-side only: delta when `override_price_per_kg` is set (target job price − summed retail). */
+  /** Sell-side only: delta when `override_price_per_kg` is set (target job price − subtotal after customer tier). */
   adjustments_price: number | null
   /** True when a positive `override_price_per_kg` is applied (shows Adjustments row in preview). */
   price_override_active: boolean
+  /** Negative dollars: customer tier discount off `total_price_retail` (before override). */
+  tier_discount_adjustment: number | null
+  /** Label for the discount line in the quote preview, e.g. `Tier 1 discount (15%)`. */
+  tier_discount_label: string | null
   total_cost: number
   /** Sum of retail component prices (before per-kg override). */
   total_price_retail: number
@@ -1246,11 +1255,31 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     punchedRetailPrice
 
   const billedTotalsKg = d.billedTotalsKg > 0 ? d.billedTotalsKg : derivedTotalKg
+  const tierRaw = inputs.customer_pricing_tier
+  const tierDisc =
+    tierRaw != null &&
+    typeof tierRaw.discount_percent === 'number' &&
+    Number.isFinite(tierRaw.discount_percent) &&
+    tierRaw.discount_percent > 0
+      ? Math.min(100, Math.max(0, tierRaw.discount_percent))
+      : 0
+  const tierName = tierRaw != null && typeof tierRaw.name === 'string' ? tierRaw.name.trim() : ''
+  const discountDollars =
+    tierDisc > 0 && Number.isFinite(totalPriceRetail) && totalPriceRetail > 0
+      ? roundMoney(totalPriceRetail * (tierDisc / 100))
+      : 0
+  const subtotalAfterTier = roundMoney(totalPriceRetail - discountDollars)
+  const tierDiscountLabel =
+    discountDollars > 0
+      ? `${tierName || 'Customer tier'} discount (${Number.isInteger(tierDisc) ? String(tierDisc) : tierDisc.toFixed(2)}%)`
+      : null
+  const tierDiscountAdjustment = discountDollars > 0 ? roundMoney(-discountDollars) : null
+
   const overridePk = toNum(inputs.override_price_per_kg)
   const priceOverrideActive = overridePk != null && overridePk > 0 && billedTotalsKg > 0
-  const targetJobPrice = priceOverrideActive ? overridePk * billedTotalsKg : totalPriceRetail
-  const adjustmentsPrice = priceOverrideActive ? roundMoney(targetJobPrice - totalPriceRetail) : null
-  const finalPrice = priceOverrideActive ? roundMoney(targetJobPrice) : totalPriceRetail
+  const targetJobPrice = priceOverrideActive ? overridePk * billedTotalsKg : subtotalAfterTier
+  const adjustmentsPrice = priceOverrideActive ? roundMoney(targetJobPrice - subtotalAfterTier) : null
+  const finalPrice = priceOverrideActive ? roundMoney(targetJobPrice) : subtotalAfterTier
   // Margin = (price − cost) / price; allow negative when selling below cost. Cap upper only (pathological >100%).
   const rawMargin = finalPrice > 0 && Number.isFinite(finalPrice) ? (finalPrice - totalCost) / finalPrice : 0
   const marginPct = Number.isFinite(rawMargin) ? Math.min(0.999999, rawMargin) : 0
@@ -1316,6 +1345,8 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     },
     adjustments_price: adjustmentsPrice,
     price_override_active: priceOverrideActive,
+    tier_discount_adjustment: tierDiscountAdjustment,
+    tier_discount_label: tierDiscountLabel,
     total_cost: roundMoney(totalCost),
     total_price_retail: roundMoney(totalPriceRetail),
     margin: marginPct,

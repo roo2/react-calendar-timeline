@@ -574,9 +574,6 @@ export function JobSheetsPage() {
                       </TableCell>
                       <TableCell>
                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Button size="small" variant="text" color="primary" component={Link} to={`/job-sheets/${r.id}`}>
-                            View
-                          </Button>
                           <Button
                             size="small"
                             variant="outlined"
@@ -584,6 +581,14 @@ export function JobSheetsPage() {
                             to={`/job-sheets/${r.id}/edit?returnTo=${encodeURIComponent(returnTo)}`}
                           >
                             Edit
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            component={Link}
+                            to={`/job-sheets/${r.id}/print`}
+                          >
+                            Print
                           </Button>
                         </Box>
                       </TableCell>

@@ -2,12 +2,26 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+import uuid
+
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import SessionLocal
-from app.db.models.domain import Brand, Customer, Order, SavedQuote
+from app.db.models.domain import Brand, Customer, CustomerPricingTier, Order, SavedQuote
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
+
+
+def _normalize_pricing_tier_id(db: Session, raw: str | None) -> str | None:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        tid = str(uuid.UUID(str(raw).strip()))
+    except Exception:
+        raise ValueError("Invalid pricing_tier_id")
+    if not db.get(CustomerPricingTier, tid):
+        raise ValueError("Invalid pricing_tier_id")
+    return tid
 
 
 def _payment_terms_to_store(payload: CustomerCreateRequest) -> dict | None:
@@ -64,7 +78,7 @@ def get_customer(customer_id: str) -> Optional[Customer]:
     with SessionLocal() as db:  # type: Session
         stmt = (
             select(Customer)
-            .options(joinedload(Customer.brand))
+            .options(joinedload(Customer.brand), joinedload(Customer.pricing_tier))
             .where(Customer.id == customer_id)
         )
         return db.scalar(stmt)
@@ -77,8 +91,11 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
         addresses_list = [address.model_dump(exclude_none=True) for address in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
+        tier_id = _normalize_pricing_tier_id(db, getattr(payload, "pricing_tier_id", None))
+
         customer = Customer(
             name=payload.name,
+            pricing_tier_id=tier_id,
             brand_id=payload.brand_id,
             priority_rank=payload.priority_rank,
             abn=payload.abn,
@@ -90,12 +107,14 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             payment_terms=_payment_terms_to_store(payload),
             notes=payload.notes,
         )
-        
+
         db.add(customer)
         db.commit()
         # Re-load with brand so the instance is safe to use after the session closes (routes call _customer_summary).
         out = db.scalars(
-            select(Customer).options(joinedload(Customer.brand)).where(Customer.id == customer.id)
+            select(Customer)
+            .options(joinedload(Customer.brand), joinedload(Customer.pricing_tier))
+            .where(Customer.id == customer.id)
         ).unique().one()
         return out
 
@@ -110,11 +129,13 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         )
         if not customer:
             raise ValueError(f"Customer with id {customer_id} not found")
-        
+
         contacts_list = [contact.model_dump(exclude_none=True) for contact in payload.contacts]
         addresses_list = [address.model_dump(exclude_none=True) for address in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
-        
+
+        customer.pricing_tier_id = _normalize_pricing_tier_id(db, getattr(payload, "pricing_tier_id", None))
+
         # Update fields
         customer.name = payload.name
         customer.brand_id = payload.brand_id
@@ -130,7 +151,9 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         
         db.commit()
         out = db.scalars(
-            select(Customer).options(joinedload(Customer.brand)).where(Customer.id == customer_id)
+            select(Customer)
+            .options(joinedload(Customer.brand), joinedload(Customer.pricing_tier))
+            .where(Customer.id == customer_id)
         ).unique().one()
         return out
 

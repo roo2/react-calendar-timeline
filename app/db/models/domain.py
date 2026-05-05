@@ -58,11 +58,27 @@ class Brand(Base):
     customers: Mapped[list["Customer"]] = relationship(back_populates="brand")
 
 
+class CustomerPricingTier(Base):
+    """Discount off retail list price (summed ratebook sell total), e.g. Retail 0%, Tier 1 15%, Wholesale 30%."""
+
+    __tablename__ = "customer_pricing_tiers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    discount_percent: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    customers: Mapped[list["Customer"]] = relationship(back_populates="pricing_tier")
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255))
+    pricing_tier_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("customer_pricing_tiers.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     brand_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -87,6 +103,7 @@ class Customer(Base):
     myob_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     brand: Mapped[Optional["Brand"]] = relationship(back_populates="customers")
+    pricing_tier: Mapped[Optional["CustomerPricingTier"]] = relationship(back_populates="customers")
     products: Mapped[list["Product"]] = relationship(back_populates="customer")
     orders: Mapped[list["Order"]] = relationship(back_populates="customer")
     quotes: Mapped[list["SavedQuote"]] = relationship(back_populates="customer")

@@ -162,14 +162,10 @@ export function synthesizeMoqQuantity(args: {
   if (qtyType === 'rolls_units') {
     const kgPerProduct = denom.kgPerProduct
     if (!(kgPerProduct != null && kgPerProduct > 0)) return null
-    const upr = unitsPerRollNum > 0 ? unitsPerRollNum : 1
-    const kgPerRollLane = denom.kgPerRoll != null && denom.kgPerRoll > 0 ? denom.kgPerRoll : null
-    const massPerRoll =
-      kgPerRollLane != null && kgPerRollLane > 0
-        ? kgPerRollLane
-        : upr * kgPerProduct > 0
-          ? upr * kgPerProduct
-          : null
+    if (!(unitsPerRollNum > 0)) return null
+    const upr = unitsPerRollNum
+    // In explicit Rolls×Units mode, roll mass must follow user-entered units/roll.
+    const massPerRoll = upr * kgPerProduct > 0 ? upr * kgPerProduct : null
     if (!(massPerRoll != null && massPerRoll > 0)) return null
     const rolls = Math.max(1, Math.ceil(moqKg / massPerRoll))
     const units = rolls * upr

@@ -200,9 +200,6 @@ export function QuotesListPage() {
                     </TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
-                        <Button size="small" variant="text" color="primary" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
-                          View
-                        </Button>
                         {canEdit && (
                           <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
                             Edit
