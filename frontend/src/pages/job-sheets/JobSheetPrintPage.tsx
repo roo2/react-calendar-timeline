@@ -1,8 +1,17 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@mui/material'
+import type { SpecPayload } from '../../components/SpecPayloadForm'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchJobSheet } from '../../store/slices/jobSheetsSlice'
+import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
+import { computeDerivedGeometryAndTotals } from '../../utils/quoteCalculator'
+import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
+import { buildQuickQuoteInputsFromSpec } from '../../utils/specToQuoteInputs'
+import {
+  jobSheetDescriptionWithPackagingTail,
+  jobSheetOrderQuantityLabel,
+} from '../../utils/quoteQuantityDescriptors'
 
 function s(v: unknown, fallback = '—'): string {
   if (v == null) return fallback
@@ -15,17 +24,70 @@ function n(v: unknown): number | null {
   return Number.isFinite(x) ? x : null
 }
 
+function fmtMetres(v: number): string {
+  const r = Math.round((v + Number.EPSILON) * 100) / 100
+  return String(r)
+}
+
+/** Matches labels in {@link SpecPayloadForm} slit select. */
+function displaySlit(raw: unknown): string {
+  const key = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\s+/g, '_')
+  const map: Record<string, string> = {
+    '': '—',
+    none: 'None',
+    one_side: 'Slit one side',
+    both_sides: 'Slit both sides',
+    middle: 'Slit up middle',
+  }
+  const fallback = String(raw ?? '').trim()
+  return map[key] ?? (fallback !== '' ? fallback : '—')
+}
+
+/** Matches labels in {@link SpecPayloadForm} treat inside/outside select. */
+function displayTreat(raw: unknown): string {
+  const key = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\s+/g, '_')
+  const map: Record<string, string> = {
+    '': '—',
+    none: 'None',
+    inside: 'Inside',
+    outside: 'Outside',
+  }
+  const fallback = String(raw ?? '').trim()
+  return map[key] ?? (fallback !== '' ? fallback : '—')
+}
+
+/** Matches `SpecPayloadForm` resin blend dropdown (House LD vs custom / other presets). */
+function displayBlendTypeLabel(blendType: unknown): string {
+  const c = String(blendType ?? '').trim()
+  if (c === '' || c === 'LD') return 'House Blend (LD)'
+  if (c === 'Custom') return 'Custom'
+  return c
+}
+
 export function JobSheetPrintPage() {
   const { jobSheetId } = useParams()
   const dispatch = useAppDispatch()
   const entry = useAppSelector((state) => (jobSheetId ? state.jobSheets.detail.byId[jobSheetId] : undefined))
   const data = entry?.data as { job_sheet?: Record<string, unknown>; spec_payload?: Record<string, unknown> } | null
   const err = entry?.error
+  const quoteRatebook = useAppSelector((state) => state.quotes.quoteRatebook)
 
   useEffect(() => {
     if (!jobSheetId) return
     void dispatch(fetchJobSheet(jobSheetId))
   }, [jobSheetId, dispatch])
+
+  useEffect(() => {
+    if (quoteRatebook.status === 'idle') void dispatch(fetchQuoteRatebook())
+  }, [dispatch, quoteRatebook.status])
 
   const model = useMemo(() => {
     const js = data?.job_sheet
@@ -102,43 +164,144 @@ export function JobSheetPrintPage() {
           ? `${spec.trim_pct}%`
           : ''
     const gaugeTrimDisplay = trimPct !== '' ? trimPct : '—'
-    const slit = s(run?.slit ?? spec?.slit)
-    const treat = s(run?.treat_inside_outside ?? run?.treat ?? spec?.treat)
+    const slitRaw = run?.slit ?? spec?.slit
+    const treatRaw = run?.treat_inside_outside ?? run?.treat ?? spec?.treat
+    const slit = displaySlit(slitRaw)
+    const treat = displayTreat(treatRaw)
     const coresLine = s(packaging?.core_type ?? spec?.core_type)
 
     const qv = n(js.quantity_value)
+    const qtyUnitRaw = String(js.quantity_unit || '').trim().toLowerCase()
     const qtyUnit = s(js.quantity_unit, '')
     const totalKg = n(js.quantity_unit === 'kg' ? js.quantity_value : js.total_kg)
     const numRolls = n(js.num_rolls)
     const numUnits = n(js.num_product_units)
     const weightPerRoll = n(js.weight_per_roll_kg)
-    const totalM = n(js.total_m)
+    const totalMStored = n(js.total_m)
     const wasteFactorPct = n(identity?.waste_factor_pct ?? spec?.waste_factor_pct)
     const wasteKg = n(spec?.waste_kg)
-    const resinRows: Array<{ text: string; highlight?: boolean }> = []
-    if (formulation?.blend_type) resinRows.push({ text: `Resin blend: ${formulation.blend_type}` })
-    else if (spec?.resin_blend_code) resinRows.push({ text: `Resin blend: ${spec.resin_blend_code}` })
-    const blendRows = Array.isArray(formulation?.blend) ? formulation.blend : Array.isArray(spec?.blend) ? spec.blend : []
-    if (blendRows.length > 0) {
-      for (const row of blendRows) {
-        const code = s(row?.code ?? row?.resin_code, '')
-        const pct = n(row?.pct)
-        if (code || pct != null) resinRows.push({ text: `${code || 'Resin'} ${pct != null ? `${pct}%` : ''}`.trim() })
+
+    const rb = quoteRatebook.data
+    let geoDerived: ReturnType<typeof computeDerivedGeometryAndTotals> | null = null
+    if (rb && spec && typeof spec === 'object') {
+      try {
+        const qtySlice = buildSpecQuantitySliceFromPersistedJobSheet(js as Record<string, unknown>, spec as SpecPayload)
+        const quick = buildQuickQuoteInputsFromSpec(spec as SpecPayload, qtySlice, { ratebook: rb })
+        geoDerived = computeDerivedGeometryAndTotals(quick, rb)
+      } catch {
+        geoDerived = null
       }
     }
+
+    const derivedTotalM =
+      geoDerived != null && geoDerived.derivedTotalM > 0 && Number.isFinite(geoDerived.derivedTotalM)
+        ? geoDerived.derivedTotalM
+        : null
+    const derivedMPerRoll =
+      geoDerived != null && geoDerived.mPerRoll != null && geoDerived.mPerRoll > 0 && Number.isFinite(geoDerived.mPerRoll)
+        ? geoDerived.mPerRoll
+        : null
+
+    const finishNorm = String(finishMode || '').trim().toLowerCase()
+    const highlightTotalKg = qtyUnitRaw === 'kg'
+    const highlightTotalM = qtyUnitRaw === '1000' || qtyUnitRaw === 'cartons'
+
+    let cartonConversion: { bagsPerCarton: string; totalCartons: string } | null = null
+    if (finishNorm === 'cartons') {
+      const bpcN = n(packaging?.bags_per_carton)
+      const qtyTypeStr = String(js.qty_type || '')
+      const quLower = String(js.quantity_unit || '').toLowerCase()
+      let totalCtns: number | null = null
+      if (qtyTypeStr === 'units' && quLower === 'cartons' && qv != null && qv > 0) {
+        totalCtns = Math.max(1, Math.round(qv))
+      } else if (bpcN != null && bpcN > 0 && numUnits != null && numUnits > 0) {
+        totalCtns = Math.max(1, Math.ceil(numUnits / bpcN))
+      } else if (
+        bpcN != null &&
+        bpcN > 0 &&
+        totalKg != null &&
+        totalKg > 0 &&
+        geoDerived?.kgPerUnit != null &&
+        Number(geoDerived.kgPerUnit) > 0
+      ) {
+        const cartonKg = bpcN * Number(geoDerived.kgPerUnit)
+        totalCtns = Math.max(1, Math.round(totalKg / cartonKg))
+      }
+      cartonConversion = {
+        bagsPerCarton: bpcN != null && bpcN > 0 ? String(Math.max(1, Math.round(bpcN))) : '—',
+        totalCartons: totalCtns != null ? String(totalCtns) : '—',
+      }
+    }
+
+    const blendTypeCode = String(formulation?.blend_type ?? '').trim() || 'LD'
+    const hasExplicitBlendType = formulation?.blend_type != null && String(formulation.blend_type).trim() !== ''
+    const legacyBlendCodeOnly =
+      !hasExplicitBlendType && spec?.resin_blend_code != null && String(spec.resin_blend_code).trim() !== ''
+    /** House LD preset only: no highlight on resin lines. Custom / other presets / legacy blend codes: highlight. */
+    const highlightNonStandardResins = blendTypeCode !== 'LD' || legacyBlendCodeOnly
+
+    const blendRowsRaw = Array.isArray(formulation?.blend) ? formulation.blend : Array.isArray(spec?.blend) ? spec.blend : []
+    const blendRowsSorted = [...blendRowsRaw].sort((a, b) => {
+      const pa = Number((a as { pct?: unknown })?.pct ?? 0)
+      const pb = Number((b as { pct?: unknown })?.pct ?? 0)
+      return pb - pa
+    })
+
+    const resinMixRows: Array<{ text: string; highlight: boolean }> = []
+
+    if (formulation?.blend_type != null && String(formulation.blend_type).trim() !== '') {
+      resinMixRows.push({
+        text: `Resin blend: ${displayBlendTypeLabel(formulation.blend_type)}`,
+        highlight: highlightNonStandardResins,
+      })
+    } else if (spec?.resin_blend_code != null && String(spec.resin_blend_code).trim() !== '') {
+      resinMixRows.push({
+        text: `Resin blend code: ${s(spec.resin_blend_code)}`,
+        highlight: true,
+      })
+    } else if (blendRowsSorted.length > 0) {
+      resinMixRows.push({
+        text: `Resin blend: ${displayBlendTypeLabel('LD')}`,
+        highlight: false,
+      })
+    }
+
+    for (const row of blendRowsSorted) {
+      const code = s((row as { code?: unknown })?.code ?? (row as { resin_code?: unknown })?.resin_code, '')
+      const pct = n((row as { pct?: unknown })?.pct)
+      if (code || pct != null) {
+        resinMixRows.push({
+          text: `${code || 'Resin'} ${pct != null ? `${pct}%` : ''}`.trim(),
+          highlight: highlightNonStandardResins,
+        })
+      }
+    }
+
     const colourRows = Array.isArray(formulation?.colour_components) ? formulation.colour_components : []
     for (const row of colourRows) {
       const code = s(row?.colour_code, '')
       const pct = n(row?.strength_pct)
-      if (code || pct != null) resinRows.push({ text: `Colour ${code || ''} ${pct != null ? `${pct}%` : ''}`.trim() })
+      if (code || pct != null) {
+        resinMixRows.push({
+          text: `Colour ${code || ''} ${pct != null ? `${pct}%` : ''}`.trim(),
+          highlight: false,
+        })
+      }
     }
+
     const additiveRows = Array.isArray(formulation?.additives) ? formulation.additives : []
     for (const row of additiveRows) {
       const code = s(row?.additive_code, '')
       const pct = n(row?.pct)
-      if (code || pct != null) resinRows.push({ text: `Additive ${code || ''} ${pct != null ? `${pct}%` : ''}`.trim() })
+      if (code || pct != null) {
+        resinMixRows.push({
+          text: `Additive ${code || ''} ${pct != null ? `${pct}%` : ''}`.trim(),
+          highlight: true,
+        })
+      }
     }
-    if (resinRows.length === 0) resinRows.push({ text: '—' })
+
+    if (resinMixRows.length === 0) resinMixRows.push({ text: '—', highlight: false })
 
     const printingRows = [
       { label: 'Print method', value: s(printing?.method ?? spec?.print_method ?? spec?.printing_method) },
@@ -146,6 +309,18 @@ export function JobSheetPrintPage() {
       { label: 'Cylinder / Anilox', value: s(printing?.cylinder_size_mm != null ? `${printing.cylinder_size_mm} mm` : spec?.anilox) },
       { label: 'Notes', value: s(printing?.print_description ?? printing?.print_position_notes ?? spec?.printing_notes ?? spec?.print_notes) },
     ]
+
+    const geoSnapshotForTail =
+      derivedTotalM != null || derivedMPerRoll != null
+        ? { derivedTotalM: derivedTotalM ?? 0, mPerRoll: derivedMPerRoll }
+        : null
+    const orderedQuantityLabel = jobSheetOrderQuantityLabel(js as Record<string, unknown>, spec as Record<string, unknown>)
+    const descriptionWithPackagingTail = jobSheetDescriptionWithPackagingTail(
+      String(productDescription ?? ''),
+      js as Record<string, unknown>,
+      spec as Record<string, unknown>,
+      geoSnapshotForTail,
+    )
 
     return {
       titleLine: `JOB SHEET ${s(jobCode, '') ? `— ${s(jobCode, '')}` : ''}`.trim(),
@@ -160,6 +335,8 @@ export function JobSheetPrintPage() {
       product: {
         productCode: s(productCode),
         productDescription: s(productDescription),
+        descriptionWithPackagingTail,
+        orderedQuantityLabel,
         notes: s(notes),
         qualityChecks: qualityChecks.map((x: unknown) => s(x, '')).filter(Boolean),
       },
@@ -192,17 +369,28 @@ export function JobSheetPrintPage() {
           numItems: numUnits != null ? String(Math.round(numUnits)) : '—',
           numRollsOrCtns: numRolls != null ? String(Math.round(numRolls)) : '—',
           totalKg: totalKg != null ? `${totalKg}` : qv != null && qtyUnit === 'kg' ? `${qv}` : '—',
-          kgPerRoll: weightPerRoll != null ? `${weightPerRoll}` : '—',
-          totalM: totalM != null ? `${totalM}` : '—',
-          mPerRoll: '—',
+          kgPerRoll:
+            finishNorm === 'cartons'
+              ? '—'
+              : weightPerRoll != null && weightPerRoll > 0
+                ? `${weightPerRoll}`
+                : '—',
+          totalM:
+            derivedTotalM != null ? fmtMetres(derivedTotalM) : totalMStored != null ? `${totalMStored}` : '—',
+          mPerRoll: derivedMPerRoll != null ? fmtMetres(derivedMPerRoll) : '—',
           wasteFactorPct,
           wasteKg: wasteKg != null ? `${wasteKg}` : null,
+          highlightTotalKg,
+          highlightTotalM,
         },
-        resinRows,
+        resinMixRows,
       },
       printingRows,
+      conversionInstructions: {
+        carton: cartonConversion,
+      },
     }
-  }, [data])
+  }, [data, quoteRatebook.data])
 
   if (err && !data && entry?.status === 'failed') {
     return (
@@ -227,6 +415,7 @@ export function JobSheetPrintPage() {
 
   const e = model.extrusion
   const q = e.orderQuantities
+  const conv = model.conversionInstructions
   const printPath = jobSheetId ? `/job-sheets/${encodeURIComponent(jobSheetId)}/print` : ''
   const editHref = jobSheetId
     ? `/job-sheets/${encodeURIComponent(jobSheetId)}/edit?returnTo=${encodeURIComponent(printPath || '/job-sheets')}`
@@ -235,7 +424,7 @@ export function JobSheetPrintPage() {
   return (
     <>
       <style>{`
-        .js-print-root, .js-print-root .js-sec, .js-print-root .js-sub, .js-print-root .js-tol, .js-print-root .js-pink, .js-print-root .js-blue, .js-print-root .js-inv-hl {
+        .js-print-root, .js-print-root .js-sec, .js-print-root .js-sub, .js-print-root .js-tol, .js-print-root .js-pink, .js-print-root .js-blue, .js-print-root .js-inv-hl, .js-print-root .js-resin-mix-hl {
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
           color-adjust: exact;
@@ -254,6 +443,38 @@ export function JobSheetPrintPage() {
           .js-grid td, .js-grid th {
             padding: 5px 7px !important;
             font-size: 10.5pt !important;
+          }
+          /* Nested tables are still inside .js-grid; without this, the rule above adds 5×7px inside dim/run cells only when printing. */
+          .js-dim-grid td.js-dim-col {
+            padding: 0 !important;
+          }
+          .js-dim-grid th.js-dim-h {
+            padding: 6px 8px !important;
+            font-size: 10pt !important;
+          }
+          .js-run-triple th,
+          .js-run-triple td {
+            padding: 6px 8px !important;
+            font-size: 10pt !important;
+          }
+          /* Nested dim grid: flex + min-height + flex-grow prints with bogus vertical gaps in table cells (Chrome/Safari). */
+          .js-dim-stack {
+            display: block !important;
+            min-height: 0 !important;
+          }
+          .js-dim-primary {
+            flex: none !important;
+          }
+          .js-dim-grid,
+          .js-run-triple {
+            margin: 0 !important;
+          }
+          .js-extrusion-dim-run-cell .js-dim-grid {
+            margin-bottom: 0 !important;
+          }
+          .js-dim-wrap.js-extrusion-dim-run-cell {
+            padding: 0 !important;
+            vertical-align: top !important;
           }
           .js-sec, .js-sub { font-size: 10pt !important; }
           .js-muted { font-size: 9.5pt !important; }
@@ -299,6 +520,8 @@ export function JobSheetPrintPage() {
         .js-muted { color: #333; font-size: 11px; }
         .js-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px; }
         .js-dim-wrap { padding: 0 !important; border-left: none !important; border-right: none !important; }
+        .js-extrusion-dim-run-cell .js-dim-grid { margin-bottom: 0; }
+        .js-order-qty-grid { margin-top: 14px; }
         .js-dim-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0 0 8px; }
         .js-dim-grid th.js-dim-h {
           border: 2px solid #000;
@@ -332,7 +555,18 @@ export function JobSheetPrintPage() {
           border-top: 1px solid #000;
           white-space: normal;
         }
-        .js-run-details td { font-weight: 700; padding: 6px 8px !important; }
+        .js-run-triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
+        .js-run-triple th {
+          width: 14%;
+          font-weight: 400;
+          text-align: left;
+          background: #f2c894;
+          border: 1px solid #000;
+          padding: 6px 8px;
+          font-size: 11px;
+        }
+        .js-run-triple td { font-weight: 700; border: 1px solid #000; padding: 6px 8px; }
+        .js-resin-mix-hl { background: #fff566; }
       `}</style>
 
       <div className="js-print-root">
@@ -370,7 +604,11 @@ export function JobSheetPrintPage() {
             <tr><td className="js-sec" colSpan={6}>Product</td></tr>
             <tr>
               <th>Product code</th><td colSpan={2} style={{ fontFamily: 'ui-monospace, monospace' }}>{model.product.productCode}</td>
-              <th>Description</th><td colSpan={2}>{model.product.productDescription}</td>
+              <th>Description</th><td colSpan={2} style={{ whiteSpace: 'pre-wrap' }}>{model.product.descriptionWithPackagingTail}</td>
+            </tr>
+            <tr>
+              <th>Ordered quantity</th>
+              <td colSpan={5}>{model.product.orderedQuantityLabel}</td>
             </tr>
             <tr><th>Notes</th><td colSpan={5} style={{ whiteSpace: 'pre-wrap' }}>{model.product.notes}</td></tr>
             <tr><th>Quality checks</th><td colSpan={5}>{model.product.qualityChecks.length ? model.product.qualityChecks.join(' · ') : '—'}</td></tr>
@@ -386,7 +624,7 @@ export function JobSheetPrintPage() {
               <th className="js-pink">(Resin) colour</th><td className="js-pink">{e.resinColour}</td>
             </tr>
             <tr>
-              <td colSpan={6} className="js-dim-wrap">
+              <td colSpan={6} className="js-dim-wrap js-extrusion-dim-run-cell">
                 <table className="js-dim-grid" role="presentation">
                   <thead>
                     <tr>
@@ -445,29 +683,44 @@ export function JobSheetPrintPage() {
                     </tr>
                   </tbody>
                 </table>
+                <table className="js-run-triple" role="presentation">
+                  <tbody>
+                    <tr>
+                      <th>Slit</th>
+                      <td>{e.slit}</td>
+                      <th>Treat</th>
+                      <td>{e.treat}</td>
+                      <th>Cores</th>
+                      <td>{e.coresLine}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </td>
             </tr>
-            <tr>
-              <td className="js-sub" colSpan={6}>
-                Slit, treat & cores
-              </td>
-            </tr>
-            <tr className="js-run-details">
-              <td colSpan={6}>
-                <div>Slit: {e.slit}</div>
-                <div style={{ marginTop: 4 }}>Treat: {e.treat}</div>
-                <div style={{ marginTop: 4 }}>Cores: {e.coresLine}</div>
-              </td>
-            </tr>
-            <tr><td className="js-sub" colSpan={6}>Order quantities (derived where applicable)</td></tr>
+            <tr><td className="js-sub" colSpan={6}>Resin mix</td></tr>
+            {e.resinMixRows.map((r, idx) => (
+              <tr key={idx}>
+                <td colSpan={6} className={r.highlight ? 'js-resin-mix-hl' : undefined}>
+                  {r.text}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <table className="js-grid js-order-qty-grid">
+          <tbody>
+            <tr><td className="js-sec" colSpan={6}>Order quantities</td></tr>
             <tr>
               <th>No. of items</th><td>{q.numItems}</td>
               <th>Rolls / ctns</th><td>{q.numRollsOrCtns}</td>
-              <th className="js-pink">Total kg</th><td className="js-pink">{q.totalKg}</td>
+              <th className={q.highlightTotalKg ? 'js-pink' : undefined}>Total kg</th>
+              <td className={q.highlightTotalKg ? 'js-pink' : undefined}>{q.totalKg}</td>
             </tr>
             <tr>
               <th>Kg per roll</th><td>{q.kgPerRoll}</td>
-              <th>Total M</th><td>{q.totalM}</td>
+              <th className={q.highlightTotalM ? 'js-pink' : undefined}>Total M</th>
+              <td className={q.highlightTotalM ? 'js-pink' : undefined}>{q.totalM}</td>
               <th>M per roll</th><td>{q.mPerRoll}</td>
             </tr>
             <tr>
@@ -492,8 +745,6 @@ export function JobSheetPrintPage() {
                 )}
               </td>
             </tr>
-            <tr><td className="js-sub" colSpan={6}>Resin mix</td></tr>
-            {e.resinRows.map((r, idx) => <tr key={idx}><td colSpan={6}>{r.text}</td></tr>)}
           </tbody>
         </table>
 
@@ -511,8 +762,28 @@ export function JobSheetPrintPage() {
 
         <table className="js-grid">
           <tbody>
-            <tr><td className="js-blue" colSpan={2}>Conversion dimensions (if different) — to be filled on floor</td></tr>
-            <tr><td colSpan={2} style={{ height: 48 }} /></tr>
+            <tr>
+              <td className="js-blue" colSpan={2}>
+                Conversion instructions
+              </td>
+            </tr>
+            {conv.carton ? (
+              <>
+                <tr>
+                  <th>Total cartons</th>
+                  <td>{conv.carton.totalCartons}</td>
+                </tr>
+                <tr>
+                  <th>Bags per carton</th>
+                  <td>{conv.carton.bagsPerCarton}</td>
+                </tr>
+              </>
+            ) : null}
+            <tr>
+              <td colSpan={2} className="js-muted" style={{ height: 40, fontWeight: 400 }}>
+                Conversion dimensions (if different) — to be filled on floor
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>

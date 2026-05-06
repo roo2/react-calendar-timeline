@@ -58,6 +58,8 @@ export type SpecQuantitySlice = {
   weightPerRoll: number
   /** For qtyType rolls_units: discrete units per roll (e.g. bags per roll). */
   unitsPerRoll?: number
+  /** Continuous web + total rolls: metres per roll (drives `quantity.total_m`). */
+  metersPerRoll?: number
 }
 
 /**
@@ -140,6 +142,10 @@ export function buildQuickQuoteInputsFromSpec(
       bagsPerCarton: bagsPerCartonNum > 0 ? bagsPerCartonNum : undefined,
       /** Matches QuotesPage calcPayload when weight/roll is blank (Tube on continuous web). */
       rollWeightAvgKg: getRollWeightAvgForCartonsInKg(opts?.ratebook ?? null),
+      metersPerRoll:
+        quantity.metersPerRoll != null && Number.isFinite(Number(quantity.metersPerRoll)) && Number(quantity.metersPerRoll) > 0
+          ? Number(quantity.metersPerRoll)
+          : undefined,
     },
   )
 

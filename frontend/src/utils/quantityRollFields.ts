@@ -35,6 +35,8 @@ export function buildQuantityObjectForCalculator(
     bagsPerCarton?: number
     /** Fallback kg/roll (or kg/carton when Cartons) from ratebook when weight field is empty. */
     rollWeightAvgKg?: number
+    /** Continuous web: metres per roll when qty type is total rolls (matches Quotes `calcPayload.quantity.total_m`). */
+    metersPerRoll?: number
   },
 ): { units?: number; total_kg?: number; total_m?: number; rolls?: number } {
   const qty: { units?: number; total_kg?: number; total_m?: number; rolls?: number } = {}
@@ -65,9 +67,17 @@ export function buildQuantityObjectForCalculator(
     const rollsFromBags = Math.ceil(numUnitsNum / bags)
     if (rollsFromBags > 0) qty.rolls = rollsFromBags
   }
-  if (qtyType === 'total_rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
-    qty.total_kg = numRollsNum * weightPerRollNum
-    qty.rolls = numRollsNum
+  if (qtyType === 'total_rolls' && numRollsNum > 0) {
+    const mpr = opts?.metersPerRoll != null ? Number(opts.metersPerRoll) : NaN
+    if (opts?.continuousLength && Number.isFinite(mpr) && mpr > 0) {
+      qty.total_m = numRollsNum * mpr
+      qty.rolls = numRollsNum
+    } else if (weightPerRollNum > 0) {
+      qty.total_kg = numRollsNum * weightPerRollNum
+      qty.rolls = numRollsNum
+    } else {
+      qty.rolls = numRollsNum
+    }
   } else if (
     finishMode === 'Rolls' &&
     qtyType !== 'kg' &&
@@ -288,7 +298,8 @@ export function coerceQtyTypeForFinishMode(
   continuousLength = false,
 ): QtyType {
   if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) return 'kg'
-  if (continuousLength && qtyType === 'rolls_units') return 'kg'
+  /** Align with Quotes page: continuous web uses roll-count modes, not rolls × discrete units per roll. */
+  if (continuousLength && qtyType === 'rolls_units') return 'total_rolls'
   return qtyType
 }
 
@@ -317,18 +328,18 @@ export function resolveNumRollsForPersistence(
   return Math.max(1, Math.round(numRollsNum) || 1)
 }
 
-/** Persisted weight per roll (kg) when applicable; Cartons always derived from total kg. */
+/** Persisted weight per roll (kg) when applicable; Carton finish does not store a nominal kg/roll. */
 export function resolveWeightPerRollForPersistence(
   finishMode: FinishMode,
   qtyType: QtyType,
-  totalKgNum: number,
+  _totalKgNum: number,
   numRollsNum: number,
   weightPerRollNum: number,
   derived: DerivedDisplay,
 ): number | null {
   if (finishMode === 'Cartons') {
-    const w = cartonsWeightPerRollKg(totalKgNum, numRollsNum)
-    return w != null && w > 0 ? w : null
+    /** Carton jobs: extrusion uses max practical roll size; do not persist a nominal kg/roll. */
+    return null
   }
   if (qtyType === 'total_rolls') {
     const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll

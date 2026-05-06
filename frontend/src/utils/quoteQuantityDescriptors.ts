@@ -176,3 +176,123 @@ export function quoteTotalQuantityLabelFromPayload(payload: Record<string, unkno
   }
   return '—'
 }
+
+/**
+ * Build a quote-style qty payload from persisted job sheet API rows + spec (for shared quantity labels / tails).
+ */
+export function jobSheetAsQuoteQtyPayload(
+  js: Record<string, unknown>,
+  spec: Record<string, unknown>,
+): Record<string, unknown> {
+  const identity = (spec as { identity?: Record<string, unknown> }).identity || {}
+  const packaging = (spec as { packaging?: Record<string, unknown> }).packaging || {}
+  const dimensions = (spec as { dimensions?: Record<string, unknown> }).dimensions || {}
+  const finish = String(identity.finish_mode || 'Rolls').trim()
+  const qtyType = String(js.qty_type || 'kg').trim()
+  const qu = String(js.quantity_unit || '').toLowerCase()
+  const cartonQtyMode = finish === 'Cartons' && qtyType === 'units' && qu === 'cartons' ? 'ctn' : '1000'
+  const pt = String(identity.product_type || '')
+  const lu = String(dimensions.length_units || '').toLowerCase()
+  const continuous_roll = pt === 'Tube' || lu === 'continuous'
+  const qv = Number(js.quantity_value || 0)
+  const npuRaw = js.num_product_units
+  const npu = npuRaw != null && npuRaw !== '' ? Number(npuRaw) : NaN
+
+  let numUnits = 0
+  if (qtyType === 'units') {
+    if (qu === 'cartons' && Number.isFinite(npu)) numUnits = Math.round(npu)
+    else if (Number.isFinite(npu)) numUnits = Math.round(npu)
+    else numUnits = Math.round(qv)
+  } else if (Number.isFinite(npu)) {
+    numUnits = Math.round(npu)
+  }
+
+  const numRolls = Math.max(0, Math.round(Number(js.num_rolls || 0)))
+  const numCartons = qtyType === 'units' && qu === 'cartons' && qv > 0 ? Math.round(qv) : 0
+  const bagsPerCarton = Math.max(0, Math.round(Number(packaging.bags_per_carton || 0)))
+
+  let totalKg = 0
+  if (qu === 'kg') totalKg = qv
+  else if (js.total_kg != null && Number(js.total_kg) > 0) totalKg = Number(js.total_kg)
+
+  return {
+    qty_type: qtyType,
+    qtyType,
+    finish_mode: finish,
+    finishMode: finish,
+    carton_qty_mode: cartonQtyMode,
+    cartonQtyMode,
+    product_type: pt,
+    productType: pt,
+    continuous_roll,
+    length_units: dimensions.length_units,
+    total_kg: totalKg,
+    totalKg,
+    num_units: numUnits,
+    numUnits,
+    num_rolls: numRolls,
+    numRolls,
+    num_cartons: numCartons,
+    numCartons,
+    bags_per_carton: bagsPerCarton,
+    bagsPerCarton,
+    quoted_totals_kg: 0,
+    quantity: {
+      total_kg: totalKg,
+      units: numUnits,
+      rolls: numRolls,
+    },
+  }
+}
+
+/** One-line ordered quantity for job sheets / print (same basis as {@link quoteTotalQuantityLabelFromPayload}). */
+export function jobSheetOrderQuantityLabel(js: Record<string, unknown>, spec: Record<string, unknown>): string {
+  return quoteTotalQuantityLabelFromPayload(jobSheetAsQuoteQtyPayload(js, spec))
+}
+
+/** {@link quotePackagingPerUnitTail} from persisted job sheet + spec + optional geometry snapshot from ratebook calc. */
+export function packagingPerUnitTailFromPersistedJobSheet(
+  js: Record<string, unknown>,
+  spec: Record<string, unknown>,
+  geoDerived: { derivedTotalM: number; mPerRoll: number | null } | null,
+): string {
+  const identity = (spec as { identity?: Record<string, unknown> }).identity || {}
+  const packaging = (spec as { packaging?: Record<string, unknown> }).packaging || {}
+  const dimensions = (spec as { dimensions?: Record<string, unknown> }).dimensions || {}
+  const finishMode = String(identity.finish_mode || 'Rolls').trim() === 'Cartons' ? 'Cartons' : 'Rolls'
+  const productType = String(identity.product_type || '')
+  const bagsPerCarton = Math.max(0, Math.round(Number(packaging.bags_per_carton || 0)))
+  const lu = String(dimensions.length_units || '').toLowerCase()
+  const isContinuousLength = productType === 'Tube' || lu === 'continuous'
+  const weightPerRollKg = Number(js.weight_per_roll_kg || 0)
+  const metersPerRoll =
+    geoDerived?.mPerRoll != null && Number(geoDerived.mPerRoll) > 0 ? Number(geoDerived.mPerRoll) : 0
+  let quantityTotalM = 0
+  if (geoDerived != null && geoDerived.derivedTotalM > 0 && Number.isFinite(geoDerived.derivedTotalM)) {
+    quantityTotalM = Number(geoDerived.derivedTotalM)
+  } else if (js.total_m != null && Number(js.total_m) > 0) {
+    quantityTotalM = Number(js.total_m)
+  }
+  const quantityRolls = Math.max(0, Math.round(Number(js.num_rolls || 0)))
+  return quotePackagingPerUnitTail({
+    finishMode,
+    productType,
+    bagsPerCarton,
+    isContinuousLength,
+    metersPerRoll,
+    weightPerRollKg,
+    quantityTotalM,
+    quantityRolls,
+  })
+}
+
+/** Product description + packaging tail (matches Live Quote description rule). */
+export function jobSheetDescriptionWithPackagingTail(
+  baseDescription: string,
+  js: Record<string, unknown>,
+  spec: Record<string, unknown>,
+  geoDerived: { derivedTotalM: number; mPerRoll: number | null } | null,
+): string {
+  const tail = packagingPerUnitTailFromPersistedJobSheet(js, spec, geoDerived)
+  return joinQuoteDescriptionWithPackagingTail(baseDescription, tail)
+}
