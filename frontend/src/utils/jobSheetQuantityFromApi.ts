@@ -142,6 +142,8 @@ export function buildLiveJobSheetRowForOrderQuantityLabel(opts: {
   derivedProductUnits: number | null | undefined
   quantityValueFallback: number
   bagsPerCarton: number | null | undefined
+  /** When set, matches job sheet editor carton ``1000`` vs ``CTN`` radio for Cartons + ``units`` qty type. */
+  cartonQtyMode?: '1000' | 'ctn'
   isImportDraft?: boolean
 }): Record<string, unknown> {
   const oq = getOrderQuantityFromJobSheetFields(
@@ -152,6 +154,7 @@ export function buildLiveJobSheetRowForOrderQuantityLabel(opts: {
     opts.numRollsPersisted,
     opts.finishMode,
     opts.bagsPerCarton,
+    opts.cartonQtyMode,
   )
   const numPu =
     opts.effectiveQtyType === 'units'

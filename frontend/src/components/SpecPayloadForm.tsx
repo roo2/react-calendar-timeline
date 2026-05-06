@@ -2290,7 +2290,7 @@ export function SpecPayloadForm(props: {
               <MenuItem value="core_off">Exclude core</MenuItem>
               <MenuItem value="core_half_off">Half core</MenuItem>
             </DefaultSelectField>
-          ) : (
+          ) : printingSurface === 'job_sheet_summary' ? null : (
             <TextField
               label="Bags per Carton"
               type="number"

@@ -457,6 +457,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       derivedProductUnits: derivedForDisplay?.units,
       quantityValueFallback: fallbackLegacy,
       bagsPerCarton: bpc != null ? Number(bpc) : null,
+      cartonQtyMode: qty.cartonQtyMode,
       isImportDraft: Boolean(loadedJobSheet?.is_import_draft),
     })
   }, [
@@ -464,6 +465,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     effectiveQtyType,
     totalKgNum,
     totalKgDisplay,
+    qty.cartonQtyMode,
     numRollsNum,
     weightPerRollNum,
     numUnitsNum,
@@ -633,6 +635,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         persistedRolls,
         finishMode,
         bpc != null ? Number(bpc) : null,
+        qty.cartonQtyMode,
       )
 
       let effectiveProductId = productId
@@ -1022,14 +1025,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                           <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
                             {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
                               ? String(qty.cartonCountForDisplay)
-                              : '—'}
-                          </Box>
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                          Bags per carton:{' '}
-                          <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
-                            {spec.packaging?.bags_per_carton != null && Number(spec.packaging.bags_per_carton) > 0
-                              ? String(Math.max(1, Math.round(Number(spec.packaging.bags_per_carton))))
                               : '—'}
                           </Box>
                         </Typography>

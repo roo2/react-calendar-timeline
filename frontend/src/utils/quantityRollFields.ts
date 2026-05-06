@@ -259,6 +259,12 @@ export function getOrderQuantityFromJobSheetFields(
   numRollsNum: number,
   finishMode: FinishMode = 'Rolls',
   bagsPerCarton: number | null | undefined = null,
+  /**
+   * Cartons + ``units`` only: ``'1000'`` bills order lines in MYOB ``1000`` units (total product count ÷ 1000);
+   * ``'ctn'`` bills in physical cartons when bags-per-carton is known. When omitted, defaults to ``'ctn'`` for
+   * backward compatibility with callers that pre-date explicit carton mode.
+   */
+  cartonQtyMode?: '1000' | 'ctn',
 ): { quantity_value: number; quantity_unit: 'kg' | 'rolls' | 'cartons' | '1000' } {
   const fb = quantityValueFallback > 0 ? quantityValueFallback : 1
   if (qtyType === 'kg') {
@@ -272,8 +278,12 @@ export function getOrderQuantityFromJobSheetFields(
   }
   // units (product count): cartons finish → carton count when BPC known; rolls finish → bill in kg
   if (finishMode === 'Cartons') {
+    const ctnMode = cartonQtyMode ?? 'ctn'
+    if (qtyType === 'units' && ctnMode === '1000' && numUnitsNum > 0) {
+      return { quantity_value: numUnitsNum / 1000, quantity_unit: '1000' }
+    }
     const bpc = Math.max(0, Math.round(Number(bagsPerCarton) || 0))
-    if (bpc > 0 && numUnitsNum > 0) {
+    if (qtyType === 'units' && ctnMode === 'ctn' && bpc > 0 && numUnitsNum > 0) {
       return {
         quantity_value: Math.max(1, Math.ceil(numUnitsNum / bpc)),
         quantity_unit: 'cartons',
