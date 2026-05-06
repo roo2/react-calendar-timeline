@@ -325,7 +325,6 @@ export function JobSheetPrintPage() {
 
     let wasteFactorPct: number | null = wasteFactorPctFixed
     let wasteKg: number | null = wasteKgFixed
-    let wasteSource: 'extruder' | 'fixed' | null = null
     if (productionExtruderCode && quotePreviewForWaste) {
       const jobKg = quotePreviewForWaste.totals_kg
       const totalExt = quotePreviewForWaste.total_extruded_kg
@@ -333,34 +332,18 @@ export function JobSheetPrintPage() {
       if (jobKg != null && jobKg > 0 && totalExt != null && totalExt > 0) {
         wasteFactorPct = ((totalExt - jobKg) / jobKg) * 100
         wasteKg = wKg != null && wKg > 0 ? wKg : 0
-        wasteSource = 'extruder'
-      } else if (wasteFactorPctFixed != null || (wasteKgFixed != null && wasteKgFixed > 0)) {
-        wasteSource = 'fixed'
       }
-    } else if (wasteFactorPctFixed != null || (wasteKgFixed != null && wasteKgFixed > 0)) {
-      wasteSource = 'fixed'
     }
 
-    let quoteWasteBreakdown: {
-      orderedJobKg: string
-      extrusionWasteKg: string
-      totalExtrudedKg: string
-      impliedWastePct: string | null
-    } | null = null
-    if (productionExtruderCode && quotePreviewForWaste) {
-      const jobKg = quotePreviewForWaste.totals_kg
-      const totalExt = quotePreviewForWaste.total_extruded_kg
-      const wKg = quotePreviewForWaste.waste_kg
-      if (jobKg != null && jobKg > 0 && totalExt != null && totalExt > 0) {
-        const pct = ((totalExt - jobKg) / jobKg) * 100
-        quoteWasteBreakdown = {
-          orderedJobKg: jobKg.toFixed(2),
-          extrusionWasteKg: wKg != null && wKg > 0 ? Number(wKg).toFixed(2) : '0',
-          totalExtrudedKg: totalExt.toFixed(2),
-          impliedWastePct: Number.isFinite(pct) ? formatWastePctForPrint(pct) : null,
-        }
+    const totalKgIncludingWasteDisplay = (() => {
+      const tex = quotePreviewForWaste?.total_extruded_kg
+      if (tex != null && Number(tex) > 0 && Number.isFinite(Number(tex))) {
+        return Number(tex).toFixed(2)
       }
-    }
+      if (totalKg != null) return `${totalKg}`
+      if (qv != null && qtyUnit === 'kg') return `${qv}`
+      return '—'
+    })()
 
     const derivedTotalM =
       geoDerived != null && geoDerived.derivedTotalM > 0 && Number.isFinite(geoDerived.derivedTotalM)
@@ -601,7 +584,7 @@ export function JobSheetPrintPage() {
               : numRolls != null
                 ? String(Math.round(numRolls))
                 : '—',
-          totalKg: totalKg != null ? `${totalKg}` : qv != null && qtyUnit === 'kg' ? `${qv}` : '—',
+          totalKg: totalKgIncludingWasteDisplay,
           kgPerRoll:
             finishNorm === 'cartons'
               ? '—'
@@ -614,8 +597,6 @@ export function JobSheetPrintPage() {
           wasteFactorPct,
           wasteFactorPctDisplay: wasteFactorPct != null ? formatWastePctForPrint(wasteFactorPct) : null,
           wasteKg: wasteKg != null ? `${wasteKg}` : null,
-          wasteSource,
-          productionExtruderCode,
           highlightTotalKg,
           highlightTotalM,
         },
@@ -632,7 +613,6 @@ export function JobSheetPrintPage() {
         extruderLabel: productionExtruderCode != null ? productionExtruderCode : '—',
         dieLabel: dieSizeDisplay != null ? dieSizeDisplay : '—',
       },
-      quoteWasteBreakdown,
     }
   }, [data, quoteRatebook.data])
 
@@ -660,7 +640,6 @@ export function JobSheetPrintPage() {
   const e = model.extrusion
   const q = e.orderQuantities
   const extrusionSetup = model.extrusionSetup
-  const quoteWasteBreakdown = model.quoteWasteBreakdown
   const conv = model.conversionInstructions
   const ship = model.shipping
   const p = model.printingLayout
@@ -1069,41 +1048,13 @@ export function JobSheetPrintPage() {
           </tbody>
         </table>
 
-        {quoteWasteBreakdown ? (
-          <table className="js-grid">
-            <tbody>
-              <tr>
-                <td className="js-sec" colSpan={6}>
-                  Quote waste (extrusion)
-                </td>
-              </tr>
-              <tr>
-                <th>Ordered job kg</th>
-                <td colSpan={2}>{quoteWasteBreakdown.orderedJobKg}</td>
-                <th>Extrusion waste kg</th>
-                <td colSpan={2}>{quoteWasteBreakdown.extrusionWasteKg}</td>
-              </tr>
-              <tr>
-                <th>Total extruded kg</th>
-                <td colSpan={2}>{quoteWasteBreakdown.totalExtrudedKg}</td>
-                <th>Implied waste</th>
-                <td colSpan={2}>
-                  {quoteWasteBreakdown.impliedWastePct != null
-                    ? `${quoteWasteBreakdown.impliedWastePct}% of ordered job kg`
-                    : '—'}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        ) : null}
-
         <table className="js-grid js-order-qty-grid">
           <tbody>
             <tr><td className="js-sec" colSpan={6}>Order quantities</td></tr>
             <tr>
               <th>No. of items</th><td>{q.numItems}</td>
               <th>{q.rollsOrCtnsLabel}</th><td>{q.numRollsOrCtns}</td>
-              <th className={q.highlightTotalKg ? 'js-pink' : undefined}>Total kg</th>
+              <th className={q.highlightTotalKg ? 'js-pink' : undefined}>Total KG (including waste)</th>
               <td className={q.highlightTotalKg ? 'js-pink' : undefined}>{q.totalKg}</td>
             </tr>
             <tr>
@@ -1127,9 +1078,6 @@ export function JobSheetPrintPage() {
                       </>
                     ) : null}
                     <span className="js-muted">)</span>
-                    {q.wasteSource === 'extruder' && q.productionExtruderCode ? (
-                      <span className="js-muted"> — from extruder {q.productionExtruderCode} (quote calculator)</span>
-                    ) : null}
                   </>
                 ) : (
                   <span className="js-print-val">—</span>
