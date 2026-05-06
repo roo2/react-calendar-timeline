@@ -51,6 +51,8 @@ def run_myob_import_pipeline(
     orders: Literal["all", "page"] = "all",
     orders_top: int = 200,
     orders_skip: int = 0,
+    skip_customers: bool = False,
+    skip_item_cache: bool = False,
     on_step: OnPipelineStep | None = None,
     resume_from: Literal["item_cache", "orders"] | None = None,
 ) -> dict[str, Any]:
@@ -72,8 +74,8 @@ def run_myob_import_pipeline(
     ``"item_cache"`` skips **customers** only; ``"orders"`` skips **customers** and **item cache** (order import
     only).
     """
-    skip_customers = resume_from is not None
-    skip_item_cache = resume_from == "orders"
+    skip_customers = skip_customers or resume_from is not None
+    skip_item_cache = skip_item_cache or resume_from == "orders"
 
     if not skip_customers:
         customers = import_customers_from_myob(db)

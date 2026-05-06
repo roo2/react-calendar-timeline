@@ -13,7 +13,7 @@ import {
   jobSheetOrderQuantityLabel,
 } from '../../utils/quoteQuantityDescriptors'
 
-function s(v: unknown, fallback = '—'): string {
+function s(v: unknown, fallback = ''): string {
   if (v == null) return fallback
   const t = String(v).trim()
   return t === '' ? fallback : t
@@ -25,7 +25,7 @@ function n(v: unknown): number | null {
 }
 
 function formatWastePctForPrint(pct: number): string {
-  if (!Number.isFinite(pct)) return '—'
+  if (!Number.isFinite(pct)) return ''
   return Math.abs(pct - Math.round(pct)) < 1e-6 ? String(Math.round(pct)) : pct.toFixed(2)
 }
 
@@ -36,7 +36,7 @@ function fmtMetres(v: number): string {
 
 /** Matches {@link ProductVersionSummary} / spec slugs like `2up`. */
 function displayRunUp(slug: unknown): string {
-  if (slug == null || slug === '' || slug === 'none') return '—'
+  if (slug == null || slug === '' || slug === 'none') return ''
   const str = String(slug)
   if (str === '1up' || str === '2up' || str.endsWith('up')) return str.replace('up', ' up')
   return str
@@ -50,14 +50,14 @@ function displaySlit(raw: unknown): string {
     .replace(/-/g, '_')
     .replace(/\s+/g, '_')
   const map: Record<string, string> = {
-    '': '—',
+    '': '',
     none: 'None',
     one_side: 'Slit one side',
     both_sides: 'Slit both sides',
     middle: 'Slit up middle',
   }
   const fallback = String(raw ?? '').trim()
-  return map[key] ?? (fallback !== '' ? fallback : '—')
+  return map[key] ?? (fallback !== '' ? fallback : '')
 }
 
 /** Matches labels in {@link SpecPayloadForm} treat inside/outside select. */
@@ -68,13 +68,13 @@ function displayTreat(raw: unknown): string {
     .replace(/-/g, '_')
     .replace(/\s+/g, '_')
   const map: Record<string, string> = {
-    '': '—',
+    '': '',
     none: 'None',
     inside: 'Inside',
     outside: 'Outside',
   }
   const fallback = String(raw ?? '').trim()
-  return map[key] ?? (fallback !== '' ? fallback : '—')
+  return map[key] ?? (fallback !== '' ? fallback : '')
 }
 
 /** Matches `SpecPayloadForm` resin blend dropdown (House LD vs custom / other presets). */
@@ -107,7 +107,7 @@ function formatPrintSide(side: unknown): string {
 
 function formatSealType(v: unknown): string {
   const x = String(v ?? '').trim().toLowerCase()
-  if (x === '') return '—'
+  if (x === '') return ''
   if (x === 'side') return 'Side'
   if (x === 'end') return 'End'
   return s(v)
@@ -115,7 +115,7 @@ function formatSealType(v: unknown): string {
 
 function formatEyeSpot(v: unknown): string {
   const x = String(v ?? '').trim().toLowerCase()
-  if (x === '') return '—'
+  if (x === '') return ''
   if (x === 'yes') return 'Yes'
   if (x === 'no') return 'No'
   return s(v)
@@ -123,9 +123,9 @@ function formatEyeSpot(v: unknown): string {
 
 /** Matches {@link SpecPayloadForm} `intOrDash` for film / bag readouts. */
 function intOrDashJob(n: unknown): string {
-  if (n == null || n === '') return '—'
+  if (n == null || n === '') return ''
   const x = typeof n === 'number' ? n : Number(String(n).trim())
-  return Number.isFinite(x) && x > 0 ? String(Math.round(x)) : '—'
+  return Number.isFinite(x) && x > 0 ? String(Math.round(x)) : ''
 }
 
 /** Same string as the printing-details modal “Film type supplied”. */
@@ -133,7 +133,7 @@ function formatJobSheetFilmSuppliedFromSpec(spec: SpecPayload): string {
   const dims = spec?.dimensions || {}
   const w = dims.base_width_mm
   const um = dims.thickness_um
-  if (w == null || um == null) return '—'
+  if (w == null || um == null) return ''
   const geom = String(dims.geometry || '')
   const gusset = Number(dims.gusset_mm || 0) > 0
   const geoTag =
@@ -147,7 +147,7 @@ function formatJobSheetFinishedBagSizeFromSpec(spec: SpecPayload): string {
   const w = dims.base_width_mm
   const l = dims.base_length_mm
   const um = dims.thickness_um
-  if (w == null) return '—'
+  if (w == null) return ''
   const parts = [`${intOrDashJob(w)}mm`]
   if (l != null) parts.push(`${intOrDashJob(l)}mm`)
   if (um != null) parts.push(`${intOrDashJob(um)}µm`)
@@ -156,7 +156,7 @@ function formatJobSheetFinishedBagSizeFromSpec(spec: SpecPayload): string {
 
 function JobSheetPrintInkTable(props: { rows: Array<{ ink: string; plate: string }> }): ReactNode {
   const { rows } = props
-  if (rows.length === 0) return <span className="js-print-v">—</span>
+  if (rows.length === 0) return <span className="js-print-v" />
   return (
     <table className="js-print-ink" role="presentation">
       <thead>
@@ -170,8 +170,8 @@ function JobSheetPrintInkTable(props: { rows: Array<{ ink: string; plate: string
         {rows.map((r, i) => (
           <tr key={`${r.ink}-${r.plate}-${i}`}>
             <td className="js-print-ink-num">{i + 1}</td>
-            <td className="js-print-ink-mono">{r.ink || '—'}</td>
-            <td className="js-print-ink-mono">{r.plate || '—'}</td>
+            <td className="js-print-ink-mono">{r.ink || ''}</td>
+            <td className="js-print-ink-mono">{r.plate || ''}</td>
           </tr>
         ))}
       </tbody>
@@ -223,8 +223,8 @@ export function JobSheetPrintPage() {
         ? spec.quality_checks
         : []
 
-    const productType = identity?.product_type ?? spec?.product_type ?? '—'
-    const finishMode = identity?.finish_mode ?? spec?.finish_mode ?? '—'
+    const productType = identity?.product_type ?? spec?.product_type ?? ''
+    const finishMode = identity?.finish_mode ?? spec?.finish_mode ?? ''
     const resinColourRaw =
       formulation?.colour?.colour_code ??
       formulation?.colour?.name ??
@@ -235,16 +235,16 @@ export function JobSheetPrintPage() {
     const resinColourTrimmed = String(resinColourRaw ?? '').trim()
     const resinColourExplicit = resinColourTrimmed !== '' && resinColourTrimmed !== '—'
     const resinColourDisplay = resinColourExplicit ? resinColourTrimmed : 'Natural'
-    const geometryLabel = dimensions?.geometry ?? spec?.geometry ?? '—'
+    const geometryLabel = dimensions?.geometry ?? spec?.geometry ?? ''
     const widthMm = n(dimensions?.base_width_mm ?? spec?.base_width_mm)
-    const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}Wmm` : '—'
+    const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}Wmm` : ''
     const ufilmLeftMm = n(dimensions?.ufilm_left_width_mm ?? spec?.ufilm_left_width_mm)
     const ufilmRightMm = n(dimensions?.ufilm_right_width_mm ?? spec?.ufilm_right_width_mm)
     const gussetMm = n(dimensions?.gusset_mm ?? spec?.gusset_mm)
     const widthTolRaw = dimensions?.width_tolerance_mm ?? spec?.width_tolerance_mm
     const widthTolMm = n(widthTolRaw)
     const widthToleranceDisplay =
-      widthTolMm != null && widthTolMm > 0 ? `± ${widthTolMm} mm` : widthTolRaw != null && String(widthTolRaw).trim() !== '' ? s(widthTolRaw) : '—'
+      widthTolMm != null && widthTolMm > 0 ? `± ${widthTolMm} mm` : widthTolRaw != null && String(widthTolRaw).trim() !== '' ? s(widthTolRaw) : ''
 
     const widthSplitMm: number[] = []
     if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
@@ -273,7 +273,7 @@ export function JobSheetPrintPage() {
         : spec?.trim_pct != null
           ? `${spec.trim_pct}%`
           : ''
-    const gaugeTrimDisplay = trimPct !== '' ? trimPct : '—'
+    const gaugeTrimDisplay = trimPct !== '' ? trimPct : ''
     const slitRaw = run?.slit ?? spec?.slit
     const treatRaw = run?.treat_inside_outside ?? run?.treat ?? spec?.treat
     const slit = displaySlit(slitRaw)
@@ -342,7 +342,7 @@ export function JobSheetPrintPage() {
       }
       if (totalKg != null) return `${totalKg}`
       if (qv != null && qtyUnit === 'kg') return `${qv}`
-      return '—'
+      return ''
     })()
 
     const derivedTotalM =
@@ -380,8 +380,8 @@ export function JobSheetPrintPage() {
         totalCtns = Math.max(1, Math.round(totalKg / cartonKg))
       }
       cartonConversion = {
-        bagsPerCarton: bpcN != null && bpcN > 0 ? String(Math.max(1, Math.round(bpcN))) : '—',
-        totalCartons: totalCtns != null ? String(totalCtns) : '—',
+        bagsPerCarton: bpcN != null && bpcN > 0 ? String(Math.max(1, Math.round(bpcN))) : '',
+        totalCartons: totalCtns != null ? String(totalCtns) : '',
       }
     }
 
@@ -453,13 +453,11 @@ export function JobSheetPrintPage() {
       }
     }
 
-    if (resinMixRows.length === 0) resinMixRows.push({ text: '—', highlight: false })
+    if (resinMixRows.length === 0) resinMixRows.push({ text: '', highlight: false })
 
     const printMethodDisplay = s(printing?.method ?? spec?.print_method ?? spec?.printing_method)
     const printed =
-      printMethodDisplay !== '—' &&
-      printMethodDisplay.trim() !== '' &&
-      printMethodDisplay.trim().toLowerCase() !== 'none'
+      printMethodDisplay.trim() !== '' && printMethodDisplay.trim().toLowerCase() !== 'none'
 
     const frontInkPlate = meaningfulInkPlateRows(printing?.front_ink_plate)
     const backInkPlate = meaningfulInkPlateRows(printing?.back_ink_plate)
@@ -481,9 +479,9 @@ export function JobSheetPrintPage() {
     const specTyped = spec as SpecPayload
     const cylMm = n(printing?.cylinder_size_mm)
     const platesAroundDisp =
-      printing?.plates_around != null && String(printing.plates_around).trim() !== '' ? s(printing.plates_around) : '—'
+      printing?.plates_around != null && String(printing.plates_around).trim() !== '' ? s(printing.plates_around) : ''
     const platesAcrossDisp =
-      printing?.plates_across != null && String(printing.plates_across).trim() !== '' ? s(printing.plates_across) : '—'
+      printing?.plates_across != null && String(printing.plates_across).trim() !== '' ? s(printing.plates_across) : ''
 
     const legacyInkPlate =
       frontInkPlate.length === 0 && backInkPlate.length === 0 && (inkCodesLegacy.length > 0 || plateCodesLegacy.length > 0)
@@ -508,12 +506,12 @@ export function JobSheetPrintPage() {
       finishedBagSize: formatJobSheetFinishedBagSizeFromSpec(specTyped),
       sealType: formatSealType(run?.seal_type ?? printing?.seal_type),
       eyeSpot: formatEyeSpot(printing?.eye_spot),
-      artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '—',
-      artworkPdfs: artworkPdfNames.length ? artworkPdfNames.join('; ') : '—',
+      artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '',
+      artworkPdfs: artworkPdfNames.length ? artworkPdfNames.join('; ') : '',
       frontRows: frontInkPlate,
       backRows: backInkPlate,
       legacyInkPlate,
-      cylinder: cylMm != null ? `${cylMm} mm` : '—',
+      cylinder: cylMm != null ? `${cylMm} mm` : '',
       platesAround: platesAroundDisp,
       platesAcross: platesAcrossDisp,
     }
@@ -563,12 +561,12 @@ export function JobSheetPrintPage() {
             ? null
             : widthMm != null && widthMm > 0
               ? `${Math.round(widthMm)} mm`
-              : widthShorthandWmm !== '—'
+              : widthShorthandWmm !== ''
                 ? widthShorthandWmm
-                : '—',
+                : '',
         widthToleranceDisplay,
         lengthLine,
-        lengthToleranceDisplay: '—',
+        lengthToleranceDisplay: '',
         gaugeLine,
         gaugeTrimDisplay,
         slit,
@@ -576,24 +574,24 @@ export function JobSheetPrintPage() {
         runUpLine,
         coresLine,
         orderQuantities: {
-          numItems: numUnits != null ? String(Math.round(numUnits)) : '—',
+          numItems: numUnits != null ? String(Math.round(numUnits)) : '',
           rollsOrCtnsLabel: finishNorm === 'cartons' ? 'Ctns' : 'Rolls',
           numRollsOrCtns:
-            finishNorm === 'cartons' && cartonConversion != null && cartonConversion.totalCartons !== '—'
+            finishNorm === 'cartons' && cartonConversion != null && cartonConversion.totalCartons !== ''
               ? cartonConversion.totalCartons
               : numRolls != null
                 ? String(Math.round(numRolls))
-                : '—',
+                : '',
           totalKg: totalKgIncludingWasteDisplay,
           kgPerRoll:
             finishNorm === 'cartons'
-              ? '—'
+              ? ''
               : weightPerRoll != null && weightPerRoll > 0
                 ? `${weightPerRoll}`
-                : '—',
+                : '',
           totalM:
-            derivedTotalM != null ? fmtMetres(derivedTotalM) : totalMStored != null ? `${totalMStored}` : '—',
-          mPerRoll: derivedMPerRoll != null ? fmtMetres(derivedMPerRoll) : '—',
+            derivedTotalM != null ? fmtMetres(derivedTotalM) : totalMStored != null ? `${totalMStored}` : '',
+          mPerRoll: derivedMPerRoll != null ? fmtMetres(derivedMPerRoll) : '',
           wasteFactorPct,
           wasteFactorPctDisplay: wasteFactorPct != null ? formatWastePctForPrint(wasteFactorPct) : null,
           wasteKg: wasteKg != null ? `${wasteKg}` : null,
@@ -610,8 +608,8 @@ export function JobSheetPrintPage() {
         carton: cartonConversion,
       },
       extrusionSetup: {
-        extruderLabel: productionExtruderCode != null ? productionExtruderCode : '—',
-        dieLabel: dieSizeDisplay != null ? dieSizeDisplay : '—',
+        extruderLabel: productionExtruderCode != null ? productionExtruderCode : '',
+        dieLabel: dieSizeDisplay != null ? dieSizeDisplay : '',
       },
     }
   }, [data, quoteRatebook.data])
@@ -928,7 +926,7 @@ export function JobSheetPrintPage() {
               <td colSpan={5}>{model.product.orderedQuantityLabel}</td>
             </tr>
             <tr><th>Notes</th><td colSpan={5} style={{ whiteSpace: 'pre-wrap' }}>{model.product.notes}</td></tr>
-            <tr><th>Quality checks</th><td colSpan={5}>{model.product.qualityChecks.length ? model.product.qualityChecks.join(' · ') : '—'}</td></tr>
+            <tr><th>Quality checks</th><td colSpan={5}>{model.product.qualityChecks.length ? model.product.qualityChecks.join(' · ') : ''}</td></tr>
           </tbody>
         </table>
 
@@ -976,7 +974,7 @@ export function JobSheetPrintPage() {
                               Width:{' '}
                               {e.widthSplitMm && e.widthSplitMm.length >= 2
                                 ? e.widthSplitMm.join(' / ')
-                                : e.widthPrimarySingle ?? '—'}
+                                : e.widthPrimarySingle ?? ''}
                             </div>
                           </div>
                           <div className="js-dim-secondary">Tolerance: {e.widthToleranceDisplay}</div>
@@ -1080,7 +1078,7 @@ export function JobSheetPrintPage() {
                     <span className="js-muted">)</span>
                   </>
                 ) : (
-                  <span className="js-print-val">—</span>
+                  <span className="js-print-val" />
                 )}
               </td>
             </tr>

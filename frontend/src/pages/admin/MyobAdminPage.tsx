@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link as RouterLink, useSearchParams } from 'react-router-dom'
-import { Alert, Box, Button, Link, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Checkbox, FormControlLabel, Link, Paper, Stack, TextField, Typography } from '@mui/material'
 import { ApiError, apiFetch } from '../../api/client'
 import { AdminPageHeader } from './components/AdminPageHeader'
 
@@ -34,25 +34,6 @@ type MyobSyncResult = {
   errors: string[]
   /** Aggregated MYOB GET response (business_id, count, pages_fetched, truncated, items) used for this import. */
   myob_json?: MyobCustomersPreview
-}
-
-type MyobSaleOrdersListPreview = {
-  business_id: string
-  request_url: string
-  top: number
-  skip: number
-  item_count: number
-  next_page_link: unknown
-  myob: unknown
-}
-
-/** Same response envelope as {@link MyobSaleOrdersListPreview} (MYOB list-preview endpoints). */
-type MyobSaleInvoiceItemsListPreview = MyobSaleOrdersListPreview
-
-type MyobSaleOrderFetchResult = {
-  request_url: string
-  resolved_by: string
-  myob: unknown
 }
 
 type MyobImportOneResult = {
@@ -120,7 +101,7 @@ type MyobPipelineStartResponse = {
 /** ``GET /api/myob/import/jobs/{job_id}`` while a background pipeline runs. */
 type MyobImportJobStatus = {
   job_id: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed' | 'interrupted'
   phase: 'customers' | 'item_cache' | 'orders' | 'done'
   message: string
   orders_mode: 'all' | 'page'
@@ -141,22 +122,10 @@ export function MyobAdminPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [banner, setBanner] = useState<'success' | 'error' | null>(null)
   const [bannerDetail, setBannerDetail] = useState<string | null>(null)
-  const [preview, setPreview] = useState<MyobCustomersPreview | null>(null)
-  const [syncResult, setSyncResult] = useState<MyobSyncResult | null>(null)
   const [companyFileId, setCompanyFileId] = useState('')
-  const [saleOrdersTop, setSaleOrdersTop] = useState(20)
-  const [saleOrdersSkip, setSaleOrdersSkip] = useState(0)
-  const [saleOrderUri, setSaleOrderUri] = useState('')
-  const [saleOrderUid, setSaleOrderUid] = useState('')
-  const [saleOrdersPreview, setSaleOrdersPreview] = useState<MyobSaleOrdersListPreview | null>(null)
-  const [saleOrderFetch, setSaleOrderFetch] = useState<MyobSaleOrderFetchResult | null>(null)
-  const [invoiceItemsTop, setInvoiceItemsTop] = useState(20)
-  const [invoiceItemsSkip, setInvoiceItemsSkip] = useState(0)
-  const [invoiceItemsPreview, setInvoiceItemsPreview] = useState<MyobSaleInvoiceItemsListPreview | null>(null)
-  const [importOneResult, setImportOneResult] = useState<MyobImportOneResult | null>(null)
-  const [importBatchResult, setImportBatchResult] = useState<MyobImportFromListResult | null>(null)
-  const [importAllResult, setImportAllResult] = useState<MyobImportAllResult | null>(null)
   const [importAllTop, setImportAllTop] = useState(200)
+  const [skipCustomers, setSkipCustomers] = useState(false)
+  const [skipItemCache, setSkipItemCache] = useState(false)
   const [arbitraryGetUrl, setArbitraryGetUrl] = useState('')
   const [arbitraryGetResult, setArbitraryGetResult] = useState<{ request_url: string; myob: unknown } | null>(null)
   const [itemUomSummary, setItemUomSummary] = useState<MyobItemUomSummary | null>(null)
@@ -190,6 +159,59 @@ export function MyobAdminPage() {
       }
     }
   }, [])
+
+  const stopPipelinePolling = useCallback(() => {
+    if (pipelinePollRef.current !== null) {
+      window.clearInterval(pipelinePollRef.current)
+      pipelinePollRef.current = null
+    }
+  }, [])
+
+  const beginPipelinePolling = useCallback(
+    async (jobId: string) => {
+      const finish = () => {
+        stopPipelinePolling()
+        setBusy(null)
+      }
+      const pollOnce = async () => {
+        try {
+          const st = await apiFetch<MyobImportJobStatus>(`/api/myob/import/jobs/${encodeURIComponent(jobId)}`)
+          setPipelineJob(st)
+          if (st.status === 'completed') {
+            finish()
+            if (st.result) setPipelineResult(st.result)
+            await doLoadItemUomSummary()
+          } else if (st.status === 'failed' || st.status === 'interrupted') {
+            finish()
+            setErr(st.error || st.message || 'MYOB import pipeline failed')
+          }
+        } catch (e) {
+          finish()
+          setErr(e instanceof Error ? e.message : 'MYOB import job poll failed')
+        }
+      }
+
+      await pollOnce()
+      pipelinePollRef.current = window.setInterval(() => void pollOnce(), 1500)
+    },
+    [stopPipelinePolling],
+  )
+
+  useEffect(() => {
+    const loadCurrentJob = async () => {
+      try {
+        const current = await apiFetch<MyobImportJobStatus | null>('/api/myob/import/jobs/current')
+        if (current && current.status === 'running') {
+          setPipelineJob(current)
+          setBusy('import-pipeline-all')
+          await beginPipelinePolling(current.job_id)
+        }
+      } catch {
+        // Best effort only; page still works without this.
+      }
+    }
+    void loadCurrentJob()
+  }, [beginPipelinePolling])
 
   useEffect(() => {
     if (status?.business_id_source === 'config') return
@@ -244,13 +266,6 @@ export function MyobAdminPage() {
     if (!window.confirm('Disconnect MYOB on this server? Stored tokens and company file id will be cleared.')) return
     setBusy('disconnect')
     setErr(null)
-    setPreview(null)
-    setSaleOrdersPreview(null)
-    setSaleOrderFetch(null)
-    setInvoiceItemsPreview(null)
-    setImportOneResult(null)
-    setImportBatchResult(null)
-    setImportAllResult(null)
     setArbitraryGetResult(null)
     setItemUomSummary(null)
     setItemUomRebuildResult(null)
@@ -271,112 +286,6 @@ export function MyobAdminPage() {
     }
   }
 
-  async function doPreviewCustomers() {
-    setBusy('preview')
-    setErr(null)
-    setPreview(null)
-    try {
-      const data = await apiFetch<MyobCustomersPreview>('/api/myob/customers/preview', { method: 'POST' })
-      setPreview(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to fetch MYOB customers')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function doSyncCustomers() {
-    if (
-      !window.confirm(
-        'Import / update customers from MYOB into Production Software? Existing rows with the same MYOB UID will be updated; new MYOB customers will be created. Brand is set on each sync: a leading “D -” on the individual last name or company name maps to the Dolphin brand (code DOLPHIN); otherwise Crown Pack (CROWN_PACK). Default brand rows are created by the database migration (and ensured at sync if missing). Other app-only fields (priority, delivery preferences, notes) are preserved where the sync does not overwrite them.',
-      )
-    ) {
-      return
-    }
-    setBusy('sync')
-    setErr(null)
-    setSyncResult(null)
-    try {
-      const data = await apiFetch<MyobSyncResult>('/api/myob/customers/sync', { method: 'POST' })
-      setSyncResult(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'MYOB customer sync failed')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function doSaleOrdersListPreview() {
-    setBusy('sale-orders-preview')
-    setErr(null)
-    setSaleOrdersPreview(null)
-    setSaleOrderFetch(null)
-    try {
-      const data = await apiFetch<MyobSaleOrdersListPreview>('/api/myob/sale/orders/list-preview', {
-        method: 'POST',
-        body: JSON.stringify({
-          top: Number.isFinite(saleOrdersTop) ? saleOrdersTop : 20,
-          skip: Number.isFinite(saleOrdersSkip) ? saleOrdersSkip : 0,
-        }),
-      })
-      setSaleOrdersPreview(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to list MYOB sale orders')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function doSaleOrderFetchJson() {
-    const uri = saleOrderUri.trim()
-    const uid = saleOrderUid.trim()
-    if (!uri && !uid) {
-      setErr('Paste an order URI from the list preview, or a 32–40 character order UID (GUID).')
-      return
-    }
-    if (uid && (uid.length < 32 || uid.length > 40)) {
-      setErr('Order UID must be 32–40 characters (MYOB GUID, with or without hyphens).')
-      return
-    }
-    setBusy('sale-order-fetch')
-    setErr(null)
-    setSaleOrderFetch(null)
-    try {
-      const body: { order_uri?: string; order_uid?: string } = {}
-      if (uri) body.order_uri = uri
-      else body.order_uid = uid
-      const data = await apiFetch<MyobSaleOrderFetchResult>('/api/myob/sale/orders/fetch-json', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      })
-      setSaleOrderFetch(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to fetch MYOB sale order')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function doSaleInvoiceItemsListPreview() {
-    setBusy('sale-invoice-items-preview')
-    setErr(null)
-    setInvoiceItemsPreview(null)
-    try {
-      const data = await apiFetch<MyobSaleInvoiceItemsListPreview>('/api/myob/sale/invoice/items/list-preview', {
-        method: 'POST',
-        body: JSON.stringify({
-          top: Number.isFinite(invoiceItemsTop) ? invoiceItemsTop : 20,
-          skip: Number.isFinite(invoiceItemsSkip) ? invoiceItemsSkip : 0,
-        }),
-      })
-      setInvoiceItemsPreview(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to list MYOB Sale/Invoice/Item')
-    } finally {
-      setBusy(null)
-    }
-  }
-
   async function doLoadItemUomSummary() {
     setBusy('item-uom-summary')
     setErr(null)
@@ -385,28 +294,6 @@ export function MyobAdminPage() {
       setItemUomSummary(data)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load item UOM summary')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function doRebuildItemUomCache() {
-    if (
-      !window.confirm(
-        'Rebuild the local MYOB item UOM cache? This deletes all cached rows and re-downloads every Inventory/Item from MYOB (GET-only). Order import then uses the cache and only fetches items not yet cached.',
-      )
-    ) {
-      return
-    }
-    setBusy('item-uom-rebuild')
-    setErr(null)
-    setItemUomRebuildResult(null)
-    try {
-      const data = await apiFetch<MyobItemUomRebuildResult>('/api/myob/item-selling-uoms/rebuild', { method: 'POST' })
-      setItemUomRebuildResult(data)
-      await doLoadItemUomSummary()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to rebuild item UOM cache')
     } finally {
       setBusy(null)
     }
@@ -434,40 +321,15 @@ export function MyobAdminPage() {
     }
   }
 
-  async function doImportFirstFiftyOrders() {
-    if (
-      !window.confirm(
-        'Import the first 50 MYOB sale orders from the list page (OData $top=50, $skip=0)? ' +
-          'Each order is created or updated the same way as a single import. ' +
-          'Customers must already be synced from MYOB. Rows that error are reported; others are still saved.',
-      )
-    ) {
-      return
-    }
-    setBusy('import-batch-50')
-    setErr(null)
-    setImportBatchResult(null)
-    setImportAllResult(null)
-    try {
-      const data = await apiFetch<MyobImportFromListResult>('/api/myob/orders/import-from-list', {
-        method: 'POST',
-        body: JSON.stringify({ top: 50, skip: 0 }),
-      })
-      setImportBatchResult(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'MYOB batch order import failed')
-    } finally {
-      setBusy(null)
-    }
-  }
-
   async function doImportPipeline() {
     const topAll = Number.isFinite(importAllTop) ? Math.min(1000, Math.max(1, importAllTop)) : 200
     const msg = [
       'Run the full MYOB import pipeline?',
       '',
-      '1. Sync customers from MYOB into this app',
-      '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
+      skipCustomers ? '1. Skip customer sync (as selected)' : '1. Sync ALL customers from MYOB into this app',
+      skipItemCache
+        ? '2. Skip item UOM cache rebuild (as selected)'
+        : '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
       `3. List all sale orders (GET …/Sale/Order, $top=${topAll} per list page), fetch/import only Open orders`,
       '4. Import all sale invoices',
       '',
@@ -475,54 +337,25 @@ export function MyobAdminPage() {
       'The server runs the work in the background; this page polls for status.',
     ].join('\n')
     if (!window.confirm(msg)) return
-    if (pipelinePollRef.current !== null) {
-      window.clearInterval(pipelinePollRef.current)
-      pipelinePollRef.current = null
-    }
+    stopPipelinePolling()
     setBusy('import-pipeline-all')
     setErr(null)
     setPipelineResult(null)
     setPipelineJob(null)
-    setSyncResult(null)
     setItemUomRebuildResult(null)
-    setImportBatchResult(null)
-    setImportAllResult(null)
-    const body = { orders: 'all' as const, orders_top: topAll, orders_skip: 0 }
+    const body = {
+      orders: 'all' as const,
+      orders_top: topAll,
+      orders_skip: 0,
+      skip_customers: skipCustomers,
+      skip_item_cache: skipItemCache,
+    }
     try {
       const start = await apiFetch<MyobPipelineStartResponse>('/api/myob/import/pipeline/start', {
         method: 'POST',
         body: JSON.stringify(body),
       })
-      const jobId = start.job_id
-
-      const finish = () => {
-        if (pipelinePollRef.current !== null) {
-          window.clearInterval(pipelinePollRef.current)
-          pipelinePollRef.current = null
-        }
-        setBusy(null)
-      }
-
-      const pollOnce = async () => {
-        try {
-          const st = await apiFetch<MyobImportJobStatus>(`/api/myob/import/jobs/${encodeURIComponent(jobId)}`)
-          setPipelineJob(st)
-          if (st.status === 'completed') {
-            finish()
-            if (st.result) setPipelineResult(st.result)
-            await doLoadItemUomSummary()
-          } else if (st.status === 'failed') {
-            finish()
-            setErr(st.error || st.message || 'MYOB import pipeline failed')
-          }
-        } catch (e) {
-          finish()
-          setErr(e instanceof Error ? e.message : 'MYOB import job poll failed')
-        }
-      }
-
-      await pollOnce()
-      pipelinePollRef.current = window.setInterval(() => void pollOnce(), 1500)
+      await beginPipelinePolling(start.job_id)
     } catch (e) {
       setBusy(null)
       if (e instanceof ApiError && e.status === 409) {
@@ -533,76 +366,16 @@ export function MyobAdminPage() {
             : e.message
         const rj =
           typeof d === 'object' && d !== null && 'running_job' in d ? (d as { running_job: unknown }).running_job : null
-        setErr(
-          `${msg}${rj != null ? ` ${typeof rj === 'string' ? rj : JSON.stringify(rj)}` : ''}`,
-        )
+        if (rj && typeof rj === 'object' && 'job_id' in (rj as Record<string, unknown>)) {
+          const running = rj as MyobImportJobStatus
+          setPipelineJob(running)
+          setBusy('import-pipeline-all')
+          await beginPipelinePolling(running.job_id)
+        }
+        setErr(`${msg}${rj != null ? ` ${typeof rj === 'string' ? rj : JSON.stringify(rj)}` : ''}`)
       } else {
         setErr(e instanceof Error ? e.message : 'MYOB import pipeline failed to start')
       }
-    }
-  }
-
-  async function doImportAllSaleOrders() {
-    if (
-      !window.confirm(
-        'Import every MYOB sale order? The server will page through GET …/Sale/Order (OData) until there are no more rows, importing each order the same way as a single import. Customers must already be synced from MYOB. This can take many minutes and perform a large number of API calls. Continue?',
-      )
-    ) {
-      return
-    }
-    setBusy('import-all-orders')
-    setErr(null)
-    setImportAllResult(null)
-    setImportBatchResult(null)
-    try {
-      const top = Number.isFinite(importAllTop) ? Math.min(1000, Math.max(1, importAllTop)) : 200
-      const data = await apiFetch<MyobImportAllResult>('/api/myob/orders/import-all', {
-        method: 'POST',
-        body: JSON.stringify({ top }),
-      })
-      setImportAllResult(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'MYOB import all orders failed')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function doImportOneOrder() {
-    const uri = saleOrderUri.trim()
-    const uid = saleOrderUid.trim()
-    if (!uri && !uid) {
-      setErr('Paste an order URI from the list preview, or a 32–40 character order UID, then import.')
-      return
-    }
-    if (uid && (uid.length < 32 || uid.length > 40)) {
-      setErr('Order UID must be 32–40 characters (MYOB GUID, with or without hyphens).')
-      return
-    }
-    if (
-      !window.confirm(
-        'Import this MYOB sale order into Production Software? The customer must already be synced from MYOB. Existing order with the same MYOB order UID will be updated.',
-      )
-    ) {
-      return
-    }
-    setBusy('import-one-order')
-    setErr(null)
-    setImportOneResult(null)
-    setImportAllResult(null)
-    try {
-      const body: { order_uri?: string; order_uid?: string } = {}
-      if (uri) body.order_uri = uri
-      else body.order_uid = uid
-      const data = await apiFetch<MyobImportOneResult>('/api/myob/orders/import-one', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      })
-      setImportOneResult(data)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'MYOB order import failed')
-    } finally {
-      setBusy(null)
     }
   }
 
@@ -653,106 +426,6 @@ export function MyobAdminPage() {
             >
               {JSON.stringify(pipelineJob.partial, null, 2)}
             </Paper>
-          ) : null}
-        </Alert>
-      ) : null}
-      {importOneResult ? (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          Order imported. MYOB UID {importOneResult.myob_order_uid} — {importOneResult.lines_synced} line(s) synced. Job
-          sheet placeholders: {importOneResult.myob_all_job_sheets_entered ? 'all linked' : 'pending'}.{' '}
-          <Button
-            size="small"
-            component={RouterLink}
-            to={`/orders/${encodeURIComponent(importOneResult.order_id)}`}
-            sx={{ ml: 1 }}
-            variant="outlined"
-          >
-            Open order
-          </Button>
-        </Alert>
-      ) : null}
-      {importBatchResult ? (
-        <Alert
-          severity={importBatchResult.failed > 0 || !importBatchResult.ok ? 'warning' : 'success'}
-          sx={{ mb: 2 }}
-        >
-          Batch import: {importBatchResult.imported} imported, {importBatchResult.failed} failed of{' '}
-          {importBatchResult.list_item_count} list row(s) ($top={importBatchResult.top}, $skip={importBatchResult.skip}).
-          {importBatchResult.results[0] ? (
-            <>
-              {' '}
-              <Button
-                size="small"
-                component={RouterLink}
-                to={`/orders/${encodeURIComponent(importBatchResult.results[0].order_id)}`}
-                variant="outlined"
-                sx={{ ml: 1 }}
-              >
-                Open first imported order
-              </Button>
-            </>
-          ) : null}
-          {importBatchResult.errors.length > 0 ? (
-            <Box
-              component="pre"
-              sx={{
-                mt: 1,
-                p: 1,
-                maxHeight: 200,
-                overflow: 'auto',
-                bgcolor: 'action.hover',
-                fontSize: 12,
-                borderRadius: 0.5,
-              }}
-            >
-              {JSON.stringify(importBatchResult.errors, null, 2)}
-            </Box>
-          ) : null}
-        </Alert>
-      ) : null}
-      {importAllResult ? (
-        <Alert
-          severity={
-            importAllResult.truncated || importAllResult.failed > 0 || !importAllResult.ok ? 'warning' : 'success'
-          }
-          sx={{ mb: 2 }}
-        >
-          Import all: {importAllResult.imported} imported, {importAllResult.skipped} skipped, {importAllResult.failed}{' '}
-          failed — {importAllResult.pages_fetched} MYOB list page(s), $top={importAllResult.top}.
-          {importAllResult.truncated ? (
-            <Typography component="span" variant="body2" display="block" sx={{ mt: 0.5 }}>
-              Stopped at the server&apos;s maximum page count; run again or raise the cap in code if more orders remain.
-            </Typography>
-          ) : null}
-          {importAllResult.results[0] ? (
-            <>
-              {' '}
-              <Button
-                size="small"
-                component={RouterLink}
-                to={`/orders/${encodeURIComponent(importAllResult.results[0].order_id)}`}
-                variant="outlined"
-                sx={{ ml: 1 }}
-              >
-                Open first imported order
-              </Button>
-            </>
-          ) : null}
-          {importAllResult.errors.length > 0 ? (
-            <Box
-              component="pre"
-              sx={{
-                mt: 1,
-                p: 1,
-                maxHeight: 200,
-                overflow: 'auto',
-                bgcolor: 'action.hover',
-                fontSize: 12,
-                borderRadius: 0.5,
-              }}
-            >
-              {JSON.stringify(importAllResult.errors, null, 2)}
-            </Box>
           ) : null}
         </Alert>
       ) : null}
@@ -846,20 +519,8 @@ export function MyobAdminPage() {
                   (Job state is kept in server memory per process — use a single worker or sticky sessions if you scale
                   horizontally.)
                 </Typography>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={() => void doImportPipeline()}
-                    disabled={busy !== null}
-                  >
-                    {busy === 'import-pipeline-all'
-                      ? 'Running pipeline (open orders + invoices)…'
-                      : 'Pipeline: customers → items → OPEN sale orders + ALL invoices'}
-                  </Button>
-                </Stack>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                  Uses the <strong>Import-all $top</strong> field further down as sale-order list page size.
+                  Use the controls below to run this pipeline and optionally skip customer sync or item cache rebuild.
                 </Typography>
               </Paper>
             ) : null}
@@ -908,67 +569,9 @@ export function MyobAdminPage() {
               <Button variant="outlined" onClick={() => void doRefresh()} disabled={!status?.connected || busy !== null}>
                 Refresh access token (no browser login)
               </Button>
-              <Button
-                variant="outlined"
-                color="secondary"
-                onClick={() => void doPreviewCustomers()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'preview' ? 'Fetching customers…' : 'Test: fetch customers from MYOB (read-only)'}
-              </Button>
-              <Button
-                variant="contained"
-                color="secondary"
-                onClick={() => void doSyncCustomers()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'sync' ? 'Syncing customers…' : 'Import / sync customers from MYOB'}
-              </Button>
-              <Button
-                variant="outlined"
-                color="info"
-                onClick={() => void doSaleInvoiceItemsListPreview()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'sale-invoice-items-preview'
-                  ? 'Listing item invoices…'
-                  : 'Test: list Sale/Invoice/Item (subset)'}
-              </Button>
-              <Button
-                variant="outlined"
-                color="info"
-                onClick={() => void doSaleOrdersListPreview()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'sale-orders-preview' ? 'Listing orders…' : 'Test: list sale orders (subset)'}
-              </Button>
-              <Button
-                variant="outlined"
-                color="info"
-                onClick={() => void doSaleOrderFetchJson()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'sale-order-fetch' ? 'Fetching order…' : 'Test: fetch one sale order as JSON'}
-              </Button>
-              <Button
-                variant="contained"
-                color="success"
-                onClick={() => void doImportOneOrder()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'import-one-order' ? 'Importing order…' : 'Import one order to Production'}
-              </Button>
-              <Button
-                variant="contained"
-                color="success"
-                onClick={() => void doImportFirstFiftyOrders()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'import-batch-50' ? 'Importing orders…' : 'Import first 50 sale orders'}
-              </Button>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
                 <TextField
-                  label="Import-all $top"
+                  label="Orders page size ($top)"
                   type="number"
                   size="small"
                   value={importAllTop}
@@ -979,16 +582,36 @@ export function MyobAdminPage() {
                   }}
                   inputProps={{ min: 1, max: 1000 }}
                   sx={{ width: 140 }}
-                  helperText="1–1000 per list page"
+                  helperText="1–1000"
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={skipCustomers}
+                      onChange={(e) => setSkipCustomers(e.target.checked)}
+                      disabled={!status?.connected || busy !== null}
+                    />
+                  }
+                  label="Skip customer import"
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={skipItemCache}
+                      onChange={(e) => setSkipItemCache(e.target.checked)}
+                      disabled={!status?.connected || busy !== null}
+                    />
+                  }
+                  label="Skip item cache rebuild"
                 />
                 <Button
                   variant="contained"
-                  color="warning"
-                  onClick={() => void doImportAllSaleOrders()}
+                  color="primary"
+                  onClick={() => void doImportPipeline()}
                   disabled={!status?.connected || busy !== null}
                   sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}
                 >
-                  {busy === 'import-all-orders' ? 'Importing all orders…' : 'Import all sale orders from MYOB'}
+                  {busy === 'import-pipeline-all' ? 'Running pipeline…' : 'Run main import pipeline'}
                 </Button>
               </Stack>
               <Button
@@ -998,21 +621,6 @@ export function MyobAdminPage() {
                 disabled={!status?.connected || busy !== null}
               >
                 {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect MYOB'}
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={() => void doLoadItemUomSummary()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'item-uom-summary' ? 'Loading…' : 'Load item UOM summary'}
-              </Button>
-              <Button
-                variant="contained"
-                color="warning"
-                onClick={() => void doRebuildItemUomCache()}
-                disabled={!status?.connected || busy !== null}
-              >
-                {busy === 'item-uom-rebuild' ? 'Rebuilding…' : 'Rebuild item UOM cache from MYOB'}
               </Button>
             </Stack>
 
@@ -1082,89 +690,6 @@ export function MyobAdminPage() {
               <strong>Python process stdout</strong> for <code>[MYOB] access_token=...</code> while developing.
             </Typography>
 
-            <Typography variant="body2" color="text.secondary">
-              <strong>Test: fetch customers</strong> runs GET-only requests to MYOB&apos;s API (no changes to your MYOB
-              file). If MYOB returns 401, reconnect OAuth, confirm <code>MYOB_APP_KEY</code> / scopes, and that the
-              company file id is correct.
-            </Typography>
-
-            <Typography variant="body2" color="text.secondary">
-              <strong>Item sale invoices:</strong> MYOB exposes <code>GET …/Sale/Invoice/Item</code> for item-type
-              invoices (lines, customer, inventory links). Use <strong>list Sale/Invoice/Item</strong> with{' '}
-              <code>$top</code> / <code>$skip</code> below to page through them; response JSON is shown for inspection
-              before a full import.
-            </Typography>
-
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap alignItems="flex-end">
-              <TextField
-                label="Invoice items $top"
-                type="number"
-                size="small"
-                value={invoiceItemsTop}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10)
-                  if (Number.isNaN(n)) return
-                  setInvoiceItemsTop(Math.min(1000, Math.max(1, n)))
-                }}
-                inputProps={{ min: 1, max: 1000 }}
-                sx={{ width: 160 }}
-                helperText="1–1000"
-              />
-              <TextField
-                label="Invoice items $skip"
-                type="number"
-                size="small"
-                value={invoiceItemsSkip}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10)
-                  if (Number.isNaN(n)) return
-                  setInvoiceItemsSkip(Math.max(0, n))
-                }}
-                inputProps={{ min: 0 }}
-                sx={{ width: 160 }}
-                helperText="Paging offset"
-              />
-            </Stack>
-
-            <Typography variant="body2" color="text.secondary">
-              <strong>Sale orders:</strong> MYOB exposes <code>GET …/Sale/Order</code> with OData <code>$top</code> /{' '}
-              <code>$skip</code> so you can page through thousands of orders. Use <strong>list sale orders</strong> to
-              fetch a subset; copy a row&apos;s <code>URI</code> (or <code>UID</code>) into the fields below and click{' '}
-              <strong>fetch one sale order</strong>. The <code>sme-sales</code> OAuth scope is required for{' '}
-              <code>/Sale/</code> endpoints. If you still see 403, reconnect MYOB after deploys that change OAuth scopes
-              in <code>app/config.py</code>.
-            </Typography>
-
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap alignItems="flex-end">
-              <TextField
-                label="Orders $top"
-                type="number"
-                size="small"
-                value={saleOrdersTop}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10)
-                  if (Number.isNaN(n)) return
-                  setSaleOrdersTop(Math.min(1000, Math.max(1, n)))
-                }}
-                inputProps={{ min: 1, max: 1000 }}
-                sx={{ width: 140 }}
-                helperText="1–1000"
-              />
-              <TextField
-                label="Orders $skip"
-                type="number"
-                size="small"
-                value={saleOrdersSkip}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10)
-                  if (Number.isNaN(n)) return
-                  setSaleOrdersSkip(Math.max(0, n))
-                }}
-                inputProps={{ min: 0 }}
-                sx={{ width: 140 }}
-                helperText="Paging offset"
-              />
-            </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               <strong>Arbitrary GET:</strong> paste a full <code>https://api.myob.com/accountright/&#123;your company
               file&#125;/…</code> (or regional <code>*.api.myob.com</code>) URL that your OAuth token can read — for
@@ -1216,170 +741,6 @@ export function MyobAdminPage() {
               </Box>
             ) : null}
 
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'flex-start' }}>
-              <TextField
-                label="Order URI (from list Items[].URI)"
-                value={saleOrderUri}
-                onChange={(e) => setSaleOrderUri(e.target.value)}
-                size="small"
-                fullWidth
-                placeholder="https://api.myob.com/accountright/…/Sale/Order/…"
-              />
-              <TextField
-                label="Or order UID (GUID)"
-                value={saleOrderUid}
-                onChange={(e) => setSaleOrderUid(e.target.value)}
-                size="small"
-                fullWidth
-                sx={{ maxWidth: 400 }}
-                placeholder="32–40 chars; server tries Service/Item/… paths"
-              />
-            </Stack>
-
-            {syncResult ? (
-              <>
-                <Alert severity={syncResult.ok && syncResult.errors.length === 0 ? 'success' : 'warning'} sx={{ mt: 1 }}>
-                  Sync finished: {syncResult.created} created, {syncResult.updated} updated (MYOB rows:{' '}
-                  {syncResult.source_count}
-                  {syncResult.truncated ? ', truncated fetch' : ''}).
-                  {syncResult.errors.length > 0 ? (
-                    <Typography component="span" variant="body2" display="block" sx={{ mt: 1, fontFamily: 'monospace' }}>
-                      {syncResult.errors.slice(0, 8).join(' · ')}
-                      {syncResult.errors.length > 8 ? ` … (+${syncResult.errors.length - 8} more)` : ''}
-                    </Typography>
-                  ) : null}
-                </Alert>
-                {syncResult.myob_json != null ? (
-                  <Box sx={{ mt: 1 }}>
-                    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                      MYOB JSON used for this import (debug)
-                    </Typography>
-                    <Paper
-                      variant="outlined"
-                      sx={{
-                        p: 1,
-                        maxHeight: 480,
-                        overflow: 'auto',
-                        bgcolor: 'action.hover',
-                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                        fontSize: 12,
-                      }}
-                      component="pre"
-                    >
-                      {JSON.stringify(syncResult.myob_json, null, 2)}
-                    </Paper>
-                  </Box>
-                ) : null}
-              </>
-            ) : null}
-
-            {preview ? (
-              <Box sx={{ mt: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                  MYOB customers preview ({preview.count} records
-                  {preview.truncated ? ', truncated — hit page cap' : ''})
-                </Typography>
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    p: 1,
-                    maxHeight: 480,
-                    overflow: 'auto',
-                    bgcolor: 'action.hover',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                    fontSize: 12,
-                  }}
-                  component="pre"
-                >
-                  {JSON.stringify(preview, null, 2)}
-                </Paper>
-              </Box>
-            ) : null}
-
-            {invoiceItemsPreview ? (
-              <Box sx={{ mt: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                  MYOB Sale/Invoice/Item list (subset){' '}
-                  <Typography component="span" variant="caption" color="text.secondary">
-                    {invoiceItemsPreview.item_count} rows · skip={invoiceItemsPreview.skip} · top=
-                    {invoiceItemsPreview.top}
-                    {typeof invoiceItemsPreview.next_page_link === 'string' && invoiceItemsPreview.next_page_link
-                      ? ' · has NextPageLink'
-                      : ''}
-                  </Typography>
-                </Typography>
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    p: 1,
-                    maxHeight: 480,
-                    overflow: 'auto',
-                    bgcolor: 'action.hover',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                    fontSize: 12,
-                  }}
-                  component="pre"
-                >
-                  {JSON.stringify(invoiceItemsPreview, null, 2)}
-                </Paper>
-              </Box>
-            ) : null}
-
-            {saleOrdersPreview ? (
-              <Box sx={{ mt: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                  MYOB sale orders list (subset){' '}
-                  <Typography component="span" variant="caption" color="text.secondary">
-                    {saleOrdersPreview.item_count} rows · skip={saleOrdersPreview.skip} · top={saleOrdersPreview.top}
-                    {typeof saleOrdersPreview.next_page_link === 'string' && saleOrdersPreview.next_page_link
-                      ? ' · has NextPageLink'
-                      : ''}
-                  </Typography>
-                </Typography>
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    p: 1,
-                    maxHeight: 480,
-                    overflow: 'auto',
-                    bgcolor: 'action.hover',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                    fontSize: 12,
-                  }}
-                  component="pre"
-                >
-                  {JSON.stringify(saleOrdersPreview, null, 2)}
-                </Paper>
-              </Box>
-            ) : null}
-
-            {saleOrderFetch ? (
-              <Box sx={{ mt: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                  One sale order (read-only){' '}
-                  <Typography component="span" variant="caption" color="text.secondary">
-                    resolved by {saleOrderFetch.resolved_by}
-                  </Typography>
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                  {saleOrderFetch.request_url}
-                </Typography>
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    p: 1,
-                    maxHeight: 560,
-                    overflow: 'auto',
-                    bgcolor: 'action.hover',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                    fontSize: 12,
-                  }}
-                  component="pre"
-                >
-                  {JSON.stringify(saleOrderFetch.myob, null, 2)}
-                </Paper>
-              </Box>
-            ) : null}
 
             <Typography variant="body2" color="text.secondary">
               Docs:{' '}

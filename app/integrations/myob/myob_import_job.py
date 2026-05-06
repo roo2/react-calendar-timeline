@@ -52,6 +52,17 @@ def get_import_job(job_id: str) -> dict[str, Any] | None:
         return _row_to_dict(row) if row else None
 
 
+def get_running_import_job() -> dict[str, Any] | None:
+    with SessionLocal() as db:
+        row = db.scalars(
+            select(MyobImportJob)
+            .where(MyobImportJob.status == "running")
+            .order_by(MyobImportJob.updated_at.desc(), MyobImportJob.created_at.desc())
+            .limit(1)
+        ).first()
+        return _row_to_dict(row) if row else None
+
+
 def _strip_myob_json(customers: Any) -> Any:
     if not isinstance(customers, dict):
         return customers
@@ -116,6 +127,8 @@ def _run_job(
     orders: Literal["all", "page"],
     orders_top: int,
     orders_skip: int,
+    skip_customers: bool,
+    skip_item_cache: bool,
     resume_from: Literal["item_cache", "orders"] | None,
 ) -> None:
     def on_step(step: Literal["customers", "item_cache", "orders"], detail: dict[str, Any]) -> None:
@@ -130,6 +143,8 @@ def _run_job(
                 orders=orders,
                 orders_top=orders_top,
                 orders_skip=orders_skip,
+                skip_customers=skip_customers,
+                skip_item_cache=skip_item_cache,
                 on_step=on_step,
                 resume_from=resume_from,
             )
@@ -174,6 +189,8 @@ def start_import_job(
     orders: Literal["all", "page"],
     orders_top: int,
     orders_skip: int,
+    skip_customers: bool = False,
+    skip_item_cache: bool = False,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Insert a new job row and start a daemon thread (full pipeline)."""
     with _lock:
@@ -202,7 +219,7 @@ def start_import_job(
 
     threading.Thread(
         target=_run_job,
-        args=(job_id, orders, orders_top, orders_skip, None),
+        args=(job_id, orders, orders_top, orders_skip, skip_customers, skip_item_cache, None),
         name=f"myob-import-{job_id[:8]}",
         daemon=True,
     ).start()
@@ -246,7 +263,7 @@ def resume_import_job(job_id: str) -> tuple[str | None, dict[str, Any] | None, s
 
     threading.Thread(
         target=_run_job,
-        args=(job_id, o_mode, o_top, o_skip, resume),
+        args=(job_id, o_mode, o_top, o_skip, False, False, resume),
         name=f"myob-import-resume-{job_id[:8]}",
         daemon=True,
     ).start()

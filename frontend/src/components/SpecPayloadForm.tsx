@@ -604,6 +604,18 @@ export function SpecPayloadForm(props: {
     if (!printingEnabled) setPrintingDetailsOpen(false)
   }, [printingSurface, printingEnabled])
 
+  /** Printed jobs: default Treat to outside; never override an explicit inside (or outside) choice. */
+  const treatInsideOutside = run.treat_inside_outside
+  useEffect(() => {
+    if (!printingEnabled) return
+    const t = String(treatInsideOutside || 'none').toLowerCase()
+    if (t === 'inside' || t === 'outside') return
+    update((d) => {
+      d.run_requirements.treat_inside_outside = 'outside'
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `update` closes over latest `spec` via `clone(spec)` pattern
+  }, [printingEnabled, treatInsideOutside])
+
   const printingNumColoursField = (
     <TextField
       label="Number of Colours"

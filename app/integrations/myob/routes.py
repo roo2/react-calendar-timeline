@@ -19,7 +19,12 @@ from app.integrations.myob.item_selling_uom_cache import (
     rebuild_myob_item_selling_uom_cache,
 )
 from app.integrations.myob.order_import import import_one_myob_sale_order
-from app.integrations.myob.myob_import_job import get_import_job, resume_import_job, start_import_job
+from app.integrations.myob.myob_import_job import (
+    get_import_job,
+    get_running_import_job,
+    resume_import_job,
+    start_import_job,
+)
 from app.integrations.myob.myob_import_pipeline import run_myob_import_pipeline
 from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
 from app.integrations.myob.service import (
@@ -268,6 +273,14 @@ class MyobImportPipelineBody(BaseModel):
         le=10_000_000,
         description="Backward-compat only; ignored by the pipeline.",
     )
+    skip_customers: bool = Field(
+        False,
+        description="When true, do not run customer sync in this pipeline run.",
+    )
+    skip_item_cache: bool = Field(
+        False,
+        description="When true, do not rebuild the item UOM cache in this pipeline run.",
+    )
 
 
 class MyobImportPipelineStartResponse(BaseModel):
@@ -365,6 +378,8 @@ async def myob_import_pipeline(_identity: SysAdminIdentity, body: MyobImportPipe
                 orders="all",
                 orders_top=body.orders_top,
                 orders_skip=0,
+                skip_customers=body.skip_customers,
+                skip_item_cache=body.skip_item_cache,
             )
         except MyobConfigError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -395,6 +410,8 @@ async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImpo
         orders="all",
         orders_top=body.orders_top,
         orders_skip=0,
+        skip_customers=body.skip_customers,
+        skip_item_cache=body.skip_item_cache,
     )
     if job_id is None:
         raise HTTPException(
@@ -405,6 +422,16 @@ async def myob_import_pipeline_start(_identity: SysAdminIdentity, body: MyobImpo
             },
         )
     return MyobImportPipelineStartResponse(job_id=job_id, status_path=f"/api/myob/import/jobs/{job_id}")
+
+
+@router.get("/import/jobs/current", response_model=MyobImportJobStatusDTO | None)
+async def myob_import_job_current(_identity: SysAdminIdentity):
+    """Return the currently running background import job, if any."""
+    del _identity
+    row = get_running_import_job()
+    if row is None:
+        return None
+    return MyobImportJobStatusDTO(**row)
 
 
 @router.get("/import/jobs/{job_id}", response_model=MyobImportJobStatusDTO)
