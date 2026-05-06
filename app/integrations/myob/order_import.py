@@ -6,6 +6,7 @@ Re-import updates header fields and per-line data while preserving links to ``Jo
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import UTC, date, datetime
@@ -27,6 +28,8 @@ from app.integrations.myob.order_import_mapping import map_myob_item_to_app_quan
 from app.integrations.myob.service import MyobConfigError, fetch_inventory_item_readonly
 from app.job_sheets import service as job_sheets_service
 from app.str_norm import strip_trailing_dash_suffix
+
+logger = logging.getLogger(__name__)
 
 
 def _dec_str(v: Any) -> str:
@@ -266,6 +269,19 @@ def _requires_job_sheet_for_line(*, myob_item: dict | None, line: dict) -> bool:
 def _next_line_index(db: Session, order_id: str) -> int:
     m = db.scalar(select(func.max(OrderItem.line_index)).where(OrderItem.order_id == str(order_id)))
     return int(m if m is not None else -1) + 1
+
+
+def _other_order_item_uses_line_index(
+    db: Session, *, order_id: str, line_index: int, exclude_order_item_id: str | None
+) -> bool:
+    """True if another :class:`OrderItem` for this order already has ``line_index`` (unique per order)."""
+    q = select(OrderItem.id).where(
+        OrderItem.order_id == str(order_id),
+        OrderItem.line_index == int(line_index),
+    )
+    if exclude_order_item_id:
+        q = q.where(OrderItem.id != str(exclude_order_item_id))
+    return db.scalar(q) is not None
 
 
 def _delete_draft_import_job_sheet_if_any(db: Session, oi: OrderItem) -> None:
@@ -527,6 +543,7 @@ def import_one_myob_sale_order(
 
     seen_row_ids: set[int] = set()
     n_lines = 0
+    lines_skipped_line_index_conflict = 0
     for idx, line in enumerate(lines):
         if not isinstance(line, dict):
             continue
@@ -608,6 +625,17 @@ def import_one_myob_sale_order(
             )
 
         if oi is not None and oi.line_kind == "manufactured" and oi.myob_row_id is not None:
+            if _other_order_item_uses_line_index(
+                db, order_id=str(order.id), line_index=idx, exclude_order_item_id=str(oi.id)
+            ):
+                lines_skipped_line_index_conflict += 1
+                logger.info(
+                    "MYOB order import: skipping line_index=%s for order_id=%s RowID=%s (line slot held by another item)",
+                    idx,
+                    order.id,
+                    r_int,
+                )
+                continue
             oi.line_index = idx
             oi.myob_line_type = "Transaction"
             oi.myob_item_uid = str(it_d.get("UID")).strip() if it_d and it_d.get("UID") else None
@@ -643,6 +671,18 @@ def import_one_myob_sale_order(
                 if str(resell_catalog_kind) == "outsourced_manufacturing"
                 else None,
             )
+            if oi is not None:
+                if _other_order_item_uses_line_index(
+                    db, order_id=str(order.id), line_index=idx, exclude_order_item_id=str(oi.id)
+                ):
+                    lines_skipped_line_index_conflict += 1
+                    logger.info(
+                        "MYOB order import: skipping resell line_index=%s for order_id=%s RowID=%s (slot held by another item)",
+                        idx,
+                        order.id,
+                        r_int,
+                    )
+                    continue
             if oi is not None and oi.line_kind == "myob_import":
                 _delete_draft_import_job_sheet_if_any(db, oi)
             if oi is not None:
@@ -672,6 +712,15 @@ def import_one_myob_sale_order(
                 oi.import_requires_job_sheet = False
                 db.add(oi)
             else:
+                if _other_order_item_uses_line_index(db, order_id=str(order.id), line_index=idx, exclude_order_item_id=None):
+                    lines_skipped_line_index_conflict += 1
+                    logger.info(
+                        "MYOB order import: skipping new resell line_index=%s for order_id=%s RowID=%s (slot held by another item)",
+                        idx,
+                        order.id,
+                        r_int,
+                    )
+                    continue
                 oi = OrderItem(
                     id=str(uuid.uuid4()),
                     order_id=str(order.id),
@@ -714,6 +763,17 @@ def import_one_myob_sale_order(
             oi.resell_due_date = None
 
         if oi is not None:
+            if _other_order_item_uses_line_index(
+                db, order_id=str(order.id), line_index=idx, exclude_order_item_id=str(oi.id)
+            ):
+                lines_skipped_line_index_conflict += 1
+                logger.info(
+                    "MYOB order import: skipping MYOB import line_index=%s for order_id=%s RowID=%s (slot held by another item)",
+                    idx,
+                    order.id,
+                    r_int,
+                )
+                continue
             oi.line_index = idx
             oi.myob_line_type = "Transaction"
             oi.myob_item_uid = str(it_d.get("UID")).strip() if it_d and it_d.get("UID") else None
@@ -730,6 +790,15 @@ def import_one_myob_sale_order(
             oi.import_requires_job_sheet = bool(req_js)
             oi.line_kind = "myob_import"
         else:
+            if _other_order_item_uses_line_index(db, order_id=str(order.id), line_index=idx, exclude_order_item_id=None):
+                lines_skipped_line_index_conflict += 1
+                logger.info(
+                    "MYOB order import: skipping new MYOB import line_index=%s for order_id=%s RowID=%s (slot held by another item)",
+                    idx,
+                    order.id,
+                    r_int,
+                )
+                continue
             oi = OrderItem(
                 id=str(uuid.uuid4()),
                 order_id=str(order.id),
@@ -852,4 +921,5 @@ def import_one_myob_sale_order(
         "myob_invoice_status": str(invoice_for_status.get("Status") or "") if isinstance(invoice_for_status, dict) else None,
         "fulfillment_partial": part,
         "matched_invoice_uid": None,
+        "lines_skipped_line_index_conflict": lines_skipped_line_index_conflict,
     }

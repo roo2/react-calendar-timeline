@@ -175,7 +175,6 @@ export function makeDefaultSpec(): SpecPayload {
       print_position_notes: null,
       plates_around: null,
       plates_across: null,
-      seal_type: null,
       eye_spot: null,
     },
     quality_expectations: {
@@ -193,6 +192,7 @@ export function makeDefaultSpec(): SpecPayload {
       hole_punched: false,
       inline_seal: false,
       notes: null,
+      seal_type: null,
     },
     packaging: {
       pack_mode: 'Rolls',
@@ -270,6 +270,8 @@ export function SpecPayloadForm(props: {
   const quality = spec.quality_expectations || {}
   const run = spec.run_requirements || {}
   const packaging = spec.packaging || {}
+  /** Prefer `run_requirements.seal_type`; fall back to legacy `printing.seal_type` until re-saved. */
+  const sealTypeUiValue = String((run as { seal_type?: string | null }).seal_type ?? (printing as { seal_type?: string | null }).seal_type ?? '')
 
   const filmSuppliedReadonly = useMemo(() => formatJobSheetFilmSupplied(spec), [spec])
   const finishedBagSizeReadonly = useMemo(() => formatJobSheetFinishedBagSize(spec), [spec])
@@ -382,8 +384,6 @@ export function SpecPayloadForm(props: {
         ink_text: row?.ink_text ?? '',
       }))
     }
-    const pr = d.printing as Record<string, unknown>
-    if (pr && 'anilox_code' in pr) delete pr.anilox_code
   }
 
   function syncLegacyInkPlateFromPairs(d: SpecPayload) {
@@ -403,7 +403,6 @@ export function SpecPayloadForm(props: {
       if (next === 'None') {
         d.printing.cylinder_size_mm = null
       }
-      delete (d.printing as Record<string, unknown>).anilox_code
       for (const key of ['front_ink_plate', 'back_ink_plate'] as const) {
         const arr = Array.isArray(d.printing[key]) ? d.printing[key] : []
         d.printing[key] = arr.map((row: any) => ({
@@ -1341,7 +1340,6 @@ export function SpecPayloadForm(props: {
                       d.printing.front_ink_plate = []
                       d.printing.back_ink_plate = []
                       d.printing.cylinder_size_mm = null
-                      delete (d.printing as Record<string, unknown>).anilox_code
                     }
                   })
                 }
@@ -1999,14 +1997,6 @@ export function SpecPayloadForm(props: {
                       fullWidth
                     />
 
-                    <TextField
-                      label="Bar code"
-                      value={printing.barcode || ''}
-                      onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
-                      fullWidth
-                      helperText="Optional: barcode value when the print includes a barcode."
-                    />
-
                     <Box>
                       <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
                         Printer
@@ -2060,11 +2050,13 @@ export function SpecPayloadForm(props: {
                       <DefaultSelectField
                         label="Seal type"
                         defaultValue=""
-                        value={printing.seal_type || ''}
+                        value={sealTypeUiValue}
                         onChange={(e) =>
                           update((d) => {
                             const v = e.target.value
-                            d.printing.seal_type = v ? (v as any) : null
+                            if (!d.run_requirements) (d as any).run_requirements = {}
+                            d.run_requirements.seal_type = v ? (v as any) : null
+                            if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
                           })
                         }
                       >
@@ -2145,6 +2137,18 @@ export function SpecPayloadForm(props: {
                         helperText="Copies side by side (1–3)."
                       />
                     </Box>
+
+                    <TextField
+                      label="Bar code"
+                      size="small"
+                      value={printing.barcode || ''}
+                      onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
+                      fullWidth
+                      helperText="Optional — usually left blank."
+                      FormHelperTextProps={{ sx: { fontSize: '0.7rem', m: 0, mt: 0.5 } }}
+                      inputProps={{ style: { fontSize: '0.85rem' } }}
+                      InputLabelProps={{ sx: { fontSize: '0.85rem' } }}
+                    />
                   </>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
@@ -2326,7 +2330,7 @@ export function SpecPayloadForm(props: {
           />
         </Box>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
           <TextField
             select
             label="Slit"
@@ -2352,6 +2356,25 @@ export function SpecPayloadForm(props: {
             <MenuItem value="inside">inside</MenuItem>
             <MenuItem value="outside">outside</MenuItem>
           </TextField>
+          <DefaultSelectField
+            label="Seal type"
+            defaultValue=""
+            value={sealTypeUiValue}
+            onChange={(e) =>
+              update((d) => {
+                const v = e.target.value
+                if (!d.run_requirements) (d as any).run_requirements = {}
+                d.run_requirements.seal_type = v ? (v as any) : null
+                if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+              })
+            }
+          >
+            <MenuItem value="">
+              <em>Not set</em>
+            </MenuItem>
+            <MenuItem value="side">Side</MenuItem>
+            <MenuItem value="end">End</MenuItem>
+          </DefaultSelectField>
         </Box>
 
         <Box sx={{ mt: 2 }}>

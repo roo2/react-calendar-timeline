@@ -78,6 +78,11 @@ def _new_draft_order_code() -> str:
     return f"ORD-{uuid.uuid4().hex[:8].upper()}"
 
 
+def _next_order_line_index(db, order_id: str) -> int:
+    m = db.scalar(select(func.max(OrderItem.line_index)).where(OrderItem.order_id == str(order_id)))
+    return int(m if m is not None else -1) + 1
+
+
 def _ensure_draft_order_for_job_sheet_in_db(db, job_sheet_id: str, *, new_order_date: Optional[date] = None) -> str:
     """
     If no order line exists for this job sheet, create a DRAFT order with one line.
@@ -99,7 +104,8 @@ def _ensure_draft_order_for_job_sheet_in_db(db, job_sheet_id: str, *, new_order_
     )
     db.add(order)
     db.flush()
-    db.add(OrderItem(order_id=str(order.id), job_sheet_id=str(js.id)))
+    li = _next_order_line_index(db, str(order.id))
+    db.add(OrderItem(order_id=str(order.id), job_sheet_id=str(js.id), line_index=li))
     db.flush()
     return str(order.id)
 

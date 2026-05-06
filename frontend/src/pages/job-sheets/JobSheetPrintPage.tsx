@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@mui/material'
 import type { SpecPayload } from '../../components/SpecPayloadForm'
@@ -27,6 +27,14 @@ function n(v: unknown): number | null {
 function fmtMetres(v: number): string {
   const r = Math.round((v + Number.EPSILON) * 100) / 100
   return String(r)
+}
+
+/** Matches {@link ProductVersionSummary} / spec slugs like `2up`. */
+function displayRunUp(slug: unknown): string {
+  if (slug == null || slug === '' || slug === 'none') return '—'
+  const str = String(slug)
+  if (str === '1up' || str === '2up' || str.endsWith('up')) return str.replace('up', ' up')
+  return str
 }
 
 /** Matches labels in {@link SpecPayloadForm} slit select. */
@@ -70,6 +78,100 @@ function displayBlendTypeLabel(blendType: unknown): string {
   if (c === '' || c === 'LD') return 'House Blend (LD)'
   if (c === 'Custom') return 'Custom'
   return c
+}
+
+/** Same row filter as {@link ProductVersionSummary}. */
+function meaningfulInkPlateRows(pairs: unknown): Array<{ ink: string; plate: string }> {
+  return (Array.isArray(pairs) ? pairs : [])
+    .map((r: { ink_code?: unknown; plate_code?: unknown }) => ({
+      ink: (r?.ink_code ?? '').toString().trim(),
+      plate: (r?.plate_code ?? '').toString().trim(),
+    }))
+    .filter((row) => row.ink || row.plate)
+}
+
+function formatPrintSide(side: unknown): string {
+  const x = String(side ?? 'front')
+    .trim()
+    .toLowerCase()
+  if (x === 'front') return 'Front'
+  if (x === 'back') return 'Back'
+  if (x === 'both') return 'Both'
+  return s(side)
+}
+
+function formatSealType(v: unknown): string {
+  const x = String(v ?? '').trim().toLowerCase()
+  if (x === '') return '—'
+  if (x === 'side') return 'Side'
+  if (x === 'end') return 'End'
+  return s(v)
+}
+
+function formatEyeSpot(v: unknown): string {
+  const x = String(v ?? '').trim().toLowerCase()
+  if (x === '') return '—'
+  if (x === 'yes') return 'Yes'
+  if (x === 'no') return 'No'
+  return s(v)
+}
+
+/** Matches {@link SpecPayloadForm} `intOrDash` for film / bag readouts. */
+function intOrDashJob(n: unknown): string {
+  if (n == null || n === '') return '—'
+  const x = typeof n === 'number' ? n : Number(String(n).trim())
+  return Number.isFinite(x) && x > 0 ? String(Math.round(x)) : '—'
+}
+
+/** Same string as the printing-details modal “Film type supplied”. */
+function formatJobSheetFilmSuppliedFromSpec(spec: SpecPayload): string {
+  const dims = spec?.dimensions || {}
+  const w = dims.base_width_mm
+  const um = dims.thickness_um
+  if (w == null || um == null) return '—'
+  const geom = String(dims.geometry || '')
+  const gusset = Number(dims.gusset_mm || 0) > 0
+  const geoTag =
+    geom === 'Gusset' || geom === 'BottomGusset' || gusset ? 'G' : geom === 'CentreFold' ? 'C/F' : 'L/F'
+  return `${intOrDashJob(w)}mm ${intOrDashJob(um)}µm ${geoTag}`
+}
+
+/** Same string as the printing-details modal “Finished bag size”. */
+function formatJobSheetFinishedBagSizeFromSpec(spec: SpecPayload): string {
+  const dims = spec?.dimensions || {}
+  const w = dims.base_width_mm
+  const l = dims.base_length_mm
+  const um = dims.thickness_um
+  if (w == null) return '—'
+  const parts = [`${intOrDashJob(w)}mm`]
+  if (l != null) parts.push(`${intOrDashJob(l)}mm`)
+  if (um != null) parts.push(`${intOrDashJob(um)}µm`)
+  return parts.join(' × ')
+}
+
+function JobSheetPrintInkTable(props: { rows: Array<{ ink: string; plate: string }> }): ReactNode {
+  const { rows } = props
+  if (rows.length === 0) return <span className="js-print-v">—</span>
+  return (
+    <table className="js-print-ink" role="presentation">
+      <thead>
+        <tr>
+          <th className="js-print-ink-num">#</th>
+          <th>Ink</th>
+          <th>Plate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={`${r.ink}-${r.plate}-${i}`}>
+            <td className="js-print-ink-num">{i + 1}</td>
+            <td className="js-print-ink-mono">{r.ink || '—'}</td>
+            <td className="js-print-ink-mono">{r.plate || '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
 }
 
 export function JobSheetPrintPage() {
@@ -118,13 +220,16 @@ export function JobSheetPrintPage() {
 
     const productType = identity?.product_type ?? spec?.product_type ?? '—'
     const finishMode = identity?.finish_mode ?? spec?.finish_mode ?? '—'
-    const resinColour =
+    const resinColourRaw =
       formulation?.colour?.colour_code ??
       formulation?.colour?.name ??
-      formulation?.colour ??
+      (typeof formulation?.colour === 'string' ? formulation.colour : null) ??
       spec?.resin_colour ??
       spec?.colour ??
-      '—'
+      ''
+    const resinColourTrimmed = String(resinColourRaw ?? '').trim()
+    const resinColourExplicit = resinColourTrimmed !== '' && resinColourTrimmed !== '—'
+    const resinColourDisplay = resinColourExplicit ? resinColourTrimmed : 'Natural'
     const geometryLabel = dimensions?.geometry ?? spec?.geometry ?? '—'
     const widthMm = n(dimensions?.base_width_mm ?? spec?.base_width_mm)
     const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}Wmm` : '—'
@@ -168,6 +273,7 @@ export function JobSheetPrintPage() {
     const treatRaw = run?.treat_inside_outside ?? run?.treat ?? spec?.treat
     const slit = displaySlit(slitRaw)
     const treat = displayTreat(treatRaw)
+    const runUpLine = displayRunUp(run?.run_up ?? spec?.run_up)
     const coresLine = s(packaging?.core_type ?? spec?.core_type)
 
     const qv = n(js.quantity_value)
@@ -303,12 +409,68 @@ export function JobSheetPrintPage() {
 
     if (resinMixRows.length === 0) resinMixRows.push({ text: '—', highlight: false })
 
-    const printingRows = [
-      { label: 'Print method', value: s(printing?.method ?? spec?.print_method ?? spec?.printing_method) },
-      { label: 'No. colours', value: s(printing?.num_colours ?? spec?.num_colours) },
-      { label: 'Cylinder / Anilox', value: s(printing?.cylinder_size_mm != null ? `${printing.cylinder_size_mm} mm` : spec?.anilox) },
-      { label: 'Notes', value: s(printing?.print_description ?? printing?.print_position_notes ?? spec?.printing_notes ?? spec?.print_notes) },
-    ]
+    const printMethodDisplay = s(printing?.method ?? spec?.print_method ?? spec?.printing_method)
+    const printed =
+      printMethodDisplay !== '—' &&
+      printMethodDisplay.trim() !== '' &&
+      printMethodDisplay.trim().toLowerCase() !== 'none'
+
+    const frontInkPlate = meaningfulInkPlateRows(printing?.front_ink_plate)
+    const backInkPlate = meaningfulInkPlateRows(printing?.back_ink_plate)
+    const inkCodesLegacy = Array.isArray(printing?.ink_codes)
+      ? (printing.ink_codes as unknown[]).filter((x) => String(x ?? '').trim() !== '')
+      : []
+    const plateCodesLegacy = Array.isArray(printing?.plate_codes)
+      ? (printing.plate_codes as unknown[]).filter((x) => String(x ?? '').trim() !== '')
+      : []
+    const artworkRefs = Array.isArray(printing?.artwork_refs)
+      ? (printing.artwork_refs as unknown[]).filter((x) => String(x ?? '').trim() !== '')
+      : []
+    const artworkPdfNames = Array.isArray(printing?.artwork_files)
+      ? (printing.artwork_files as Array<{ filename?: unknown }>)
+          .map((f) => String(f?.filename ?? '').trim())
+          .filter(Boolean)
+      : []
+
+    const specTyped = spec as SpecPayload
+    const cylMm = n(printing?.cylinder_size_mm)
+    const platesAroundDisp =
+      printing?.plates_around != null && String(printing.plates_around).trim() !== '' ? s(printing.plates_around) : '—'
+    const platesAcrossDisp =
+      printing?.plates_across != null && String(printing.plates_across).trim() !== '' ? s(printing.plates_across) : '—'
+
+    const legacyInkPlate =
+      frontInkPlate.length === 0 && backInkPlate.length === 0 && (inkCodesLegacy.length > 0 || plateCodesLegacy.length > 0)
+        ? [
+            inkCodesLegacy.length ? `Inks: ${inkCodesLegacy.join(', ')}` : '',
+            plateCodesLegacy.length ? `Plates: ${plateCodesLegacy.join(', ')}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : null
+
+    const printingLayout = {
+      printed,
+      method: printMethodDisplay,
+      printDescription: s(printing?.print_description ?? spec?.printing_notes ?? spec?.print_notes),
+      barcode: s(printing?.barcode),
+      numColours: s(printing?.num_colours ?? spec?.num_colours),
+      printSide: formatPrintSide(printing?.side),
+      treatLine: treat,
+      printPosition: s(printing?.print_position_notes),
+      filmSupplied: formatJobSheetFilmSuppliedFromSpec(specTyped),
+      finishedBagSize: formatJobSheetFinishedBagSizeFromSpec(specTyped),
+      sealType: formatSealType(run?.seal_type ?? printing?.seal_type),
+      eyeSpot: formatEyeSpot(printing?.eye_spot),
+      artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '—',
+      artworkPdfs: artworkPdfNames.length ? artworkPdfNames.join('; ') : '—',
+      frontRows: frontInkPlate,
+      backRows: backInkPlate,
+      legacyInkPlate,
+      cylinder: cylMm != null ? `${cylMm} mm` : '—',
+      platesAround: platesAroundDisp,
+      platesAcross: platesAcrossDisp,
+    }
 
     const geoSnapshotForTail =
       derivedTotalM != null || derivedMPerRoll != null
@@ -343,7 +505,8 @@ export function JobSheetPrintPage() {
       extrusion: {
         productType: s(productType),
         finishMode: s(finishMode),
-        resinColour: s(resinColour),
+        resinColour: resinColourDisplay,
+        resinColourHighlight: resinColourExplicit,
         geometryLabel: s(geometryLabel),
         geometryExtras: [
           gussetMm != null && gussetMm > 0 ? `Gusset ${Math.round(gussetMm)} mm` : '',
@@ -364,10 +527,17 @@ export function JobSheetPrintPage() {
         gaugeTrimDisplay,
         slit,
         treat,
+        runUpLine,
         coresLine,
         orderQuantities: {
           numItems: numUnits != null ? String(Math.round(numUnits)) : '—',
-          numRollsOrCtns: numRolls != null ? String(Math.round(numRolls)) : '—',
+          rollsOrCtnsLabel: finishNorm === 'cartons' ? 'Ctns' : 'Rolls',
+          numRollsOrCtns:
+            finishNorm === 'cartons' && cartonConversion != null && cartonConversion.totalCartons !== '—'
+              ? cartonConversion.totalCartons
+              : numRolls != null
+                ? String(Math.round(numRolls))
+                : '—',
           totalKg: totalKg != null ? `${totalKg}` : qv != null && qtyUnit === 'kg' ? `${qv}` : '—',
           kgPerRoll:
             finishNorm === 'cartons'
@@ -385,7 +555,10 @@ export function JobSheetPrintPage() {
         },
         resinMixRows,
       },
-      printingRows,
+      printingLayout,
+      shipping: {
+        palletType: s(packaging?.pallet_type ?? spec?.pallet_type),
+      },
       conversionInstructions: {
         carton: cartonConversion,
       },
@@ -416,6 +589,8 @@ export function JobSheetPrintPage() {
   const e = model.extrusion
   const q = e.orderQuantities
   const conv = model.conversionInstructions
+  const ship = model.shipping
+  const p = model.printingLayout
   const printPath = jobSheetId ? `/job-sheets/${encodeURIComponent(jobSheetId)}/print` : ''
   const editHref = jobSheetId
     ? `/job-sheets/${encodeURIComponent(jobSheetId)}/edit?returnTo=${encodeURIComponent(printPath || '/job-sheets')}`
@@ -476,8 +651,22 @@ export function JobSheetPrintPage() {
             padding: 0 !important;
             vertical-align: top !important;
           }
+          .js-printing-wrap {
+            padding: 0 !important;
+            vertical-align: top !important;
+          }
           .js-sec, .js-sub { font-size: 10pt !important; }
           .js-muted { font-size: 9.5pt !important; }
+          .js-printing-nested > tbody > tr > th,
+          .js-printing-nested > tbody > tr > td {
+            padding: 3px 5px !important;
+            font-size: 9.75pt !important;
+          }
+          .js-print-ink th,
+          .js-print-ink td {
+            padding: 2px 4px !important;
+            font-size: 9.25pt !important;
+          }
         }
         .js-print-root {
           font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -557,7 +746,7 @@ export function JobSheetPrintPage() {
         }
         .js-run-triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
         .js-run-triple th {
-          width: 14%;
+          width: 11%;
           font-weight: 400;
           text-align: left;
           background: #f2c894;
@@ -567,6 +756,82 @@ export function JobSheetPrintPage() {
         }
         .js-run-triple td { font-weight: 700; border: 1px solid #000; padding: 6px 8px; }
         .js-resin-mix-hl { background: #fff566; }
+        .js-printing-wrap {
+          padding: 0 !important;
+          vertical-align: top;
+          border-left: none !important;
+          border-right: none !important;
+        }
+        .js-printing-nested {
+          width: 100%;
+          border-collapse: collapse;
+          table-layout: fixed;
+          margin: 0;
+          font-size: 12px;
+        }
+        .js-printing-nested > tbody > tr > th {
+          background: #ededed;
+          font-weight: 600;
+          font-size: 10px;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
+          text-align: left;
+          border: 1px solid #000;
+          padding: 4px 6px;
+          vertical-align: top;
+        }
+        .js-printing-nested > tbody > tr > td {
+          border: 1px solid #000;
+          padding: 4px 6px;
+          font-weight: 700;
+          vertical-align: top;
+          word-break: break-word;
+        }
+        .js-printing-nested .js-print-block { padding: 5px 7px; }
+        .js-print-k {
+          display: block;
+          font-weight: 600;
+          font-size: 10px;
+          color: #333;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          margin-bottom: 3px;
+        }
+        .js-print-v { font-weight: 700; font-size: 12px; }
+        .js-print-pre { white-space: pre-wrap; }
+        .js-print-ink {
+          width: 100%;
+          border-collapse: collapse;
+          margin-top: 4px;
+          font-size: 11px;
+        }
+        .js-print-ink th,
+        .js-print-ink td {
+          border: 1px solid #000;
+          padding: 3px 6px;
+          font-weight: 600;
+        }
+        .js-print-ink thead th {
+          background: #f2f2f2;
+          font-size: 10px;
+          font-weight: 600;
+        }
+        .js-print-ink-mono {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-weight: 700;
+        }
+        .js-print-ink-num { width: 2rem; text-align: center; }
+        .js-print-barcode-block { padding-top: 4px !important; padding-bottom: 5px !important; }
+        .js-print-barcode-k {
+          font-size: 9px !important;
+          letter-spacing: 0.04em;
+          margin-bottom: 2px !important;
+        }
+        .js-print-barcode-v {
+          font-size: 11px !important;
+          font-weight: 600;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
       `}</style>
 
       <div className="js-print-root">
@@ -621,7 +886,8 @@ export function JobSheetPrintPage() {
             <tr>
               <th>Product type</th><td>{e.productType}</td>
               <th>Finish</th><td>{e.finishMode}</td>
-              <th className="js-pink">(Resin) colour</th><td className="js-pink">{e.resinColour}</td>
+              <th className={e.resinColourHighlight ? 'js-pink' : undefined}>(Resin) colour</th>
+              <td className={e.resinColourHighlight ? 'js-pink' : undefined}>{e.resinColour}</td>
             </tr>
             <tr>
               <td colSpan={6} className="js-dim-wrap js-extrusion-dim-run-cell">
@@ -686,6 +952,8 @@ export function JobSheetPrintPage() {
                 <table className="js-run-triple" role="presentation">
                   <tbody>
                     <tr>
+                      <th>Run up</th>
+                      <td>{e.runUpLine}</td>
                       <th>Slit</th>
                       <td>{e.slit}</td>
                       <th>Treat</th>
@@ -713,7 +981,7 @@ export function JobSheetPrintPage() {
             <tr><td className="js-sec" colSpan={6}>Order quantities</td></tr>
             <tr>
               <th>No. of items</th><td>{q.numItems}</td>
-              <th>Rolls / ctns</th><td>{q.numRollsOrCtns}</td>
+              <th>{q.rollsOrCtnsLabel}</th><td>{q.numRollsOrCtns}</td>
               <th className={q.highlightTotalKg ? 'js-pink' : undefined}>Total kg</th>
               <td className={q.highlightTotalKg ? 'js-pink' : undefined}>{q.totalKg}</td>
             </tr>
@@ -751,12 +1019,111 @@ export function JobSheetPrintPage() {
         <table className="js-grid">
           <tbody>
             <tr><td className="js-sec" colSpan={2}>Printing</td></tr>
-            {model.printingRows.map((row) => (
-              <tr key={row.label}>
-                <th style={{ width: '32%' }}>{row.label}</th>
-                <td>{row.value}</td>
-              </tr>
-            ))}
+            <tr>
+              <td colSpan={2} className="js-printing-wrap">
+                <table className="js-printing-nested" role="presentation">
+                  <tbody>
+                    {!p.printed ? (
+                      <tr>
+                        <th style={{ width: '28%' }}>Print method</th>
+                        <td colSpan={2}>{p.method}</td>
+                      </tr>
+                    ) : (
+                      <>
+                        <tr>
+                          <td colSpan={3} className="js-print-block">
+                            <span className="js-print-k">Print description</span>
+                            <div className="js-print-v js-print-pre">{p.printDescription}</div>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th style={{ width: '28%' }}>Printer</th>
+                          <td colSpan={2}>{p.method}</td>
+                        </tr>
+                        <tr>
+                          <th>No. colours</th>
+                          <th>Print side</th>
+                          <th>Treat (in / out)</th>
+                        </tr>
+                        <tr>
+                          <td>{p.numColours}</td>
+                          <td>{p.printSide}</td>
+                          <td>{p.treatLine}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={3} className="js-print-block">
+                            <span className="js-print-k">Print position details</span>
+                            <div className="js-print-v js-print-pre">{p.printPosition}</div>
+                          </td>
+                        </tr>
+                        <tr>
+                          <th colSpan={2}>Film type supplied</th>
+                          <th>Finished bag size</th>
+                        </tr>
+                        <tr>
+                          <td colSpan={2}>{p.filmSupplied}</td>
+                          <td>{p.finishedBagSize}</td>
+                        </tr>
+                        <tr>
+                          <th colSpan={2}>Seal type</th>
+                          <th>Eye spot</th>
+                        </tr>
+                        <tr>
+                          <td colSpan={2}>{p.sealType}</td>
+                          <td>{p.eyeSpot}</td>
+                        </tr>
+                        <tr>
+                          <th colSpan={2}>Artwork refs</th>
+                          <th>Artwork PDFs</th>
+                        </tr>
+                        <tr>
+                          <td colSpan={2} className="js-print-pre">
+                            {p.artworkRefs}
+                          </td>
+                          <td className="js-print-pre">{p.artworkPdfs}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={3} className="js-print-block">
+                            <span className="js-print-k">Front print</span>
+                            <JobSheetPrintInkTable rows={p.frontRows} />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td colSpan={3} className="js-print-block">
+                            <span className="js-print-k">Back print</span>
+                            <JobSheetPrintInkTable rows={p.backRows} />
+                          </td>
+                        </tr>
+                        {p.legacyInkPlate ? (
+                          <tr>
+                            <td colSpan={3} className="js-print-block">
+                              <span className="js-print-k">Legacy ink / plate codes</span>
+                              <div className="js-print-v js-print-pre">{p.legacyInkPlate}</div>
+                            </td>
+                          </tr>
+                        ) : null}
+                        <tr>
+                          <th>Cylinder</th>
+                          <th>Around</th>
+                          <th>Across</th>
+                        </tr>
+                        <tr>
+                          <td>{p.cylinder}</td>
+                          <td>{p.platesAround}</td>
+                          <td>{p.platesAcross}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={3} className="js-print-block js-print-barcode-block">
+                            <span className="js-print-k js-print-barcode-k">Bar code</span>
+                            <div className="js-print-v js-print-barcode-v">{p.barcode}</div>
+                          </td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
           </tbody>
         </table>
 
@@ -780,9 +1147,19 @@ export function JobSheetPrintPage() {
               </>
             ) : null}
             <tr>
-              <td colSpan={2} className="js-muted" style={{ height: 40, fontWeight: 400 }}>
-                Conversion dimensions (if different) — to be filled on floor
+              <td colSpan={2} style={{ height: 40 }}>
+                {'\u00A0'}
               </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table className="js-grid">
+          <tbody>
+            <tr><td className="js-sec" colSpan={2}>Shipping details</td></tr>
+            <tr>
+              <th style={{ width: '32%' }}>Pallet type</th>
+              <td>{ship.palletType}</td>
             </tr>
           </tbody>
         </table>
