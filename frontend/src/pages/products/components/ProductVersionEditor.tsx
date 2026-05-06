@@ -120,7 +120,8 @@ export function ProductVersionEditor(props: {
   /** New Order / Edit Order: full job sheet + spec flow before a product exists (`productId` must be {@link EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID}). */
   embeddedNewJobSheetFlow?: EmbeddedNewJobSheetFlow | null
   returnTo?: string | null
-  onDone?: (versionId?: string) => void
+  /** May return a Promise (e.g. parent refetches order); callers should await after save. */
+  onDone?: (versionId?: string) => void | Promise<void>
   onCancel?: () => void
   title?: string
   submitLabel?: string
@@ -705,7 +706,7 @@ export function ProductVersionEditor(props: {
           }),
         ).unwrap()
         setDirty(false)
-        onDone?.()
+        await Promise.resolve(onDone?.())
       } catch (e: unknown) {
         if (isRejectedWithValue(e)) {
           const p = e.payload as UpsertError
@@ -727,7 +728,7 @@ export function ProductVersionEditor(props: {
       const vid = res?.versionId as string | undefined
       setDirty(false)
       if (onDone) {
-        onDone(vid)
+        await Promise.resolve(onDone(vid))
         return
       }
       if (returnTo) nav(returnTo)

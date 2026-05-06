@@ -1502,12 +1502,15 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               jobSheetId={pvJobSheetId || undefined}
               onCancel={closeProductVersionModal}
               onDone={async () => {
-                closeProductVersionModal()
-                if (!orderId) return
+                if (!orderId) {
+                  closeProductVersionModal()
+                  return
+                }
                 try {
                   const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
                   setOrderStatus(String(res?.status || orderStatus))
                   setInvoiceNumber(String(res?.code ?? ''))
+                  setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
                   setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
                   const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
                   setItems(nextItems)
@@ -1515,6 +1518,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                   originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
                 } catch {
                   // stale table until user refreshes or saves again
+                } finally {
+                  closeProductVersionModal()
                 }
               }}
               title={pvTitle || undefined}

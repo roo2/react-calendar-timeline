@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # AccountRight company file GUID used in https://api.myob.com/accountright/{id}/...
     # If set, overrides any id stored in the database (OAuth / admin save).
     MYOB_COMPANY_FILE_ID: str | None = None
+    # OData ``$top`` for MYOB ``Sale/Order`` and ``Sale/Invoice/Item`` list calls during import (per request).
+    # Bulk import still pages until no more rows; see ``app.integrations.myob.order_import_batch``.
+    MYOB_SALE_ORDER_LIST_MAX_TOP: int = 1000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

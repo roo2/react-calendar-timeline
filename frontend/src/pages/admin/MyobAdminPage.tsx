@@ -99,6 +99,9 @@ type MyobPipelineStartResponse = {
 }
 
 /** ``GET /api/myob/import/jobs/{job_id}`` while a background pipeline runs. */
+/** Must match ``MYOB_SALE_ORDER_LIST_HARD_CAP`` in ``app/integrations/myob/service.py`` (API request validation). */
+const MYOB_SALE_ORDER_LIST_HARD_CAP = 10_000
+
 type MyobImportJobStatus = {
   job_id: string
   status: 'running' | 'completed' | 'failed' | 'interrupted'
@@ -322,7 +325,9 @@ export function MyobAdminPage() {
   }
 
   async function doImportPipeline() {
-    const topAll = Number.isFinite(importAllTop) ? Math.min(1000, Math.max(1, importAllTop)) : 200
+    const topAll = Number.isFinite(importAllTop)
+      ? Math.min(MYOB_SALE_ORDER_LIST_HARD_CAP, Math.max(1, importAllTop))
+      : 200
     const msg = [
       'Run the full MYOB import pipeline?',
       '',
@@ -330,7 +335,7 @@ export function MyobAdminPage() {
       skipItemCache
         ? '2. Skip item UOM cache rebuild (as selected)'
         : '2. Rebuild the local item UOM cache (full Inventory/Item list + income accounts)',
-      `3. List all sale orders (GET …/Sale/Order, $top=${topAll} per list page), fetch/import only Open orders`,
+      `3. Page through all sale orders (GET …/Sale/Order, $top=${topAll} per list page until none remain), fetch/import only Open orders`,
       '4. Import all sale invoices',
       '',
       'This can take many minutes and performs many API calls.',
@@ -578,11 +583,11 @@ export function MyobAdminPage() {
                   onChange={(e) => {
                     const n = parseInt(e.target.value, 10)
                     if (Number.isNaN(n)) return
-                    setImportAllTop(Math.min(1000, Math.max(1, n)))
+                    setImportAllTop(Math.min(MYOB_SALE_ORDER_LIST_HARD_CAP, Math.max(1, n)))
                   }}
-                  inputProps={{ min: 1, max: 1000 }}
-                  sx={{ width: 140 }}
-                  helperText="1–1000"
+                  inputProps={{ min: 1, max: MYOB_SALE_ORDER_LIST_HARD_CAP }}
+                  sx={{ width: 160 }}
+                  helperText={`1–${MYOB_SALE_ORDER_LIST_HARD_CAP} per MYOB request; import walks every page until done. Server default/env: MYOB_SALE_ORDER_LIST_MAX_TOP.`}
                 />
                 <FormControlLabel
                   control={

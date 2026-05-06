@@ -28,6 +28,7 @@ from app.integrations.myob.myob_import_job import (
 from app.integrations.myob.myob_import_pipeline import run_myob_import_pipeline
 from app.integrations.myob.order_import_batch import import_all_myob_sale_orders, import_myob_sale_orders_list_page
 from app.integrations.myob.service import (
+    MYOB_SALE_ORDER_LIST_HARD_CAP,
     MyobApiError,
     MyobConfigError,
     MyobOAuthError,
@@ -221,9 +222,14 @@ class MyobGetJsonBody(BaseModel):
 
 
 class MyobSaleOrdersListBody(BaseModel):
-    """OData paging for ``GET .../Sale/Order`` (MYOB default page size up to 1000)."""
+    """OData paging for ``GET .../Sale/Order`` (``$top`` upper bound matches server ``MYOB_SALE_ORDER_LIST_MAX_TOP``)."""
 
-    top: int = Field(20, ge=1, le=1000, description="$top — max rows in this response (MYOB caps at 1000).")
+    top: int = Field(
+        20,
+        ge=1,
+        le=MYOB_SALE_ORDER_LIST_HARD_CAP,
+        description=f"$top — max rows in this response (server cap {MYOB_SALE_ORDER_LIST_HARD_CAP}; MYOB may reject very large values).",
+    )
     skip: int = Field(0, ge=0, le=10_000_000, description="$skip — offset into the full ordered list.")
 
 
@@ -234,7 +240,12 @@ class MyobSaleInvoiceItemsListBody(MyobSaleOrdersListBody):
 class MyobImportOrdersBatchBody(BaseModel):
     """Import each sale order from one MYOB list page (``GET .../Sale/Order?$top&$skip``), same as *list sale orders* preview."""
 
-    top: int = Field(50, ge=1, le=1000, description="Number of orders to list and import from this page (default 50).")
+    top: int = Field(
+        50,
+        ge=1,
+        le=MYOB_SALE_ORDER_LIST_HARD_CAP,
+        description=f"Number of orders to list and import from this page (default 50; max {MYOB_SALE_ORDER_LIST_HARD_CAP}).",
+    )
     skip: int = Field(0, ge=0, le=10_000_000, description="OData $skip — offset into MYOB’s ordered list (0 = first page).")
 
 
@@ -244,8 +255,11 @@ class MyobImportAllOrdersBody(BaseModel):
     top: int = Field(
         200,
         ge=1,
-        le=1000,
-        description="List page size ($top) while walking all sale orders; MYOB caps at 1000.",
+        le=MYOB_SALE_ORDER_LIST_HARD_CAP,
+        description=(
+            f"List page size ($top) while walking all sale orders (max {MYOB_SALE_ORDER_LIST_HARD_CAP}; "
+            "also bounded by server ``MYOB_SALE_ORDER_LIST_MAX_TOP``). Import continues until no more rows."
+        ),
     )
 
 
@@ -264,8 +278,11 @@ class MyobImportPipelineBody(BaseModel):
     orders_top: int = Field(
         200,
         ge=1,
-        le=1000,
-        description="OData ``$top`` page size while listing all sale orders.",
+        le=MYOB_SALE_ORDER_LIST_HARD_CAP,
+        description=(
+            f"OData ``$top`` page size while listing all sale orders (max {MYOB_SALE_ORDER_LIST_HARD_CAP}; "
+            "also bounded by ``MYOB_SALE_ORDER_LIST_MAX_TOP`` on the server). Listing continues until no more rows."
+        ),
     )
     orders_skip: int = Field(
         0,

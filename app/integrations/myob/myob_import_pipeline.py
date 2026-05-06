@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.integrations.myob.customer_import import import_customers_from_myob
 from app.integrations.myob.item_selling_uom_cache import rebuild_myob_item_selling_uom_cache
 from app.integrations.myob.order_import_batch import import_all_myob_sale_orders
+from app.integrations.myob.service import myob_sale_order_list_max_top
 
 PipelineStep = Literal["customers", "item_cache", "orders"]
 OnPipelineStep = Callable[[PipelineStep, dict[str, Any]], None]
@@ -92,7 +93,7 @@ def run_myob_import_pipeline(
     else:
         item_cache = _skipped_step_result("item_cache")
 
-    top_i = max(1, min(int(orders_top), 1000))
+    top_i = max(1, min(int(orders_top), myob_sale_order_list_max_top()))
     orders_result = import_all_myob_sale_orders(db, top=top_i)
 
     if on_step is not None:

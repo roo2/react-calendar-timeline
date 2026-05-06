@@ -16,13 +16,13 @@ from sqlalchemy.orm import Session
 from app.integrations.myob.order_import import import_one_myob_sale_order
 from app.integrations.myob.service import (
     MYOB_SALE_ORDER_IMPORT_MAX_PAGES,
-    MYOB_SALE_ORDER_LIST_MAX_TOP,
     MyobApiError,
     MyobConfigError,
     fetch_all_sale_invoice_items_readonly,
     fetch_myob_url_readonly,
     fetch_sale_order_detail_readonly,
     fetch_sale_orders_list_readonly,
+    myob_sale_order_list_max_top,
 )
 
 
@@ -167,9 +167,10 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
 
     Stops after :data:`MYOB_SALE_ORDER_IMPORT_MAX_PAGES` list requests; then ``truncated`` is true.
     """
-    top_i = max(1, min(int(top), MYOB_SALE_ORDER_LIST_MAX_TOP))
+    top_i = max(1, min(int(top), myob_sale_order_list_max_top()))
     skip = 0
     list_url: str | None = None
+    total_rows_seen = 0
 
     all_results: list[dict[str, Any]] = []
     all_skipped: list[dict[str, Any]] = []
@@ -209,6 +210,7 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
         all_skipped.extend(chunk_s)
         all_errors.extend(chunk_e)
 
+        total_rows_seen += len(items_raw)
         pages += 1
 
         next_link: str | None = None
@@ -222,8 +224,11 @@ def import_all_myob_sale_orders(db: Session, *, top: int = 200) -> dict[str, Any
             continue
 
         list_url = None
-        # A page loaded via ``NextPageLink`` is not part of the ``$skip`` sequence; do not advance ``$skip``.
         if page_from_next_link:
+            # MYOB sometimes omits ``NextPageLink`` on a full page; continue with ``$skip`` from rows already seen.
+            if len(items_raw) >= top_i:
+                skip = total_rows_seen
+                continue
             break
         if len(items_raw) < top_i:
             break

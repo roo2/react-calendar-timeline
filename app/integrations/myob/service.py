@@ -20,10 +20,24 @@ MYOB_ACCOUNTRIGHT_BASE = "https://api.myob.com/accountright"
 STATE_TTL = timedelta(minutes=10)
 # Safety cap when following OData NextPageLink (GET-only pagination).
 MYOB_CUSTOMER_FETCH_MAX_PAGES = 5000
-# OData $top cap for MYOB list previews (Sale/Order, Sale/Invoice/Item, etc.); full import will paginate separately.
-MYOB_SALE_ORDER_LIST_MAX_TOP = 1000
+# Hard ceiling for OData ``$top`` (MYOB may reject larger values per tenant).
+MYOB_SALE_ORDER_LIST_HARD_CAP = 10_000
 # Safety cap when paging Sale/Order for bulk import (GET-only).
 MYOB_SALE_ORDER_IMPORT_MAX_PAGES = 5000
+
+
+def myob_sale_order_list_max_top() -> int:
+    """
+    Effective OData ``$top`` upper bound for MYOB list endpoints.
+
+    Configurable via ``Settings.MYOB_SALE_ORDER_LIST_MAX_TOP`` (env ``MYOB_SALE_ORDER_LIST_MAX_TOP``), clamped to
+    ``MYOB_SALE_ORDER_LIST_HARD_CAP``. Bulk import walks **every page** until empty (``NextPageLink`` / ``$skip``).
+    """
+    try:
+        v = int(getattr(settings, "MYOB_SALE_ORDER_LIST_MAX_TOP", 1000))
+    except (TypeError, ValueError):
+        v = 1000
+    return max(1, min(v, MYOB_SALE_ORDER_LIST_HARD_CAP))
 
 
 def _myob_accountright_api_host_ok(host: str) -> bool:
@@ -225,7 +239,7 @@ def fetch_sale_orders_list_readonly(db: Session, *, top: int = 20, skip: int = 0
     access = ensure_myob_access_token_for_api(db)
     business_id, _ = effective_company_file_id(db)
     business_id = (business_id or "").strip()
-    top_i = max(1, min(int(top), MYOB_SALE_ORDER_LIST_MAX_TOP))
+    top_i = max(1, min(int(top), myob_sale_order_list_max_top()))
     skip_i = max(0, int(skip))
     url = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}/Sale/Order?$top={top_i}&$skip={skip_i}"
     data = _myob_get_json(url=url, access_token=access)
@@ -251,7 +265,7 @@ def fetch_sale_invoice_items_list_readonly(db: Session, *, top: int = 20, skip: 
     access = ensure_myob_access_token_for_api(db)
     business_id, _ = effective_company_file_id(db)
     business_id = (business_id or "").strip()
-    top_i = max(1, min(int(top), MYOB_SALE_ORDER_LIST_MAX_TOP))
+    top_i = max(1, min(int(top), myob_sale_order_list_max_top()))
     skip_i = max(0, int(skip))
     url = f"{MYOB_ACCOUNTRIGHT_BASE}/{business_id}/Sale/Invoice/Item?$top={top_i}&$skip={skip_i}"
     data = _myob_get_json(url=url, access_token=access)
@@ -316,11 +330,12 @@ def fetch_all_sale_invoice_items_readonly(db: Session) -> list[dict[str, Any]]:
 
     Same pagination contract as :func:`import_all_myob_sale_orders` (``NextPageLink`` + ``$skip``).
     """
-    top_i = max(1, min(int(MYOB_SALE_ORDER_LIST_MAX_TOP), 1000))
+    top_i = myob_sale_order_list_max_top()
     skip = 0
     list_url: str | None = None
     out: list[dict[str, Any]] = []
     pages = 0
+    total_rows_seen = 0
     while pages < MYOB_SALE_ORDER_IMPORT_MAX_PAGES:
         page_from_next_link = bool(list_url)
         if list_url:
@@ -343,6 +358,7 @@ def fetch_all_sale_invoice_items_readonly(db: Session) -> list[dict[str, Any]]:
         if not items_raw:
             break
 
+        total_rows_seen += len(items_raw)
         pages += 1
 
         next_link: str | None = None
@@ -357,6 +373,9 @@ def fetch_all_sale_invoice_items_readonly(db: Session) -> list[dict[str, Any]]:
 
         list_url = None
         if page_from_next_link:
+            if len(items_raw) >= top_i:
+                skip = total_rows_seen
+                continue
             break
         if len(items_raw) < top_i:
             break
