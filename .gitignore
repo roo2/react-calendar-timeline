@@ -9,6 +9,9 @@ __pycache__/
 .ruff_cache/
 .coverage
 
+# Heroku build cache (written by scripts/heroku-vendor-timeline.sh; persisted via cacheDirectories)
+.heroku/vendor-timeline-cache/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

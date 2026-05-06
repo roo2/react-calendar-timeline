@@ -1,15 +1,25 @@
 #!/usr/bin/env sh
 # Heroku: rebuild vendor/react-calendar-timeline only when the submodule revision changed.
-# Uses $CACHE_DIR (set by Heroku buildpacks) to store the last built gitlink + dist/.
+# Caches the last built gitlink + dist/ between deploys.
+#
+# The Heroku Node buildpack does not export CACHE_DIR to npm lifecycle scripts, so $CACHE_DIR
+# is almost always empty during `heroku-postbuild`. Fall back to a repo-relative directory and
+# list it in root package.json "cacheDirectories" so the buildpack persists it (same mechanism
+# as extra node_modules paths). If CACHE_DIR is set (e.g. custom build), it is still used.
 
 set -eu
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
+if [ -z "${CACHE_DIR:-}" ]; then
+  CACHE_DIR="$ROOT_DIR/.heroku/vendor-timeline-cache"
+fi
+mkdir -p "$CACHE_DIR"
+
 VENDOR_DIR="vendor/react-calendar-timeline"
-STAMP_FILE="${CACHE_DIR:-}/react-calendar-timeline-submodule.sha"
-DIST_CACHE="${CACHE_DIR:-}/react-calendar-timeline-dist"
+STAMP_FILE="$CACHE_DIR/react-calendar-timeline-submodule.sha"
+DIST_CACHE="$CACHE_DIR/react-calendar-timeline-dist"
 
 # Commit being built (Heroku sets this during compile; more reliable than HEAD in some checkouts).
 build_ref="${SOURCE_VERSION:-}"

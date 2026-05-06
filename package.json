@@ -5,6 +5,7 @@
     "node": "22.x",
     "npm": "11.x"
   },
+  "cacheDirectories": [".heroku/vendor-timeline-cache"],
   "scripts": {
     "heroku-postbuild": "sh scripts/heroku-vendor-timeline.sh && npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
   }
