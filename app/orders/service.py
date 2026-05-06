@@ -153,6 +153,83 @@ def _order_total_for_filters(o: OrderModel) -> float | None:
     return total if any_line else None
 
 
+def order_total_from_orm(o: OrderModel) -> float | None:
+    """Sum line totals for list display / sorting (matches OrderListItemDTO.order_total)."""
+    total = 0.0
+    any_line = False
+    for oi in getattr(o, "items", None) or []:
+        kind = getattr(oi, "line_kind", None) or "manufactured"
+        if kind == "resell":
+            t = getattr(oi, "resell_line_total", None)
+            if t is not None:
+                total += float(t)
+                any_line = True
+            continue
+        if kind == "myob_import":
+            js = getattr(oi, "job_sheet", None)
+            if js is not None and getattr(js, "line_total", None) is not None:
+                total += float(js.line_total)
+                any_line = True
+            elif getattr(oi, "import_line_total", None) is not None:
+                total += float(oi.import_line_total)
+                any_line = True
+            continue
+        js = getattr(oi, "job_sheet", None)
+        if js is not None and getattr(js, "line_total", None) is not None:
+            total += float(js.line_total)
+            any_line = True
+    return total if any_line else None
+
+
+_ORDER_LIST_SORT_FIELDS = frozenset(
+    {"invoice", "customer_po", "customer", "order_total", "status", "import_review", "order_date"}
+)
+
+
+def _apply_order_list_sort(orders: List[OrderModel], sort_by: Optional[str], sort_dir: Optional[str]) -> None:
+    """In-place stable sort of filtered order rows (list endpoint uses Python-side filters)."""
+    key_name = (sort_by or "").strip().casefold()
+    if key_name not in _ORDER_LIST_SORT_FIELDS:
+        return
+    d = (sort_dir or "").strip().casefold()
+    reverse = d != "asc"
+
+    def key_fn(o: OrderModel) -> tuple:
+        oid = str(o.id)
+        if key_name == "invoice":
+            return (str(getattr(o, "code", "") or "").casefold(), oid)
+        if key_name == "customer_po":
+            return (str(getattr(o, "customer_purchase_order_number", "") or "").casefold(), oid)
+        if key_name == "customer":
+            c = getattr(o, "customer", None)
+            return (str(getattr(c, "name", "") or "").casefold(), oid)
+        if key_name == "order_total":
+            t = order_total_from_orm(o)
+            return (t is None, float(t) if t is not None else 0.0, oid)
+        if key_name == "status":
+            st = str(getattr(getattr(o, "status", None), "value", getattr(o, "status", "")) or "")
+            return (st.casefold(), oid)
+        if key_name == "import_review":
+            src = getattr(o, "import_source", None)
+            if not src:
+                return (0, "", oid)
+            ir = getattr(o, "import_review_status", None)
+            s = ir if ir in ("incomplete", "complete") else ""
+            return (1, s.casefold(), oid)
+        if key_name == "order_date":
+            od = getattr(o, "order_date", None)
+            ca = getattr(o, "created_at", None)
+            if od is not None:
+                ts = datetime.combine(od, time.min).timestamp()
+                return (0, ts, oid)
+            if ca is not None:
+                return (0, ca.timestamp(), oid)
+            return (1, 0.0, oid)
+        raise AssertionError(key_name)
+
+    orders.sort(key=key_fn, reverse=reverse)
+
+
 def _order_tokens(o: OrderModel) -> str:
     toks: list[str] = []
     toks.append(str(getattr(o, "code", "") or ""))
@@ -193,6 +270,8 @@ def list_orders(
     order_date_to: date | None = None,
     line_item_search: Optional[str] = None,
     search: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: Optional[str] = None,
     page: int = 1,
     page_size: int = 100,
 ) -> tuple[List[OrderModel], int]:
@@ -264,6 +343,8 @@ def list_orders(
             if total_max is not None and (tot is None or float(tot) > total_max):
                 continue
             out.append(o)
+
+        _apply_order_list_sort(out, sort_by, sort_dir)
 
         total = len(out)
         start = max(0, (int(page) - 1) * int(page_size))

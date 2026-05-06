@@ -62,6 +62,8 @@ export type OrdersListQuery = {
   order_date_to?: string
   line_item_search?: string
   search?: string
+  sort_by?: string
+  sort_dir?: string
   page?: number
   page_size?: number
 }
@@ -87,6 +89,8 @@ function ordersListQueryToSearchParams(q: OrdersListQuery): URLSearchParams {
   set('order_date_to', q.order_date_to)
   set('line_item_search', q.line_item_search)
   set('search', q.search)
+  set('sort_by', q.sort_by)
+  set('sort_dir', q.sort_dir)
   set('page', q.page)
   set('page_size', q.page_size)
   return qs

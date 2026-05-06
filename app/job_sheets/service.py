@@ -78,6 +78,22 @@ def _new_draft_order_code() -> str:
     return f"ORD-{uuid.uuid4().hex[:8].upper()}"
 
 
+def _norm_job_sheet_extruder(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    t = str(v).strip()
+    if not t:
+        return None
+    return t[:64]
+
+
+def _norm_job_sheet_die_size(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    t = str(v).strip()
+    return t if t else None
+
+
 def _next_order_line_index(db, order_id: str) -> int:
     m = db.scalar(select(func.max(OrderItem.line_index)).where(OrderItem.order_id == str(order_id)))
     return int(m if m is not None else -1) + 1
@@ -158,6 +174,14 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
             if new_code and new_code != getattr(product, "code", None):
                 product.code = new_code
                 db.add(product)
+
+        create_fields = payload.model_dump(exclude_unset=True)
+        if "production_extruder_code" in create_fields or "die_size" in create_fields:
+            if "production_extruder_code" in create_fields:
+                product.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
+            if "die_size" in create_fields:
+                product.die_size = _norm_job_sheet_die_size(payload.die_size)
+            db.add(product)
 
         due_dt: Optional[datetime] = None
         if payload.due_date is not None:
@@ -777,6 +801,18 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         db.flush()
         if payload.spec is not None and import_draft_before:
             finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
+
+        if ("production_extruder_code" in upd or "die_size" in upd) and str(js.product_id) != str(
+            MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID
+        ):
+            prod = db.get(Product, str(js.product_id))
+            if prod:
+                if "production_extruder_code" in upd:
+                    prod.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
+                if "die_size" in upd:
+                    prod.die_size = _norm_job_sheet_die_size(payload.die_size)
+                db.add(prod)
+
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
         if "order_date" in upd:
             o = db.get(Order, oid)

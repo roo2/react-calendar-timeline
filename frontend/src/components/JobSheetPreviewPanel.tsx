@@ -1,5 +1,6 @@
 import { Box, Link as MuiLink, Paper, Typography } from '@mui/material'
 import { Link } from 'react-router-dom'
+import type { JobSheetPreviewQuoteSummary } from '../utils/jobSheetPreviewQuoteSummary'
 
 export function JobSheetPreviewPanel(props: {
   productCode: string
@@ -19,6 +20,8 @@ export function JobSheetPreviewPanel(props: {
   dueDate?: string
   /** Optional hook before opening print preview; return false to cancel navigation. */
   onBeforeOpenPrint?: () => Promise<boolean> | boolean
+  /** Live order qty + quote-calculator estimates (same basis as Quotes page). */
+  quoteSummary?: JobSheetPreviewQuoteSummary | null
 }) {
   const {
     productCode,
@@ -32,6 +35,7 @@ export function JobSheetPreviewPanel(props: {
     orderDate = '',
     dueDate = '',
     onBeforeOpenPrint,
+    quoteSummary = null,
   } = props
   const dash = '—'
   const user = String(customerFacingDescription || '').trim()
@@ -118,6 +122,65 @@ export function JobSheetPreviewPanel(props: {
                 {dueDate.trim() ? dueDate : dash}
               </Typography>
             </div>
+            {quoteSummary ? (
+              <>
+                <Box sx={{ pt: 0.5, borderTop: 1, borderColor: 'divider' }} />
+                <Typography variant="subtitle2" sx={{ mt: 0.5 }}>
+                  Production (estimate)
+                </Typography>
+                <div>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Quantity (order)
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {quoteSummary.orderQuantityLabel ? quoteSummary.orderQuantityLabel : dash}
+                  </Typography>
+                </div>
+                <div>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Total KG (including waste)
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {quoteSummary.totalKgIncludingWaste != null
+                      ? `${quoteSummary.totalKgIncludingWaste} kg`
+                      : dash}
+                  </Typography>
+                </div>
+                <div>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Extrusion time (est.)
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {quoteSummary.extrusionTimeDisplay ? quoteSummary.extrusionTimeDisplay : dash}
+                  </Typography>
+                </div>
+                <div>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Extruded meters
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : dash}
+                  </Typography>
+                </div>
+                <div>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Estimated waste factor
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {quoteSummary.estimatedWasteFactorPct ? (
+                      <>
+                        {quoteSummary.estimatedWasteFactorPct}
+                        <Box component="span" sx={{ fontWeight: 400, color: 'text.secondary', ml: 0.5 }}>
+                          of ordered job kg
+                        </Box>
+                      </>
+                    ) : (
+                      dash
+                    )}
+                  </Typography>
+                </div>
+              </>
+            ) : null}
           </>
         ) : null}
         <div>

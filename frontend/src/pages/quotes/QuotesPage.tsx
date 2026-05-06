@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { apiFetch } from '../../api/client'
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
@@ -2999,6 +3000,22 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       if (!productId) {
         setConvertErr('Failed to create product')
         return
+      }
+
+      const extruderCodeForProduct =
+        selectedExtruder.extruder?.extruder_code != null &&
+        String(selectedExtruder.extruder.extruder_code).trim() !== ''
+          ? String(selectedExtruder.extruder.extruder_code).trim()
+          : ''
+      if (extruderCodeForProduct) {
+        try {
+          await apiFetch(`/api/products/${encodeURIComponent(productId)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ production_extruder_code: extruderCodeForProduct }),
+          })
+        } catch {
+          // Non-fatal: extruder can be set on the product from the job sheet editor.
+        }
       }
 
       const previewNums = {

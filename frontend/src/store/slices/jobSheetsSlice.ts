@@ -32,6 +32,8 @@ export type JobSheetSummary = {
   line_total?: number | null
   price_per_kg?: number | null
   customer_facing_description?: string | null
+  production_extruder_code?: string | null
+  die_size?: string | null
 }
 
 /** Query params for GET /api/job-sheets (match-style filters). */
@@ -51,6 +53,8 @@ export type JobSheetListQuery = {
   order_status?: string
   production_status?: string
   search?: string
+  sort_by?: string
+  sort_dir?: string
   page?: number
   page_size?: number
 }
@@ -77,6 +81,8 @@ function jobSheetListQueryToSearchParams(q: JobSheetListQuery): URLSearchParams 
   set('order_status', q.order_status)
   set('production_status', q.production_status)
   set('search', q.search)
+  set('sort_by', q.sort_by)
+  set('sort_dir', q.sort_dir)
   set('page', q.page)
   set('page_size', q.page_size)
   return qs

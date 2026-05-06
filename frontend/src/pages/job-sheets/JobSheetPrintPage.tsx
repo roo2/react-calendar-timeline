@@ -5,7 +5,7 @@ import type { SpecPayload } from '../../components/SpecPayloadForm'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchJobSheet } from '../../store/slices/jobSheetsSlice'
 import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
-import { computeDerivedGeometryAndTotals } from '../../utils/quoteCalculator'
+import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../../utils/quoteCalculator'
 import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
 import { buildQuickQuoteInputsFromSpec } from '../../utils/specToQuoteInputs'
 import {
@@ -22,6 +22,11 @@ function s(v: unknown, fallback = '—'): string {
 function n(v: unknown): number | null {
   const x = Number(v)
   return Number.isFinite(x) ? x : null
+}
+
+function formatWastePctForPrint(pct: number): string {
+  if (!Number.isFinite(pct)) return '—'
+  return Math.abs(pct - Math.round(pct)) < 1e-6 ? String(Math.round(pct)) : pct.toFixed(2)
 }
 
 function fmtMetres(v: number): string {
@@ -284,18 +289,76 @@ export function JobSheetPrintPage() {
     const numUnits = n(js.num_product_units)
     const weightPerRoll = n(js.weight_per_roll_kg)
     const totalMStored = n(js.total_m)
-    const wasteFactorPct = n(identity?.waste_factor_pct ?? spec?.waste_factor_pct)
-    const wasteKg = n(spec?.waste_kg)
+    const wasteFactorPctFixed = n(identity?.waste_factor_pct ?? spec?.waste_factor_pct)
+    const wasteKgFixed = n(spec?.waste_kg)
+    const extFromJob =
+      js?.production_extruder_code != null && String(js.production_extruder_code).trim() !== ''
+        ? String(js.production_extruder_code).trim()
+        : null
+    const extLegacy =
+      identity?.production_extruder_code != null && String(identity.production_extruder_code).trim() !== ''
+        ? String(identity.production_extruder_code).trim()
+        : null
+    const productionExtruderCode = extFromJob || extLegacy
+    const dieSizeDisplay =
+      js?.die_size != null && String(js.die_size).trim() !== '' ? String(js.die_size).trim() : null
 
     const rb = quoteRatebook.data
     let geoDerived: ReturnType<typeof computeDerivedGeometryAndTotals> | null = null
+    let quotePreviewForWaste: ReturnType<typeof computeQuickQuotePreview> | null = null
     if (rb && spec && typeof spec === 'object') {
       try {
         const qtySlice = buildSpecQuantitySliceFromPersistedJobSheet(js as Record<string, unknown>, spec as SpecPayload)
-        const quick = buildQuickQuoteInputsFromSpec(spec as SpecPayload, qtySlice, { ratebook: rb })
+        const quick = buildQuickQuoteInputsFromSpec(spec as SpecPayload, qtySlice, {
+          ratebook: rb,
+          extruderCode: productionExtruderCode,
+        })
         geoDerived = computeDerivedGeometryAndTotals(quick, rb)
+        if (productionExtruderCode) {
+          quotePreviewForWaste = computeQuickQuotePreview(quick, rb)
+        }
       } catch {
         geoDerived = null
+        quotePreviewForWaste = null
+      }
+    }
+
+    let wasteFactorPct: number | null = wasteFactorPctFixed
+    let wasteKg: number | null = wasteKgFixed
+    let wasteSource: 'extruder' | 'fixed' | null = null
+    if (productionExtruderCode && quotePreviewForWaste) {
+      const jobKg = quotePreviewForWaste.totals_kg
+      const totalExt = quotePreviewForWaste.total_extruded_kg
+      const wKg = quotePreviewForWaste.waste_kg
+      if (jobKg != null && jobKg > 0 && totalExt != null && totalExt > 0) {
+        wasteFactorPct = ((totalExt - jobKg) / jobKg) * 100
+        wasteKg = wKg != null && wKg > 0 ? wKg : 0
+        wasteSource = 'extruder'
+      } else if (wasteFactorPctFixed != null || (wasteKgFixed != null && wasteKgFixed > 0)) {
+        wasteSource = 'fixed'
+      }
+    } else if (wasteFactorPctFixed != null || (wasteKgFixed != null && wasteKgFixed > 0)) {
+      wasteSource = 'fixed'
+    }
+
+    let quoteWasteBreakdown: {
+      orderedJobKg: string
+      extrusionWasteKg: string
+      totalExtrudedKg: string
+      impliedWastePct: string | null
+    } | null = null
+    if (productionExtruderCode && quotePreviewForWaste) {
+      const jobKg = quotePreviewForWaste.totals_kg
+      const totalExt = quotePreviewForWaste.total_extruded_kg
+      const wKg = quotePreviewForWaste.waste_kg
+      if (jobKg != null && jobKg > 0 && totalExt != null && totalExt > 0) {
+        const pct = ((totalExt - jobKg) / jobKg) * 100
+        quoteWasteBreakdown = {
+          orderedJobKg: jobKg.toFixed(2),
+          extrusionWasteKg: wKg != null && wKg > 0 ? Number(wKg).toFixed(2) : '0',
+          totalExtrudedKg: totalExt.toFixed(2),
+          impliedWastePct: Number.isFinite(pct) ? formatWastePctForPrint(pct) : null,
+        }
       }
     }
 
@@ -549,7 +612,10 @@ export function JobSheetPrintPage() {
             derivedTotalM != null ? fmtMetres(derivedTotalM) : totalMStored != null ? `${totalMStored}` : '—',
           mPerRoll: derivedMPerRoll != null ? fmtMetres(derivedMPerRoll) : '—',
           wasteFactorPct,
+          wasteFactorPctDisplay: wasteFactorPct != null ? formatWastePctForPrint(wasteFactorPct) : null,
           wasteKg: wasteKg != null ? `${wasteKg}` : null,
+          wasteSource,
+          productionExtruderCode,
           highlightTotalKg,
           highlightTotalM,
         },
@@ -562,6 +628,11 @@ export function JobSheetPrintPage() {
       conversionInstructions: {
         carton: cartonConversion,
       },
+      extrusionSetup: {
+        extruderLabel: productionExtruderCode != null ? productionExtruderCode : '—',
+        dieLabel: dieSizeDisplay != null ? dieSizeDisplay : '—',
+      },
+      quoteWasteBreakdown,
     }
   }, [data, quoteRatebook.data])
 
@@ -588,6 +659,8 @@ export function JobSheetPrintPage() {
 
   const e = model.extrusion
   const q = e.orderQuantities
+  const extrusionSetup = model.extrusionSetup
+  const quoteWasteBreakdown = model.quoteWasteBreakdown
   const conv = model.conversionInstructions
   const ship = model.shipping
   const p = model.printingLayout
@@ -749,7 +822,7 @@ export function JobSheetPrintPage() {
           width: 11%;
           font-weight: 400;
           text-align: left;
-          background: #f2c894;
+          background: transparent;
           border: 1px solid #000;
           padding: 6px 8px;
           font-size: 11px;
@@ -976,6 +1049,54 @@ export function JobSheetPrintPage() {
           </tbody>
         </table>
 
+        <table className="js-grid">
+          <tbody>
+            <tr>
+              <td className="js-sec" colSpan={6}>
+                Extrusion setup
+              </td>
+            </tr>
+            <tr>
+              <th>Extruder</th>
+              <td colSpan={5}>{extrusionSetup.extruderLabel}</td>
+            </tr>
+            <tr>
+              <th>Die size</th>
+              <td colSpan={5} style={{ whiteSpace: 'pre-wrap' }}>
+                {extrusionSetup.dieLabel}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        {quoteWasteBreakdown ? (
+          <table className="js-grid">
+            <tbody>
+              <tr>
+                <td className="js-sec" colSpan={6}>
+                  Quote waste (extrusion)
+                </td>
+              </tr>
+              <tr>
+                <th>Ordered job kg</th>
+                <td colSpan={2}>{quoteWasteBreakdown.orderedJobKg}</td>
+                <th>Extrusion waste kg</th>
+                <td colSpan={2}>{quoteWasteBreakdown.extrusionWasteKg}</td>
+              </tr>
+              <tr>
+                <th>Total extruded kg</th>
+                <td colSpan={2}>{quoteWasteBreakdown.totalExtrudedKg}</td>
+                <th>Implied waste</th>
+                <td colSpan={2}>
+                  {quoteWasteBreakdown.impliedWastePct != null
+                    ? `${quoteWasteBreakdown.impliedWastePct}% of ordered job kg`
+                    : '—'}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        ) : null}
+
         <table className="js-grid js-order-qty-grid">
           <tbody>
             <tr><td className="js-sec" colSpan={6}>Order quantities</td></tr>
@@ -994,19 +1115,21 @@ export function JobSheetPrintPage() {
             <tr>
               <th>Waste factor</th>
               <td colSpan={5} className="js-td-mixed">
-                {q.wasteFactorPct != null ? (
+                {q.wasteFactorPctDisplay != null ? (
                   <>
-                    <span className="js-print-val">{q.wasteFactorPct}%</span>
+                    <span className="js-print-val">{q.wasteFactorPctDisplay}%</span>
                     <span className="js-muted"> of ordered job kg (extrusion waste</span>
                     {q.wasteKg ? (
                       <>
                         <span className="js-muted">: </span>
                         <span className="js-print-val">{q.wasteKg}</span>
-                        <span className="js-muted">)</span>
+                        <span className="js-muted"> kg</span>
                       </>
-                    ) : (
-                      <span className="js-muted">)</span>
-                    )}
+                    ) : null}
+                    <span className="js-muted">)</span>
+                    {q.wasteSource === 'extruder' && q.productionExtruderCode ? (
+                      <span className="js-muted"> — from extruder {q.productionExtruderCode} (quote calculator)</span>
+                    ) : null}
                   </>
                 ) : (
                   <span className="js-print-val">—</span>
@@ -1018,9 +1141,9 @@ export function JobSheetPrintPage() {
 
         <table className="js-grid">
           <tbody>
-            <tr><td className="js-sec" colSpan={2}>Printing</td></tr>
+            <tr><td className="js-sec" colSpan={6}>Printing</td></tr>
             <tr>
-              <td colSpan={2} className="js-printing-wrap">
+              <td colSpan={6} className="js-printing-wrap js-dim-wrap">
                 <table className="js-printing-nested" role="presentation">
                   <tbody>
                     {!p.printed ? (

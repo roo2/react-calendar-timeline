@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode, Ref, RefObject } from 'react'
+import type { ComponentClass, CSSProperties, ReactNode, Ref, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import Timeline, {
@@ -501,6 +501,16 @@ type TimelineItem = {
     style?: CSSProperties
   }
 }
+
+/**
+ * `react-calendar-timeline` default export is a generic class; under React 19 / `@types/react` 19, TS2786
+ * rejects it as a JSX component. Cast once at the boundary so `tsc` and Heroku builds succeed.
+ *
+ * Typed as `ComponentClass<any>`: the library's `ReactCalendarTimelineProps` marks several fields required
+ * even though runtime supplies them via `defaultProps` (keys, timeSteps, rightSidebarWidth, …).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor class + defaultProps vs strict props
+const GanttTimeline = Timeline as unknown as ComponentClass<any>
 
 function firstRollCompletionFraction(rollCount?: number | null): number {
   const resolvedRollCount = Math.max(1, Math.floor(rollCount ?? 1))
@@ -1579,7 +1589,7 @@ export function GanttBoard() {
           >
             {/* Stable key: refetch must not remount or zoom/scroll reset (calendar.end shifts with each API `now`).
                 stackItems=false: overlapping jobs keep fixed lane height; bars overlap in Z-order (hover raises). */}
-            <Timeline<TimelineItem, TimelineGroup>
+            <GanttTimeline
               key="schedule-gantt-timeline"
               ref={timelineRef}
               groups={groups}
@@ -1645,7 +1655,7 @@ export function GanttBoard() {
                   )}
                 </TodayMarker>
               </TimelineMarkers>
-            </Timeline>
+            </GanttTimeline>
           </Box>
         </Box>
       </Box>

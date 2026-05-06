@@ -83,6 +83,8 @@ def _product_summary(p) -> dict:
         "product_type": product_type,
         "finish_mode": finish_mode,
         "pack_mode": pack_mode,
+        "production_extruder_code": getattr(p, "production_extruder_code", None),
+        "die_size": getattr(p, "die_size", None),
     }
 
 
@@ -215,7 +217,7 @@ async def create_product_version(product_id: str, payload: CreateProductVersionR
 @router.put("/{product_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
 async def update_product(product_id: str, payload: UpdateProductRequest):
     try:
-        p = service.update_product_description(product_id, payload.description)
+        p = service.update_product(product_id, payload)
         return {"ok": True, "product": _product_summary(p)}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)

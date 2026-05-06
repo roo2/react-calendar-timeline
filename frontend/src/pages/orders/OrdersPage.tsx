@@ -23,7 +23,14 @@ import {
   Link as MuiLink,
   Chip,
 } from '@mui/material'
-import { LIST_PAGE_SIZE, ListFiltersCard, ListPaginationBar, ListTableSurface } from '../../components/list'
+import {
+  LIST_PAGE_SIZE,
+  ListFiltersCard,
+  ListPaginationBar,
+  ListTableSurface,
+  SortHeaderCell,
+  type UrlSortDir,
+} from '../../components/list'
 import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
@@ -49,6 +56,8 @@ const ORDER_FILTER_DEFAULTS: Record<string, string> = {
   statusFilter: '',
   orderDateFrom: '',
   orderDateTo: '',
+  sortBy: '',
+  sortDir: '',
   advanced: '',
 }
 
@@ -65,6 +74,8 @@ const ORDER_URL_KEYS: Record<string, string> = {
   statusFilter: 'st',
   orderDateFrom: 'df',
   orderDateTo: 'dt',
+  sortBy: 'sb',
+  sortDir: 'sd',
   advanced: 'adv',
 }
 
@@ -114,7 +125,7 @@ export function OrdersPage() {
   const [debouncing, setDebouncing] = useState(false)
   const [brands, setBrands] = useState<Array<{ id: string; code: string; name: string }>>([])
 
-  const { filters, setFilter, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
+  const { filters, setFilter, patchFilters, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
     defaults: ORDER_FILTER_DEFAULTS,
     urlKeys: ORDER_URL_KEYS,
   })
@@ -136,6 +147,12 @@ export function OrdersPage() {
     if (filters.statusFilter) q.status = filters.statusFilter
     if (filters.orderDateFrom) q.order_date_from = filters.orderDateFrom
     if (filters.orderDateTo) q.order_date_to = filters.orderDateTo
+    const sb = filters.sortBy.trim()
+    const sd = filters.sortDir.trim().toLowerCase()
+    if (sb && (sd === 'asc' || sd === 'desc')) {
+      q.sort_by = sb
+      q.sort_dir = sd
+    }
     q.page = pageIdx + 1
     q.page_size = LIST_PAGE_SIZE
     return q
@@ -172,6 +189,13 @@ export function OrdersPage() {
   }, [dispatch, query])
 
   const searching = debouncing || loading
+
+  const sortDirSafe: UrlSortDir =
+    filters.sortDir === 'asc' || filters.sortDir === 'desc' ? filters.sortDir : ''
+
+  const onSortColumn = (column: string, dir: 'asc' | 'desc') => {
+    patchFilters({ sortBy: column, sortDir: dir })
+  }
 
   return (
     <Stack spacing={2}>
@@ -270,14 +294,40 @@ export function OrdersPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Invoice Number</TableCell>
-                <TableCell>Customer PO</TableCell>
-                <TableCell>Customer</TableCell>
+                <SortHeaderCell column="invoice" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
+                  Invoice Number
+                </SortHeaderCell>
+                <SortHeaderCell column="customer_po" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
+                  Customer PO
+                </SortHeaderCell>
+                <SortHeaderCell column="customer" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
+                  Customer
+                </SortHeaderCell>
                 <TableCell sx={{ minWidth: 220 }}>Products</TableCell>
-                <TableCell align="right">Order total</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell sx={{ minWidth: 140 }}>Import review</TableCell>
-                <TableCell>Order Date</TableCell>
+                <SortHeaderCell
+                  align="right"
+                  column="order_total"
+                  sortBy={filters.sortBy}
+                  sortDir={sortDirSafe}
+                  onSort={onSortColumn}
+                >
+                  Order total
+                </SortHeaderCell>
+                <SortHeaderCell column="status" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
+                  Status
+                </SortHeaderCell>
+                <SortHeaderCell
+                  column="import_review"
+                  sortBy={filters.sortBy}
+                  sortDir={sortDirSafe}
+                  onSort={onSortColumn}
+                  sx={{ minWidth: 140 }}
+                >
+                  Import review
+                </SortHeaderCell>
+                <SortHeaderCell column="order_date" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
+                  Order Date
+                </SortHeaderCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>

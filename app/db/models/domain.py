@@ -121,6 +121,9 @@ class Product(Base):
         ForeignKey("product_versions.id", ondelete="RESTRICT"), nullable=True
     )
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Ratebook extruder + extrusion die (shared by all job sheets for this product).
+    production_extruder_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    die_size: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="products")
     versions: Mapped[list["ProductVersion"]] = relationship(
@@ -175,7 +178,7 @@ class JobSheet(Base):
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_import_draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    """Override for quotes / job sheet UI; when null, fall back to order import line or product spec text."""
+    # customer_facing_description: override for quotes / job sheet UI; when null, fall back to import line / spec.
     customer_facing_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     customer: Mapped["Customer"] = relationship()

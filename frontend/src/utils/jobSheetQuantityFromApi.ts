@@ -6,6 +6,7 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import {
   coerceQtyTypeForFinishMode,
+  getOrderQuantityFromJobSheetFields,
   qtyTypeFromPersisted,
   type FinishMode,
   type QtyType,
@@ -126,4 +127,46 @@ export function buildSpecQuantitySliceFromPersistedJobSheet(
   spec: SpecPayload,
 ): SpecQuantitySlice {
   return parseQtyStrings(js, spec)
+}
+
+/**
+ * API-shaped job sheet row from live editor quantity state, for {@link jobSheetOrderQuantityLabel} / quote qty helpers.
+ * Mirrors the quantity fields persisted on save (see job sheet editor `onSave`).
+ */
+export function buildLiveJobSheetRowForOrderQuantityLabel(opts: {
+  effectiveQtyType: QtyType
+  finishMode: FinishMode
+  totalKgForScheduling: number
+  numUnitsNum: number
+  numRollsPersisted: number
+  derivedProductUnits: number | null | undefined
+  quantityValueFallback: number
+  bagsPerCarton: number | null | undefined
+  isImportDraft?: boolean
+}): Record<string, unknown> {
+  const oq = getOrderQuantityFromJobSheetFields(
+    opts.effectiveQtyType,
+    opts.quantityValueFallback,
+    opts.totalKgForScheduling,
+    opts.numUnitsNum,
+    opts.numRollsPersisted,
+    opts.finishMode,
+    opts.bagsPerCarton,
+  )
+  const numPu =
+    opts.effectiveQtyType === 'units'
+      ? opts.numUnitsNum
+      : opts.derivedProductUnits != null && Number.isFinite(Number(opts.derivedProductUnits))
+        ? Math.round(Number(opts.derivedProductUnits))
+        : null
+  const row: Record<string, unknown> = {
+    qty_type: opts.effectiveQtyType,
+    quantity_unit: oq.quantity_unit,
+    quantity_value: oq.quantity_value,
+    num_product_units: numPu,
+    num_rolls: opts.numRollsPersisted,
+  }
+  if (opts.totalKgForScheduling > 0) row.total_kg = opts.totalKgForScheduling
+  if (opts.isImportDraft) row.is_import_draft = true
+  return row
 }

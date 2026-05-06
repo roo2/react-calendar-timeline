@@ -18,9 +18,14 @@ import {
   Alert,
   Box,
   Button,
+  FormControl,
+  InputLabel,
   Link as MuiLink,
+  MenuItem,
   Paper,
+  Select,
   Stack,
+  TextField,
   Typography,
   useMediaQuery,
   useTheme,
@@ -47,6 +52,9 @@ import { StickySideAside } from '../../../components/StickySideAside'
 import { LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
+import { computeJobSheetPreviewQuoteSummary } from '../../../utils/jobSheetPreviewQuoteSummary'
+import { buildLiveJobSheetRowForOrderQuantityLabel } from '../../../utils/jobSheetQuantityFromApi'
+import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
 
 type Mode = 'new' | 'edit'
 
@@ -118,6 +126,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const createState = useAppSelector((s) => s.products.create)
   const jobSheetDetail = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
+  const loadedJobSheet = mode === 'edit' && jobSheetId ? jobSheetDetail?.data?.job_sheet : undefined
   const { setDirty } = useUnsavedChanges()
   const [savingJobSheet, setSavingJobSheet] = useState(false)
 
@@ -143,6 +152,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const [specFieldErrors, setSpecFieldErrors] = useState<Record<string, string>>({})
   const [customerFacingDescription, setCustomerFacingDescription] = useState('')
+  /** Stored on the linked product (shared across job sheets). */
+  const [productionExtruderCode, setProductionExtruderCode] = useState('')
+  const [dieSize, setDieSize] = useState('')
+  /** After the user changes the extruder dropdown, do not auto-fill over an explicit empty selection. */
+  const extruderUserTouchedRef = useRef(false)
 
   useEffect(() => {
     if (customersStatus !== 'idle') return
@@ -152,7 +166,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
   const ratebook = quoteRatebookState.data
 
-  const qty = useSpecLinkedQuantityFields({ spec, ratebook, extruderCode: null })
+  const extruderCodeForQty =
+    productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : null
+
+  const qty = useSpecLinkedQuantityFields({ spec, ratebook, extruderCode: extruderCodeForQty })
 
   useEffect(() => {
     void dispatch(fetchQuoteRatebook())
@@ -184,6 +201,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (st.status !== 'succeeded' || !st.data) return
     if (lastJobDetailDataRef.current === st.data) return
     lastJobDetailDataRef.current = st.data
+    extruderUserTouchedRef.current = false
     setSaveErr(null)
     setSpecFieldErrors({})
     const res = st.data
@@ -222,6 +240,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionStatus(normalizedPs)
     setProductionStartedLocal(isoToDatetimeLocalValue(js?.production_started_at as string | null | undefined))
     setProductionFinishedLocal(isoToDatetimeLocalValue(js?.production_finished_at as string | null | undefined))
+    const extFromRow =
+      js?.production_extruder_code != null && String(js.production_extruder_code).trim() !== ''
+        ? String(js.production_extruder_code).trim()
+        : ''
     const isImportDraft = Boolean(js?.is_import_draft)
     let loadedSpec0 = ensureSpec(res?.spec_payload)
     const rawQu = String(js?.quantity_unit || '').toLowerCase()
@@ -236,6 +258,13 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       }
     }
     setSpec(loadedSpec0)
+    const extLegacy =
+      loadedSpec0.identity?.production_extruder_code != null &&
+      String(loadedSpec0.identity.production_extruder_code).trim() !== ''
+        ? String(loadedSpec0.identity.production_extruder_code).trim()
+        : ''
+    setProductionExtruderCode(extFromRow || extLegacy)
+    setDieSize(js?.die_size != null && String(js.die_size).trim() !== '' ? String(js.die_size) : '')
     const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
     const pt = String(loadedSpec0.identity?.product_type || 'Bag')
     const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
@@ -344,6 +373,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setSpecDirty(false)
     setSaveMsg(null)
     qty.resetNewDraft()
+    extruderUserTouchedRef.current = false
+    setProductionExtruderCode('')
+    setDieSize('')
     setProductionStatus('planned')
     setProductionStartedLocal('')
     setProductionFinishedLocal('')
@@ -382,7 +414,76 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     derivedDisplay,
   )
 
-  const loadedJobSheet = mode === 'edit' && jobSheetId ? jobSheetDetail?.data?.job_sheet : undefined
+  const extruderSuggestion = useMemo(
+    () => suggestSmallestFittingExtruderCode(spec, ratebook ?? null),
+    [spec, ratebook],
+  )
+
+  useEffect(() => {
+    if (extruderUserTouchedRef.current) return
+    if (productionExtruderCode.trim() !== '') return
+    const code = extruderSuggestion.extruderCode
+    if (!code) return
+    setProductionExtruderCode(code)
+  }, [productionExtruderCode, extruderSuggestion.extruderCode])
+
+  const previewJobSheetQuantityRow = useMemo(() => {
+    const totalKgForScheduling =
+      finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
+        ? Number(totalKgDisplay)
+        : totalKgNum
+    const persistedRolls = resolveNumRollsForPersistence(
+      finishMode,
+      effectiveQtyType,
+      totalKgNum,
+      numRollsNum,
+      weightPerRollNum,
+      derivedDisplay,
+    )
+    const fallbackLegacy =
+      mode === 'edit' &&
+      loadedJobSheet != null &&
+      loadedJobSheet.quantity_value != null &&
+      Number(loadedJobSheet.quantity_value) > 0
+        ? Number(loadedJobSheet.quantity_value)
+        : 1
+    const bpc = spec.packaging?.bags_per_carton
+    return buildLiveJobSheetRowForOrderQuantityLabel({
+      effectiveQtyType,
+      finishMode,
+      totalKgForScheduling,
+      numUnitsNum,
+      numRollsPersisted: persistedRolls,
+      derivedProductUnits: derivedForDisplay?.units,
+      quantityValueFallback: fallbackLegacy,
+      bagsPerCarton: bpc != null ? Number(bpc) : null,
+      isImportDraft: Boolean(loadedJobSheet?.is_import_draft),
+    })
+  }, [
+    finishMode,
+    effectiveQtyType,
+    totalKgNum,
+    totalKgDisplay,
+    numRollsNum,
+    weightPerRollNum,
+    numUnitsNum,
+    derivedDisplay,
+    mode,
+    loadedJobSheet,
+    spec.packaging?.bags_per_carton,
+  ])
+
+  const jobSheetPreviewQuoteSummary = useMemo(
+    () =>
+      computeJobSheetPreviewQuoteSummary(
+        spec,
+        previewJobSheetQuantityRow,
+        ratebook ?? null,
+        qty.quickInputs ?? null,
+      ),
+    [spec, previewJobSheetQuantityRow, ratebook, qty.quickInputs],
+  )
+
   const myobImportLineDescription = useMemo(() => {
     const raw = jobSheetDetail?.data?.myob_import_line_description
     if (raw == null || typeof raw !== 'string') return ''
@@ -608,6 +709,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             ...(customerFacingDescription.trim()
               ? { customer_facing_description: customerFacingDescription.trim() }
               : {}),
+            production_extruder_code: productionExtruderCode.trim() || null,
+            die_size: dieSize.trim() || null,
           }),
         ).unwrap()
         const id = res?.job_sheet?.id
@@ -640,6 +743,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
           production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
           customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
+          production_extruder_code: productionExtruderCode.trim() || null,
+          die_size: dieSize.trim() || null,
         }
         if (specDirty) body.spec = spec
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
@@ -837,6 +942,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             myobImportLineDescription={myobImportLineDescription}
             customerFacingDescription={customerFacingDescription}
             onBeforeOpenPrint={onBeforeOpenPrintPreview}
+            quoteSummary={jobSheetPreviewQuoteSummary}
           />
         ) : null}
 
@@ -866,69 +972,130 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 setDirty(true)
               }}
               afterDimensionsSlot={
-                <Paper variant="outlined" sx={{ p: 2 }}>
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      justifyContent: 'space-between',
-                      gap: 2,
-                      flexWrap: 'wrap',
-                      mb: 2,
-                    }}
-                  >
-                    <Typography variant="h6">Quantity</Typography>
-                    {mode === 'edit' && orderId.trim() ? (
-                      <MuiLink
-                        component={Link}
-                        to={`/orders/${encodeURIComponent(orderId)}`}
-                        underline="hover"
-                        variant="body2"
-                        sx={{ flexShrink: 0 }}
-                      >
-                        View order
-                      </MuiLink>
-                    ) : null}
-                  </Box>
-                  <LinkedQuantityFields
-                    qty={qty}
-                    bagsPerCartonStr={bagsPerCartonStr}
-                    onBagsPerCartonChange={(raw) => {
-                      setSpec((prev: SpecPayload) => ({
-                        ...prev,
-                        packaging: {
-                          ...prev.packaging,
-                          bags_per_carton: raw.trim() === '' ? null : Math.max(1, Math.round(Number(raw))),
-                        },
-                      }))
-                      if (mode === 'edit') setSpecDirty(true)
-                      setDirty(true)
-                    }}
-                  />
-                  {finishMode === 'Cartons' ? (
-                    <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                        Conversion instructions
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Total cartons:{' '}
-                        <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
-                          {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
-                            ? String(qty.cartonCountForDisplay)
-                            : '—'}
-                        </Box>
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                        Bags per carton:{' '}
-                        <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
-                          {spec.packaging?.bags_per_carton != null && Number(spec.packaging.bags_per_carton) > 0
-                            ? String(Math.max(1, Math.round(Number(spec.packaging.bags_per_carton))))
-                            : '—'}
-                        </Box>
-                      </Typography>
+                <>
+                  <Paper variant="outlined" sx={{ p: 2 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        gap: 2,
+                        flexWrap: 'wrap',
+                        mb: 2,
+                      }}
+                    >
+                      <Typography variant="h6">Quantity</Typography>
+                      {mode === 'edit' && orderId.trim() ? (
+                        <MuiLink
+                          component={Link}
+                          to={`/orders/${encodeURIComponent(orderId)}`}
+                          underline="hover"
+                          variant="body2"
+                          sx={{ flexShrink: 0 }}
+                        >
+                          View order
+                        </MuiLink>
+                      ) : null}
                     </Box>
-                  ) : null}
-                </Paper>
+                    <LinkedQuantityFields
+                      qty={qty}
+                      bagsPerCartonStr={bagsPerCartonStr}
+                      onBagsPerCartonChange={(raw) => {
+                        setSpec((prev: SpecPayload) => ({
+                          ...prev,
+                          packaging: {
+                            ...prev.packaging,
+                            bags_per_carton: raw.trim() === '' ? null : Math.max(1, Math.round(Number(raw))),
+                          },
+                        }))
+                        if (mode === 'edit') setSpecDirty(true)
+                        setDirty(true)
+                      }}
+                    />
+                    {finishMode === 'Cartons' ? (
+                      <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                          Conversion instructions
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total cartons:{' '}
+                          <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
+                            {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
+                              ? String(qty.cartonCountForDisplay)
+                              : '—'}
+                          </Box>
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                          Bags per carton:{' '}
+                          <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
+                            {spec.packaging?.bags_per_carton != null && Number(spec.packaging.bags_per_carton) > 0
+                              ? String(Math.max(1, Math.round(Number(spec.packaging.bags_per_carton))))
+                              : '—'}
+                          </Box>
+                        </Typography>
+                      </Box>
+                    ) : null}
+                  </Paper>
+                  <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+                    <Typography variant="h6" sx={{ mb: 2 }}>
+                      Extruder
+                    </Typography>
+                    <Stack spacing={2}>
+                      <FormControl fullWidth size="small" sx={{ maxWidth: 520 }}>
+                        <InputLabel id="job-sheet-production-extruder-label">Extruder</InputLabel>
+                        <Select
+                          labelId="job-sheet-production-extruder-label"
+                          label="Extruder"
+                          value={productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : ''}
+                          onChange={(e) => {
+                            extruderUserTouchedRef.current = true
+                            const v = String(e.target.value || '').trim()
+                            setProductionExtruderCode(v)
+                            setDirty(true)
+                          }}
+                        >
+                          <MenuItem value="">
+                            <em>None</em>
+                          </MenuItem>
+                          {(Array.isArray(ratebook?.extruders) ? ratebook!.extruders : [])
+                            .filter((ex) => ex && String(ex.extruder_code || '').trim())
+                            .map((ex) => {
+                              const code = String(ex.extruder_code || '').trim()
+                              const model = ex?.model != null && String(ex.model).trim() ? String(ex.model).trim() : ''
+                              const dw = ex?.decision_width_mm != null ? Number(ex.decision_width_mm) : null
+                              const avg = ex?.average_kg_hr != null ? Number(ex.average_kg_hr) : null
+                              const bits = [code]
+                              if (model) bits.push(`— ${model}`)
+                              if (dw != null && Number.isFinite(dw)) bits.push(`${Math.round(dw)} mm`)
+                              if (avg != null && Number.isFinite(avg)) bits.push(`~${avg} kg/h`)
+                              return (
+                                <MenuItem key={code} value={code}>
+                                  {bits.join(' · ')}
+                                </MenuItem>
+                              )
+                            })}
+                        </Select>
+                      </FormControl>
+                      <TextField
+                        label="Die size"
+                        value={dieSize}
+                        onChange={(e) => {
+                          setDieSize(e.target.value)
+                          setDirty(true)
+                        }}
+                        size="small"
+                        sx={{ maxWidth: 220 }}
+                        placeholder="120"
+                        inputProps={{ maxLength: 32 }}
+                      />
+                      {extruderSuggestion.hintLine ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          {extruderSuggestion.hintLine}
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                  </Paper>
+                </>
               }
             />
           </Paper>
@@ -950,6 +1117,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               myobImportLineDescription={myobImportLineDescription}
               customerFacingDescription={customerFacingDescription}
               onBeforeOpenPrint={onBeforeOpenPrintPreview}
+              quoteSummary={jobSheetPreviewQuoteSummary}
             />
           </StickySideAside>
         ) : null}

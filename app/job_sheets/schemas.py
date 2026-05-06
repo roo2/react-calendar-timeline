@@ -32,6 +32,10 @@ class JobSheetCreateRequest(BaseModel):
     production_finished_at: Optional[datetime] = None
     customer_facing_description: Optional[str] = None
     """Short description shown to the customer; optional on create."""
+    production_extruder_code: Optional[str] = Field(default=None, max_length=64)
+    """Ratebook extruder code; stored on the linked ``Product`` (shared across job sheets)."""
+    die_size: Optional[str] = None
+    """Extrusion die on the extruder; stored on the linked ``Product``."""
 
 
 class JobSheetSummary(BaseModel):
@@ -76,6 +80,10 @@ class JobSheetSummary(BaseModel):
     price_per_kg: Optional[float] = None
     customer_facing_description: Optional[str] = None
     """Optional text override; when unset, UIs use import line (MYOB) / product spec."""
+    production_extruder_code: Optional[str] = None
+    """From linked product (same for all job sheets on that product)."""
+    die_size: Optional[str] = None
+    """From linked product."""
 
 
 class JobSheetDetail(BaseModel):
@@ -113,4 +121,8 @@ class JobSheetUpdateRequest(BaseModel):
     """Explicit finish instant (UTC). Send `null` to clear. Applied after status-driven defaults."""
     customer_facing_description: Optional[str] = None
     """Set or clear (send null / empty) the customer-facing description for this job sheet."""
+    production_extruder_code: Optional[str] = Field(default=None, max_length=64)
+    """Updates the linked ``Product`` (not the job sheet row)."""
+    die_size: Optional[str] = None
+    """Updates the linked ``Product``."""
 

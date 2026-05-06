@@ -32,7 +32,14 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
+import {
+  ListFiltersCard,
+  ListPaginationBar,
+  ListTableSurface,
+  LIST_PAGE_SIZE,
+  SortHeaderCell,
+  type UrlSortDir,
+} from '../../components/list'
 import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
@@ -80,6 +87,8 @@ const JOB_SHEET_FILTER_DEFAULTS: Record<string, string> = {
   toDate: '',
   orderStatus: '',
   productionStatus: '',
+  sortBy: '',
+  sortDir: '',
   advanced: '',
 }
 
@@ -99,6 +108,8 @@ const JOB_SHEET_URL_KEYS: Record<string, string> = {
   toDate: 'dt',
   orderStatus: 'ost',
   productionStatus: 'pst',
+  sortBy: 'sb',
+  sortDir: 'sd',
   advanced: 'adv',
 }
 function fmtQty(v: number, u: string) {
@@ -136,7 +147,7 @@ export function JobSheetsPage() {
   const [customerSearchQ, setCustomerSearchQ] = useState('')
   const [unlistedFilterCustomer, setUnlistedFilterCustomer] = useState<CustomerSummary | null>(null)
 
-  const { filters, setFilter, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
+  const { filters, setFilter, patchFilters, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
     defaults: JOB_SHEET_FILTER_DEFAULTS,
     urlKeys: JOB_SHEET_URL_KEYS,
   })
@@ -165,6 +176,12 @@ export function JobSheetsPage() {
     if (filters.toDate) q.to_date = filters.toDate
     if (filters.orderStatus) q.order_status = filters.orderStatus
     if (filters.productionStatus) q.production_status = filters.productionStatus
+    const sb = filters.sortBy.trim()
+    const sd = filters.sortDir.trim().toLowerCase()
+    if (sb && (sd === 'asc' || sd === 'desc')) {
+      q.sort_by = sb
+      q.sort_dir = sd
+    }
     q.page = pageIdx + 1
     q.page_size = LIST_PAGE_SIZE
     return q
@@ -236,6 +253,13 @@ export function JobSheetsPage() {
 
   const colCount = 9
   const searching = debouncing || loading
+
+  const sortDirSafe: UrlSortDir =
+    filters.sortDir === 'asc' || filters.sortDir === 'desc' ? filters.sortDir : ''
+
+  const onSortColumn = (column: string, dir: 'asc' | 'desc') => {
+    patchFilters({ sortBy: column, sortDir: dir })
+  }
 
   return (
     <Stack spacing={2}>
@@ -494,18 +518,74 @@ export function JobSheetsPage() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ width: 120, whiteSpace: 'nowrap' }}>Invoice No</TableCell>
-                  <TableCell sx={{ width: 88, maxWidth: 100, whiteSpace: 'nowrap' }}>Customer</TableCell>
-                  <TableCell sx={{ minWidth: 220 }}>Product</TableCell>
-                  <TableCell sx={{ minWidth: 160, maxWidth: 280 }}>Status</TableCell>
-                  <TableCell sx={{ width: 110, whiteSpace: 'nowrap' }}>Order Date</TableCell>
-                  <TableCell>Qty</TableCell>
-                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                  <SortHeaderCell
+                    column="invoice_no"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ width: 120, whiteSpace: 'nowrap' }}
+                  >
+                    Invoice No
+                  </SortHeaderCell>
+                  <SortHeaderCell
+                    column="customer"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ width: 88, maxWidth: 100, whiteSpace: 'nowrap' }}
+                  >
+                    Customer
+                  </SortHeaderCell>
+                  <SortHeaderCell
+                    column="product"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ minWidth: 220 }}
+                  >
+                    Product
+                  </SortHeaderCell>
+                  <SortHeaderCell
+                    column="status"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ minWidth: 160, maxWidth: 280 }}
+                  >
+                    Status
+                  </SortHeaderCell>
+                  <SortHeaderCell
+                    column="order_date"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ width: 110, whiteSpace: 'nowrap' }}
+                  >
+                    Order Date
+                  </SortHeaderCell>
+                  <SortHeaderCell column="qty" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
+                    Qty
+                  </SortHeaderCell>
+                  <SortHeaderCell
+                    align="right"
+                    column="price_per_kg"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
                     Price/kg
-                  </TableCell>
-                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                  </SortHeaderCell>
+                  <SortHeaderCell
+                    align="right"
+                    column="line_total"
+                    sortBy={filters.sortBy}
+                    sortDir={sortDirSafe}
+                    onSort={onSortColumn}
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
                     Line total
-                  </TableCell>
+                  </SortHeaderCell>
                   <TableCell sx={{ width: 200, whiteSpace: 'nowrap' }}>Actions</TableCell>
                 </TableRow>
               </TableHead>

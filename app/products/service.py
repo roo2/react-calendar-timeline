@@ -18,6 +18,7 @@ from app.products.schemas import (
     SpecPayload,
     PrintMethod,
     FinishMode,
+    UpdateProductRequest,
 )
 
 
@@ -566,13 +567,34 @@ def create_new_version(product_id: str, payload: CreateProductVersionRequest, cr
         return version
 
 
-def update_product_description(product_id: str, description: Optional[str]) -> Product:
+def _norm_product_extruder(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    t = str(v).strip()
+    if not t:
+        return None
+    return t[:64]
+
+
+def _norm_product_die_size(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    t = str(v).strip()
+    return t if t else None
+
+
+def update_product(product_id: str, payload: UpdateProductRequest) -> Product:
     with SessionLocal() as db:
         pid = str(uuid.UUID(product_id))
         product = db.get(Product, pid)
         if not product:
             raise DomainError("Product not found")
-        # Description is now computed from the active ProductVersion.
+        upd = payload.model_dump(exclude_unset=True)
+        if "production_extruder_code" in upd:
+            product.production_extruder_code = _norm_product_extruder(payload.production_extruder_code)
+        if "die_size" in upd:
+            product.die_size = _norm_product_die_size(payload.die_size)
+        # Description is computed from the active ProductVersion.
         desc = None
         if product.active_version_id:
             active = db.get(ProductVersion, product.active_version_id)

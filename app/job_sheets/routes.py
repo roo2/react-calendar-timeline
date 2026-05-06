@@ -22,6 +22,20 @@ from app.storage import printing_artwork_service as printing_artwork_service
 router = APIRouter(prefix="/api/job-sheets", tags=["job_sheets"])
 
 
+def _job_sheet_extruder_for_summary(v) -> str | None:
+    if v is None:
+        return None
+    t = str(v).strip()
+    return t[:64] if t else None
+
+
+def _job_sheet_die_for_summary(v) -> str | None:
+    if v is None:
+        return None
+    t = str(v).strip()
+    return t if t else None
+
+
 def _printing_artwork_http_error(e: DomainError) -> None:
     m = (e.message or "").lower()
     if "not configured" in m:
@@ -167,7 +181,72 @@ def _to_summary(
         line_total=lt,
         price_per_kg=ppk,
         customer_facing_description=str(getattr(js, "customer_facing_description", None) or "").strip() or None,
+        production_extruder_code=_job_sheet_extruder_for_summary(
+            getattr(product, "production_extruder_code", None) if product else None
+        ),
+        die_size=_job_sheet_die_for_summary(getattr(product, "die_size", None) if product else None),
     )
+
+
+_JOB_SHEET_LIST_SORT_FIELDS = frozenset(
+    {"invoice_no", "customer", "product", "status", "order_date", "qty", "price_per_kg", "line_total"}
+)
+
+
+def _job_sheet_order_date_sort_tuple(order_date_s: str | None) -> tuple[int, float]:
+    if not order_date_s:
+        return (1, 0.0)
+    try:
+        d0 = date.fromisoformat(str(order_date_s)[:10])
+        return (0, float(d0.toordinal()))
+    except Exception:
+        return (1, 0.0)
+
+
+def _job_sheet_list_sort_tuple(
+    js,
+    order_map: dict[str, tuple[str | None, str | None, str | None, str | None]],
+    snap_map: dict[str, dict],
+    sort_by: str,
+) -> tuple:
+    oid = str(js.id)
+    oi = order_map.get(oid)
+    _, inv, od_s, ost = oi if oi else (None, None, None, None)
+    snap = snap_map.get(oid) or {}
+    ps_raw = snap.get("status")
+    prod_stat = None if ps_raw is None else str(ps_raw)
+    status_label = _status_label(ost, prod_stat) or ""
+    version = getattr(js, "version", None)
+    spec: dict = {}
+    if version and isinstance(getattr(version, "spec_payload", None), dict):
+        spec = version.spec_payload  # type: ignore[assignment]
+    product = getattr(js, "product", None)
+    customer = getattr(js, "customer", None)
+
+    if sort_by == "invoice_no":
+        return ((inv or "").casefold(), oid)
+    if sort_by == "customer":
+        return ((getattr(customer, "name", None) or "").casefold(), oid)
+    if sort_by == "product":
+        code = str(getattr(product, "code", "") or "").casefold()
+        desc = str(getattr(product, "description", "") or "").casefold()
+        return (code, desc, oid)
+    if sort_by == "status":
+        return (status_label.casefold(), oid)
+    if sort_by == "order_date":
+        return (*_job_sheet_order_date_sort_tuple(od_s), oid)
+    if sort_by == "qty":
+        qv = float(getattr(js, "quantity_value", 0) or 0)
+        return (qv, oid)
+    if sort_by == "line_total":
+        lt = getattr(js, "line_total", None)
+        return (lt is None, float(lt) if lt is not None else 0.0, oid)
+    if sort_by == "price_per_kg":
+        lt_f = float(js.line_total) if getattr(js, "line_total", None) is not None else None
+        tkg = _totals_kg_for_price(js, spec)
+        ppk = _price_per_kg(lt_f, tkg)
+        return (ppk is None, float(ppk) if ppk is not None else 0.0, oid)
+    raise AssertionError(sort_by)
 
 
 @router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
@@ -187,6 +266,13 @@ async def list_job_sheets(
     order_status: str | None = Query(default=None),
     production_status: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    sort_by: str | None = Query(
+        default=None,
+        description=(
+            "Sort field: invoice_no, customer, product, status, order_date, qty, price_per_kg, line_total"
+        ),
+    ),
+    sort_dir: str | None = Query(default=None, description="asc or desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
@@ -233,6 +319,18 @@ async def list_job_sheets(
             filtered_rows.append(r)
         rows = filtered_rows
         total = len(filtered_rows)
+
+    sort_key = (sort_by or "").strip().casefold()
+    if sort_key in _JOB_SHEET_LIST_SORT_FIELDS:
+        ids_sort = [str(r.id) for r in rows]
+        order_map_sort = _order_info_for_job_sheets(ids_sort)
+        snap_map_sort = service.production_job_snapshots_by_job_sheet_ids(ids_sort)
+        ascending = (sort_dir or "").strip().casefold() == "asc"
+        rows.sort(
+            key=lambda r: _job_sheet_list_sort_tuple(r, order_map_sort, snap_map_sort, sort_key),
+            reverse=not ascending,
+        )
+
     start = (page - 1) * page_size
     end = start + page_size
     page_rows = rows[start:end]

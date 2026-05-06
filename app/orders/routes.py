@@ -179,34 +179,6 @@ def _products_summary(o) -> tuple[str | None, int]:
     return codes[0], max(0, len(codes) - 1)
 
 
-def _order_total_from_orm(o) -> float | None:
-    """Sum line totals from job sheets, resell, and MYOB import lines (unified order_items)."""
-    total = 0.0
-    any_line = False
-    for oi in getattr(o, "items", None) or []:
-        kind = getattr(oi, "line_kind", None) or "manufactured"
-        if kind == "resell":
-            t = getattr(oi, "resell_line_total", None)
-            if t is not None:
-                total += float(t)
-                any_line = True
-            continue
-        if kind == "myob_import":
-            js = getattr(oi, "job_sheet", None)
-            if js is not None and getattr(js, "line_total", None) is not None:
-                total += float(js.line_total)
-                any_line = True
-            elif getattr(oi, "import_line_total", None) is not None:
-                total += float(oi.import_line_total)
-                any_line = True
-            continue
-        js = getattr(oi, "job_sheet", None)
-        if js is not None and getattr(js, "line_total", None) is not None:
-            total += float(js.line_total)
-            any_line = True
-    return total if any_line else None
-
-
 def _order_to_list_dto(o) -> OrderListItemDTO:
     return OrderListItemDTO(
         id=o.id,
@@ -217,7 +189,7 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
         product_version_id=o.product_version_id,
         customer_name=(o.customer.name if getattr(o, "customer", None) else None),
         item_count=len(getattr(o, "items", []) or []),
-        order_total=_order_total_from_orm(o),
+        order_total=service.order_total_from_orm(o),
         created_at=str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None,
         order_date=str(getattr(o, "order_date", None)) if getattr(o, "order_date", None) else None,
         import_source=getattr(o, "import_source", None),
@@ -270,6 +242,11 @@ async def list_orders(
     order_date_to: date | None = Query(default=None),
     line_item_search: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    sort_by: str | None = Query(
+        default=None,
+        description="Sort field: invoice, customer_po, customer, order_total, status, import_review, order_date",
+    ),
+    sort_dir: str | None = Query(default=None, description="asc or desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=200),
 ):
@@ -298,6 +275,8 @@ async def list_orders(
         order_date_to=order_date_to,
         line_item_search=line_item_search,
         search=search,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
         page=page,
         page_size=page_size,
     )

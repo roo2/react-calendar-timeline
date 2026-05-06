@@ -257,6 +257,8 @@ class CreateProductVersionRequest(BaseModel):
 
 class UpdateProductRequest(BaseModel):
     description: Optional[str] = None
+    production_extruder_code: Optional[str] = Field(default=None, max_length=64)
+    die_size: Optional[str] = None
 
 
 class OperatorSuggestionRequest(BaseModel):
