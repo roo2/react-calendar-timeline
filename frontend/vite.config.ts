@@ -25,8 +25,11 @@ export default defineConfig({
       'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
       'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime'),
       'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime'),
+      // `file:../vendor/react-calendar-timeline` imports `dayjs` as a peer; Rollup resolves from the
+      // vendor dist and may not find hoisted deps on CI/Heroku — pin to the app copy (same pattern as React).
+      dayjs: path.resolve(__dirname, 'node_modules/dayjs'),
     },
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', 'dayjs'],
   },
   build: {
     sourcemap: prodSourcemap,
