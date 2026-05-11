@@ -180,15 +180,15 @@ export function JobSheetPreviewPanel(props: {
             </Typography>
             <PreviewInlineRow label="Extruded meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
             <PreviewInlineRow
-              label="Total KG (including waste):"
+              label="Total KG (inc waste):"
               value={quoteSummary.totalKgIncludingWaste != null ? `${quoteSummary.totalKgIncludingWaste} kg` : ''}
             />
-            <PreviewInlineRow label="Extrusion time (est.):" value={quoteSummary.extrusionTimeDisplay || ''} />
+            <PreviewInlineRow label="Extrusion time:" value={quoteSummary.extrusionTimeDisplay || ''} />
             <PreviewInlineRow
               label="Extrusion waste factor:"
               value={
                 quoteSummary.estimatedWasteFactorPct
-                  ? `${quoteSummary.estimatedWasteFactorPct} of ordered job kg`
+                  ? `${quoteSummary.estimatedWasteFactorPct} of extruded resin`
                   : ''
               }
             />

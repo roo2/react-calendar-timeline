@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { derivedInlineSeal } from '../../utils/specCompat'
 import { fetchProduct, fetchProductVersion, productVersionCacheKey } from '../../store/slices/productsSlice'
 
 function fmtList(x: unknown): string {
@@ -353,7 +354,9 @@ export function ProductVersionPrintPage() {
                   </tr>
                   <tr>
                     <th>Inline Seal</th>
-                    <td>{spec.run_requirements?.inline_seal ? 'Yes' : 'No'}</td>
+                    <td>
+                      {derivedInlineSeal(spec?.identity?.product_type, spec?.identity?.finish_mode) ? 'Yes' : 'No'}
+                    </td>
                   </tr>
                   <tr>
                     <th>Setup Notes</th>

@@ -10,7 +10,7 @@ import {
   type QuoteRatebook,
 } from './quoteCalculator'
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
-import { productTypeCanHaveGusset } from './specCompat'
+import { derivedInlineSeal, productTypeCanHaveGusset } from './specCompat'
 
 function dimensionsAreContinuous(dim: any, productType: string): boolean {
   const lu = String(dim?.length_units || '')
@@ -161,7 +161,7 @@ export function buildQuickQuoteInputsFromSpec(
     base_length_mm: baseLengthMm,
     continuous_roll: continuousRoll,
     inline_perforation: !!run.inline_perforation,
-    inline_seal: !!run.inline_seal,
+    inline_seal: derivedInlineSeal(productType, finishMode),
     hole_punched: !!run.hole_punched,
     gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
     trim_pct: trimPct,

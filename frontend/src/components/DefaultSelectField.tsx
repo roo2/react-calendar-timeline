@@ -10,10 +10,11 @@ export function isDefaultValue(value: unknown, defaultValue: unknown): boolean {
 }
 
 export function defaultFieldSx(isDefault: boolean) {
-  if (!isDefault) return {}
+  if (isDefault) return {}
   return {
-    // Very light yellow tint to indicate "default" without looking disabled.
-    '& .MuiInputBase-root': { bgcolor: '#FFFDE7' },
+    // Very light yellow tint when the value differs from the template default.
+    // !important so parent panels (e.g. perforated tint) can set a default input surface without hiding this highlight.
+    '& .MuiInputBase-root': { bgcolor: '#FFFDE7 !important' },
   }
 }
 
@@ -22,7 +23,7 @@ type DefaultSelectFieldProps = Omit<TextFieldProps, 'select'> & {
 }
 
 /**
- * TextField(select) that renders with a subtle tint while it is still at its default value.
+ * TextField(select) with a subtle yellow tint when the value differs from `defaultValue`.
  * Intended as a reusable pattern across quote/job sheet forms.
  */
 export function DefaultSelectField(props: DefaultSelectFieldProps) {

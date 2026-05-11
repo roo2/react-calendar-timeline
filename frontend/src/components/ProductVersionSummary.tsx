@@ -1,4 +1,5 @@
 import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { derivedInlineSeal } from '../utils/specCompat'
 
 function fmtMm(v: unknown): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
@@ -144,7 +145,7 @@ export function ProductVersionSummary(props: { spec: any }) {
     gussetOn ? 'Gusset' : null,
     printed ? 'Printed' : null,
     spec?.run_requirements?.inline_perforation ? 'Perforated' : null,
-    spec?.run_requirements?.inline_seal ? 'Sealed' : null,
+    derivedInlineSeal(spec?.identity?.product_type, spec?.identity?.finish_mode) ? 'Sealed' : null,
     spec?.run_requirements?.hole_punched ? 'Punched' : null,
   ].filter(Boolean)
 

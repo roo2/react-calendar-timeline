@@ -15,8 +15,9 @@ export type JobSheetPreviewQuoteSummary = {
   extrusionTimeDisplay: string | null
   extrudedMeters: string | null
   /**
-   * Extrusion waste as % of ordered (billable) job kg when calculator returns job kg + total extruded kg.
-   * Same implied factor previously shown under Extruder on the editor.
+   * Extrusion downtime waste as % of **productive plastic kg** (film to make the job, before extrusion waste).
+   * Uses `total_extruded_kg − waste_kg` as the denominator so roll-weight billing (billed kg includes cores)
+   * does not skew the % vs `totals_kg` (billable).
    */
   estimatedWasteFactorPct: string | null
 }
@@ -79,13 +80,19 @@ export function computeJobSheetPreviewQuoteSummary(
       : null
 
   let estimatedWasteFactorPct: string | null = null
-  const jobKg = preview.totals_kg
-  const extKg = preview.total_extruded_kg
-  if (jobKg != null && Number(jobKg) > 0 && extKg != null && Number(extKg) >= Number(jobKg)) {
-    const pct = ((Number(extKg) - Number(jobKg)) / Number(jobKg)) * 100
-    if (Number.isFinite(pct)) {
-      estimatedWasteFactorPct =
-        Math.abs(pct - Math.round(pct)) < 1e-6 ? `${Math.round(pct)}%` : `${pct.toFixed(2)}%`
+  const extKgRaw = preview.total_extruded_kg
+  const wasteKgRaw = preview.waste_kg
+  const extKg = extKgRaw != null && Number.isFinite(Number(extKgRaw)) && Number(extKgRaw) > 0 ? Number(extKgRaw) : null
+  const wasteKg =
+    wasteKgRaw != null && Number.isFinite(Number(wasteKgRaw)) && Number(wasteKgRaw) > 0 ? Number(wasteKgRaw) : 0
+  if (extKg != null) {
+    const plasticKg = Math.max(0, extKg - wasteKg)
+    if (plasticKg > 0) {
+      const pct = (wasteKg / plasticKg) * 100
+      if (Number.isFinite(pct)) {
+        estimatedWasteFactorPct =
+          Math.abs(pct - Math.round(pct)) < 1e-6 ? `${Math.round(pct)}%` : `${pct.toFixed(2)}%`
+      }
     }
   }
 

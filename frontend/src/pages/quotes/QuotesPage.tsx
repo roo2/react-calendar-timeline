@@ -44,7 +44,7 @@ import type { ColourOption } from '../../components/ColourSelect'
 import type { AdditiveOption } from '../../components/AdditiveSelect'
 import { MaterialsColoursAndAdditives } from '../../components/MaterialsColoursAndAdditives'
 import { DefaultSelectField } from '../../components/DefaultSelectField'
-import { productTypeCanHaveGusset } from '../../utils/specCompat'
+import { derivedInlineSeal, productTypeCanHaveGusset } from '../../utils/specCompat'
 import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
 import { computeWeightPerRollDisplay, qtyTypeFromPersisted } from '../../utils/quantityRollFields'
 import { getDisplayProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
@@ -270,7 +270,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const [flagGusset, setFlagGusset] = useState(false)
   const [flagPrinted, setFlagPrinted] = useState(false)
   const [flagPerforated, setFlagPerforated] = useState(false)
-  const [flagSealed, setFlagSealed] = useState(false)
   const [flagPunched, setFlagPunched] = useState(false)
 
   // Dimensions
@@ -448,8 +447,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (p.quantity?.rolls != null) setNumRolls(String(p.quantity.rolls))
     if (p.flagPerforated != null) setFlagPerforated(!!p.flagPerforated)
     else if (p.inline_perforation != null) setFlagPerforated(!!p.inline_perforation)
-    if (p.flagSealed != null) setFlagSealed(!!p.flagSealed)
-    else if (p.inline_seal != null) setFlagSealed(!!p.inline_seal)
     if (p.flagPunched != null) setFlagPunched(!!p.flagPunched)
     else if (p.hole_punched != null) setFlagPunched(!!p.hole_punched)
     if (p.showNumColours != null) setFlagPrinted(!!p.showNumColours)
@@ -813,7 +810,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           base_length_mm: baseLengthMm,
           continuous_roll: isContinuousLength,
           inline_perforation: flagPerforated,
-          inline_seal: flagSealed,
+          inline_seal: derivedInlineSeal(productType, finishMode),
           hole_punched: flagPunched,
           gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
           trim_pct: null,
@@ -855,7 +852,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         base_length_mm: baseLengthMm,
         continuous_roll: isContinuousLength,
         inline_perforation: flagPerforated,
-        inline_seal: flagSealed,
+        inline_seal: derivedInlineSeal(productType, finishMode),
         hole_punched: flagPunched,
         gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
         trim_pct: null,
@@ -937,7 +934,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       additives: additivesList,
 
       inline_perforation: flagPerforated,
-      inline_seal: flagSealed,
+      inline_seal: derivedInlineSeal(productType, finishMode),
       hole_punched: flagPunched,
 
       print_method: printMethod,
@@ -976,7 +973,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     flagPerforated,
     flagPrinted,
     flagPunched,
-    flagSealed,
     gussetReturnMmNum,
     isContinuousLength,
     isUFilm,
@@ -2159,7 +2155,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       bagsPerCarton,
       palletType,
       flagPerforated,
-      flagSealed,
       flagPunched,
       desiredNumColours: desiredNumColours || numColours,
       showNumColours: flagPrinted,
@@ -2206,7 +2201,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       bagsPerCarton,
       palletType,
       flagPerforated,
-      flagSealed,
       flagPunched,
       desiredNumColours,
       numColours,
@@ -3393,7 +3387,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   />
                   <FormControlLabel control={<Checkbox checked={flagPrinted} onChange={(e) => setPrinted(e.target.checked)} />} label="Printed" />
                   <FormControlLabel control={<Checkbox checked={flagPerforated} onChange={(e) => setFlagPerforated(e.target.checked)} />} label="Perforated" />
-                  <FormControlLabel control={<Checkbox checked={flagSealed} onChange={(e) => setFlagSealed(e.target.checked)} />} label="Sealed" />
                   <FormControlLabel control={<Checkbox checked={flagPunched} onChange={(e) => setFlagPunched(e.target.checked)} />} label="Punched" />
                 </FormGroup>
 

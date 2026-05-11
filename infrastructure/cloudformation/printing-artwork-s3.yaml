@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Private S3 bucket + IAM user/policy for Crown Pack printing artwork PDFs
+  (prefix-scoped Put/Get/Delete + ListBucket).
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Globally unique S3 bucket name (lowercase; DNS-compliant).
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+    ConstraintDescription: Use 3-63 chars, lowercase letters, digits, dots, hyphens.
+
+  ObjectPrefix:
+    Type: String
+    Default: printing-artwork/
+    Description: >
+      Key prefix for app uploads (must end with /). Must match S3_PRINTING_ARTWORK_PREFIX in the app.
+
+  AllowedCorsOrigin:
+    Type: String
+    Default: ''
+    Description: >
+      Frontend origin for CORS (e.g. https://app.example.com). Leave empty to skip CORS configuration.
+
+Conditions:
+  HasCorsOrigin: !Not [!Equals [!Ref AllowedCorsOrigin, '']]
+
+Resources:
+  PrintPdfBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  PrintPdfBucketCors:
+    Type: AWS::S3::BucketCorsConfiguration
+    Condition: HasCorsOrigin
+    Properties:
+      Bucket: !Ref PrintPdfBucket
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - HEAD
+            AllowedOrigins:
+              - !Ref AllowedCorsOrigin
+            ExposeHeaders:
+              - ETag
+            MaxAge: 3000
+
+  PrintingArtworkAppUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub '${AWS::StackName}-printing-artwork'
+
+  PrintingArtworkAppPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-printing-artwork-s3'
+      Users:
+        - !Ref PrintingArtworkAppUser
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ObjectReadWriteDelete
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+            Resource: !Sub 'arn:aws:s3:::${PrintPdfBucket}/${ObjectPrefix}*'
+          - Sid: ListPrefix
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource: !GetAtt PrintPdfBucket.Arn
+            Condition:
+              StringLike:
+                s3:prefix:
+                  - !Ref ObjectPrefix
+                  - !Sub '${ObjectPrefix}*'
+
+Outputs:
+  BucketName:
+    Description: Value for S3_BUCKET
+    Value: !Ref PrintPdfBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+
+  BucketArn:
+    Description: Bucket ARN
+    Value: !GetAtt PrintPdfBucket.Arn
+
+  Region:
+    Description: Value for S3_REGION
+    Value: !Ref AWS::Region
+
+  ObjectPrefix:
+    Description: Value for S3_PRINTING_ARTWORK_PREFIX
+    Value: !Ref ObjectPrefix
+
+  IamUserName:
+    Description: IAM user — create an access key for backend env AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    Value: !Ref PrintingArtworkAppUser

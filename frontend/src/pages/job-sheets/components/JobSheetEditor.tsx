@@ -14,6 +14,7 @@ import {
   type FinishMode,
   type QtyType,
 } from '../../../utils/quantityRollFields'
+import PrintIcon from '@mui/icons-material/Print'
 import {
   Alert,
   Box,
@@ -906,9 +907,20 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             View Order
           </Button>
         ) : null}
-        <Button variant="contained" onClick={onSave} disabled={savingJobSheet}>
+        <Button variant="outlined" color="primary" onClick={onSave} disabled={savingJobSheet}>
           {savingJobSheet ? 'Saving…' : mode === 'new' ? 'Save job sheet' : 'Save changes'}
         </Button>
+        {mode === 'edit' && jobSheetId ? (
+          <Button
+            variant="contained"
+            color="primary"
+            component={Link}
+            to={`/job-sheets/${encodeURIComponent(jobSheetId)}/print`}
+            startIcon={<PrintIcon />}
+          >
+            Print
+          </Button>
+        ) : null}
       </>
     )
   }

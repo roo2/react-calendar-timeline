@@ -40,6 +40,7 @@ import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
 import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type PrintingArtworkScope } from './PrintingArtworkUploadSection'
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
+import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -522,20 +523,7 @@ export function SpecPayloadForm(props: {
   const runUpOptions: number[] =
     productType === PRODUCT_TYPE.Centerfold ? [1, 2] : productType === PRODUCT_TYPE.Sheet ? [2, 4, 6] : []
   const runUpSlug = (run.run_up as string) || 'none'
-  const runUpNum =
-    runUpSlug === '1up'
-      ? 1
-      : runUpSlug === '2up'
-        ? 2
-        : runUpSlug === '4up'
-          ? 4
-          : runUpSlug === '6up'
-            ? 6
-            : productType === PRODUCT_TYPE.Centerfold
-              ? 1
-              : productType === PRODUCT_TYPE.Sheet
-                ? 2
-                : 1
+  const runUpNum = runUpNumericalFromSlug(runUpSlug, productType)
 
   const derived: DerivedDimensions = useMemo(() => {
     const width = typeof dimensions.base_width_mm === 'number' ? dimensions.base_width_mm : 0
@@ -658,7 +646,7 @@ export function SpecPayloadForm(props: {
       d.run_requirements.treat_inside_outside = 'outside'
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `update` closes over latest `spec` via `clone(spec)` pattern
-  }, [printingEnabled, treatInsideOutside])
+  }, [printingEnabled])
 
   // Carton conversion default: seal type is End unless explicitly set.
   useEffect(() => {
@@ -680,7 +668,6 @@ export function SpecPayloadForm(props: {
     if (!isBagOnRoll || wasBagOnRoll) return
     update((d) => {
       d.run_requirements.inline_perforation = true
-      d.run_requirements.inline_seal = true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mode-transition effect
   }, [isBagOnRoll])
@@ -729,10 +716,11 @@ export function SpecPayloadForm(props: {
     </DefaultSelectField>
   )
 
-  /** Same binding as Run Requirements — duplicated in the job-sheet printing dialog for convenience. */
+  /** Same binding as Extrusion Requirements — duplicated in the job-sheet printing dialog for convenience. */
   const printingTreatField = (
-    <TextField
-      select
+    <DefaultSelectField
+      fullWidth
+      defaultValue={printingEnabled ? "outside" : "none"}
       label="Treat Inside/Outside"
       value={run.treat_inside_outside || 'none'}
       onChange={(e) => update((d) => (d.run_requirements.treat_inside_outside = e.target.value))}
@@ -742,7 +730,27 @@ export function SpecPayloadForm(props: {
       <MenuItem value="none">none</MenuItem>
       <MenuItem value="inside">inside</MenuItem>
       <MenuItem value="outside">outside</MenuItem>
-    </TextField>
+    </DefaultSelectField>
+  )
+  const sealTypeField = (
+  <DefaultSelectField
+    label="Seal"
+    defaultValue="end"
+    value={sealTypeUiValue || 'end'}
+    fullWidth
+    onChange={(e) =>
+      update((d) => {
+        const v = e.target.value
+        if (!d.run_requirements) (d as any).run_requirements = {}
+        d.run_requirements.seal_type = v ? (v as any) : null
+        if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+      })
+    }
+  >
+    <MenuItem value="end">End Seal</MenuItem>
+    <MenuItem value="side">Side Seal</MenuItem>
+    <MenuItem value="none">None</MenuItem>
+  </DefaultSelectField>
   )
 
   const showPlateColumn = printing.method === 'Inline'
@@ -1324,14 +1332,9 @@ export function SpecPayloadForm(props: {
               })
             }
             fullWidth
+            multiline
             inputProps={{ maxLength: 64 }}
             error={!!errorFor('spec.identity.customer_code')}
-            helperText={
-              errorFor('spec.identity.customer_code') ||
-              (!(identity.customer_code ?? '').trim()
-                ? 'Optional. Uses the generated code when empty.'
-                : 'Shown to customers instead of the generated code.')
-            }
           />
           {typeof onCustomerFacingDescriptionChange === 'function' ? (
             <TextField
@@ -1341,8 +1344,7 @@ export function SpecPayloadForm(props: {
               onChange={(e) => onCustomerFacingDescriptionChange(e.target.value)}
               fullWidth
               multiline
-              minRows={2}
-              size="small"
+              minRows={1}
               InputLabelProps={{ shrink: true }}
             />
           ) : null}
@@ -1381,9 +1383,34 @@ export function SpecPayloadForm(props: {
           </DefaultSelectField>
         </Box>
 
+        <Box sx={{ mt: 2 }}>
+          <TextField
+            label="Notes"
+            value={run.notes || ''}
+            onChange={(e) => update((d) => (d.run_requirements.notes = e.target.value || null))}
+            multiline
+            minRows={3}
+            fullWidth
+            error={!!errorFor('spec.run_requirements.notes')}
+            helperText={errorFor('spec.run_requirements.notes') || ''}
+          />
+        </Box>
+
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
+      <Paper
+        variant="outlined"
+        sx={[
+          { p: 2 },
+          run.inline_perforation
+            ? {
+                // Matches job sheet print perforated highlight (`.js-perf-bg` / `.js-title.js-perf-hl` in JobSheetPrintPage).
+                bgcolor: '#dff1ff',
+                '& .MuiOutlinedInput-root': { bgcolor: (theme) => theme.palette.background.paper },
+              }
+            : {},
+        ]}
+      >
         <Typography variant="h6" sx={{ mb: 2 }}>
           Dimensions &amp; Geometry
         </Typography>
@@ -1448,12 +1475,6 @@ export function SpecPayloadForm(props: {
               />
             }
             label="Perforated"
-          />
-          <FormControlLabel
-            control={
-              <Checkbox checked={!!run.inline_seal} onChange={(e) => update((d) => (d.run_requirements.inline_seal = e.target.checked))} />
-            }
-            label="Sealed"
           />
           <FormControlLabel
             control={
@@ -1697,7 +1718,7 @@ export function SpecPayloadForm(props: {
             />
           </Box>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr)', gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
             <TextField
               label="Thickness/Gauge (µm)"
               type="number"
@@ -2289,155 +2310,108 @@ export function SpecPayloadForm(props: {
                   const inv = String(hdr.invoiceNo ?? '').trim()
                   const job = String(hdr.jobCode ?? '').trim()
                   const po = String(hdr.purchaseOrderNo ?? '').trim()
-                  const inlineRow = (label: string, value: string, opts?: { monospace?: boolean; preWrap?: boolean }) => (
-                    <Box
-                      key={label}
-                      sx={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        columnGap: 1,
-                        rowGap: 0.25,
-                        alignItems: 'baseline',
-                      }}
-                    >
-                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                        {label}
-                      </Typography>
-                      <Typography
-                        component="span"
-                        variant="body2"
+                  /** Matches job sheet print `.js-compact-grid` / `.js-compact-item` (label + value, 3 columns). */
+                  const compactItem = (
+                    label: string,
+                    value: string,
+                    opts?: { monospace?: boolean; preWrap?: boolean; strongValue?: boolean },
+                  ) => {
+                    const v = value.trim() ? value : dash
+                    return (
+                      <Box
+                        key={label}
                         sx={{
-                          fontFamily: opts?.monospace ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : undefined,
-                          whiteSpace: opts?.preWrap ? 'pre-wrap' : undefined,
-                          wordBreak: 'break-word',
+                          display: 'flex',
+                          gap: 0.75,
+                          alignItems: 'baseline',
+                          minWidth: 0,
                         }}
                       >
-                        {value.trim() ? value : dash}
-                      </Typography>
-                    </Box>
-                  )
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            fontSize: 10,
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          {label}
+                        </Typography>
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          sx={{
+                            fontWeight: opts?.strongValue ? 800 : 700,
+                            fontSize: 11,
+                            lineHeight: 1.25,
+                            minWidth: 0,
+                            wordBreak: 'break-word',
+                            fontFamily: opts?.monospace
+                              ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+                              : undefined,
+                            whiteSpace: opts?.preWrap ? 'pre-wrap' : undefined,
+                          }}
+                        >
+                          {v}
+                        </Typography>
+                      </Box>
+                    )
+                  }
                   return (
                     <Box
                       sx={{
-                        pb: 1,
-                        borderBottom: 1,
+                        border: 1,
                         borderColor: 'divider',
+                        borderRadius: 1,
+                        p: 1.25,
+                        mb: 0.5,
                       }}
                     >
-                      <Stack spacing={0.75}>
-                        {inlineRow('Customer:', hdr.customerLabel)}
-                        {inlineRow('Invoice no.:', inv, { monospace: true })}
-                        {inlineRow('Job code:', job, { monospace: true })}
-                        {inlineRow('Order date:', hdr.orderDateLabel)}
-                        {inlineRow('Purchase order:', po)}
-                        {inlineRow('Due date:', hdr.dueDateLabel)}
-                        {inlineRow('Total metres:', hdr.totalMetersLabel)}
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pt: 0.25 }}>
-                          Total metres from job sheet quantity and product dimensions.
-                        </Typography>
-                        <Box sx={{ pt: 0.75 }}>{inlineRow('Product description:', hdr.productDescription, { preWrap: true })}</Box>
-                      </Stack>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+                          columnGap: { xs: 0.75, sm: '10px' },
+                          rowGap: { xs: 0.75, sm: '6px' },
+                        }}
+                      >
+                        {compactItem('Customer:', hdr.customerLabel)}
+                        {compactItem('Invoice no.:', inv, { monospace: true })}
+                        {compactItem('Job code:', job, { monospace: true })}
+                        {compactItem('Order date:', hdr.orderDateLabel)}
+                        {compactItem('Purchase order:', po)}
+                        {compactItem('Due date:', hdr.dueDateLabel, { strongValue: true })}
+                      </Box>
+                      <Box sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
+                        {compactItem('Total metres:', hdr.totalMetersLabel)}
+                      </Box>
+                      <Box sx={{ mt: 1.5 }}>
+                        {compactItem('Product description:', hdr.productDescription, { preWrap: true })}
+                      </Box>
                     </Box>
                   )
                 })()}
 
                 {printingEnabled ? (
                   <>
-                    <TextField
-                      label="Print description"
-                      value={printing.print_description || ''}
-                      onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
-                      multiline
-                      minRows={2}
-                      fullWidth
+                    <Box sx={{ display: 'grid', marginBottom: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2  }}>
+                      <TextField
+                        sx={{ gridColumn: { xs: 'span 3', sm: 'span 2' } }}
+                        label="Print description"
+                        value={printing.print_description || ''}
+                        onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
+                        multiline
+                        minRows={2}
+                      />
+                      <TextField
+                      label="Bar code"
+                      value={printing.barcode || ''}
+                      onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
                     />
-
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
-                        Printer
-                      </Typography>
-                      <ToggleButtonGroup
-                        exclusive
-                        size="small"
-                        value={printing.method === 'Uteco' ? 'Uteco' : 'Inline'}
-                        onChange={(_, v) => {
-                          if (!v) return
-                          applyPrintingMethodChange(v)
-                        }}
-                      >
-                        <ToggleButton value="Inline">In-line</ToggleButton>
-                        <ToggleButton value="Uteco">Out of line (Uteco)</ToggleButton>
-                      </ToggleButtonGroup>
                     </Box>
-
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-                      {printingNumColoursField}
-                      {printingPrintSideField}
-                    </Box>
-
-                    <TextField
-                      label="Print position details"
-                      value={printing.print_position_notes || ''}
-                      onChange={(e) => update((d) => (d.printing.print_position_notes = e.target.value || null))}
-                      fullWidth
-                      multiline
-                      minRows={2}
-                      placeholder='e.g. 35 mm from bottom of bag'
-                    />
-
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                        <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                          Film type supplied:
-                        </Typography>
-                        <Typography component="span" variant="body2" sx={{ wordBreak: 'break-word' }}>
-                          {filmSuppliedReadonly.trim() ? filmSuppliedReadonly : '—'}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                        <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                          Finished bag size:
-                        </Typography>
-                        <Typography component="span" variant="body2" sx={{ wordBreak: 'break-word' }}>
-                          {finishedBagSizeReadonly.trim() ? finishedBagSizeReadonly : '—'}
-                        </Typography>
-                      </Box>
-                    </Box>
-
-                    <Box sx={{ width: '100%', maxWidth: 560 }}>{printingTreatField}</Box>
-
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-                      <DefaultSelectField
-                        label="Eye spot"
-                        defaultValue=""
-                        value={printing.eye_spot || ''}
-                        onChange={(e) =>
-                          update((d) => {
-                            const v = e.target.value
-                            d.printing.eye_spot = v ? (v as any) : null
-                          })
-                        }
-                      >
-                        <MenuItem value="">
-                          <em>Not set</em>
-                        </MenuItem>
-                        <MenuItem value="yes">Yes</MenuItem>
-                        <MenuItem value="no">No</MenuItem>
-                      </DefaultSelectField>
-                    </Box>
-
-                    <PrintingArtworkUploadSection
-                      scope={printingArtworkScope}
-                      disabled={!printingEnabled}
-                      files={printingArtworkFiles as PrintingArtworkFileRow[]}
-                      onChangeFiles={(next) =>
-                        update((d) => {
-                          d.printing.artwork_files = next as any
-                        })
-                      }
-                    />
-
-                    {jobSheetPrintingInkTables}
 
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
                       <TextField
@@ -2479,16 +2453,76 @@ export function SpecPayloadForm(props: {
                       />
                     </Box>
 
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+                        Printer
+                      </Typography>
+                      <ToggleButtonGroup
+                        exclusive
+                        size="small"
+                        value={printing.method === 'Uteco' ? 'Uteco' : 'Inline'}
+                        onChange={(_, v) => {
+                          if (!v) return
+                          applyPrintingMethodChange(v)
+                        }}
+                      >
+                        <ToggleButton value="Inline">In-line</ToggleButton>
+                        <ToggleButton value="Uteco">Out of line (Uteco)</ToggleButton>
+                      </ToggleButtonGroup>
+                    </Box>
+                    
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+                      {printingNumColoursField}
+                      {printingPrintSideField}
+                    </Box>
+
                     <TextField
-                      label="Bar code"
-                      size="small"
-                      value={printing.barcode || ''}
-                      onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
+                      label="Print position details"
+                      value={printing.print_position_notes || ''}
+                      onChange={(e) => update((d) => (d.printing.print_position_notes = e.target.value || null))}
                       fullWidth
-                      helperText="Optional — usually left blank."
-                      FormHelperTextProps={{ sx: { fontSize: '0.7rem', m: 0, mt: 0.5 } }}
-                      inputProps={{ style: { fontSize: '0.85rem' } }}
-                      InputLabelProps={{ sx: { fontSize: '0.85rem' } }}
+                      multiline
+                      minRows={2}
+                      placeholder='e.g. 35 mm from bottom of bag'
+                    />
+
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, minmax(0, 1fr))' }, gap: 2 }}>
+                        <Box sx={{ width: '100%' }}>{printingTreatField}</Box>
+                        <DefaultSelectField
+                          sx={{ width: '100%' }}
+                          label="Eye spot"
+                          defaultValue=""
+                          value={printing.eye_spot || ''}
+                          onChange={(e) =>
+                            update((d) => {
+                              const v = e.target.value
+                              d.printing.eye_spot = v ? (v as any) : null
+                            })
+                          }
+                        >
+                          <MenuItem value="">
+                            <em>Not set</em>
+                          </MenuItem>
+                          <MenuItem value="yes">Yes</MenuItem>
+                          <MenuItem value="no">No</MenuItem>
+                        </DefaultSelectField>
+
+                        {/* seal type */}
+                        <Box sx={{ width: '100%' }}>{sealTypeField}</Box>
+                    </Box>
+
+                    {jobSheetPrintingInkTables}
+
+
+                    <PrintingArtworkUploadSection
+                      scope={printingArtworkScope}
+                      disabled={!printingEnabled}
+                      files={printingArtworkFiles as PrintingArtworkFileRow[]}
+                      onChangeFiles={(next) =>
+                        update((d) => {
+                          d.printing.artwork_files = next as any
+                        })
+                      }
                     />
                   </>
                 ) : (
@@ -2586,7 +2620,7 @@ export function SpecPayloadForm(props: {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          Run Requirements
+          Extrusion Requirements
         </Typography>
 
         {firstErrorForPrefix('spec.run_requirements') && (
@@ -2685,32 +2719,9 @@ export function SpecPayloadForm(props: {
             <MenuItem value="both_sides">Slit both sides</MenuItem>
             <MenuItem value="middle">slit up middle</MenuItem>
           </TextField>
-          <TextField
-            select
-            label="Treat Inside/Outside"
-            value={run.treat_inside_outside || 'none'}
-            onChange={(e) => update((d) => (d.run_requirements.treat_inside_outside = e.target.value))}
-            error={!!errorFor('spec.run_requirements.treat_inside_outside')}
-            helperText={errorFor('spec.run_requirements.treat_inside_outside') || ''}
-          >
-            <MenuItem value="none">none</MenuItem>
-            <MenuItem value="inside">inside</MenuItem>
-            <MenuItem value="outside">outside</MenuItem>
-          </TextField>
+          {printingTreatField}
         </Box>
 
-        <Box sx={{ mt: 2 }}>
-          <TextField
-            label="Notes"
-            value={run.notes || ''}
-            onChange={(e) => update((d) => (d.run_requirements.notes = e.target.value || null))}
-            multiline
-            minRows={3}
-            fullWidth
-            error={!!errorFor('spec.run_requirements.notes')}
-            helperText={errorFor('spec.run_requirements.notes') || ''}
-          />
-        </Box>
       </Paper>
 
       {finishMode === 'Cartons' ? (

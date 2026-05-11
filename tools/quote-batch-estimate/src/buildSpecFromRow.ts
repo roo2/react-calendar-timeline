@@ -5,7 +5,7 @@
 
 import type { SpecQuantitySlice } from '../../../frontend/src/utils/specToQuoteInputs'
 import type { QtyType } from '../../../frontend/src/utils/quantityRollFields'
-import { productTypeCanHaveGusset } from '../../../frontend/src/utils/specCompat'
+import { derivedInlineSeal, productTypeCanHaveGusset } from '../../../frontend/src/utils/specCompat'
 import { blendComponentsForCode, type ResinBlendPreset } from './resinBlends'
 
 export type CsvRow = Record<string, string>
@@ -142,7 +142,7 @@ export function buildSpecAndQuantityFromRow(
       treat_inside_outside: 'none',
       inline_perforation: boolCell(row.inline_perforation),
       hole_punched: boolCell(row.hole_punched),
-      inline_seal: boolCell(row.inline_seal),
+      inline_seal: derivedInlineSeal(productType, finishMode),
       notes: null,
     },
     quality_expectations: { flags: [], known_issues: null },

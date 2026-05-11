@@ -72,6 +72,8 @@ import {
   jobSheetOrderQuantityLabel,
 } from '../../utils/quoteQuantityDescriptors'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
+import { derivedInlineSeal } from '../../utils/specCompat'
+import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
 
 function s(v: unknown, fallback = ''): string {
   if (v == null) return fallback
@@ -292,13 +294,14 @@ type JobSheetPrintOrderQuantitiesModel = {
   highlightOrderedKg: boolean
   rollsDisplay: string
   /** Row label before rolls count, e.g. “Num. Rolls” / “Num. Ctns”. */
-  numRollsRowLabel: string
+  rollsLabel: string
   mPerRollFormatted: string
   kgPerRollFormatted: string
   wasteLines: string[]
   totalRecommendedKg: string
   suggestedRollWeight: string | null
   suggestedRollWeightExplanation: string | null
+  qtyUnitRaw: string
   rollWeightBilling: string
   extruderOutputRollCount: number
 }
@@ -314,26 +317,30 @@ function jobSheetPrintOrderQuantitiesRows(q: JobSheetPrintOrderQuantitiesModel):
     ) : (
       '\u00a0'
     )
-
-    // <td className="js-oq-row-label">Roll weight Billing</td>
-    // <td>
-    //   {q.rollWeightBilling ? <span className="js-print-val">{q.rollWeightBilling}</span> : <span className="js-print-val" />}
-    // </td>
-
     
   return (
     <>
       <tr>
         <td className="js-sec js-oq-sec-title" colSpan={1}>
-          Rolls
+          {q.rollsLabel}
         </td>
         <th className={`js-sec${q.highlightOrderedM ? ' js-pink' : ''}`}>Ordered M</th>
         <th className={`js-sec${q.highlightOrderedKg ? ' js-pink' : ''}`}>Ordered KG</th>
-        <th className="js-sec">Total Recommended</th>
+        <th className="js-sec">Recommended KG</th>
         <th className="js-sec">Waste estimates</th>
       </tr>
       <tr>
-        <th></th>
+        <td className="js-qty-billing">
+          <span>Billing: </span>
+          { q.qtyUnitRaw == 'kg' ? (
+            <div style={{'display': 'inline-block'}}>
+              <span className="js-print-val"> Per KG</span>
+              <div className="js-print-val">{ q.rollWeightBilling }</div>
+            </div>
+          ) : (
+            <span className="js-print-val">Per {q.qtyUnitRaw}</span>
+          )}
+        </td>
         <td className={q.highlightOrderedM ? 'js-pink' : undefined}>
           {q.orderedM ? <span className="js-print-val">{q.orderedM}</span> : <span className="js-print-val" />}
         </td>
@@ -750,7 +757,7 @@ function JobSheetPrintExtrusionQcPage(props: {
                     <th>Operator</th>
                     <th>Kgs/Roll</th>
                     <th>Mts/Roll</th>
-                    <th>Width</th>
+                    <th>Width (mm)</th>
                     <th>Gauge</th>
                     <th>QC Check</th>
                     <th>Remark</th>
@@ -890,7 +897,10 @@ function JobSheetPrintConversionInstructionsPage(props: {
                   Final specification after setup
                 </td>
               </tr>
-              <tr><th>Width</th><td>{v(meta.width)}</td></tr>
+              <tr>
+                <th>Width (mm)</th>
+                <td>{v(meta.width)}</td>
+              </tr>
               <tr><th>Length</th><td>{v(meta.length)}</td></tr>
               <tr><th>Gauge</th><td>{v(meta.gauge)}</td></tr>
               <tr><th>Total cartons</th><td>{v(conv.carton?.totalCartons)}</td></tr>
@@ -1034,7 +1044,7 @@ export function JobSheetPrintPage() {
     }
     const geometryLabelRaw = dimensions?.geometry ?? spec?.geometry ?? ''
     const widthMm = n(dimensions?.base_width_mm ?? spec?.base_width_mm)
-    const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}Wmm` : ''
+    const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)} mm` : ''
     const ufilmLeftMm = n(dimensions?.ufilm_left_width_mm ?? spec?.ufilm_left_width_mm)
     const ufilmRightMm = n(dimensions?.ufilm_right_width_mm ?? spec?.ufilm_right_width_mm)
     const gussetMm = n(dimensions?.gusset_mm ?? spec?.gusset_mm)
@@ -1070,38 +1080,50 @@ export function JobSheetPrintPage() {
     const geometryNorm = String(geometryLabelRaw ?? '')
       .trim()
       .toLowerCase()
+    const runUpSlugPrint = String(run?.run_up ?? spec?.run_up ?? 'none').trim()
+    const runUpNumPrint = runUpNumericalFromSlug(runUpSlugPrint, productType)
     const widthDisplay = (() => {
-      if (widthSplitMm.length >= 3) return widthSplitMm.join('/')
-      if ((geometryNorm === 'gusset' || geometryNorm === 'bottomgusset' || geometryNorm === 'bottom_gusset') && widthMm && gussetMm) {
-        return `${Math.round(widthMm)} + ${Math.round(gussetMm)}`
+      if (widthSplitMm.length >= 3) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
+      if (
+        (geometryNorm === 'gusset' || geometryNorm === 'bottomgusset' || geometryNorm === 'bottom_gusset') &&
+        widthMm != null &&
+        widthMm > 0 &&
+        gussetMm != null &&
+        gussetMm > 0
+      ) {
+        return `(${widthMm} + ${gussetMm})`
       }
-      if ((geometryNorm === 'centrefold' || geometryNorm === 'centerfold') && widthMm) {
-        return `${Math.round(widthMm)}(${Math.round(widthMm * 2)})`
+      const ru = runUpNumPrint
+      if ((geometryNorm === 'centrefold' || geometryNorm === 'centerfold') && widthMm != null && widthMm > 0) {
+        const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm * 0.5)
+        return `${widthMm}(${layflatMm})`
       }
-      if (widthMm && (geometryNorm === 'sheet' || geometryNorm === 'flat' || geometryNorm === 'layflat')) {
-        return String(Math.round(widthMm))
+      if (
+        widthMm != null &&
+        widthMm > 0 &&
+        (geometryNorm === 'sheet' || geometryNorm === 'flat' || geometryNorm === 'layflat')
+      ) {
+        const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm)
+        return `${widthMm}(${layflatMm})`
       }
-      if (widthSplitMm.length >= 2) return widthSplitMm.join('/')
-      if (widthMm && widthMm > 0) return String(Math.round(widthMm))
-      return widthShorthandWmm.replace(/Wmm$/i, '')
+      if (widthSplitMm.length >= 2) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
+      if (widthMm != null && widthMm > 0) return `${widthMm}`
+      return widthShorthandWmm
     })()
 
     const lengthLine = s(
       String(dimensions?.length_units ?? '').trim().toLowerCase() === 'continuous'
-        ? 'Continuous'
-        : dimensions?.base_length_mm != null
-        ? `${dimensions.base_length_mm} mm`
-        : dimensions?.length != null
-          ? dimensions.length
-          : spec?.base_length_mm != null
-            ? `${spec.base_length_mm} mm`
-            : spec?.length,
+        ? ''
+        : dimensions?.length_units === 'M'
+          ? `${dimensions.base_length_mm / 1000}`
+          : `${dimensions.base_length_mm}`,
     )
+    const lengthUnits = s(dimensions?.length_units ?? spec?.length_units ?? '')
     const gaugeLine = s(
       dimensions?.thickness_um != null
-        ? `${dimensions.thickness_um} um`
+        ? `${dimensions.thickness_um}`
         : spec?.thickness_um != null
-          ? `${spec.thickness_um} um`
+          ? `${spec.thickness_um}`
           : spec?.gauge,
     )
     const trimPct =
@@ -1131,7 +1153,7 @@ export function JobSheetPrintPage() {
     const runUpLine = displayRunUp(run?.run_up ?? spec?.run_up)
     const coresLine = s(packaging?.core_type ?? spec?.core_type)
     const shrink = !!run?.shrink
-    const inlineSeal = !!run?.inline_seal
+    const inlineSeal = derivedInlineSeal(String(productType || ''), String(finishMode || ''))
     const perforated = !!run?.inline_perforation
     const holePunched = !!run?.hole_punched
     const productTypeNorm = String(productType || '')
@@ -1572,6 +1594,7 @@ export function JobSheetPrintPage() {
         widthPrimarySingle: widthDisplay,
         widthToleranceDisplay,
         lengthLine,
+        lengthUnits,
         lengthToleranceDisplay,
         widthToleranceHighlight,
         lengthToleranceHighlight,
@@ -1661,13 +1684,13 @@ export function JobSheetPrintPage() {
               // if we are including core or half core, add core weight to the roll weight.
               if (rollWeightBilling === 'core_included') {
                 suggestedRollWeight = formatKgPerRoll(kprNum ?? 0)
-                suggestedRollWeightExplanation = `Core: ${formatKgPerRoll(coreWeightPerRoll)}. Included`
+                suggestedRollWeightExplanation = `${coreTypeStr}\u00a0cores: ${formatKgPerRoll(coreWeightPerRoll)}. Included`
               } else if (rollWeightBilling === 'core_half_off') {
                 suggestedRollWeight = formatKgPerRoll(coreWeightPerRoll / 2 + (kprNum ?? 0))
-                suggestedRollWeightExplanation = `Core: ${formatKgPerRoll(coreWeightPerRoll)}. Half`
+                suggestedRollWeightExplanation = `${coreTypeStr}\u00a0cores: ${formatKgPerRoll(coreWeightPerRoll)}. Half`
               } else {
                 suggestedRollWeight = formatKgPerRoll(coreWeightPerRoll + (kprNum ?? 0))
-                suggestedRollWeightExplanation = `Core: ${formatKgPerRoll(coreWeightPerRoll)}. Excluded`
+                suggestedRollWeightExplanation = `${coreTypeStr}\u00a0cores: ${formatKgPerRoll(coreWeightPerRoll)}. Excluded`
               }
             }
           }
@@ -1691,11 +1714,12 @@ export function JobSheetPrintPage() {
             highlightOrderedM,
             highlightOrderedKg,
             rollsDisplay,
-            numRollsRowLabel: `Num. ${rollsLabel}`,
+            rollsLabel,
             mPerRollFormatted,
             kgPerRollFormatted,
             suggestedRollWeight,
             suggestedRollWeightExplanation,
+            qtyUnitRaw,
             wasteLines,
             totalRecommendedKg: totalRecommendedPrint,
             rollWeightBilling,
@@ -1821,7 +1845,7 @@ export function JobSheetPrintPage() {
           --js-print-fs-body: 11px;
           --js-print-fs-label: 10px;
           --js-print-fs-title: 15px;
-          --js-print-fs-dim-primary: 16px;
+          --js-print-fs-dim-primary: 15px;
           --js-print-fw-label: 700;
           --js-print-fw-value: 700;
         }
@@ -1882,7 +1906,7 @@ export function JobSheetPrintPage() {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           font-weight: 700;
         }
-        .js-print-val { font-weight: 700; }
+        .js-print-val { font-weight: 700; font-size: var(--js-print-fs-body); }
         .js-sec {
           background: #d9d9d9;
           font-size: var(--js-print-fs-body);
@@ -1974,6 +1998,19 @@ export function JobSheetPrintPage() {
           font-size: var(--js-print-fs-dim-primary);
           line-height: 1.2;
         }
+        .js-dim-primary.js-dim-primary-hl {
+          background: #fff59d;
+        }
+        .js-dim-primary-unit {
+          font-size: var(--js-print-fs-body);
+          font-weight: 400;
+          color: #444;
+        }
+        .js-dim-primary-unit-m {
+          font-weight: 700;
+          font-size: var(--js-print-fs-dim-primary);
+          color: #000;
+        }
         .js-dim-primary.js-dim-primary-left { text-align: left; }
         .js-dim-secondary {
           background: #e8e8e8;
@@ -2007,7 +2044,7 @@ export function JobSheetPrintPage() {
         .js-print-flag-grid td.js-print-flag-val--yes {
           background: #fff59d;
         }
-        .js-dim-secondary.js-dim-secondary-hl { background: #fff566; }
+        .js-dim-secondary.js-dim-secondary-hl { background: #fff59d; }
         .js-run-triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
         .js-run-triple td {
           font-weight: 400;
@@ -2098,6 +2135,16 @@ export function JobSheetPrintPage() {
         .js-resin-mix-blend--custom {
           background: #ffe8ec;
         }
+
+        .js-grid .js-qty-billing {    
+          font-size: var(--js-print-fs-label);
+          font-weight: 600;
+        }
+          
+        .js-qty-billing span{
+           vertical-align: top;
+        }
+
         .js-printing-wrap {
           padding: 0 !important;
           vertical-align: top;
@@ -2662,7 +2709,7 @@ export function JobSheetPrintPage() {
                     <tr>
                       <td className="js-dim-col">
                         <div className="js-dim-stack">
-                          <div className="js-dim-primary"><div>{e.widthPrimarySingle ?? '-'}</div></div>
+                          <div className="js-dim-primary"><span>{e.widthPrimarySingle ?? '-'}</span><span className={`js-dim-primary-unit`}>mm</span></div>
                           <div className={`js-dim-secondary${e.widthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
                             {e.widthToleranceDisplay}
                           </div>
@@ -2670,7 +2717,7 @@ export function JobSheetPrintPage() {
                       </td>
                       <td className="js-dim-col">
                         <div className="js-dim-stack">
-                          <div className="js-dim-primary"><div>{e.lengthLine || '-'}</div></div>
+                          <div className={`js-dim-primary${e.lengthUnits === 'M' ? ' js-dim-primary-hl' : ''}`}><span>{e.lengthLine || '-'}</span><span className={`js-dim-primary-unit ${e.lengthUnits === 'M' ? 'js-dim-primary-unit-m' : ''}`}>{e.lengthUnits}</span></div>
                           <div className={`js-dim-secondary${e.lengthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
                             {e.lengthToleranceDisplay}
                           </div>
@@ -2678,7 +2725,7 @@ export function JobSheetPrintPage() {
                       </td>
                       <td className="js-dim-col">
                         <div className="js-dim-stack">
-                          <div className="js-dim-primary"><div>{e.gaugeLine || '-'}</div></div>
+                          <div className="js-dim-primary"><span>{e.gaugeLine || '-'}</span><span className="js-dim-primary-unit">µm</span></div>
                           <div className={`js-dim-secondary${e.gaugeTrimExplicit ? ' js-dim-secondary-hl' : ''}`}>
                             {e.gaugeTrimDisplay || '-'}
                           </div>
@@ -2714,7 +2761,7 @@ export function JobSheetPrintPage() {
                     </tr>
                     <tr>
                       <td className={e.inlineSeal ? 'js-print-flag-val--yes js-perf-bg' : undefined}>
-                        Bottom Seal:{' '}
+                        Inline Seal:{' '}
                         <b >{e.inlineSeal ? 'Yes' : '-'}</b>
                       </td>
                       <td className={e.inlinePerforated ? 'js-print-flag-val--yes js-perf-bg' : undefined}>

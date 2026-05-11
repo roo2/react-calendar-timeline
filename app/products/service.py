@@ -15,6 +15,7 @@ from app.products.schemas import (
     CreateProductRequest,
     CreateProductVersionRequest,
     OperatorSuggestionRequest,
+    ProductType,
     SpecPayload,
     PrintMethod,
     FinishMode,
@@ -742,6 +743,11 @@ def list_suggestions(product_id: Optional[str] = None, status: Optional[str] = "
         return list(db.scalars(stmt).all())
 
 
+def _derived_inline_seal(spec: SpecPayload) -> bool:
+    """Bag on rolls: inline bottom seal is implied (not a persisted toggle)."""
+    return spec.identity.product_type == ProductType.BAG and spec.identity.finish_mode == FinishMode.ROLLS
+
+
 def derive_operation_routing(spec: SpecPayload) -> Dict[str, Any]:
     operations: List[Dict[str, str]] = []
     warnings: List[str] = []
@@ -750,7 +756,7 @@ def derive_operation_routing(spec: SpecPayload) -> Dict[str, Any]:
     )
     if spec.run_requirements.inline_perforation:
         operations[-1]["description"] += " with inline perforation"
-    if spec.run_requirements.inline_seal:
+    if _derived_inline_seal(spec):
         operations[-1]["description"] += " with inline sealing"
     if spec.printing.method == PrintMethod.INLINE:
         operations[-1]["description"] += f" with inline printing ({spec.printing.num_colours or 0} colours)"

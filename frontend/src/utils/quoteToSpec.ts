@@ -6,6 +6,7 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
 
 import { qtyTypeFromPersisted } from './quantityRollFields'
+import { derivedInlineSeal } from './specCompat'
 
 export type QuotePayload = {
   product_type?: string
@@ -32,6 +33,7 @@ export type QuotePayload = {
   bags_per_carton?: number | null
   pallet_type?: string
   inline_perforation?: boolean
+  /** Legacy; inline seal is derived (Bag + Rolls). Ignored when building spec. */
   inline_seal?: boolean
   hole_punched?: boolean
   /** Quotes UI checkbox; may appear without `hole_punched` on some payloads. */
@@ -214,7 +216,7 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       treat_inside_outside: 'none',
       inline_perforation: !!(p.inline_perforation ?? (p as { flagPerforated?: boolean }).flagPerforated),
       hole_punched: !!(p.hole_punched ?? p.flagPunched),
-      inline_seal: !!(p.inline_seal ?? (p as { flagSealed?: boolean }).flagSealed),
+      inline_seal: derivedInlineSeal(String(p.product_type || 'Bag'), finishMode),
       notes: null,
     },
     packaging: {
