@@ -1,6 +1,6 @@
-import { Autocomplete, TextField } from '@mui/material'
+import { Autocomplete, Box, TextField } from '@mui/material'
 
-export type ColourOption = { colour_code: string; name: string }
+export type ColourOption = { colour_code: string; name: string; hex_code?: string | null }
 
 export function ColourSelect(props: {
   options: ColourOption[]
@@ -19,6 +19,22 @@ export function ColourSelect(props: {
       getOptionLabel={(o) => `${o.colour_code} — ${o.name}`}
       isOptionEqualToValue={(a, b) => a.colour_code === b.colour_code}
       onChange={(_e, v) => onChangeCode(v?.colour_code || '')}
+      renderOption={(props, option) => (
+        <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box
+            sx={{
+              width: 16,
+              height: 16,
+              borderRadius: '4px',
+              border: '1px solid',
+              borderColor: 'divider',
+              backgroundColor: option.hex_code || 'transparent',
+              flexShrink: 0,
+            }}
+          />
+          <span>{`${option.colour_code} — ${option.name}`}</span>
+        </Box>
+      )}
       renderInput={(params) => <TextField {...params} label={label || 'Colour'} error={error} helperText={helperText} />}
     />
   )

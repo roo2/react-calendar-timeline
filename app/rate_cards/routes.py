@@ -8,6 +8,7 @@ from app.db.models.rate_cards import (
     Additive,
     Colour,
     ConversionFactor,
+    ConversionCartonSize,
     ConversionSpeed,
     Core,
     Extruder,
@@ -65,15 +66,42 @@ async def list_resin_blends():
 @router.get("/colours", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
 async def list_colours():
     with SessionLocal() as db:
-        rows = db.execute(select(Colour.colour_code, Colour.name).order_by(Colour.sort_order.asc(), Colour.colour_code.asc())).all()
-        return [{"colour_code": r[0], "name": r[1]} for r in rows]
+        rows = db.execute(
+            select(Colour.colour_code, Colour.name, Colour.hex_code).order_by(Colour.sort_order.asc(), Colour.colour_code.asc())
+        ).all()
+        return [{"colour_code": r[0], "name": r[1], "hex_code": r[2]} for r in rows]
 
 
 @router.get("/additives", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
 async def list_additives():
     with SessionLocal() as db:
-        rows = db.execute(select(Additive.additive_code, Additive.name).order_by(Additive.additive_code.asc())).all()
-        return [{"additive_code": r[0], "name": r[1]} for r in rows]
+        rows = db.execute(
+            select(Additive.additive_code, Additive.name, Additive.highlight_hex_code).order_by(Additive.additive_code.asc())
+        ).all()
+        return [{"additive_code": r[0], "name": r[1], "highlight_hex_code": r[2]} for r in rows]
+
+
+@router.get("/conversion-carton-sizes", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
+async def list_conversion_carton_sizes():
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(
+                ConversionCartonSize.carton_size,
+                ConversionCartonSize.sort_order,
+                ConversionCartonSize.cost,
+            ).order_by(
+                ConversionCartonSize.sort_order.asc(),
+                ConversionCartonSize.carton_size.asc(),
+            )
+        ).all()
+        return [
+            {
+                "carton_size": r[0],
+                "sort_order": int(r[1]),
+                "cost": float(r[2]),
+            }
+            for r in rows
+        ]
 
 
 @router.get("/inks", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])
@@ -116,6 +144,7 @@ async def get_ratebook():
             select(
                 Extruder.extruder_code,
                 Extruder.model,
+                Extruder.die_size_mm,
                 Extruder.decision_width_mm,
                 Extruder.average_kg_hr,
                 Extruder.cost_per_hr,
@@ -227,11 +256,12 @@ async def get_ratebook():
             {
                 "extruder_code": str(code),
                 "model": (str(model) if model is not None else None),
+                "die_size_mm": (int(die_mm) if die_mm is not None else None),
                 "decision_width_mm": (int(dw) if dw is not None else None),
                 "average_kg_hr": (int(avg) if avg is not None else None),
                 "cost_per_hr": (float(cph) if cph is not None else None),
             }
-            for code, model, dw, avg, cph in extruders
+            for code, model, die_mm, dw, avg, cph in extruders
         ],
         "printing_rates": out_printing,
         "printing_pricing_tiers": [

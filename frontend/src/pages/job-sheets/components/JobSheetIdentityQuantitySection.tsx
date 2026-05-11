@@ -201,6 +201,10 @@ export type JobSheetIdentityQuantitySectionProps = JobSheetQuantityFieldsProps &
   /** Main heading (default: Job Sheet) */
   title?: string
   jobCode?: string | null
+  /** Read-only invoice line (matches printed header). */
+  invoiceNo?: string
+  /** Read-only customer purchase order line (matches printed header). */
+  purchaseOrderNo?: string
   headerActions?: ReactNode
   customers: JobSheetCustomerOption[]
   customersStatus: 'idle' | 'loading' | 'succeeded' | 'failed'
@@ -237,6 +241,8 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
     paperSx,
     title = 'Job Sheet',
     jobCode,
+    invoiceNo = '',
+    purchaseOrderNo = '',
     headerActions,
     customers,
     customersStatus,
@@ -294,21 +300,9 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
   return (
     <Paper variant="outlined" sx={{ p: 2, ...paperSx }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', minWidth: 0 }}>
-          <Typography variant="h6" component="span">
-            {title}
-          </Typography>
-          {jobCode ? (
-            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, flexWrap: 'wrap' }}>
-              <Typography variant="caption" color="text.secondary" component="span">
-                Job code
-              </Typography>
-              <Typography component="span" variant="subtitle1" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>
-                {jobCode}
-              </Typography>
-            </Box>
-          ) : null}
-        </Box>
+        <Typography variant="h6" component="span">
+          {title}
+        </Typography>
         {headerActions ? (
           <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>{headerActions}</Box>
         ) : null}
@@ -332,6 +326,10 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
             </MenuItem>
           ))}
         </TextField>
+
+        <TextField label="Invoice no." value={String(invoiceNo ?? '')} InputProps={{ readOnly: true }} />
+
+        <TextField label="Job code" value={jobCode ? String(jobCode) : ''} InputProps={{ readOnly: true }} />
 
         <TextField
           label="Order Date"
@@ -369,6 +367,8 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           inputRef={dueDateInputRef}
           InputLabelProps={{ shrink: true }}
         />
+
+        <TextField label="Purchase order" value={String(purchaseOrderNo ?? '')} InputProps={{ readOnly: true }} />
       </Box>
 
       {onProductionStatusChange ? (

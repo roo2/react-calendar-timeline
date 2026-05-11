@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -67,6 +67,10 @@ const PRODUCT_TYPES: ProductType[] = [
   PRODUCT_TYPE.UFilm,
 ]
 
+function productTypeLabel(v: ProductType): string {
+  return v === PRODUCT_TYPE.Centerfold ? 'Centrefold' : v
+}
+
 function clone<T>(v: T): T {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sc = (globalThis as any).structuredClone as undefined | ((x: any) => any)
@@ -78,6 +82,12 @@ function clone<T>(v: T): T {
 export type JobSheetPrintingContext = {
   customerLabel: string
   productDescription: string
+  /** Matches printed “Invoice no.” when provided. */
+  invoiceNo?: string
+  /** Matches printed “Job code” when provided. */
+  jobCode?: string
+  /** Matches printed “Purchase order” when provided. */
+  purchaseOrderNo?: string
   orderNumber: string
   orderDateLabel: string
   dueDateLabel: string
@@ -143,7 +153,7 @@ export function makeDefaultSpec(): SpecPayload {
     },
     dimensions: {
       base_width_mm: null,
-      width_tolerance_mm: null,
+      width_tolerance_mm: 5,
       base_length_mm: null,
       thickness_um: null,
       geometry: 'Flat',
@@ -189,10 +199,26 @@ export function makeDefaultSpec(): SpecPayload {
       slit: 'none',
       treat_inside_outside: 'none',
       inline_perforation: false,
+      shrink: false,
       hole_punched: false,
       inline_seal: false,
       notes: null,
       seal_type: null,
+      conversion: {
+        carton_size: null,
+        pack_lay_flat: false,
+        tag_packs: false,
+        tag_ctn: false,
+        vent_rows: null,
+        vent_holes_per_row: null,
+        pack_size: null,
+        inner_pack: false,
+        loose: false,
+        qty_to_stock: null,
+        send_all_bags: false,
+        handle: false,
+        lined_cartons: false,
+      },
     },
     packaging: {
       pack_mode: 'Rolls',
@@ -270,6 +296,7 @@ export function SpecPayloadForm(props: {
   const quality = spec.quality_expectations || {}
   const run = spec.run_requirements || {}
   const packaging = spec.packaging || {}
+  const conversion = (run as { conversion?: Record<string, unknown> }).conversion || {}
   /** Prefer `run_requirements.seal_type`; fall back to legacy `printing.seal_type` until re-saved. */
   const sealTypeUiValue = String((run as { seal_type?: string | null }).seal_type ?? (printing as { seal_type?: string | null }).seal_type ?? '')
 
@@ -312,6 +339,9 @@ export function SpecPayloadForm(props: {
   const inkPrinterType = printing.method === 'Inline' ? 'inline' : printing.method === 'Uteco' ? 'uteco' : null
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
+  const isBagOnRoll = productType === PRODUCT_TYPE.Bag && finishMode === 'Rolls'
+  const isBagInCarton = productType === PRODUCT_TYPE.Bag && finishMode === 'Cartons'
+  const isTubeProduct = productType === PRODUCT_TYPE.Tube
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
   const isUFilm = productType === PRODUCT_TYPE.UFilm
   const gussetEnabled =
@@ -320,6 +350,7 @@ export function SpecPayloadForm(props: {
     (((dimensions.geometry as string) || 'Flat') === 'Gusset' || Number(dimensions.gusset_mm || 0) > 0)
 
   const resinBlends = bundle.resinBlends
+  const cartonSizes = bundle.cartonSizes || []
   const resins = bundle.resins as ResinOption[]
   const colours = bundle.colours as ColourOption[]
   const additiveOptions = bundle.additives as AdditiveOption[]
@@ -604,6 +635,19 @@ export function SpecPayloadForm(props: {
     if (!printingEnabled) setPrintingDetailsOpen(false)
   }, [printingSurface, printingEnabled])
 
+  // Match Quotes behavior: tubes cannot be packed in cartons.
+  useEffect(() => {
+    if (!isTubeProduct) return
+    if (finishMode !== 'Cartons') return
+    update((d) => {
+      d.identity.finish_mode = 'Rolls'
+      d.packaging.pack_mode = 'Rolls'
+      d.dimensions.length_units = 'Continuous'
+      d.dimensions.base_length_mm = null
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- enforce tube finish-mode constraint
+  }, [isTubeProduct, finishMode])
+
   /** Printed jobs: default Treat to outside; never override an explicit inside (or outside) choice. */
   const treatInsideOutside = run.treat_inside_outside
   useEffect(() => {
@@ -615,6 +659,40 @@ export function SpecPayloadForm(props: {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `update` closes over latest `spec` via `clone(spec)` pattern
   }, [printingEnabled, treatInsideOutside])
+
+  // Carton conversion default: seal type is End unless explicitly set.
+  useEffect(() => {
+    if (finishMode !== 'Cartons') return
+    if (sealTypeUiValue.trim() !== '') return
+    update((d) => {
+      if (!d.run_requirements) (d as any).run_requirements = {}
+      d.run_requirements.seal_type = 'end'
+      if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-way defaulting for carton mode
+  }, [finishMode, sealTypeUiValue])
+
+  // Bag-on-roll defaults: switch perforation + seal on when entering this mode.
+  const prevBagOnRollRef = useRef(false)
+  useEffect(() => {
+    const wasBagOnRoll = prevBagOnRollRef.current
+    prevBagOnRollRef.current = isBagOnRoll
+    if (!isBagOnRoll || wasBagOnRoll) return
+    update((d) => {
+      d.run_requirements.inline_perforation = true
+      d.run_requirements.inline_seal = true
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mode-transition effect
+  }, [isBagOnRoll])
+
+  // Bag-in-carton cannot be perforated.
+  useEffect(() => {
+    if (!isBagInCarton || !run.inline_perforation) return
+    update((d) => {
+      d.run_requirements.inline_perforation = false
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- enforce product/finish constraint
+  }, [isBagInCarton, run.inline_perforation])
 
   const printingNumColoursField = (
     <TextField
@@ -1279,7 +1357,7 @@ export function SpecPayloadForm(props: {
           >
             {PRODUCT_TYPES.map((v) => (
               <MenuItem key={v} value={v}>
-                {v}
+                {productTypeLabel(v)}
               </MenuItem>
             ))}
           </DefaultSelectField>
@@ -1297,7 +1375,9 @@ export function SpecPayloadForm(props: {
             }}
           >
             <MenuItem value="Rolls">Rolls</MenuItem>
-            <MenuItem value="Cartons">Cartons</MenuItem>
+            <MenuItem value="Cartons" disabled={isTubeProduct}>
+              Cartons
+            </MenuItem>
           </DefaultSelectField>
         </Box>
 
@@ -1363,6 +1443,7 @@ export function SpecPayloadForm(props: {
             control={
               <Checkbox
                 checked={!!run.inline_perforation}
+                disabled={isBagInCarton}
                 onChange={(e) => update((d) => (d.run_requirements.inline_perforation = e.target.checked))}
               />
             }
@@ -1382,6 +1463,10 @@ export function SpecPayloadForm(props: {
               />
             }
             label="Punched"
+          />
+          <FormControlLabel
+            control={<Checkbox checked={!!run.shrink} onChange={(e) => update((d) => ((d.run_requirements as any).shrink = e.target.checked))} />}
+            label="Shrink"
           />
         </FormGroup>
 
@@ -1555,15 +1640,16 @@ export function SpecPayloadForm(props: {
               onChange={(e) =>
                 update((d) => {
                   const v = e.target.value as 'mm' | 'M' | 'Continuous'
-                  d.dimensions.length_units = v
-                  if (v === 'Continuous') d.dimensions.base_length_mm = null
+                  const nextLengthUnits = finishMode === 'Cartons' && v === 'Continuous' ? 'mm' : v
+                  d.dimensions.length_units = nextLengthUnits
+                  if (nextLengthUnits === 'Continuous') d.dimensions.base_length_mm = null
                 })
               }
               disabled={productType === PRODUCT_TYPE.Tube}
             >
               <MenuItem value="mm">mm</MenuItem>
               <MenuItem value="M">M</MenuItem>
-              {productType !== PRODUCT_TYPE.Bag && productType !== PRODUCT_TYPE.Sleeve ? (
+              {productType !== PRODUCT_TYPE.Bag && productType !== PRODUCT_TYPE.Sleeve && finishMode !== 'Cartons' ? (
                 <MenuItem value="Continuous">Continuous</MenuItem>
               ) : null}
             </DefaultSelectField>
@@ -1894,7 +1980,272 @@ export function SpecPayloadForm(props: {
         </Box>
 
         {printingSurface === 'job_sheet_summary' && printingEnabled ? (
-          <Box sx={{ mt: 1.5 }}>
+          <Box
+            sx={{
+              mt: 2,
+              p: 1.5,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+              bgcolor: 'action.hover',
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ mb: 1.25 }}>
+              Printing details
+            </Typography>
+            <Stack spacing={1}>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Print description:
+                </Typography>
+                <Typography
+                  component="span"
+                  variant="body2"
+                  sx={{ whiteSpace: 'pre-wrap', fontWeight: printing.print_description ? 600 : 400, wordBreak: 'break-word' }}
+                >
+                  {printing.print_description ? String(printing.print_description) : '—'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  No. colours:
+                </Typography>
+                <Typography component="span" variant="body2" sx={{ fontWeight: printing.num_colours != null ? 600 : 400 }}>
+                  {printing.num_colours != null && String(printing.num_colours).trim() !== '' ? String(printing.num_colours) : '—'}
+                </Typography>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600, ml: { sm: 2 } }}>
+                  Print side:
+                </Typography>
+                <Typography component="span" variant="body2" sx={{ fontWeight: (printing.side || '') !== '' ? 600 : 400 }}>
+                  {printing.side === 'front'
+                    ? 'Front'
+                    : printing.side === 'back'
+                      ? 'Back'
+                      : printing.side === 'both'
+                        ? 'Both'
+                        : printing.side
+                          ? String(printing.side)
+                          : '—'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Print position details:
+                </Typography>
+                <Typography
+                  component="span"
+                  variant="body2"
+                  sx={{ whiteSpace: 'pre-wrap', fontWeight: printing.print_position_notes ? 600 : 400, wordBreak: 'break-word' }}
+                >
+                  {printing.print_position_notes ? String(printing.print_position_notes) : '—'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Film type supplied:
+                </Typography>
+                <Typography component="span" variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: filmSuppliedReadonly ? 600 : 400, wordBreak: 'break-word' }}>
+                  {filmSuppliedReadonly || '—'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Finished bag size:
+                </Typography>
+                <Typography
+                  component="span"
+                  variant="body2"
+                  sx={{ whiteSpace: 'pre-wrap', fontWeight: finishedBagSizeReadonly ? 600 : 400, wordBreak: 'break-word' }}
+                >
+                  {finishedBagSizeReadonly || '—'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Eye spot:
+                </Typography>
+                <Typography component="span" variant="body2" sx={{ fontWeight: printing.eye_spot ? 600 : 400 }}>
+                  {printing.eye_spot === 'yes' ? 'Yes' : printing.eye_spot === 'no' ? 'No' : printing.eye_spot ? String(printing.eye_spot) : '—'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
+                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Treat (inside / outside):
+                </Typography>
+                <Typography
+                  component="span"
+                  variant="body2"
+                  sx={{ fontWeight: run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none' ? 600 : 400 }}
+                >
+                  {run.treat_inside_outside === 'inside'
+                    ? 'Inside'
+                    : run.treat_inside_outside === 'outside'
+                      ? 'Outside'
+                      : run.treat_inside_outside === 'none' || !run.treat_inside_outside
+                        ? '—'
+                        : String(run.treat_inside_outside)}
+                </Typography>
+              </Box>
+
+              {(finishMode === 'Cartons' && sealTypeUiValue) ||
+              printing.cylinder_size_mm != null ||
+              printing.plates_around ||
+              printing.plates_across ? (
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                    gap: 1,
+                  }}
+                >
+                  {finishMode === 'Cartons' && sealTypeUiValue ? (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Seal:
+                      </Typography>
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                        {sealTypeUiValue === 'end' ? 'End' : sealTypeUiValue === 'side' ? 'Side' : sealTypeUiValue === 'none' ? 'None' : sealTypeUiValue}
+                      </Typography>
+                    </Box>
+                  ) : null}
+                  {printing.method === 'Uteco' && printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0 ? (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Cylinder (mm):
+                      </Typography>
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                        {Number(printing.cylinder_size_mm)}
+                      </Typography>
+                    </Box>
+                  ) : null}
+                  {(printing.plates_around != null && String(printing.plates_around).trim() !== '') ||
+                  (printing.plates_across != null && String(printing.plates_across).trim() !== '') ? (
+                    <Box sx={{ gridColumn: { sm: '1 / -1' }, display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Plate layout (around × across):
+                      </Typography>
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                        {String(printing.plates_around ?? '—')} × {String(printing.plates_across ?? '—')}
+                      </Typography>
+                    </Box>
+                  ) : null}
+                </Box>
+              ) : null}
+
+              {printing.barcode != null && String(printing.barcode).trim() !== '' ? (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                  <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                    Bar code:
+                  </Typography>
+                  <Typography component="span" variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                    {String(printing.barcode)}
+                  </Typography>
+                </Box>
+              ) : null}
+
+              {printingArtworkFiles.length > 0 ? (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                  <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                    Artwork files:
+                  </Typography>
+                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
+                    {printingArtworkFiles.length} file{printingArtworkFiles.length === 1 ? '' : 's'} attached
+                  </Typography>
+                </Box>
+              ) : null}
+
+              {(() => {
+                const rowFilter = (pairs: unknown) =>
+                  (Array.isArray(pairs) ? pairs : [])
+                    .map((r: { ink_code?: unknown; plate_code?: unknown; ink_text?: unknown }) => ({
+                      ink: String(r?.ink_code ?? '').trim(),
+                      plate: String(r?.plate_code ?? '').trim(),
+                      colourText: String(r?.ink_text ?? '').trim(),
+                    }))
+                    .filter((row) => row.ink || row.plate || row.colourText)
+                const front = rowFilter(printing.front_ink_plate)
+                const back = rowFilter(printing.back_ink_plate)
+                const showPlate = printing.method === 'Inline'
+                if (!front.length && !back.length) return null
+                return (
+                  <Stack spacing={1.25}>
+                    {front.length ? (
+                      <Box>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                          Ink colours
+                        </Typography>
+                        <Stack spacing={1}>
+                          {front.map((r, idx) => (
+                            <Box
+                              key={`f-${idx}-${r.ink}-${r.plate}`}
+                              sx={{
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 1,
+                                p: 1,
+                              }}
+                            >
+                              <Typography variant="caption" color="text.secondary">
+                                Colour {idx + 1}
+                              </Typography>
+                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: r.colourText ? 600 : 400 }}>
+                                {r.colourText || '—'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                Ink code / plate
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                                Ink: {r.ink || '—'}
+                                {showPlate ? <> · Plate: {r.plate || '—'}</> : null}
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Stack>
+                      </Box>
+                    ) : null}
+                    {(printing.side === 'back' || printing.side === 'both') && back.length ? (
+                      <Box>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                          Back print
+                        </Typography>
+                        <Stack spacing={1}>
+                          {back.map((r, idx) => (
+                            <Box
+                              key={`b-${idx}-${r.ink}-${r.plate}`}
+                              sx={{
+                                border: '1px solid',
+                                borderColor: 'divider',
+                                borderRadius: 1,
+                                p: 1,
+                              }}
+                            >
+                              <Typography variant="caption" color="text.secondary">
+                                Colour {idx + 1}
+                              </Typography>
+                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: r.colourText ? 600 : 400 }}>
+                                {r.colourText || '—'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                Ink code / plate
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                                Ink: {r.ink || '—'}
+                                {showPlate ? <> · Plate: {r.plate || '—'}</> : null}
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Stack>
+                      </Box>
+                    ) : null}
+                  </Stack>
+                )
+              })()}
+            </Stack>
+          </Box>
+        ) : null}
+
+        {printingSurface === 'job_sheet_summary' && printingEnabled ? (
+          <Box sx={{ mt: 1.25 }}>
             <Button variant="outlined" type="button" onClick={() => setPrintingDetailsOpen(true)}>
               Edit printing specification
             </Button>
@@ -1934,6 +2285,37 @@ export function SpecPayloadForm(props: {
                     dueDateLabel: '—',
                     totalMetersLabel: '—',
                   }
+                  const dash = '—'
+                  const inv = String(hdr.invoiceNo ?? '').trim()
+                  const job = String(hdr.jobCode ?? '').trim()
+                  const po = String(hdr.purchaseOrderNo ?? '').trim()
+                  const inlineRow = (label: string, value: string, opts?: { monospace?: boolean; preWrap?: boolean }) => (
+                    <Box
+                      key={label}
+                      sx={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        columnGap: 1,
+                        rowGap: 0.25,
+                        alignItems: 'baseline',
+                      }}
+                    >
+                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        {label}
+                      </Typography>
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{
+                          fontFamily: opts?.monospace ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : undefined,
+                          whiteSpace: opts?.preWrap ? 'pre-wrap' : undefined,
+                          wordBreak: 'break-word',
+                        }}
+                      >
+                        {value.trim() ? value : dash}
+                      </Typography>
+                    </Box>
+                  )
                   return (
                     <Box
                       sx={{
@@ -1942,58 +2324,19 @@ export function SpecPayloadForm(props: {
                         borderColor: 'divider',
                       }}
                     >
-                      <Box
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-                          gap: 1.5,
-                          mb: 1.5,
-                        }}
-                      >
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            Customer
-                          </Typography>
-                          <Typography variant="body2">{hdr.customerLabel}</Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            Product description
-                          </Typography>
-                          <Typography variant="body2">{hdr.productDescription}</Typography>
-                        </Box>
-                      </Box>
-                      <Box
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
-                          gap: 1.5,
-                        }}
-                      >
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            Order number
-                          </Typography>
-                          <Typography variant="body2">{hdr.orderNumber}</Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            Dates
-                          </Typography>
-                          <Typography variant="body2">
-                            Order: {hdr.orderDateLabel} · Due: {hdr.dueDateLabel}
-                          </Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            Total metres
-                          </Typography>
-                          <Typography variant="body2">{hdr.totalMetersLabel}</Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                            From job sheet quantity and product dimensions.
-                          </Typography>
-                        </Box>
-                      </Box>
+                      <Stack spacing={0.75}>
+                        {inlineRow('Customer:', hdr.customerLabel)}
+                        {inlineRow('Invoice no.:', inv, { monospace: true })}
+                        {inlineRow('Job code:', job, { monospace: true })}
+                        {inlineRow('Order date:', hdr.orderDateLabel)}
+                        {inlineRow('Purchase order:', po)}
+                        {inlineRow('Due date:', hdr.dueDateLabel)}
+                        {inlineRow('Total metres:', hdr.totalMetersLabel)}
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pt: 0.25 }}>
+                          Total metres from job sheet quantity and product dimensions.
+                        </Typography>
+                        <Box sx={{ pt: 0.75 }}>{inlineRow('Product description:', hdr.productDescription, { preWrap: true })}</Box>
+                      </Stack>
                     </Box>
                   )
                 })()}
@@ -2027,10 +2370,9 @@ export function SpecPayloadForm(props: {
                       </ToggleButtonGroup>
                     </Box>
 
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
                       {printingNumColoursField}
                       {printingPrintSideField}
-                      {printingTreatField}
                     </Box>
 
                     <TextField
@@ -2044,40 +2386,27 @@ export function SpecPayloadForm(props: {
                     />
 
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Film type supplied
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                        <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                          Film type supplied:
                         </Typography>
-                        <Typography variant="body2">{filmSuppliedReadonly}</Typography>
+                        <Typography component="span" variant="body2" sx={{ wordBreak: 'break-word' }}>
+                          {filmSuppliedReadonly.trim() ? filmSuppliedReadonly : '—'}
+                        </Typography>
                       </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Finished bag size
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
+                        <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                          Finished bag size:
                         </Typography>
-                        <Typography variant="body2">{finishedBagSizeReadonly}</Typography>
+                        <Typography component="span" variant="body2" sx={{ wordBreak: 'break-word' }}>
+                          {finishedBagSizeReadonly.trim() ? finishedBagSizeReadonly : '—'}
+                        </Typography>
                       </Box>
                     </Box>
 
+                    <Box sx={{ width: '100%', maxWidth: 560 }}>{printingTreatField}</Box>
+
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-                      <DefaultSelectField
-                        label="Seal type"
-                        defaultValue=""
-                        value={sealTypeUiValue}
-                        onChange={(e) =>
-                          update((d) => {
-                            const v = e.target.value
-                            if (!d.run_requirements) (d as any).run_requirements = {}
-                            d.run_requirements.seal_type = v ? (v as any) : null
-                            if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
-                          })
-                        }
-                      >
-                        <MenuItem value="">
-                          <em>Not set</em>
-                        </MenuItem>
-                        <MenuItem value="side">Side</MenuItem>
-                        <MenuItem value="end">End</MenuItem>
-                      </DefaultSelectField>
                       <DefaultSelectField
                         label="Eye spot"
                         defaultValue=""
@@ -2342,7 +2671,7 @@ export function SpecPayloadForm(props: {
           />
         </Box>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
           <TextField
             select
             label="Slit"
@@ -2368,25 +2697,6 @@ export function SpecPayloadForm(props: {
             <MenuItem value="inside">inside</MenuItem>
             <MenuItem value="outside">outside</MenuItem>
           </TextField>
-          <DefaultSelectField
-            label="Seal type"
-            defaultValue=""
-            value={sealTypeUiValue}
-            onChange={(e) =>
-              update((d) => {
-                const v = e.target.value
-                if (!d.run_requirements) (d as any).run_requirements = {}
-                d.run_requirements.seal_type = v ? (v as any) : null
-                if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
-              })
-            }
-          >
-            <MenuItem value="">
-              <em>Not set</em>
-            </MenuItem>
-            <MenuItem value="side">Side</MenuItem>
-            <MenuItem value="end">End</MenuItem>
-          </DefaultSelectField>
         </Box>
 
         <Box sx={{ mt: 2 }}>
@@ -2402,6 +2712,259 @@ export function SpecPayloadForm(props: {
           />
         </Box>
       </Paper>
+
+      {finishMode === 'Cartons' ? (
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            Conversion
+          </Typography>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+            <DefaultSelectField
+              label="Seal"
+              defaultValue="end"
+              value={sealTypeUiValue || 'end'}
+              onChange={(e) =>
+                update((d) => {
+                  const v = e.target.value
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  d.run_requirements.seal_type = v ? (v as any) : null
+                  if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+                })
+              }
+            >
+              <MenuItem value="end">End Seal</MenuItem>
+              <MenuItem value="side">Side Seal</MenuItem>
+              <MenuItem value="none">None</MenuItem>
+            </DefaultSelectField>
+            <DefaultSelectField
+              label="Carton size"
+              defaultValue=""
+              value={String(conversion.carton_size ?? '')}
+              onChange={(e) =>
+                update((d) => {
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  ;(d.run_requirements as any).conversion = {
+                    ...((d.run_requirements as any).conversion || {}),
+                    carton_size: e.target.value || null,
+                  }
+                })
+              }
+            >
+              <MenuItem value="">
+                <em>Not set</em>
+              </MenuItem>
+              {(Array.isArray(cartonSizes) ? cartonSizes : []).map((r: any) => (
+                <MenuItem key={String(r?.carton_size ?? '')} value={String(r?.carton_size ?? '')}>
+                  {String(r?.carton_size ?? '')}
+                </MenuItem>
+              ))}
+            </DefaultSelectField>
+
+            <TextField
+              label="Vent rows"
+              type="number"
+              inputProps={{ min: 0, step: 1 }}
+              value={conversion.vent_rows ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  ;(d.run_requirements as any).conversion = {
+                    ...((d.run_requirements as any).conversion || {}),
+                    vent_rows: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
+                  }
+                })
+              }
+            />
+            <TextField
+              label="Vent holes / row"
+              type="number"
+              inputProps={{ min: 0, step: 1 }}
+              value={conversion.vent_holes_per_row ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  ;(d.run_requirements as any).conversion = {
+                    ...((d.run_requirements as any).conversion || {}),
+                    vent_holes_per_row: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
+                  }
+                })
+              }
+              helperText={`Total holes: ${Math.max(0, Number(conversion.vent_rows || 0)) * Math.max(0, Number(conversion.vent_holes_per_row || 0))}`}
+            />
+
+            <TextField
+              label="Pack"
+              type="number"
+              inputProps={{ min: 0, step: 1 }}
+              value={conversion.pack_size ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  ;(d.run_requirements as any).conversion = {
+                    ...((d.run_requirements as any).conversion || {}),
+                    pack_size: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
+                  }
+                })
+              }
+            />
+            <TextField
+              label="Qty to Stock"
+              type="number"
+              inputProps={{ min: 0, step: 1 }}
+              value={conversion.qty_to_stock ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  ;(d.run_requirements as any).conversion = {
+                    ...((d.run_requirements as any).conversion || {}),
+                    qty_to_stock: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
+                  }
+                })
+              }
+            />
+          </Box>
+
+          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mt: 2 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.pack_lay_flat}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        pack_lay_flat: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Pack Lay Flat"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.tag_packs}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        tag_packs: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Tag Packs"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.tag_ctn}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        tag_ctn: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Tag Ctn"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.inner_pack}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        inner_pack: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Inner Pack"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.loose}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        loose: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Loose"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.send_all_bags}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        send_all_bags: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Send all bags"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.handle}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        handle: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Handle"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={!!conversion.lined_cartons}
+                  onChange={(e) =>
+                    update((d) => {
+                      if (!d.run_requirements) (d as any).run_requirements = {}
+                      ;(d.run_requirements as any).conversion = {
+                        ...((d.run_requirements as any).conversion || {}),
+                        lined_cartons: e.target.checked,
+                      }
+                    })
+                  }
+                />
+              }
+              label="Lined Cartons"
+            />
+          </FormGroup>
+        </Paper>
+      ) : null}
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>

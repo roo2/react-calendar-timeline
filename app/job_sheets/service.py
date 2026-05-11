@@ -99,6 +99,39 @@ def _next_order_line_index(db, order_id: str) -> int:
     return int(m if m is not None else -1) + 1
 
 
+def sync_job_numbers_for_order(db, order_id: str) -> None:
+    """
+    Recompute job numbers for all job-sheet-backed order lines as:
+      {invoice_number}_{1-based-line-counter}
+    where invoice_number is ``orders.code``.
+    """
+    o = db.get(Order, str(order_id))
+    if o is None:
+        return
+    invoice = str(getattr(o, "code", "") or "").strip()
+    if not invoice:
+        return
+    items = (
+        db.execute(
+            select(OrderItem)
+            .where(OrderItem.order_id == str(o.id), OrderItem.job_sheet_id.is_not(None))
+            .order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    for i, oi in enumerate(items, start=1):
+        jsid = getattr(oi, "job_sheet_id", None)
+        if not jsid:
+            continue
+        js = db.get(JobSheet, str(jsid))
+        if js is None:
+            continue
+        js.job_no = f"{invoice}_{i}"
+        db.add(js)
+    db.flush()
+
+
 def _ensure_draft_order_for_job_sheet_in_db(db, job_sheet_id: str, *, new_order_date: Optional[date] = None) -> str:
     """
     If no order line exists for this job sheet, create a DRAFT order with one line.
@@ -228,6 +261,9 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
             raise DomainError("Failed to allocate job number") from last_err
 
         _ensure_draft_order_for_job_sheet_in_db(db, str(js.id), new_order_date=payload.order_date)
+        oi = db.scalar(select(OrderItem).where(OrderItem.job_sheet_id == str(js.id)))
+        if oi is not None:
+            sync_job_numbers_for_order(db, str(oi.order_id))
         job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
         if job is None:
             raise DomainError("Could not create production job for job sheet")
@@ -814,6 +850,7 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
                 db.add(prod)
 
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
+        sync_job_numbers_for_order(db, str(oid))
         if "order_date" in upd:
             o = db.get(Order, oid)
             if o:

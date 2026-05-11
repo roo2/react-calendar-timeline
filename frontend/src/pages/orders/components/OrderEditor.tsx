@@ -28,6 +28,7 @@ import { OrderFormFooter } from './OrderFormFooter'
 import {
   EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID,
   type EmbeddedNewJobSheetFlow,
+  type OrderLineQtySnapshot,
   ProductVersionEditor,
 } from '../../products/components/ProductVersionEditor'
 import { fetchProducts } from '../../../store/slices/productsSlice'
@@ -321,6 +322,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [pvProductId, setPvProductId] = useState<string | null>(null)
   const [pvJobSheetId, setPvJobSheetId] = useState<string | null>(null)
   const [pvTitle, setPvTitle] = useState<string>('')
+  const [pvOrderLineQty, setPvOrderLineQty] = useState<OrderLineQtySnapshot | null>(null)
 
   const [newJobSheetOpen, setNewJobSheetOpen] = useState(false)
 
@@ -421,10 +423,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const productListErr =
     customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
 
-  function openProductVersionModal(p: { product_id: string; product_code?: string | null; job_sheet_id?: string | null }) {
+  function openProductVersionModal(p: {
+    product_id: string
+    product_code?: string | null
+    job_sheet_id?: string | null
+    /** Table row values when opening from an order line (unsaved qty/due date must match the modal). */
+    orderLineQty?: OrderLineQtySnapshot | null
+  }) {
     setPvProductId(p.product_id)
     const js = jobSheetIdFromApi(p.job_sheet_id)
     setPvJobSheetId(js || null)
+    setPvOrderLineQty(p.orderLineQty ?? null)
     setPvTitle(
       js
         ? p.product_code
@@ -456,6 +465,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       product_id: it.product_id,
       product_code: it.product_code,
       job_sheet_id: js || null,
+      orderLineQty: {
+        quantity_value: it.quantity_value,
+        quantity_unit: it.quantity_unit,
+        due_date: it.due_date,
+      },
     })
   }
 
@@ -463,6 +477,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setPvOpen(false)
     setPvProductId(null)
     setPvJobSheetId(null)
+    setPvOrderLineQty(null)
     setPvTitle('')
   }
 
@@ -549,6 +564,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       product_id: String(req.product_id),
       product_code: code || null,
       job_sheet_id: String(req.job_sheet_id),
+      orderLineQty: {
+        quantity_value: line.quantity_value,
+        quantity_unit: line.quantity_unit,
+        due_date: line.due_date,
+      },
     })
   }, [mode, orderId, items, loc.state, loc.pathname, loc.search, loc.hash, canEditProduct, nav])
 
@@ -722,6 +742,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           product_id: newLine.product_id,
           product_code: newLine.product_code,
           job_sheet_id: newLine.job_sheet_id,
+          orderLineQty: {
+            quantity_value: newLine.quantity_value,
+            quantity_unit: newLine.quantity_unit,
+            due_date: newLine.due_date,
+          },
         })
       }
     } catch (e) {
@@ -1274,10 +1299,23 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                                 variant="text"
                                 onClick={() => {
                                   if (!m.linked_product_id) return
+                                  const linked = items.find(
+                                    (it) =>
+                                      it.line_kind !== 'resell' &&
+                                      jobSheetIdFromApi(it.job_sheet_id) &&
+                                      String(it.job_sheet_id) === String(m.job_sheet_id),
+                                  )
                                   openProductVersionModal({
                                     product_id: m.linked_product_id,
                                     product_code: m.myob_item_number,
                                     job_sheet_id: m.job_sheet_id,
+                                    orderLineQty: linked
+                                      ? {
+                                          quantity_value: linked.quantity_value,
+                                          quantity_unit: linked.quantity_unit,
+                                          due_date: linked.due_date,
+                                        }
+                                      : null,
                                   })
                                 }}
                                 disabled={saving || !m.linked_product_id}
@@ -1500,6 +1538,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               key={`${pvProductId}:${pvJobSheetId ?? 'none'}`}
               productId={pvProductId}
               jobSheetId={pvJobSheetId || undefined}
+              orderLineQtySnapshot={pvOrderLineQty}
               onCancel={closeProductVersionModal}
               onDone={async () => {
                 if (!orderId) {

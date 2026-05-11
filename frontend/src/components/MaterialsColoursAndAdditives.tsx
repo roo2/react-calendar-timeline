@@ -1,13 +1,4 @@
-import {
-  Box,
-  Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  TextField,
-} from '@mui/material'
+import { Box, Button, Table, TableBody, TableCell, TableHead, TableRow, TextField } from '@mui/material'
 import { defaultRowSx, isDefaultRow } from './DefaultRowTable'
 import { ColourSelect, type ColourOption } from './ColourSelect'
 import { AdditiveSelect, type AdditiveOption } from './AdditiveSelect'
@@ -94,8 +85,9 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
         <TableBody>
           {colours.map((row, idx) => {
             const isDefault = isDefaultRow(row, COLOUR_DEFAULTS)
+            const colourHex = colourOptions.find((o) => o.colour_code === row.colour_code)?.hex_code || ''
             return (
-              <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+              <TableRow key={idx} hover sx={{ ...defaultRowSx(isDefault), ...(colourHex ? { '& td': { bgcolor: colourHex } } : {}) }}>
                 <TableCell sx={{ width: '55%' }}>
                   <ColourSelect
                     options={colourOptions}
@@ -151,8 +143,9 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
           <TableBody>
             {additives.map((row, idx) => {
               const isDefault = isDefaultRow(row, ADDITIVE_DEFAULTS)
+              const additiveHex = additiveOptions.find((o) => o.additive_code === row.additive_code)?.highlight_hex_code || ''
               return (
-                <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                <TableRow key={idx} hover sx={{ ...defaultRowSx(isDefault), ...(additiveHex ? { '& td': { bgcolor: additiveHex } } : {}) }}>
                   <TableCell sx={{ width: '55%' }}>
                     <AdditiveSelect
                       options={additiveOptions}

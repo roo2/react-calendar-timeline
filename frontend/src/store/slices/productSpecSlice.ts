@@ -5,8 +5,9 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { apiFetch } from '../../api/client'
 
 export type SpecResinOption = { resin_code: string; name: string }
-export type SpecColourOption = { colour_code: string; name: string; price_per_kg?: number }
-export type SpecAdditiveOption = { additive_code: string; name: string; price_per_kg?: number }
+export type SpecColourOption = { colour_code: string; name: string; price_per_kg?: number; hex_code?: string | null }
+export type SpecAdditiveOption = { additive_code: string; name: string; price_per_kg?: number; highlight_hex_code?: string | null }
+export type SpecConversionCartonSizeOption = { carton_size: string; sort_order?: number; cost?: number }
 export type SpecInkOption = { ink_code: string; name: string; printer_type?: string }
 export type SpecPlateOption = { plate_code: string; description?: string | null }
 
@@ -26,6 +27,7 @@ type ProductSpecState = {
     resins: SpecResinOption[]
     colours: SpecColourOption[]
     additives: SpecAdditiveOption[]
+    cartonSizes: SpecConversionCartonSizeOption[]
   }
   inks: {
     status: Status
@@ -49,23 +51,26 @@ const initialState: ProductSpecState = {
     resins: [],
     colours: [],
     additives: [],
+    cartonSizes: [],
   },
   inks: { status: 'idle', error: null, items: [], lastPrinterType: null },
   plates: { status: 'idle', error: null, items: [], lastCustomerId: null },
 }
 
 export const fetchProductSpecBundle = createAsyncThunk('productSpec/bundle', async () => {
-  const [resinBlends, resins, colours, additives] = await Promise.all([
+  const [resinBlends, resins, colours, additives, cartonSizes] = await Promise.all([
     apiFetch<ResinBlendPreset[]>('/api/rate-cards/resin-blends'),
     apiFetch<SpecResinOption[]>('/api/rate-cards/resins'),
     apiFetch<SpecColourOption[]>('/api/rate-cards/colours'),
     apiFetch<SpecAdditiveOption[]>('/api/rate-cards/additives'),
+    apiFetch<SpecConversionCartonSizeOption[]>('/api/rate-cards/conversion-carton-sizes'),
   ])
   return {
     resinBlends: Array.isArray(resinBlends) ? resinBlends : [],
     resins: Array.isArray(resins) ? resins : [],
     colours: Array.isArray(colours) ? colours : [],
     additives: Array.isArray(additives) ? additives : [],
+    cartonSizes: Array.isArray(cartonSizes) ? cartonSizes : [],
   }
 })
 
@@ -100,6 +105,7 @@ const slice = createSlice({
       s.bundle.resins = a.payload.resins
       s.bundle.colours = a.payload.colours
       s.bundle.additives = a.payload.additives
+      s.bundle.cartonSizes = a.payload.cartonSizes
     })
     b.addCase(fetchProductSpecBundle.rejected, (s, a) => {
       s.bundle.status = 'failed'

@@ -102,14 +102,33 @@ def _status_label(order_status: str | None, production_status: str | None) -> st
 
 
 def _totals_kg_for_price(js, spec: dict) -> float | None:
-    """Prefer calculator snapshot on the version spec; fall back to quantity when unit is kg."""
+    """
+    Prefer calculator snapshot on the version spec; otherwise derive from persisted job-sheet quantity fields.
+
+    This runs during list serialization/sort and must stay lightweight (no extra DB lookups).
+    """
     qtk = spec.get("quoted_totals_kg")
     if isinstance(qtk, (int, float)) and float(qtk) > 0:
         return float(qtk)
-    qu = str(getattr(js, "quantity_unit", "") or "").lower()
+    qu = str(getattr(js, "quantity_unit", "") or "").strip().lower()
+    qt = str(getattr(js, "qty_type", "") or "").strip().lower()
     if qu == "kg":
         v = float(getattr(js, "quantity_value", 0) or 0)
         return v if v > 0 else None
+    # For rolls / cartons / 1000 (units), estimate total kg from roll mass fields when available.
+    # - rolls qty_type/unit: quantity_value is roll count.
+    # - units qty_type (1000/cartons/etc): use persisted num_rolls from quantity editor state.
+    wpr = float(getattr(js, "weight_per_roll_kg", 0) or 0)
+    if wpr > 0:
+        rolls: float | None = None
+        if qt == "total_rolls" or qu == "rolls":
+            rv = float(getattr(js, "quantity_value", 0) or 0)
+            rolls = rv if rv > 0 else None
+        else:
+            nr = int(getattr(js, "num_rolls", 0) or 0)
+            rolls = float(nr) if nr > 0 else None
+        if rolls and rolls > 0:
+            return rolls * wpr
     return None
 
 

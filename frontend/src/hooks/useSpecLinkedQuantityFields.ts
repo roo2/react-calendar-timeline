@@ -367,10 +367,16 @@ export function useSpecLinkedQuantityFields(opts: {
   const productTypeIsBag = productType.toLowerCase() === 'bag'
 
   useEffect(() => {
-    setQtyType((t) => coerceQtyTypeForFinishMode(finishMode, t, isContinuousLength))
-  }, [finishMode, isContinuousLength])
+    const coerced = coerceQtyTypeForFinishMode(finishMode, qtyType, isContinuousLength)
+    if (coerced !== qtyType) setQtyType(coerced)
+  }, [finishMode, isContinuousLength, qtyType])
 
   useEffect(() => {
+    if (finishMode === 'Cartons' && qtyType === 'kg') {
+      setQtyType('units')
+      setCartonQtyMode('ctn')
+      return
+    }
     if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) {
       setQtyType('units')
       setCartonQtyMode('ctn')
@@ -391,11 +397,12 @@ export function useSpecLinkedQuantityFields(opts: {
   useEffect(() => {
     if (!(finishMode === 'Cartons' && effectiveQtyType === 'units' && cartonQtyMode === 'ctn')) return
     if (!(numCartonsNum > 0) || !(bagsPerCartonNum > 0)) {
-      setNumUnits('')
+      if (numUnits !== '') setNumUnits('')
       return
     }
-    setNumUnits(String(numCartonsNum * bagsPerCartonNum))
-  }, [finishMode, effectiveQtyType, cartonQtyMode, numCartonsNum, bagsPerCartonNum])
+    const nextUnits = String(numCartonsNum * bagsPerCartonNum)
+    if (numUnits !== nextUnits) setNumUnits(nextUnits)
+  }, [finishMode, effectiveQtyType, cartonQtyMode, numCartonsNum, bagsPerCartonNum, numUnits])
 
   useEffect(() => {
     if (!(finishMode === 'Cartons' && effectiveQtyType === 'kg')) {

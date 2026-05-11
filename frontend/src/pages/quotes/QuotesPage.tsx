@@ -637,6 +637,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   }, [productType, lengthUnits])
 
   useEffect(() => {
+    if (finishMode === 'Cartons' && qtyType === 'kg') {
+      setQtyType('units')
+      setCartonQtyMode('ctn')
+      return
+    }
     if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) {
       setQtyType('units')
       setCartonQtyMode('ctn')
@@ -2319,31 +2324,26 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     const hasProductLine = Boolean((liveQuoteProductDescription || '').trim())
     let desc = base
     if (hasProductLine) {
-      const perRollProductsForCopy =
-        finishMode === 'Rolls' &&
-        !isContinuousLength &&
-        (qtyType === 'units' || qtyType === 'rolls_units' || qtyType === 'total_rolls') &&
-        (unitsPerRollNum > 0 ||
-          (productsPerRollDerived != null &&
-            Number.isFinite(Number(productsPerRollDerived)) &&
-            Number(productsPerRollDerived) > 0))
-          ? unitsPerRollNum > 0
-            ? unitsPerRollNum
-            : Number(productsPerRollDerived)
-          : null
-      const tail =
-        perRollProductsForCopy != null
-          ? `${fmtQtyNumber(perRollProductsForCopy, 0)} ${productUnitLabel}/ROLL.`
-          : quotePackagingPerUnitTail({
-              finishMode,
-              productType,
-              bagsPerCarton: bagsPerCartonNum,
-              isContinuousLength,
-              metersPerRoll: metersPerRollNum,
-              weightPerRollKg: weightPerRollNum,
-              quantityTotalM: Number(calcPayload?.quantity?.total_m ?? 0),
-              quantityRolls: Number(calcPayload?.quantity?.rolls ?? numRollsNum ?? 0),
-            })
+      const unitsPerRollForTail = Math.max(
+        unitsPerRollNum,
+        productsPerRollDerived != null &&
+          Number.isFinite(Number(productsPerRollDerived)) &&
+          Number(productsPerRollDerived) > 0
+          ? Math.max(1, Math.round(Number(productsPerRollDerived)))
+          : 0,
+      )
+      const tail = quotePackagingPerUnitTail({
+        finishMode,
+        productType,
+        bagsPerCarton: bagsPerCartonNum,
+        isContinuousLength,
+        metersPerRoll: metersPerRollNum,
+        weightPerRollKg: weightPerRollNum,
+        quantityTotalM: Number(calcPayload?.quantity?.total_m ?? 0),
+        quantityRolls: Number(calcPayload?.quantity?.rolls ?? numRollsNum ?? 0),
+        qtyMode,
+        unitsPerRoll: unitsPerRollForTail,
+      })
       desc = joinQuoteDescriptionWithPackagingTail(base, tail)
     }
     const priceHeader =
@@ -3562,7 +3562,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                           applyQuantityCarryForNewQtyType('units', 'ctn')
                           setQtyType('units')
                           setCartonQtyMode('ctn')
-                        } else if (v === 'kg') {
+                        } else if (v === 'kg' && finishMode === 'Rolls') {
                           applyQuantityCarryForNewQtyType('kg')
                           setQtyType('kg')
                         } else if (finishMode === 'Rolls') {
@@ -3585,7 +3585,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                             : `1000 (total ${productUnitLabel.toLowerCase()})`
                         }
                       />
-                      <FormControlLabel value="kg" control={<Radio />} label="KG (total kg)" />
+                      {finishMode === 'Rolls' ? <FormControlLabel value="kg" control={<Radio />} label="KG (total kg)" /> : null}
                       {finishMode === 'Cartons' ? <FormControlLabel value="ctn" control={<Radio />} label="CTN" /> : null}
                       {finishMode === 'Rolls' ? <FormControlLabel value="roll" control={<Radio />} label="ROLL" /> : null}
                     </RadioGroup>

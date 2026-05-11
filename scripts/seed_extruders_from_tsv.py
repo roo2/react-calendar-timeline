@@ -64,6 +64,7 @@ def to_money(v: str) -> float | None:
 
 FIELD_MAP: dict[str, tuple[str, Any]] = {
     "Model": ("model", lambda x: (x or "").strip() or None),
+    "Die Size": ("die_size_mm", to_int),
     "Film Width Min (mm)": ("film_width_min_mm", to_int),
     "Film Width Max (mm)": ("film_width_max_mm", to_int),
     "Decision Width (mm)": ("decision_width_mm", to_int),
@@ -110,16 +111,45 @@ def main() -> None:
             print("Cleared existing extruders (DELETE FROM extruders).")
 
         for code, fields in data.items():
+            row_payload = {
+                "extruder_code": code,
+                "model": fields.get("model"),
+                "die_size_mm": fields.get("die_size_mm"),
+                "film_width_min_mm": fields.get("film_width_min_mm"),
+                "film_width_max_mm": fields.get("film_width_max_mm"),
+                "decision_width_mm": fields.get("decision_width_mm"),
+                "average_kg_hr": fields.get("average_kg_hr"),
+                "ave_width": fields.get("ave_width"),
+                "cost_per_hr": fields.get("cost_per_hr"),
+            }
             conn.execute(
                 text(
                     """
-                    INSERT INTO extruders
-                    (extruder_code, model, film_width_min_mm, film_width_max_mm, decision_width_mm, average_kg_hr, ave_width, cost_per_hr)
-                    VALUES
-                    (:extruder_code, :model, :film_width_min_mm, :film_width_max_mm, :decision_width_mm, :average_kg_hr, :ave_width, :cost_per_hr)
+                    INSERT INTO extruders (
+                        extruder_code,
+                        model,
+                        die_size_mm,
+                        film_width_min_mm,
+                        film_width_max_mm,
+                        decision_width_mm,
+                        average_kg_hr,
+                        ave_width,
+                        cost_per_hr
+                    )
+                    VALUES (
+                        :extruder_code,
+                        :model,
+                        :die_size_mm,
+                        :film_width_min_mm,
+                        :film_width_max_mm,
+                        :decision_width_mm,
+                        :average_kg_hr,
+                        :ave_width,
+                        :cost_per_hr
+                    )
                     """
                 ),
-                {"extruder_code": code, **fields},
+                row_payload,
             )
 
     print(f"Seeded {len(data)} extruders from {tsv_path.name}")

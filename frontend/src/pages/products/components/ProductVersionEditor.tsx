@@ -40,7 +40,10 @@ import {
   type JobSheetQuantityFieldsProps,
 } from '../../job-sheets/components/JobSheetIdentityQuantitySection'
 import { LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
-import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
+import {
+  useSpecLinkedQuantityFields,
+  type SpecLinkedQuantityHydrate,
+} from '../../../hooks/useSpecLinkedQuantityFields'
 import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
 import {
   cartonsWeightPerRollKg,
@@ -113,10 +116,149 @@ function inferQtyTypeFromUnit(u: string | undefined): QtyType {
   return 'units'
 }
 
+/** Current order-line quantity/due date when opening the job sheet editor from {@link OrderEditor} (may differ from persisted job sheet until save). */
+export type OrderLineQtySnapshot = {
+  quantity_value: string
+  quantity_unit: string
+  due_date: string
+}
+
+function mergeJobSheetRowWithOrderLineQty(js: any, snap: OrderLineQtySnapshot): any {
+  const qvNum = Number(snap.quantity_value)
+  const qu = String(snap.quantity_unit || '').trim()
+  const jsMerged: any = {
+    ...js,
+    quantity_value: Number.isFinite(qvNum) ? qvNum : js?.quantity_value,
+    quantity_unit: qu || js?.quantity_unit,
+    qty_type: null,
+  }
+  if (qu === 'rolls') {
+    const n = Math.max(1, Math.round(Number.isFinite(qvNum) ? qvNum : Number(js?.num_rolls) || 1))
+    jsMerged.num_rolls = n
+  }
+  if (qu === '1000') {
+    jsMerged.num_product_units = Math.round((Number.isFinite(qvNum) ? qvNum : 0) * 1000)
+  }
+  return jsMerged
+}
+
+function buildSpecLinkedHydrateFromJobSheetJs(
+  loadedSpec0: SpecPayload,
+  jsQty: any,
+  isImportDraft: boolean,
+): SpecLinkedQuantityHydrate {
+  const rawQu = String(jsQty?.quantity_unit || '').toLowerCase()
+  const rawQt =
+    jsQty?.qty_type != null && String(jsQty.qty_type).trim()
+      ? qtyTypeFromPersisted(String(jsQty.qty_type))
+      : inferQtyTypeFromUnit(jsQty?.quantity_unit)
+  const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+  const pt = String(loadedSpec0.identity?.product_type || 'Bag')
+  const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
+  const continuousLength =
+    pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
+  let qt: QtyType
+  if (isImportDraft) {
+    if (continuousLength && rawQt === 'rolls_units') {
+      qt = 'kg'
+    } else {
+      qt = rawQt
+    }
+  } else {
+    qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
+  }
+  let qtResolved: QtyType = qt
+  if (isImportDraft && rawQu === 'rolls' && qtResolved === 'total_rolls') {
+    qtResolved = 'rolls_units'
+  }
+  const nrStored = jsQty?.num_rolls != null ? Math.max(1, Number(jsQty.num_rolls)) : 1
+  const wpr =
+    jsQty?.weight_per_roll_kg != null && Number.isFinite(Number(jsQty.weight_per_roll_kg))
+      ? String(jsQty.weight_per_roll_kg)
+      : ''
+  const quRawLower = String(jsQty?.quantity_unit || '').toLowerCase()
+
+  let cartonQtyMode: '1000' | 'ctn' = '1000'
+  let numCartonsHydrate = ''
+  if (fm === 'Cartons' && qtResolved === 'units') {
+    if (quRawLower === 'cartons') {
+      cartonQtyMode = 'ctn'
+      numCartonsHydrate =
+        jsQty?.quantity_value != null && String(jsQty.quantity_value).trim() !== ''
+          ? String(Math.max(0, Math.round(Number(jsQty.quantity_value))))
+          : ''
+    } else {
+      cartonQtyMode = '1000'
+    }
+  }
+
+  let totalKgH = ''
+  let numRollsH = String(nrStored)
+  let weightPerRollH = wpr
+  let numUnitsH = ''
+  let unitsPerRollH = ''
+  const metersPerRollH = ''
+
+  if (qtResolved === 'kg') {
+    totalKgH = String(jsQty?.quantity_value ?? '')
+    numUnitsH = ''
+    unitsPerRollH = ''
+    numRollsH = String(nrStored)
+    weightPerRollH = wpr
+  } else if (qtResolved === 'units') {
+    if (quRawLower === 'cartons' && jsQty?.num_product_units != null) {
+      numUnitsH = String(jsQty.num_product_units)
+    } else if (quRawLower === '1000' && jsQty?.num_product_units != null) {
+      numUnitsH = String(Math.max(0, Math.round(Number(jsQty.num_product_units))))
+    } else {
+      numUnitsH = String(jsQty?.num_product_units ?? jsQty?.quantity_value ?? '')
+    }
+    totalKgH = ''
+    unitsPerRollH = ''
+    numRollsH = String(nrStored)
+    weightPerRollH = wpr
+  } else if (qtResolved === 'rolls_units') {
+    numRollsH = String(nrStored)
+    totalKgH = ''
+    numUnitsH = ''
+    const npu = jsQty?.num_product_units != null ? Number(jsQty.num_product_units) : NaN
+    unitsPerRollH =
+      Number.isFinite(npu) && npu > 0 && nrStored > 0 ? String(Math.max(1, Math.round(npu / nrStored))) : ''
+    weightPerRollH = wpr
+  } else {
+    unitsPerRollH = ''
+    numRollsH = String(jsQty?.num_rolls ?? jsQty?.quantity_value ?? nrStored)
+    weightPerRollH = wpr
+    totalKgH = ''
+    numUnitsH = ''
+  }
+
+  if (fm === 'Cartons') {
+    weightPerRollH = ''
+  }
+
+  return {
+    qtyType: qtResolved,
+    cartonQtyMode,
+    totalKg: totalKgH,
+    numRolls: numRollsH,
+    weightPerRoll: weightPerRollH,
+    numUnits: numUnitsH,
+    unitsPerRoll: unitsPerRollH,
+    metersPerRoll: metersPerRollH,
+    numCartons: numCartonsHydrate,
+  }
+}
+
 export function ProductVersionEditor(props: {
   productId: string
   /** When set (e.g. order line edit), show job sheet identity + quantity and save via `updateJobSheet` + spec (creates product version server-side). */
   jobSheetId?: string | null
+  /**
+   * When opening from an order line, pass the **current** table row values so quantity/due date match unsaved edits
+   * (the job sheet GET payload would otherwise lag until the order is saved).
+   */
+  orderLineQtySnapshot?: OrderLineQtySnapshot | null
   /** New Order / Edit Order: full job sheet + spec flow before a product exists (`productId` must be {@link EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID}). */
   embeddedNewJobSheetFlow?: EmbeddedNewJobSheetFlow | null
   returnTo?: string | null
@@ -126,7 +268,17 @@ export function ProductVersionEditor(props: {
   title?: string
   submitLabel?: string
 }) {
-  const { productId, jobSheetId, embeddedNewJobSheetFlow, returnTo, onDone, onCancel, title, submitLabel } = props
+  const {
+    productId,
+    jobSheetId,
+    orderLineQtySnapshot,
+    embeddedNewJobSheetFlow,
+    returnTo,
+    onDone,
+    onCancel,
+    title,
+    submitLabel,
+  } = props
   const embedded = Boolean(embeddedNewJobSheetFlow)
   const embCustomerId = embeddedNewJobSheetFlow?.customerId ?? ''
   const embOrderMode = embeddedNewJobSheetFlow?.orderMode
@@ -185,6 +337,8 @@ export function ProductVersionEditor(props: {
   const specHydratedRef = useRef(false)
   /** Re-hydrate when GET /job-sheets/:id returns a new `data` object (avoids stale qty after a slow/out-of-order fetch). */
   const lastHydratedJobDetailDataRef = useRef<unknown>(null)
+  /** Re-hydrate when {@link orderLineQtySnapshot} changes while job sheet payload is unchanged (unsaved order line edits). */
+  const lastHydratedOrderQtySnapRef = useRef<string | null>(null)
   useEffect(() => {
     void dispatch(clearNewVersionErrors())
   }, [dispatch, productId])
@@ -196,6 +350,7 @@ export function ProductVersionEditor(props: {
   useEffect(() => {
     specHydratedRef.current = false
     lastHydratedJobDetailDataRef.current = null
+    lastHydratedOrderQtySnapRef.current = null
     setSpec(makeDefaultSpec())
     qty.resetNewDraft()
     setCustomerId('')
@@ -275,17 +430,27 @@ export function ProductVersionEditor(props: {
       return
     }
     setLoadErr(null)
-    if (lastHydratedJobDetailDataRef.current === st.data) return
+    const snapKey = orderLineQtySnapshot
+      ? `${orderLineQtySnapshot.quantity_value}|${orderLineQtySnapshot.quantity_unit}|${orderLineQtySnapshot.due_date}`
+      : '__none__'
+    if (
+      lastHydratedJobDetailDataRef.current === st.data &&
+      lastHydratedOrderQtySnapRef.current === snapKey
+    ) {
+      return
+    }
     lastHydratedJobDetailDataRef.current = st.data
+    lastHydratedOrderQtySnapRef.current = snapKey
     const res = st.data
     const js = res.job_sheet
+    const jsQty = orderLineQtySnapshot ? mergeJobSheetRowWithOrderLineQty(js, orderLineQtySnapshot) : js
     const isImportDraft = Boolean(js?.is_import_draft)
     let loadedSpec0 = ensureSpec(res.spec_payload)
-    const rawQu = String(js?.quantity_unit || '').toLowerCase()
+    const rawQu = String(jsQty?.quantity_unit || '').toLowerCase()
     const rawQt =
-      js?.qty_type != null && String(js.qty_type).trim()
-        ? qtyTypeFromPersisted(String(js.qty_type))
-        : inferQtyTypeFromUnit(js?.quantity_unit)
+      jsQty?.qty_type != null && String(jsQty.qty_type).trim()
+        ? qtyTypeFromPersisted(String(jsQty.qty_type))
+        : inferQtyTypeFromUnit(jsQty?.quantity_unit)
     if (isImportDraft && (rawQu === 'rolls' || String(rawQt || '') === 'total_rolls')) {
       loadedSpec0 = {
         ...loadedSpec0,
@@ -307,106 +472,11 @@ export function ProductVersionEditor(props: {
     setDieSize(js?.die_size != null && String(js.die_size).trim() !== '' ? String(js.die_size) : '')
     setCustomerId(js?.customer_id || '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
-    setDueDate(js?.due_date || '')
-    const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
-    const pt = String(loadedSpec0.identity?.product_type || 'Bag')
-    const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
-    const continuousLength =
-      pt === 'Tube' || lenRaw === 'Continuous' || lenRaw.toLowerCase() === 'continuous'
-    let qt: QtyType
-    if (isImportDraft) {
-      if (continuousLength && rawQt === 'rolls_units') {
-        qt = 'kg'
-      } else {
-        qt = rawQt
-      }
-    } else {
-      qt = coerceQtyTypeForFinishMode(fm, rawQt, continuousLength)
-    }
-    let qtResolved: QtyType = qt
-    if (isImportDraft && rawQu === 'rolls' && qtResolved === 'total_rolls') {
-      qtResolved = 'rolls_units'
-    }
-    const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
-    const wpr =
-      js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
-        ? String(js.weight_per_roll_kg)
-        : ''
-    const quRawLower = String(js?.quantity_unit || '').toLowerCase()
-
-    let cartonQtyMode: '1000' | 'ctn' = '1000'
-    let numCartonsHydrate = ''
-    if (fm === 'Cartons' && qtResolved === 'units') {
-      if (quRawLower === 'cartons') {
-        cartonQtyMode = 'ctn'
-        numCartonsHydrate =
-          js?.quantity_value != null && String(js.quantity_value).trim() !== ''
-            ? String(Math.max(0, Math.round(Number(js.quantity_value))))
-            : ''
-      } else {
-        cartonQtyMode = '1000'
-      }
-    }
-
-    let totalKgH = ''
-    let numRollsH = String(nrStored)
-    let weightPerRollH = wpr
-    let numUnitsH = ''
-    let unitsPerRollH = ''
-    const metersPerRollH = ''
-
-    if (qtResolved === 'kg') {
-      totalKgH = String(js?.quantity_value ?? '')
-      numUnitsH = ''
-      unitsPerRollH = ''
-      numRollsH = String(nrStored)
-      weightPerRollH = wpr
-    } else if (qtResolved === 'units') {
-      if (quRawLower === 'cartons' && js?.num_product_units != null) {
-        numUnitsH = String(js.num_product_units)
-      } else if (quRawLower === '1000' && js?.num_product_units != null) {
-        numUnitsH = String(Math.max(0, Math.round(Number(js.num_product_units))))
-      } else {
-        numUnitsH = String(js?.num_product_units ?? js?.quantity_value ?? '')
-      }
-      totalKgH = ''
-      unitsPerRollH = ''
-      numRollsH = String(nrStored)
-      weightPerRollH = wpr
-    } else if (qtResolved === 'rolls_units') {
-      numRollsH = String(nrStored)
-      totalKgH = ''
-      numUnitsH = ''
-      const npu = js?.num_product_units != null ? Number(js.num_product_units) : NaN
-      unitsPerRollH =
-        Number.isFinite(npu) && npu > 0 && nrStored > 0 ? String(Math.max(1, Math.round(npu / nrStored))) : ''
-      weightPerRollH = wpr
-    } else {
-      unitsPerRollH = ''
-      numRollsH = String(js?.num_rolls ?? js?.quantity_value ?? nrStored)
-      weightPerRollH = wpr
-      totalKgH = ''
-      numUnitsH = ''
-    }
-
-    if (fm === 'Cartons') {
-      weightPerRollH = ''
-    }
-
-    qty.hydrate({
-      qtyType: qtResolved,
-      cartonQtyMode,
-      totalKg: totalKgH,
-      numRolls: numRollsH,
-      weightPerRoll: weightPerRollH,
-      numUnits: numUnitsH,
-      unitsPerRoll: unitsPerRollH,
-      metersPerRoll: metersPerRollH,
-      numCartons: numCartonsHydrate,
-    })
+    setDueDate(orderLineQtySnapshot ? orderLineQtySnapshot.due_date || '' : js?.due_date || '')
+    qty.hydrate(buildSpecLinkedHydrateFromJobSheetJs(loadedSpec0, jsQty, isImportDraft))
     specHydratedRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `qty.hydrate` is stable; listing `qty` reruns on every render.
-  }, [jobSheetId, jobSheetDetail])
+  }, [jobSheetId, jobSheetDetail, orderLineQtySnapshot])
 
   const finishMode = qty.finishMode
   const effectiveQtyType = qty.effectiveQtyType
@@ -904,61 +974,6 @@ export function ProductVersionEditor(props: {
                     afterDimensionsSlot={
                       <>
                         <Paper variant="outlined" sx={{ p: 2 }}>
-                          <Box
-                            sx={{
-                              display: 'flex',
-                              alignItems: 'baseline',
-                              justifyContent: 'space-between',
-                              gap: 2,
-                              flexWrap: 'wrap',
-                              mb: 2,
-                            }}
-                          >
-                            <Typography variant="h6">Quantity</Typography>
-                            {loadedJobSheet?.order_id != null && String(loadedJobSheet.order_id).trim() !== '' ? (
-                              <MuiLink
-                                component={Link}
-                                to={`/orders/${encodeURIComponent(String(loadedJobSheet.order_id))}`}
-                                underline="hover"
-                                variant="body2"
-                                sx={{ flexShrink: 0 }}
-                              >
-                                View order
-                              </MuiLink>
-                            ) : null}
-                          </Box>
-                          <LinkedQuantityFields
-                            qty={qty}
-                            bagsPerCartonStr={bagsPerCartonStr}
-                            onBagsPerCartonChange={(raw) => {
-                              setSpec((prev: SpecPayload) => ({
-                                ...prev,
-                                packaging: {
-                                  ...prev.packaging,
-                                  bags_per_carton: raw.trim() === '' ? null : Math.max(1, Math.round(Number(raw))),
-                                },
-                              }))
-                              setDirty(true)
-                              setJobSaveErr(null)
-                            }}
-                          />
-                          {qty.finishMode === 'Cartons' ? (
-                            <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                              <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                                Conversion instructions
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                Total cartons:{' '}
-                                <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
-                                  {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
-                                    ? String(qty.cartonCountForDisplay)
-                                    : '—'}
-                                </Box>
-                              </Typography>
-                            </Box>
-                          ) : null}
-                        </Paper>
-                        <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                           <Typography variant="h6" sx={{ mb: 2 }}>
                             Extruder
                           </Typography>
@@ -1016,6 +1031,61 @@ export function ProductVersionEditor(props: {
                               </Typography>
                             ) : null}
                           </Stack>
+                        </Paper>
+                        <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'baseline',
+                              justifyContent: 'space-between',
+                              gap: 2,
+                              flexWrap: 'wrap',
+                              mb: 2,
+                            }}
+                          >
+                            <Typography variant="h6">Quantity</Typography>
+                            {loadedJobSheet?.order_id != null && String(loadedJobSheet.order_id).trim() !== '' ? (
+                              <MuiLink
+                                component={Link}
+                                to={`/orders/${encodeURIComponent(String(loadedJobSheet.order_id))}`}
+                                underline="hover"
+                                variant="body2"
+                                sx={{ flexShrink: 0 }}
+                              >
+                                View order
+                              </MuiLink>
+                            ) : null}
+                          </Box>
+                          <LinkedQuantityFields
+                            qty={qty}
+                            bagsPerCartonStr={bagsPerCartonStr}
+                            onBagsPerCartonChange={(raw) => {
+                              setSpec((prev: SpecPayload) => ({
+                                ...prev,
+                                packaging: {
+                                  ...prev.packaging,
+                                  bags_per_carton: raw.trim() === '' ? null : Math.max(1, Math.round(Number(raw))),
+                                },
+                              }))
+                              setDirty(true)
+                              setJobSaveErr(null)
+                            }}
+                          />
+                          {qty.finishMode === 'Cartons' ? (
+                            <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                                Conversion instructions
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Total cartons:{' '}
+                                <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
+                                  {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
+                                    ? String(qty.cartonCountForDisplay)
+                                    : '—'}
+                                </Box>
+                              </Typography>
+                            </Box>
+                          ) : null}
                         </Paper>
                       </>
                     }

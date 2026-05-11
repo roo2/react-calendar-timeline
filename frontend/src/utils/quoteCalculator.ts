@@ -34,6 +34,7 @@ export type QuoteRatebook = {
   extruders?: Array<{
     extruder_code: string
     model: string | null
+    die_size_mm?: number | null
     decision_width_mm: number | null
     average_kg_hr: number | null
     cost_per_hr: number | null

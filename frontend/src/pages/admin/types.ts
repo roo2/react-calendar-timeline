@@ -9,6 +9,7 @@ export type Additive = {
   additive_code: string
   name: string
   price_per_kg: number
+  highlight_hex_code?: string | null
 }
 
 export type Colour = {
@@ -17,6 +18,7 @@ export type Colour = {
   price_per_kg: number
   sort_order: number
   short_code?: string | null
+  hex_code?: string | null
 }
 
 export type ResinBlend = {
@@ -35,6 +37,7 @@ export type Core = {
 export type Extruder = {
   extruder_code: string
   model?: string | null
+  die_size_mm?: number | null
   film_width_min_mm?: number | null
   film_width_max_mm?: number | null
   decision_width_mm?: number | null

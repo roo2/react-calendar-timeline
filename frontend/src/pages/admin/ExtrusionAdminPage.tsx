@@ -20,7 +20,7 @@ import type { Extruder, ExtrusionWasteFactor } from './types'
 
 const MATERIAL_GROUPS: Array<{ key: MaterialsRetailBand['product_group']; title: string }> = [
   { key: 'tube', title: 'Tube' },
-  { key: 'centerfold', title: 'Centerfold' },
+  { key: 'centerfold', title: 'Centrefold' },
   { key: 'sheet', title: 'Sheet' },
   { key: 'u_film', title: 'U-Film' },
   { key: 'bag', title: 'Bag' },
@@ -165,6 +165,7 @@ export function ExtrusionAdminPage() {
 
   const [newExtruderCode, setNewExtruderCode] = useState('')
   const [newExtruderModel, setNewExtruderModel] = useState('')
+  const [newExtruderDieMm, setNewExtruderDieMm] = useState<number | ''>('')
   const [newExtruderWMin, setNewExtruderWMin] = useState<number | ''>('')
   const [newExtruderWMax, setNewExtruderWMax] = useState<number | ''>('')
   const [newExtruderDecisionW, setNewExtruderDecisionW] = useState<number | ''>('')
@@ -360,7 +361,8 @@ export function ExtrusionAdminPage() {
           Quote gusset and hole punch retail
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Sell-side add-ons on quotes: <b>$/kg × billed job kg</b> when the product uses gusset geometry (with gusset width) or hole punching.
+          Sell-side add-ons on quotes: <b>$/kg × billed job kg</b> when the product uses gusset geometry (with gusset width) or hole punching.{' '}
+          <b>Extra production default</b> applies to job sheets when quantity type is <b>KG</b> and the per-job value is left blank.
         </Typography>
         {quoteDefaultsStatus === 'loading' && !quoteDefaults ? (
           <Typography color="text.secondary">Loading…</Typography>
@@ -393,7 +395,7 @@ export function ExtrusionAdminPage() {
               disabled={savingFeatureRetails || !extrusionFeatureRetailDirty || !quoteDefaults}
               onClick={() => void saveExtrusionFeatureRetails()}
             >
-              {savingFeatureRetails ? 'Saving…' : 'Save gusset and hole punch retail'}
+              {savingFeatureRetails ? 'Saving…' : 'Save quote extrusion defaults'}
             </Button>
           </Stack>
         )}
@@ -538,7 +540,8 @@ export function ExtrusionAdminPage() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: 140 }}>Code</TableCell>
-                <TableCell sx={{ width: 220 }}>Model</TableCell>
+                <TableCell sx={{ width: 200 }}>Model</TableCell>
+                <TableCell sx={{ width: 110 }}>Die (mm)</TableCell>
                 <TableCell sx={{ width: 120 }}>W min</TableCell>
                 <TableCell sx={{ width: 120 }}>W max</TableCell>
                 <TableCell sx={{ width: 140 }}>Decision Width</TableCell>
@@ -564,6 +567,15 @@ export function ExtrusionAdminPage() {
                 </TableCell>
                 <TableCell>
                   <TextField size="small" label="Model" value={newExtruderModel} onChange={(e) => setNewExtruderModel(e.target.value)} />
+                </TableCell>
+                <TableCell>
+                  <TextField
+                    size="small"
+                    label="Die mm"
+                    inputProps={{ inputMode: 'numeric' }}
+                    value={newExtruderDieMm}
+                    onChange={(e) => setNewExtruderDieMm(e.target.value ? parseFloat(e.target.value) : '')}
+                  />
                 </TableCell>
                 <TableCell>
                   <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={newExtruderWMin} onChange={(e) => setNewExtruderWMin(e.target.value ? parseFloat(e.target.value) : '')} />
@@ -592,6 +604,7 @@ export function ExtrusionAdminPage() {
                       if (!canCreateExtruder) return
                       void saveExtruder(newExtruderCode, {
                         model: newExtruderModel.trim() || null,
+                        die_size_mm: newExtruderDieMm === '' ? null : Number(newExtruderDieMm),
                         film_width_min_mm: newExtruderWMin === '' ? null : Number(newExtruderWMin),
                         film_width_max_mm: newExtruderWMax === '' ? null : Number(newExtruderWMax),
                         decision_width_mm: newExtruderDecisionW === '' ? null : Number(newExtruderDecisionW),
@@ -601,6 +614,7 @@ export function ExtrusionAdminPage() {
                       }).then(() => {
                         setNewExtruderCode('')
                         setNewExtruderModel('')
+                        setNewExtruderDieMm('')
                         setNewExtruderWMin('')
                         setNewExtruderWMax('')
                         setNewExtruderDecisionW('')
@@ -654,6 +668,7 @@ function ExtruderRow(props: {
 }) {
   const { row, saving, onSave, onDelete } = props
   const [model, setModel] = useState(row.model || '')
+  const [dieMm, setDieMm] = useState<number | ''>(row.die_size_mm ?? '')
   const [wMin, setWMin] = useState<number | ''>(row.film_width_min_mm ?? '')
   const [wMax, setWMax] = useState<number | ''>(row.film_width_max_mm ?? '')
   const [decisionW, setDecisionW] = useState<number | ''>(row.decision_width_mm ?? '')
@@ -662,16 +677,18 @@ function ExtruderRow(props: {
   const [costPerHr, setCostPerHr] = useState<number | ''>(row.cost_per_hr ?? '')
   useEffect(() => {
     setModel(row.model || '')
+    setDieMm(row.die_size_mm ?? '')
     setWMin(row.film_width_min_mm ?? '')
     setWMax(row.film_width_max_mm ?? '')
     setDecisionW(row.decision_width_mm ?? '')
     setAvgKgHr(row.average_kg_hr ?? '')
     setAveWidth(row.ave_width ?? '')
     setCostPerHr(row.cost_per_hr ?? '')
-  }, [row.model, row.film_width_min_mm, row.film_width_max_mm, row.decision_width_mm, row.average_kg_hr, row.ave_width, row.cost_per_hr])
+  }, [row.model, row.die_size_mm, row.film_width_min_mm, row.film_width_max_mm, row.decision_width_mm, row.average_kg_hr, row.ave_width, row.cost_per_hr])
 
   const dirty =
     model !== (row.model || '') ||
+    dieMm !== (row.die_size_mm ?? '') ||
     wMin !== (row.film_width_min_mm ?? '') ||
     wMax !== (row.film_width_max_mm ?? '') ||
     decisionW !== (row.decision_width_mm ?? '') ||
@@ -684,6 +701,9 @@ function ExtruderRow(props: {
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.extruder_code}</TableCell>
       <TableCell>
         <TextField size="small" value={model} onChange={(e) => setModel(e.target.value)} />
+      </TableCell>
+      <TableCell>
+        <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={dieMm} onChange={(e) => setDieMm(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
       <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'numeric' }} value={wMin} onChange={(e) => setWMin(e.target.value ? parseFloat(e.target.value) : '')} />
@@ -712,6 +732,7 @@ function ExtruderRow(props: {
             onClick={() =>
               void onSave(row.extruder_code, {
                 model: model.trim() || null,
+                die_size_mm: dieMm === '' ? null : Number(dieMm),
                 film_width_min_mm: wMin === '' ? null : Number(wMin),
                 film_width_max_mm: wMax === '' ? null : Number(wMax),
                 decision_width_mm: decisionW === '' ? null : Number(decisionW),

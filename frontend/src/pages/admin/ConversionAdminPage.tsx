@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Box, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { apiFetch } from '../../api/client'
 import {
   adminSaveConversionFactor,
   adminSaveConversionSpeed,
@@ -31,6 +32,7 @@ function speedKey(s: Pick<ConversionSpeed, 'min_gauge_um' | 'max_gauge_um' | 'mi
 const COST_FACTOR_SLUGS = ['conversion_cost_per_hr', 'conversion_price_per_hr', 'carton_cost'] as const
 
 type CostFactorSlug = (typeof COST_FACTOR_SLUGS)[number]
+type CartonSizeRow = { carton_size: string; sort_order: number; cost: number }
 
 const COST_FACTOR_DEFAULTS: Record<CostFactorSlug, { name: string }> = {
   conversion_cost_per_hr: { name: 'Conversion Cost ($/hr)' },
@@ -49,6 +51,8 @@ export function ConversionAdminPage() {
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [speedSavedFlash, setSpeedSavedFlash] = useState(false)
   const speedSavedTimerRef = useRef<number | null>(null)
+  const [cartonSizes, setCartonSizes] = useState<CartonSizeRow[]>([])
+  const [cartonDrafts, setCartonDrafts] = useState<Record<string, string>>({})
 
   const gaugeRanges: GaugeRange[] = useMemo(() => {
     const m = new Map<string, GaugeRange>()
@@ -110,6 +114,26 @@ export function ConversionAdminPage() {
     void dispatch(fetchAdminConversionTab())
   }, [dispatch])
 
+  useEffect(() => {
+    let alive = true
+    void apiFetch<CartonSizeRow[]>('/api/admin/rate-cards/conversion-carton-sizes')
+      .then((rows) => {
+        if (!alive) return
+        const next = Array.isArray(rows) ? rows : []
+        setCartonSizes(next)
+        const drafts: Record<string, string> = {}
+        for (const r of next) drafts[r.carton_size] = String(r.cost)
+        setCartonDrafts(drafts)
+      })
+      .catch((e) => {
+        if (!alive) return
+        setErr(e instanceof Error ? e.message : 'Failed to load carton sizes')
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const displayErr = err || tabErr
 
   async function saveSpeed(
@@ -142,6 +166,34 @@ export function ConversionAdminPage() {
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save conversion factor')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  async function saveCartonSize(row: CartonSizeRow, costRaw: string) {
+    const key = `carton:${row.carton_size}`
+    const n = Number(costRaw)
+    if (!Number.isFinite(n) || n < 0) return
+    try {
+      setErr(null)
+      setSavingKey(key)
+      const saved = await apiFetch<CartonSizeRow>(
+        `/api/admin/rate-cards/conversion-carton-sizes/${encodeURIComponent(row.carton_size)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ sort_order: row.sort_order, cost: n }),
+        },
+      )
+      setCartonSizes((cur) =>
+        cur
+          .map((x) => (x.carton_size === saved.carton_size ? saved : x))
+          .sort((a, b) => a.sort_order - b.sort_order || a.carton_size.localeCompare(b.carton_size)),
+      )
+      setCartonDrafts((cur) => ({ ...cur, [saved.carton_size]: String(saved.cost) }))
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save carton size cost')
     } finally {
       setSavingKey(null)
     }
@@ -223,6 +275,59 @@ export function ConversionAdminPage() {
             </Box>
           </Stack>
         )}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
+          Carton sizes and cost
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, maxWidth: 720 }}>
+          Carton size options shown on job sheets conversion fields, with per-carton cost.
+        </Typography>
+        <AdminDataTable>
+          <TableHead>
+            <TableRow>
+              <TableCell>Carton size</TableCell>
+              <TableCell sx={{ width: 180 }}>Cost ($)</TableCell>
+              <TableCell sx={{ width: 220 }} />
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {cartonSizes.map((row) => {
+              const draft = cartonDrafts[row.carton_size] ?? String(row.cost)
+              const dirty = draft !== String(row.cost)
+              const saving = savingKey === `carton:${row.carton_size}`
+              return (
+                <TableRow key={row.carton_size} hover>
+                  <TableCell>{row.carton_size}</TableCell>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      inputProps={{ inputMode: 'decimal' }}
+                      value={draft}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) {
+                          setCartonDrafts((cur) => ({ ...cur, [row.carton_size]: v }))
+                        }
+                      }}
+                    />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={saving || !dirty || draft.trim() === '' || !Number.isFinite(Number(draft))}
+                      onClick={() => void saveCartonSize(row, draft)}
+                    >
+                      {saving ? 'Saving…' : 'Save'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </AdminDataTable>
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>

@@ -37,6 +37,13 @@ function formulationPctFieldToFraction(s: string): number {
   return n / 100
 }
 
+function normalizeHexCode(raw: string): string {
+  const t = String(raw || '').trim().toUpperCase()
+  if (!t) return ''
+  if (/^#[0-9A-F]{6}$/.test(t)) return t
+  return ''
+}
+
 export function ResinsAdminPage() {
   const dispatch = useAppDispatch()
   const { setDirty } = useUnsavedChanges()
@@ -73,6 +80,7 @@ export function ResinsAdminPage() {
   const [newAdditiveCode, setNewAdditiveCode] = useState('')
   const [newAdditiveName, setNewAdditiveName] = useState('')
   const [newAdditivePrice, setNewAdditivePrice] = useState<number | ''>('')
+  const [newAdditiveHighlightHexCode, setNewAdditiveHighlightHexCode] = useState('')
   const canCreateAdditive = useMemo(
     () => !!newAdditiveCode.trim() && !!newAdditiveName.trim() && newAdditivePrice !== '',
     [newAdditiveCode, newAdditiveName, newAdditivePrice],
@@ -83,6 +91,7 @@ export function ResinsAdminPage() {
   const [newColourName, setNewColourName] = useState('')
   const [newColourPrice, setNewColourPrice] = useState<number | ''>('')
   const [newColourShortCode, setNewColourShortCode] = useState('')
+  const [newColourHexCode, setNewColourHexCode] = useState('')
   const canCreateColour = useMemo(
     () => !!newColourCode.trim() && !!newColourName.trim() && newColourPrice !== '',
     [newColourCode, newColourName, newColourPrice],
@@ -452,6 +461,7 @@ export function ResinsAdminPage() {
               <TableRow>
                 <TableCell sx={{ width: 180 }}>Code</TableCell>
                 <TableCell>Name</TableCell>
+                <TableCell sx={{ width: 160 }}>Highlight hex</TableCell>
                 <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
                 <TableCell sx={{ width: 180 }} />
               </TableRow>
@@ -476,6 +486,16 @@ export function ResinsAdminPage() {
                 <TableCell>
                   <TextField
                     size="small"
+                    label="#RRGGBB"
+                    value={newAdditiveHighlightHexCode}
+                    onChange={(e) => setNewAdditiveHighlightHexCode((e.target.value || '').slice(0, 7))}
+                    placeholder="#FFF59D"
+                    inputProps={{ maxLength: 7 }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <TextField
+                    size="small"
                     label="Price / kg"
                     inputProps={{ inputMode: 'decimal' }}
                     value={newAdditivePrice}
@@ -489,10 +509,15 @@ export function ResinsAdminPage() {
                     disabled={!canCreateAdditive || savingKey === `additive:${newAdditiveCode.trim()}`}
                     onClick={() => {
                       if (!canCreateAdditive) return
-                      void saveAdditive(newAdditiveCode, { name: newAdditiveName.trim(), price_per_kg: Number(newAdditivePrice) }).then(() => {
+                      void saveAdditive(newAdditiveCode, {
+                        name: newAdditiveName.trim(),
+                        price_per_kg: Number(newAdditivePrice),
+                        highlight_hex_code: normalizeHexCode(newAdditiveHighlightHexCode) || null,
+                      }).then(() => {
                         setNewAdditiveCode('')
                         setNewAdditiveName('')
                         setNewAdditivePrice('')
+                        setNewAdditiveHighlightHexCode('')
                       })
                     }}
                   >
@@ -519,6 +544,7 @@ export function ResinsAdminPage() {
                 <TableCell sx={{ width: 180 }}>Code</TableCell>
                 <TableCell sx={{ width: 72 }}>Short</TableCell>
                 <TableCell>Name</TableCell>
+                <TableCell sx={{ width: 140 }}>Hex code</TableCell>
                 <TableCell sx={{ width: 160 }}>Price / kg</TableCell>
                 <TableCell sx={{ width: 180 }} />
               </TableRow>
@@ -547,6 +573,16 @@ export function ResinsAdminPage() {
                 <TableCell>
                   <TextField
                     size="small"
+                    label="#RRGGBB"
+                    value={newColourHexCode}
+                    onChange={(e) => setNewColourHexCode((e.target.value || '').slice(0, 7))}
+                    placeholder="#FFFFFF"
+                    inputProps={{ maxLength: 7 }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <TextField
+                    size="small"
                     label="Price / kg"
                     inputProps={{ inputMode: 'decimal' }}
                     value={newColourPrice}
@@ -561,11 +597,18 @@ export function ResinsAdminPage() {
                     onClick={() => {
                       if (!canCreateColour) return
                       const maxOrder = colours.length === 0 ? 0 : Math.max(...colours.map((c) => c.sort_order))
-                      void saveColour(newColourCode, { name: newColourName.trim(), price_per_kg: Number(newColourPrice), sort_order: maxOrder + 1, short_code: newColourShortCode.trim() || null }).then(() => {
+                      void saveColour(newColourCode, {
+                        name: newColourName.trim(),
+                        price_per_kg: Number(newColourPrice),
+                        sort_order: maxOrder + 1,
+                        short_code: newColourShortCode.trim() || null,
+                        hex_code: normalizeHexCode(newColourHexCode) || null,
+                      }).then(() => {
                         setNewColourCode('')
                         setNewColourName('')
                         setNewColourPrice('')
                         setNewColourShortCode('')
+                        setNewColourHexCode('')
                       })
                     }}
                   >
@@ -687,12 +730,33 @@ function AdditiveRow(props: {
   const { row, saving, onSave, onDelete } = props
   const [name, setName] = useState(row.name)
   const [price, setPrice] = useState<number | ''>(row.price_per_kg)
-  const dirty = name !== row.name || price !== row.price_per_kg
+  const [highlightHexCode, setHighlightHexCode] = useState(row.highlight_hex_code ?? '')
+  useEffect(() => {
+    setName(row.name)
+    setPrice(row.price_per_kg)
+    setHighlightHexCode(row.highlight_hex_code ?? '')
+  }, [row.highlight_hex_code, row.name, row.price_per_kg])
+  const dirty =
+    name !== row.name ||
+    price !== row.price_per_kg ||
+    normalizeHexCode(highlightHexCode) !== normalizeHexCode(row.highlight_hex_code ?? '')
   return (
-    <TableRow hover>
+    <TableRow
+      hover
+      sx={normalizeHexCode(highlightHexCode) ? { '& td': { bgcolor: normalizeHexCode(highlightHexCode) } } : undefined}
+    >
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.additive_code}</TableCell>
       <TableCell>
         <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          placeholder="#RRGGBB"
+          value={highlightHexCode}
+          onChange={(e) => setHighlightHexCode((e.target.value || '').slice(0, 7))}
+          inputProps={{ maxLength: 7 }}
+        />
       </TableCell>
       <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={price} onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')} />
@@ -703,7 +767,13 @@ function AdditiveRow(props: {
             size="small"
             variant="outlined"
             disabled={saving || !dirty || !name.trim() || price === ''}
-            onClick={() => void onSave(row.additive_code, { name: name.trim(), price_per_kg: Number(price) })}
+            onClick={() =>
+              void onSave(row.additive_code, {
+                name: name.trim(),
+                price_per_kg: Number(price),
+                highlight_hex_code: normalizeHexCode(highlightHexCode) || null,
+              })
+            }
           >
             {saving ? 'Saving…' : 'Save'}
           </Button>
@@ -727,19 +797,22 @@ function ColourRow(props: {
   const [price, setPrice] = useState<number | ''>(row.price_per_kg)
   const [sortOrder, setSortOrder] = useState<number | ''>(row.sort_order)
   const [shortCode, setShortCode] = useState(row.short_code ?? '')
+  const [hexCode, setHexCode] = useState(row.hex_code ?? '')
   useEffect(() => {
     setName(row.name)
     setPrice(row.price_per_kg)
     setSortOrder(row.sort_order)
     setShortCode(row.short_code ?? '')
-  }, [row.name, row.price_per_kg, row.sort_order, row.short_code])
+    setHexCode(row.hex_code ?? '')
+  }, [row.name, row.price_per_kg, row.sort_order, row.short_code, row.hex_code])
   const dirty =
     name !== row.name ||
     price !== row.price_per_kg ||
     (sortOrder !== '' && Number(sortOrder) !== row.sort_order) ||
-    shortCode !== (row.short_code ?? '')
+    shortCode !== (row.short_code ?? '') ||
+    normalizeHexCode(hexCode) !== normalizeHexCode(row.hex_code ?? '')
   return (
-    <TableRow hover>
+    <TableRow hover sx={normalizeHexCode(hexCode) ? { '& td': { bgcolor: normalizeHexCode(hexCode) } } : undefined}>
       <TableCell>
         <TextField
           size="small"
@@ -765,6 +838,15 @@ function ColourRow(props: {
         <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} />
       </TableCell>
       <TableCell>
+        <TextField
+          size="small"
+          placeholder="#RRGGBB"
+          value={hexCode}
+          onChange={(e) => setHexCode((e.target.value || '').slice(0, 7))}
+          inputProps={{ maxLength: 7 }}
+        />
+      </TableCell>
+      <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'decimal' }} value={price} onChange={(e) => setPrice(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
       <TableCell align="right">
@@ -779,6 +861,7 @@ function ColourRow(props: {
                 price_per_kg: Number(price),
                 sort_order: Number(sortOrder),
                 short_code: shortCode.trim() || null,
+                hex_code: normalizeHexCode(hexCode) || null,
               })
             }
           >

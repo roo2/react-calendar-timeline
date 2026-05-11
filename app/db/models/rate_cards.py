@@ -67,6 +67,7 @@ class Additive(Base):
     name: Mapped[str] = mapped_column(String(255))
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    highlight_hex_code: Mapped[str | None] = mapped_column(String(7), nullable=True)  # e.g. #FFF59D
 
     __table_args__ = (CheckConstraint("price_per_kg >= 0", name="ck_additives_price_nonneg"),)
 
@@ -79,6 +80,7 @@ class Colour(Base):
     price_per_kg: Mapped[float] = mapped_column(Numeric(12, 4))
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     short_code: Mapped[str | None] = mapped_column(String(3), nullable=True)  # 3-char code for product code (e.g. BLK, WHT)
+    hex_code: Mapped[str | None] = mapped_column(String(7), nullable=True)  # e.g. #FFFFFF
 
     __table_args__ = (
         CheckConstraint("price_per_kg >= 0", name="ck_colours_price_nonneg"),
@@ -229,6 +231,20 @@ class ConversionFactor(Base):
     )
 
 
+class ConversionCartonSize(Base):
+    __tablename__ = "conversion_carton_sizes"
+
+    carton_size: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[float] = mapped_column(Numeric(12, 4), default=0)
+
+    __table_args__ = (
+        CheckConstraint("length(carton_size) > 0", name="ck_conv_carton_sizes_nonempty"),
+        CheckConstraint("sort_order >= 0", name="ck_conv_carton_sizes_sort_nonneg"),
+        CheckConstraint("cost >= 0", name="ck_conv_carton_sizes_cost_nonneg"),
+    )
+
+
 class WasteAdder(Base):
     __tablename__ = "waste_adders"
 
@@ -246,6 +262,7 @@ class Extruder(Base):
 
     extruder_code: Mapped[str] = mapped_column(String(16), primary_key=True)
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    die_size_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     film_width_min_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     film_width_max_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     decision_width_mm: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -43,7 +43,14 @@ import {
 import { useUrlSyncedFilters } from '../../hooks/urlSearchParamsSync'
 import { formatDateDMYShort } from '../../utils/dateFormat'
 
-const PRODUCT_TYPES = ['Bag', 'Tube', 'Sleeve', 'Sheet', 'Centerfold', 'U-Film'] as const
+const PRODUCT_TYPES = [
+  { value: 'Bag', label: 'Bag' },
+  { value: 'Tube', label: 'Tube' },
+  { value: 'Sleeve', label: 'Sleeve' },
+  { value: 'Sheet', label: 'Sheet' },
+  { value: 'Centerfold', label: 'Centrefold' },
+  { value: 'U-Film', label: 'U-Film' },
+] as const
 const PRINT_METHODS = ['None', 'Inline', 'Uteco'] as const
 const FINISH_MODES = ['Rolls', 'Cartons'] as const
 const ORDER_STATUSES = [
@@ -401,8 +408,8 @@ export function JobSheetsPage() {
                       <em>Any</em>
                     </MenuItem>
                     {PRODUCT_TYPES.map((pt) => (
-                      <MenuItem key={pt} value={pt}>
-                        {pt}
+                      <MenuItem key={pt.value} value={pt.value}>
+                        {pt.label}
                       </MenuItem>
                     ))}
                   </Select>

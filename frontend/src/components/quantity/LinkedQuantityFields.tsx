@@ -43,6 +43,7 @@ export function LinkedQuantityFields(props: {
     unitsDisplay,
     productsPerRollDerived,
     cartonCountForDisplay,
+    cartonWeightKgForDisplay,
     totalMetersReadonly,
     applyQuantityCarryForNewQtyType,
     setQtyType,
@@ -92,7 +93,7 @@ export function LinkedQuantityFields(props: {
                 applyQuantityCarryForNewQtyType('units', 'ctn')
                 setQtyType('units')
                 setCartonQtyMode('ctn')
-              } else if (v === 'kg') {
+              } else if (v === 'kg' && finishMode === 'Rolls') {
                 applyQuantityCarryForNewQtyType('kg')
                 setQtyType('kg')
               } else if (finishMode === 'Rolls') {
@@ -113,7 +114,7 @@ export function LinkedQuantityFields(props: {
                 isContinuousLength ? `total ${productUnitLabel.toLowerCase()}` : `1000 (total ${productUnitLabel.toLowerCase()})`
               }
             />
-            <FormControlLabel value="kg" control={<Radio />} label="KG (total kg)" />
+            {finishMode === 'Rolls' ? <FormControlLabel value="kg" control={<Radio />} label="KG (total kg)" /> : null}
             {finishMode === 'Cartons' ? <FormControlLabel value="ctn" control={<Radio />} label="CTN" /> : null}
             {finishMode === 'Rolls' ? <FormControlLabel value="roll" control={<Radio />} label="ROLL" /> : null}
           </RadioGroup>
@@ -206,7 +207,7 @@ export function LinkedQuantityFields(props: {
               debouncedBagsPerCartonCascade()
             }}
             onBlur={() => debouncedBagsPerCartonCascade.flush()}
-            disabled={finishMode === 'Cartons' && effectiveQtyType === 'kg'}
+            disabled={false}
           />
         )}
 
@@ -216,7 +217,9 @@ export function LinkedQuantityFields(props: {
           inputProps={{ min: 0, step: 'any' }}
           value={
             cartonsHideNominalRollWeight
-              ? ''
+              ? cartonWeightKgForDisplay != null
+                ? formatKgDisplay(cartonWeightKgForDisplay)
+                : ''
               : weightPerRollEditable
                 ? weightPerRoll
                 : effectiveQtyType === 'rolls_units' && finishMode === 'Rolls'

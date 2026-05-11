@@ -612,17 +612,29 @@ async def show_order(order_id: str):
                 js = db.get(JobSheet, str(oi.job_sheet_id)) if oi.job_sheet_id else None
                 linked_pid, jno = _js_meta(js)
                 id_disp, nm_income = _myob_income_display_for_order_item(db, oi)
+                # Import snapshot columns on the order line are only refreshed when the order is saved.
+                # Staff edit qty/rate/line total on the linked job sheet; reflect those values here when present.
+                ship_quantity = float(oi.import_ship_quantity) if oi.import_ship_quantity is not None else 0.0
+                unit_price = float(oi.import_unit_price) if oi.import_unit_price is not None else None
+                line_total = float(oi.import_line_total) if oi.import_line_total is not None else None
+                if js is not None:
+                    if getattr(js, "quantity_value", None) is not None:
+                        ship_quantity = float(js.quantity_value)
+                    if getattr(js, "unit_rate", None) is not None:
+                        unit_price = float(js.unit_rate)
+                    if getattr(js, "line_total", None) is not None:
+                        line_total = float(js.line_total)
                 dto.items.append(
                     {
                         "line_kind": "myob_import",
                         "id": str(oi.id),
                         "line_index": oi.line_index,
                         "description": oi.import_line_description,
-                        "ship_quantity": float(oi.import_ship_quantity) if oi.import_ship_quantity is not None else 0.0,
+                        "ship_quantity": ship_quantity,
                         "quantity_unit": oi.import_quantity_unit,
                         "qty_type": oi.import_qty_type,
-                        "unit_price": float(oi.import_unit_price) if oi.import_unit_price is not None else None,
-                        "line_total": float(oi.import_line_total) if oi.import_line_total is not None else None,
+                        "unit_price": unit_price,
+                        "line_total": line_total,
                         "myob_item_number": oi.myob_item_number,
                         "myob_item_name": oi.myob_item_name,
                         "myob_item_sales_unit_raw": oi.myob_item_sales_unit_raw,
@@ -634,9 +646,9 @@ async def show_order(order_id: str):
                         "product_id": None,
                         "product_code": _myob_import_line_product_code(oi, getattr(o, "import_source", None)),
                         "product_name": oi.import_line_description,
-                        "quantity_value": float(oi.import_ship_quantity) if oi.import_ship_quantity is not None else 0.0,
-                        "rate": float(oi.import_unit_price) if oi.import_unit_price is not None else None,
-                        "total_price": float(oi.import_line_total) if oi.import_line_total is not None else None,
+                        "quantity_value": ship_quantity,
+                        "rate": unit_price,
+                        "total_price": line_total,
                         "income_account_display_id": id_disp,
                         "income_account_name": nm_income,
                     }

@@ -141,9 +141,12 @@ def _order_total_for_filters(o: OrderModel) -> float | None:
                 any_line = True
             continue
         if kind == "myob_import":
-            t = getattr(oi, "import_line_total", None)
-            if t is not None:
-                total += float(t)
+            js = getattr(oi, "job_sheet", None)
+            if js is not None and getattr(js, "line_total", None) is not None:
+                total += float(js.line_total)
+                any_line = True
+            elif getattr(oi, "import_line_total", None) is not None:
+                total += float(oi.import_line_total)
                 any_line = True
             continue
         js = getattr(oi, "job_sheet", None)
@@ -415,6 +418,7 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
             db.add(oi)
 
         db.flush()
+        job_sheets_service.sync_job_numbers_for_order(db, str(order.id))
         for rit in resell_items:
             _add_resell_line_core(db, str(order.id), rit)
 
@@ -508,6 +512,8 @@ def update_order(order_id: str, payload: UpdateOrderRequest) -> OrderModel:
                 o.import_review_status = s
         db.add(o)
         db.flush()
+        if "invoice_number" in updates:
+            job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
         db.refresh(o)
         return o
 
@@ -571,6 +577,7 @@ def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: s
             db.add(o)
 
         db.flush()
+        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
         ensure_scheduling_job_for_job_sheet(db, str(js.id))
         db.refresh(oi)
         return oi
@@ -621,6 +628,7 @@ def remove_order_item(order_id: str, order_item_id: str) -> None:
             o.product_version_id = None
         db.add(o)
         db.flush()
+        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
 
 
 def add_order_resell_line(order_id: str, item: CreateResellOrderLineRequest, *, created_by: str) -> OrderItemModel:
@@ -774,6 +782,7 @@ def convert_resell_line_to_myob_import_job_sheet(order_id: str, line_id: str, *,
         oi.job_sheet_id = str(js.id)
         db.add(oi)
         db.flush()
+        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
         db.refresh(oi)
         return oi
 
@@ -812,5 +821,6 @@ def link_myob_import_line_job_sheet(order_id: str, line_id: str, job_sheet_id: s
             if int(n or 0) == 0:
                 db.delete(old_js)
         db.flush()
+        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
 
         _ = ensure_scheduling_job_for_job_sheet(db, str(new_js.id))

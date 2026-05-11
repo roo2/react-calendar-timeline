@@ -9,6 +9,7 @@ import { jobSheetOrderQuantityLabel } from './quoteQuantityDescriptors'
 
 export type JobSheetPreviewQuoteSummary = {
   orderQuantityLabel: string | null
+  /** Extruded film kg from the quote calculator (includes extrusion waste). */
   totalKgIncludingWaste: string | null
   /** Same basis as Quotes: {@link fmtHoursMinutesPreview}(extrusion_hours × 60); job sheet UI omits parentheses around the string. */
   extrusionTimeDisplay: string | null
@@ -57,10 +58,11 @@ export function computeJobSheetPreviewQuoteSummary(
     }
   }
 
-  const totalKgIncludingWaste =
-    preview.total_extruded_kg != null && Number(preview.total_extruded_kg) > 0
-      ? fmtQtyNumber(Number(preview.total_extruded_kg), 2)
+  const extrudedBaseNum =
+    preview.total_extruded_kg != null && Number(preview.total_extruded_kg) > 0 && Number.isFinite(Number(preview.total_extruded_kg))
+      ? Number(preview.total_extruded_kg)
       : null
+  const totalKgIncludingWaste = extrudedBaseNum != null ? fmtQtyNumber(extrudedBaseNum, 2) : null
 
   let extrusionTimeDisplay: string | null = null
   if (

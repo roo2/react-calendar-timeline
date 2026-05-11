@@ -14,6 +14,7 @@ from app.db.models.rate_cards import (
     Additive,
     Colour,
     ConversionFactor,
+    ConversionCartonSize,
     ConversionSpeed,
     Core,
     Extruder,
@@ -86,12 +87,14 @@ class AdditiveDTO(BaseModel):
     name: str
     price_per_kg: float
     notes: str | None = None
+    highlight_hex_code: str | None = None
 
 
 class AdditiveUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     price_per_kg: float = Field(..., ge=0)
     notes: str | None = None
+    highlight_hex_code: str | None = Field(None, max_length=7)
 
 
 class ColourDTO(BaseModel):
@@ -100,6 +103,7 @@ class ColourDTO(BaseModel):
     price_per_kg: float
     sort_order: int = 0
     short_code: str | None = None  # 3-char code for product code (e.g. BLK, WHT)
+    hex_code: str | None = None
 
 
 class ColourUpsertRequest(BaseModel):
@@ -107,6 +111,7 @@ class ColourUpsertRequest(BaseModel):
     price_per_kg: float = Field(..., ge=0)
     sort_order: int = Field(0, ge=0)
     short_code: str | None = Field(None, max_length=3)
+    hex_code: str | None = Field(None, max_length=7)
 
 
 class CoreDTO(BaseModel):
@@ -145,6 +150,17 @@ class ConversionFactorUpsertRequest(BaseModel):
     value: float
 
 
+class ConversionCartonSizeDTO(BaseModel):
+    carton_size: str
+    sort_order: int
+    cost: float
+
+
+class ConversionCartonSizeUpsertRequest(BaseModel):
+    sort_order: int = Field(0, ge=0)
+    cost: float = Field(..., ge=0)
+
+
 class InkDTO(BaseModel):
     ink_code: str
     name: str
@@ -171,6 +187,7 @@ class PlateUpsertRequest(BaseModel):
 class ExtruderDTO(BaseModel):
     extruder_code: str
     model: str | None = None
+    die_size_mm: int | None = None
     film_width_min_mm: int | None = None
     film_width_max_mm: int | None = None
     decision_width_mm: int | None = None
@@ -181,6 +198,7 @@ class ExtruderDTO(BaseModel):
 
 class ExtruderUpsertRequest(BaseModel):
     model: str | None = Field(default=None, max_length=64)
+    die_size_mm: int | None = Field(default=None, ge=0)
     film_width_min_mm: int | None = None
     film_width_max_mm: int | None = None
     decision_width_mm: int | None = None
@@ -442,6 +460,7 @@ async def list_additives():
                 name=a.name,
                 price_per_kg=float(a.price_per_kg),
                 notes=a.notes,
+                highlight_hex_code=getattr(a, "highlight_hex_code", None),
             )
             for a in rows
         ]
@@ -457,6 +476,10 @@ async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="additive_code is required")
 
+    highlight_hex_code = (payload.highlight_hex_code or "").strip().upper()
+    if highlight_hex_code and not re.fullmatch(r"#[0-9A-F]{6}", highlight_hex_code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="highlight_hex_code must be in #RRGGBB format")
+
     with SessionLocal.begin() as db:
         a = db.get(Additive, code)
         if not a:
@@ -465,12 +488,14 @@ async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
                 name=payload.name,
                 price_per_kg=payload.price_per_kg,
                 notes=payload.notes,
+                highlight_hex_code=highlight_hex_code or None,
             )
             db.add(a)
         else:
             a.name = payload.name
             a.price_per_kg = payload.price_per_kg
             a.notes = payload.notes
+            a.highlight_hex_code = highlight_hex_code or None
 
     with SessionLocal() as db:
         a2 = db.get(Additive, code)
@@ -480,6 +505,7 @@ async def upsert_additive(additive_code: str, payload: AdditiveUpsertRequest):
             name=a2.name,
             price_per_kg=float(a2.price_per_kg),
             notes=a2.notes,
+            highlight_hex_code=getattr(a2, "highlight_hex_code", None),
         )
 
 
@@ -518,6 +544,7 @@ async def list_colours():
                 price_per_kg=float(c.price_per_kg),
                 sort_order=c.sort_order,
                 short_code=getattr(c, "short_code", None),
+                hex_code=getattr(c, "hex_code", None),
             )
             for c in rows
         ]
@@ -533,6 +560,10 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="colour_code is required")
 
+    hex_code = (payload.hex_code or "").strip().upper()
+    if hex_code and not re.fullmatch(r"#[0-9A-F]{6}", hex_code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="hex_code must be in #RRGGBB format")
+
     with SessionLocal.begin() as db:
         c = db.get(Colour, code)
         if not c:
@@ -543,6 +574,7 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
                 price_per_kg=payload.price_per_kg,
                 sort_order=max_order + 1,
                 short_code=(payload.short_code or "").strip()[:3] or None,
+                hex_code=hex_code or None,
             )
             db.add(c)
         else:
@@ -550,6 +582,7 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
             c.price_per_kg = payload.price_per_kg
             c.sort_order = payload.sort_order
             c.short_code = (payload.short_code or "").strip()[:3] or None
+            c.hex_code = hex_code or None
 
     with SessionLocal() as db:
         c2 = db.get(Colour, code)
@@ -560,6 +593,7 @@ async def upsert_colour(colour_code: str, payload: ColourUpsertRequest):
             price_per_kg=float(c2.price_per_kg),
             sort_order=c2.sort_order,
             short_code=getattr(c2, "short_code", None),
+            hex_code=getattr(c2, "hex_code", None),
         )
 
 
@@ -1076,6 +1110,82 @@ async def delete_conversion_factor(slug: str):
 
 
 @router.get(
+    "/conversion-carton-sizes",
+    response_model=List[ConversionCartonSizeDTO],
+    dependencies=[Depends(require_roles("SYS_ADMIN"))],
+)
+async def list_conversion_carton_sizes():
+    with SessionLocal() as db:
+        rows = (
+            db.execute(
+                select(ConversionCartonSize).order_by(
+                    ConversionCartonSize.sort_order.asc(),
+                    ConversionCartonSize.carton_size.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            ConversionCartonSizeDTO(
+                carton_size=r.carton_size,
+                sort_order=int(r.sort_order),
+                cost=float(r.cost),
+            )
+            for r in rows
+        ]
+
+
+@router.put(
+    "/conversion-carton-sizes/{carton_size}",
+    response_model=ConversionCartonSizeDTO,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def upsert_conversion_carton_size(carton_size: str, payload: ConversionCartonSizeUpsertRequest):
+    key = (carton_size or "").strip()
+    if not key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="carton_size is required")
+
+    with SessionLocal.begin() as db:
+        row = db.get(ConversionCartonSize, key)
+        if not row:
+            row = ConversionCartonSize(
+                carton_size=key,
+                sort_order=payload.sort_order,
+                cost=payload.cost,
+            )
+            db.add(row)
+        else:
+            row.sort_order = payload.sort_order
+            row.cost = payload.cost
+
+    with SessionLocal() as db:
+        r2 = db.get(ConversionCartonSize, key)
+        assert r2 is not None
+        return ConversionCartonSizeDTO(
+            carton_size=r2.carton_size,
+            sort_order=int(r2.sort_order),
+            cost=float(r2.cost),
+        )
+
+
+@router.delete(
+    "/conversion-carton-sizes/{carton_size}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles("SYS_ADMIN")), Depends(csrf_protect())],
+)
+async def delete_conversion_carton_size(carton_size: str):
+    key = (carton_size or "").strip()
+    if not key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="carton_size is required")
+    with SessionLocal.begin() as db:
+        row = db.get(ConversionCartonSize, key)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversion carton size not found")
+        db.delete(row)
+
+
+@router.get(
     "/inks",
     response_model=List[InkDTO],
     dependencies=[Depends(require_roles("SYS_ADMIN"))],
@@ -1214,6 +1324,7 @@ async def list_extruders():
             ExtruderDTO(
                 extruder_code=e.extruder_code,
                 model=e.model,
+                die_size_mm=e.die_size_mm,
                 film_width_min_mm=e.film_width_min_mm,
                 film_width_max_mm=e.film_width_max_mm,
                 decision_width_mm=e.decision_width_mm,
@@ -1241,6 +1352,7 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
             row = Extruder(extruder_code=code)
             db.add(row)
         row.model = payload.model
+        row.die_size_mm = payload.die_size_mm
         row.film_width_min_mm = payload.film_width_min_mm
         row.film_width_max_mm = payload.film_width_max_mm
         row.decision_width_mm = payload.decision_width_mm
@@ -1254,6 +1366,7 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
         return ExtruderDTO(
             extruder_code=e2.extruder_code,
             model=e2.model,
+            die_size_mm=e2.die_size_mm,
             film_width_min_mm=e2.film_width_min_mm,
             film_width_max_mm=e2.film_width_max_mm,
             decision_width_mm=e2.decision_width_mm,

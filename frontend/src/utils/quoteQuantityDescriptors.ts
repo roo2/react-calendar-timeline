@@ -1,3 +1,5 @@
+import type { SpecPayload } from '../components/SpecPayloadForm'
+import { buildSpecQuantitySliceFromPersistedJobSheet } from './jobSheetQuantityFromApi'
 import { fmtCount, fmtQtyNumber } from './quoteFormat'
 
 /** 2 d.p. kg string for roll weights (matches QuotesPage `formatKgDisplay`). */
@@ -49,11 +51,19 @@ export type QuotePackagingPerUnitTailParams = {
   /** When continuous M/roll is not stored, derive from web length ÷ rolls (saved payload or live calc). */
   quantityTotalM?: number
   quantityRolls?: number
+  /**
+   * When set (Live Quote / job sheet paths), roll tails follow qty type: continuous → `…m/ROLL.`,
+   * kg → `…kg/ROLL.`, roll / units (1000) on discrete length → `…/ROLL.`.
+   * When omitted, discrete rolls fall back to kg-only (legacy list rows).
+   */
+  qtyMode?: QuoteQtyMode
+  /** Discrete rolls: products (e.g. bags) per roll when {@link qtyMode} is `roll` or `units`. */
+  unitsPerRoll?: number
 }
 
 /**
  * Pack-size fragment appended to the product description in the email / list row
- * (e.g. `400M/ROLL.`, `300 Bags/CTN.`, `20.00kg/ROLL.`).
+ * (e.g. `600m/ROLL.`, `500/ROLL.`, `25.00kg/ROLL.`, `300 Bags/CTN.`).
  */
 export function quotePackagingPerUnitTail(params: QuotePackagingPerUnitTailParams): string {
   const {
@@ -65,22 +75,37 @@ export function quotePackagingPerUnitTail(params: QuotePackagingPerUnitTailParam
     weightPerRollKg,
     quantityTotalM = 0,
     quantityRolls = 0,
+    qtyMode,
+    unitsPerRoll: unitsPerRollIn,
   } = params
   const label = quoteProductUnitLabel(productType)
   if (finishMode === 'Cartons' && Number.isFinite(bagsPerCarton) && bagsPerCarton > 0) {
     return `${fmtCount(bagsPerCarton)} ${label}/CTN.`
   }
   if (finishMode === 'Rolls') {
-    let mpr = metersPerRoll
+    let mpr = Number(metersPerRoll) || 0
     if (!(mpr > 0) && isContinuousLength) {
       const t = Number(quantityTotalM)
       const r = Number(quantityRolls)
       if (Number.isFinite(t) && t > 0 && Number.isFinite(r) && r > 0) mpr = t / r
     }
     if (isContinuousLength && mpr > 0) {
-      return `${fmtQtyNumber(mpr, 0)}M/ROLL.`
+      return `${fmtQtyNumber(mpr, 0)}m/ROLL.`
     }
-    if (weightPerRollKg > 0) {
+
+    const uprRaw = Number(unitsPerRollIn ?? 0)
+    const unitsPerRoll =
+      Number.isFinite(uprRaw) && uprRaw > 0 ? Math.max(1, Math.round(uprRaw)) : 0
+
+    if (qtyMode === 'kg' && weightPerRollKg > 0) {
+      return `${formatQuoteKgDisplay(weightPerRollKg)}kg/ROLL.`
+    }
+    if (qtyMode === 'roll' || qtyMode === 'units') {
+      if (unitsPerRoll > 0) return `${fmtCount(unitsPerRoll)}/ROLL.`
+      return ''
+    }
+
+    if (qtyMode == null && weightPerRollKg > 0) {
       return `${formatQuoteKgDisplay(weightPerRollKg)}kg/ROLL.`
     }
   }
@@ -120,6 +145,30 @@ export function quotePackagingPerUnitTailFromPayload(payload: Record<string, unk
   const qty = (p.quantity as Record<string, unknown> | undefined) || {}
   const quantityTotalM = Number(qty.total_m ?? 0)
   const quantityRolls = Number(qty.rolls ?? 0)
+  const qtyMode = quoteQtyModeFromPayload(p)
+  const numRolls = Math.max(
+    0,
+    Math.round(
+      Number(
+        p.numRolls ?? p.num_rolls ?? (p.quantity as Record<string, unknown> | undefined)?.rolls ?? 0,
+      ),
+    ),
+  )
+  const numUnits = Math.max(
+    0,
+    Math.round(
+      Number(
+        p.numUnits ?? p.num_units ?? (p.quantity as Record<string, unknown> | undefined)?.units ?? 0,
+      ),
+    ),
+  )
+  let unitsPerRoll = Math.max(
+    0,
+    Math.round(Number((p as { units_per_roll?: unknown }).units_per_roll ?? p.unitsPerRoll ?? 0)),
+  )
+  if (unitsPerRoll <= 0 && numRolls > 0 && numUnits > 0 && (qtyMode === 'roll' || qtyMode === 'units')) {
+    unitsPerRoll = Math.max(1, Math.round(numUnits / numRolls))
+  }
   return quotePackagingPerUnitTail({
     finishMode,
     productType,
@@ -129,6 +178,8 @@ export function quotePackagingPerUnitTailFromPayload(payload: Record<string, unk
     weightPerRollKg,
     quantityTotalM,
     quantityRolls,
+    qtyMode,
+    unitsPerRoll,
   })
 }
 
@@ -274,6 +325,20 @@ export function packagingPerUnitTailFromPersistedJobSheet(
     quantityTotalM = Number(js.total_m)
   }
   const quantityRolls = Math.max(0, Math.round(Number(js.num_rolls || 0)))
+
+  const slice = buildSpecQuantitySliceFromPersistedJobSheet(js, spec as SpecPayload)
+  const qt = slice.qtyType
+  const qtyMode: QuoteQtyMode = qt === 'kg' ? 'kg' : qt === 'units' ? 'units' : 'roll'
+
+  let unitsPerRoll =
+    slice.unitsPerRoll != null && Number(slice.unitsPerRoll) > 0
+      ? Math.max(1, Math.round(Number(slice.unitsPerRoll)))
+      : 0
+  const npu = js.num_product_units != null ? Number(js.num_product_units) : NaN
+  if (unitsPerRoll <= 0 && Number.isFinite(npu) && npu > 0 && quantityRolls > 0) {
+    unitsPerRoll = Math.max(1, Math.round(npu / quantityRolls))
+  }
+
   return quotePackagingPerUnitTail({
     finishMode,
     productType,
@@ -283,6 +348,8 @@ export function packagingPerUnitTailFromPersistedJobSheet(
     weightPerRollKg,
     quantityTotalM,
     quantityRolls,
+    qtyMode,
+    unitsPerRoll,
   })
 }
 
