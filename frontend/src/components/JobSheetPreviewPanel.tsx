@@ -1,6 +1,8 @@
 import { Box, Link as MuiLink, Paper, Typography } from '@mui/material'
 import { Link } from 'react-router-dom'
 import type { JobSheetPreviewQuoteSummary } from '../utils/jobSheetPreviewQuoteSummary'
+import { JobSheetPrintOrderHeaderFields } from '../pages/job-sheets/components/JobSheetPrintOrderHeaderFields'
+import type { JobSheetPrintOrderHeaderModel } from '../pages/job-sheets/components/jobSheetPrintOrderHeaderModel'
 
 const QUALITY_FLAG_LABEL: Record<string, string> = {
   tight_gauge: 'Tight gauge tolerance',
@@ -100,6 +102,37 @@ export function JobSheetPreviewPanel(props: {
     .map((id) => QUALITY_FLAG_LABEL[String(id)] || String(id))
     .filter(Boolean)
 
+  const emptyHeader: JobSheetPrintOrderHeaderModel['header'] = {
+    customer: '',
+    invoiceNo: '',
+    jobCode: '',
+    orderDate: '',
+    purchaseOrderNo: '',
+    dueDate: '',
+  }
+
+  const header: JobSheetPrintOrderHeaderModel['header'] = showJobFields
+    ? {
+        customer: customerName,
+        invoiceNo: invoiceNo ?? '',
+        jobCode: jobCode ?? '',
+        orderDate: orderDate ?? '',
+        purchaseOrderNo: purchaseOrderNo ?? '',
+        dueDate: dueDate ?? '',
+      }
+    : emptyHeader
+
+  const product: JobSheetPrintOrderHeaderModel['product'] = {
+    productCode: productCode || '—',
+    descriptionWithPackagingTail: effective || '—',
+    orderedQuantityLabel:
+      showJobFields && quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
+        ? String(quoteSummary.orderQuantityLabel).trim()
+        : '—',
+    notes: String(notes ?? '').trim(),
+    qualityChecks: qcLabels,
+  }
+
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Box
@@ -134,64 +167,49 @@ export function JobSheetPreviewPanel(props: {
           </MuiLink>
         ) : null}
       </Box>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-        {showJobFields ? (
-          <>
-            <PreviewInlineRow label="Customer:" value={customerName} />
-            <PreviewInlineRow label="Invoice no.:" value={invoiceNo} monospace />
-            <PreviewInlineRow label="Job code:" value={jobCode} monospace />
-            <PreviewInlineRow label="Order date:" value={orderDate} />
-            <PreviewInlineRow label="Purchase order:" value={purchaseOrderNo} />
-            <PreviewInlineRow label="Due date:" value={dueDate} />
-            <Box sx={{ borderTop: 1, borderColor: 'divider', my: 0.75 }} />
-          </>
-        ) : null}
 
-        <PreviewInlineRow label="Product code:" value={productCode} monospace />
-
-        <PreviewInlineRow label="Product description:" value={effective} preWrap />
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <JobSheetPrintOrderHeaderFields
+          variant="preview"
+          header={header}
+          product={product}
+          printingFooter={null}
+          hideHeaderGrid={!showJobFields}
+        />
 
         {showSpecSecondary ? (
-          <PreviewInlineRow label="From product spec:" value={specDesc} preWrap />
-        ) : null}
-
-        {showJobFields && quoteSummary?.orderQuantityLabel ? (
-          <PreviewInlineRow label="Ordered quantity:" value={quoteSummary.orderQuantityLabel} />
-        ) : null}
-
-        {String(notes ?? '').trim() ? <PreviewInlineRow label="Notes:" value={String(notes).trim()} preWrap /> : null}
-
-        {qcLabels.length > 0 ? (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-            <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Quality checks:
-            </Typography>
-            <Typography component="span" variant="body2">
-              {qcLabels.join(', ')}
-            </Typography>
-          </Box>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: 'block', pl: 0.25, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+          >
+            <Box component="span" sx={{ fontWeight: 600 }}>
+              From product spec:
+            </Box>{' '}
+            {specDesc}
+          </Typography>
         ) : null}
 
         {showJobFields && quoteSummary ? (
           <>
-            <Box sx={{ borderTop: 1, borderColor: 'divider', my: 0.75 }} />
-            <Typography variant="subtitle2" sx={{ mt: 0.25 }}>
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1, mt: 0.25 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.02 }}>
               Production (estimate)
             </Typography>
-            <PreviewInlineRow label="Extruded meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
-            <PreviewInlineRow
-              label="Total KG (inc waste):"
-              value={quoteSummary.totalKgIncludingWaste != null ? `${quoteSummary.totalKgIncludingWaste} kg` : ''}
-            />
-            <PreviewInlineRow label="Extrusion time:" value={quoteSummary.extrusionTimeDisplay || ''} />
-            <PreviewInlineRow
-              label="Extrusion waste factor:"
-              value={
-                quoteSummary.estimatedWasteFactorPct
-                  ? `${quoteSummary.estimatedWasteFactorPct} of extruded resin`
-                  : ''
-              }
-            />
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, pl: 0.25 }}>
+              <PreviewInlineRow label="Extruded meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
+              <PreviewInlineRow
+                label="Total KG (inc waste):"
+                value={quoteSummary.totalKgIncludingWaste != null ? `${quoteSummary.totalKgIncludingWaste} kg` : ''}
+              />
+              <PreviewInlineRow label="Extrusion time:" value={quoteSummary.extrusionTimeDisplay || ''} />
+              <PreviewInlineRow
+                label="Extrusion waste factor:"
+                value={
+                  quoteSummary.estimatedWasteFactorPct ? `${quoteSummary.estimatedWasteFactorPct} of extruded resin` : ''
+                }
+              />
+            </Box>
           </>
         ) : null}
       </Box>

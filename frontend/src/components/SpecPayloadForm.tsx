@@ -115,9 +115,16 @@ function formatJobSheetFilmSupplied(spec: SpecPayload): string {
   const um = dims.thickness_um
   if (w == null || um == null) return '—'
   const geom = String(dims.geometry || '')
+  const productType = String(spec?.identity?.product_type ?? '')
   const gusset = Number(dims.gusset_mm || 0) > 0
   const geoTag =
-    geom === 'Gusset' || geom === 'BottomGusset' || gusset ? 'G' : geom === 'CentreFold' ? 'C/F' : 'L/F'
+    geom === 'Gusset' || geom === 'BottomGusset' || gusset
+      ? 'G'
+      : geom === 'CentreFold'
+        ? 'C/F'
+        : geom === 'Sheet' || productType === 'Sheet'
+          ? 'SWS'
+          : 'L/F'
   return `${intOrDash(w)}mm ${intOrDash(um)}µm ${geoTag}`
 }
 
@@ -280,6 +287,15 @@ export function SpecPayloadForm(props: {
     const flags = Array.isArray(d?.identity?.industry_flags) ? d.identity.industry_flags : []
     // "non_food" is redundant (inverse of food_contact) and should not be persisted.
     d.identity.industry_flags = Array.from(new Set(flags)).filter((x) => x !== 'non_food')
+    // Sheet product type always uses geometry "Sheet" (single wound sheet / SWS), not legacy Flat.
+    const pt = String(d?.identity?.product_type || '').trim()
+    if (pt === 'Sheet' && d.dimensions) {
+      const g = String(d.dimensions.geometry || '').trim()
+      if (g !== 'Sheet' && g !== 'Gusset' && g !== 'BottomGusset') {
+        d.dimensions.geometry = 'Sheet'
+        d.dimensions.gusset_mm = null
+      }
+    }
   }
 
   function update(mut: (draft: SpecPayload) => void) {
@@ -539,7 +555,7 @@ export function SpecPayloadForm(props: {
       layflat = width * (ru / 2)
     } else if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
       layflat = 0.5 * width
-    } else if (productType === PRODUCT_TYPE.Sheet && ru > 0) {
+    } else if ((productType === PRODUCT_TYPE.Sheet || dimensions.geometry === 'Sheet') && ru > 0) {
       layflat = width * (ru / 2)
     } else if (gussetEnabled && gussetReturnOrSide > 0) {
       layflat = width + gussetReturnOrSide
@@ -581,12 +597,18 @@ export function SpecPayloadForm(props: {
         return
       }
 
-      // If leaving Centerfold, fall back to Flat.
-      if (d.dimensions.geometry === 'CentreFold') d.dimensions.geometry = 'Flat'
+      // Sheet uses its own geometry (single wound sheet / SWS).
+      if (nextType === PRODUCT_TYPE.Sheet) {
+        d.dimensions.geometry = 'Sheet'
+        d.dimensions.gusset_mm = null
+      } else if (d.dimensions.geometry === 'CentreFold' || d.dimensions.geometry === 'Sheet') {
+        // Leaving centerfold/sheet for another product type.
+        d.dimensions.geometry = 'Flat'
+      }
 
       // Gusset only allowed for Bag/Tube.
       const allowGusset = nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Tube
-      if (!allowGusset) {
+      if (!allowGusset && nextType !== PRODUCT_TYPE.Sheet) {
         d.dimensions.geometry = 'Flat'
         d.dimensions.gusset_mm = null
       }
@@ -2014,254 +2036,200 @@ export function SpecPayloadForm(props: {
             <Typography variant="subtitle2" sx={{ mb: 1.25 }}>
               Printing details
             </Typography>
-            <Stack spacing={1}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  Print description:
-                </Typography>
-                <Typography
-                  component="span"
-                  variant="body2"
-                  sx={{ whiteSpace: 'pre-wrap', fontWeight: printing.print_description ? 600 : 400, wordBreak: 'break-word' }}
-                >
-                  {printing.print_description ? String(printing.print_description) : '—'}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  No. colours:
-                </Typography>
-                <Typography component="span" variant="body2" sx={{ fontWeight: printing.num_colours != null ? 600 : 400 }}>
-                  {printing.num_colours != null && String(printing.num_colours).trim() !== '' ? String(printing.num_colours) : '—'}
-                </Typography>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600, ml: { sm: 2 } }}>
-                  Print side:
-                </Typography>
-                <Typography component="span" variant="body2" sx={{ fontWeight: (printing.side || '') !== '' ? 600 : 400 }}>
-                  {printing.side === 'front'
-                    ? 'Front'
-                    : printing.side === 'back'
-                      ? 'Back'
-                      : printing.side === 'both'
-                        ? 'Both'
-                        : printing.side
-                          ? String(printing.side)
-                          : '—'}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  Print position details:
-                </Typography>
-                <Typography
-                  component="span"
-                  variant="body2"
-                  sx={{ whiteSpace: 'pre-wrap', fontWeight: printing.print_position_notes ? 600 : 400, wordBreak: 'break-word' }}
-                >
-                  {printing.print_position_notes ? String(printing.print_position_notes) : '—'}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  Film type supplied:
-                </Typography>
-                <Typography component="span" variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: filmSuppliedReadonly ? 600 : 400, wordBreak: 'break-word' }}>
-                  {filmSuppliedReadonly || '—'}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  Finished bag size:
-                </Typography>
-                <Typography
-                  component="span"
-                  variant="body2"
-                  sx={{ whiteSpace: 'pre-wrap', fontWeight: finishedBagSizeReadonly ? 600 : 400, wordBreak: 'break-word' }}
-                >
-                  {finishedBagSizeReadonly || '—'}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  Eye spot:
-                </Typography>
-                <Typography component="span" variant="body2" sx={{ fontWeight: printing.eye_spot ? 600 : 400 }}>
-                  {printing.eye_spot === 'yes' ? 'Yes' : printing.eye_spot === 'no' ? 'No' : printing.eye_spot ? String(printing.eye_spot) : '—'}
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, rowGap: 0.25, alignItems: 'baseline' }}>
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  Treat (inside / outside):
-                </Typography>
-                <Typography
-                  component="span"
-                  variant="body2"
-                  sx={{ fontWeight: run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none' ? 600 : 400 }}
-                >
-                  {run.treat_inside_outside === 'inside'
-                    ? 'Inside'
-                    : run.treat_inside_outside === 'outside'
-                      ? 'Outside'
-                      : run.treat_inside_outside === 'none' || !run.treat_inside_outside
-                        ? '—'
-                        : String(run.treat_inside_outside)}
-                </Typography>
-              </Box>
+            {(() => {
+              const printSideText =
+                printing.side === 'front'
+                  ? 'Front'
+                  : printing.side === 'back'
+                    ? 'Back'
+                    : printing.side === 'both'
+                      ? 'Both'
+                      : printing.side
+                        ? String(printing.side)
+                        : '—'
+              const eyeSpotText =
+                printing.eye_spot === 'yes'
+                  ? 'Yes'
+                  : printing.eye_spot === 'no'
+                    ? 'No'
+                    : printing.eye_spot
+                      ? String(printing.eye_spot)
+                      : '—'
+              const treatText =
+                run.treat_inside_outside === 'inside'
+                  ? 'Inside'
+                  : run.treat_inside_outside === 'outside'
+                    ? 'Outside'
+                    : run.treat_inside_outside === 'none' || !run.treat_inside_outside
+                      ? '—'
+                      : String(run.treat_inside_outside)
+              const sealText =
+                sealTypeUiValue === 'end'
+                  ? 'End'
+                  : sealTypeUiValue === 'side'
+                    ? 'Side'
+                    : sealTypeUiValue === 'none'
+                      ? 'None'
+                      : sealTypeUiValue
+              const rowFilter = (pairs: unknown) =>
+                (Array.isArray(pairs) ? pairs : [])
+                  .map((r: { ink_code?: unknown; plate_code?: unknown; ink_text?: unknown }) => ({
+                    ink: String(r?.ink_code ?? '').trim(),
+                    plate: String(r?.plate_code ?? '').trim(),
+                    colourText: String(r?.ink_text ?? '').trim(),
+                  }))
+                  .filter((row) => row.ink || row.plate || row.colourText)
+              const frontInks = rowFilter(printing.front_ink_plate)
+              const backInks = rowFilter(printing.back_ink_plate)
+              const showPlate = printing.method === 'Inline'
+              const plateAroundAcross =
+                (printing.plates_around != null && String(printing.plates_around).trim() !== '') ||
+                (printing.plates_across != null && String(printing.plates_across).trim() !== '')
+                  ? `${String(printing.plates_around ?? '—')} × ${String(printing.plates_across ?? '—')}`
+                  : ''
+              const mono = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' as const
 
-              {(finishMode === 'Cartons' && sealTypeUiValue) ||
-              printing.cylinder_size_mm != null ||
-              printing.plates_around ||
-              printing.plates_across ? (
+              const previewField = (
+                label: string,
+                value: ReactNode,
+                opts?: { span?: boolean; strong?: boolean; preWrap?: boolean; monospace?: boolean },
+              ) => (
                 <Box
                   sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-                    gap: 1,
+                    minWidth: 0,
+                    ...(opts?.span ? { gridColumn: { xs: '1 / -1', sm: '1 / -1' } } : {}),
                   }}
                 >
-                  {finishMode === 'Cartons' && sealTypeUiValue ? (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                        Seal:
-                      </Typography>
-                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                        {sealTypeUiValue === 'end' ? 'End' : sealTypeUiValue === 'side' ? 'Side' : sealTypeUiValue === 'none' ? 'None' : sealTypeUiValue}
-                      </Typography>
-                    </Box>
-                  ) : null}
-                  {printing.method === 'Uteco' && printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0 ? (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                        Cylinder (mm):
-                      </Typography>
-                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                        {Number(printing.cylinder_size_mm)}
-                      </Typography>
-                    </Box>
-                  ) : null}
-                  {(printing.plates_around != null && String(printing.plates_around).trim() !== '') ||
-                  (printing.plates_across != null && String(printing.plates_across).trim() !== '') ? (
-                    <Box sx={{ gridColumn: { sm: '1 / -1' }, display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                      <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                        Plate layout (around × across):
-                      </Typography>
-                      <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                        {String(printing.plates_around ?? '—')} × {String(printing.plates_across ?? '—')}
-                      </Typography>
-                    </Box>
-                  ) : null}
-                </Box>
-              ) : null}
-
-              {printing.barcode != null && String(printing.barcode).trim() !== '' ? (
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                  <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                    Bar code:
+                  <Typography
+                    component="div"
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontWeight: 600, lineHeight: 1.2, mb: 0.35, display: 'block' }}
+                  >
+                    {label}
                   </Typography>
-                  <Typography component="span" variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                    {String(printing.barcode)}
+                  <Typography
+                    component="div"
+                    variant="body2"
+                    sx={{
+                      fontWeight: opts?.strong ? 600 : 400,
+                      whiteSpace: opts?.preWrap ? 'pre-wrap' : undefined,
+                      wordBreak: 'break-word',
+                      fontFamily: opts?.monospace ? mono : undefined,
+                    }}
+                  >
+                    {value === '' || value == null ? '—' : value}
                   </Typography>
                 </Box>
-              ) : null}
+              )
 
-              {printingArtworkFiles.length > 0 ? (
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 1, alignItems: 'baseline' }}>
-                  <Typography component="span" variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                    Artwork files:
-                  </Typography>
-                  <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                    {printingArtworkFiles.length} file{printingArtworkFiles.length === 1 ? '' : 's'} attached
-                  </Typography>
-                </Box>
-              ) : null}
+              const gridSx = {
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+                columnGap: 2,
+                rowGap: 1.5,
+              } as const
 
-              {(() => {
-                const rowFilter = (pairs: unknown) =>
-                  (Array.isArray(pairs) ? pairs : [])
-                    .map((r: { ink_code?: unknown; plate_code?: unknown; ink_text?: unknown }) => ({
-                      ink: String(r?.ink_code ?? '').trim(),
-                      plate: String(r?.plate_code ?? '').trim(),
-                      colourText: String(r?.ink_text ?? '').trim(),
-                    }))
-                    .filter((row) => row.ink || row.plate || row.colourText)
-                const front = rowFilter(printing.front_ink_plate)
-                const back = rowFilter(printing.back_ink_plate)
-                const showPlate = printing.method === 'Inline'
-                if (!front.length && !back.length) return null
-                return (
-                  <Stack spacing={1.25}>
-                    {front.length ? (
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                          Ink colours
-                        </Typography>
-                        <Stack spacing={1}>
-                          {front.map((r, idx) => (
-                            <Box
-                              key={`f-${idx}-${r.ink}-${r.plate}`}
-                              sx={{
-                                border: '1px solid',
-                                borderColor: 'divider',
-                                borderRadius: 1,
-                                p: 1,
-                              }}
-                            >
-                              <Typography variant="caption" color="text.secondary">
-                                Colour {idx + 1}
-                              </Typography>
-                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: r.colourText ? 600 : 400 }}>
-                                {r.colourText || '—'}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                                Ink code / plate
-                              </Typography>
-                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                                Ink: {r.ink || '—'}
-                                {showPlate ? <> · Plate: {r.plate || '—'}</> : null}
-                              </Typography>
-                            </Box>
+              const inkTableDenseSx = {
+                width: '100%',
+                borderCollapse: 'collapse' as const,
+                '& th, & td': { py: 0.25, px: 0.5, fontSize: 11, lineHeight: 1.25 },
+                '& th': { fontWeight: 600, color: 'text.secondary', borderBottom: 1, borderColor: 'divider' },
+                '& td': { borderBottom: 1, borderColor: 'divider', verticalAlign: 'top' },
+                '& tbody tr:last-of-type td': { borderBottom: 0 },
+              }
+
+              return (
+                <Stack spacing={1.5}>
+                  <Box sx={gridSx}>
+                    {previewField('Print description', printing.print_description ? String(printing.print_description) : '—', {
+                      span: true,
+                      strong: !!printing.print_description,
+                      preWrap: true,
+                    })}
+                    {previewField(
+                      'No. colours',
+                      printing.num_colours != null && String(printing.num_colours).trim() !== '' ? String(printing.num_colours) : '—',
+                      { strong: printing.num_colours != null && String(printing.num_colours).trim() !== '' },
+                    )}
+                    {previewField('Print side', printSideText, { strong: (printing.side || '') !== '' })}
+                    {previewField('Eye spot', eyeSpotText, { strong: !!printing.eye_spot })}
+                    {previewField(
+                      'Print position details',
+                      printing.print_position_notes ? String(printing.print_position_notes) : '—',
+                      { span: true, strong: !!printing.print_position_notes, preWrap: true },
+                    )}
+                    {previewField('Film type supplied', filmSuppliedReadonly || '—', {
+                      strong: !!filmSuppliedReadonly,
+                      preWrap: true,
+                    })}
+                    {previewField('Finished bag size', finishedBagSizeReadonly || '—', {
+                      strong: !!finishedBagSizeReadonly,
+                      preWrap: true,
+                    })}
+                    {previewField('Treat (inside / outside)', treatText, {
+                      strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
+                    })}
+                    {finishMode === 'Cartons' && sealTypeUiValue
+                      ? previewField('Seal', sealText, { strong: true })
+                      : null}
+                    {printing.method === 'Uteco' && printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0
+                      ? previewField('Cylinder (mm)', Number(printing.cylinder_size_mm), { strong: true })
+                      : null}
+                    {plateAroundAcross
+                      ? previewField('Plate layout (around × across)', plateAroundAcross, { strong: true })
+                      : null}
+                    {printing.barcode != null && String(printing.barcode).trim() !== ''
+                      ? previewField('Bar code', String(printing.barcode), { strong: true, monospace: true })
+                      : null}
+                    {printingArtworkFiles.length > 0
+                      ? previewField(
+                          'Artwork files',
+                          `${printingArtworkFiles.length} file${printingArtworkFiles.length === 1 ? '' : 's'} attached`,
+                          { strong: true },
+                        )
+                      : null}
+                  </Box>
+
+                  {(() => {
+                    if (!frontInks.length && !backInks.length) return null
+                    const rows: Array<{ deck: string; n: number; colourText: string; ink: string; plate: string }> = []
+                    frontInks.forEach((r, idx) => rows.push({ deck: 'Front', n: idx + 1, ...r }))
+                    if ((printing.side === 'back' || printing.side === 'both') && backInks.length) {
+                      backInks.forEach((r, idx) => rows.push({ deck: 'Back', n: idx + 1, ...r }))
+                    }
+                    return (
+                      <Table size="small" sx={{ ...inkTableDenseSx, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ width: 56 }}>Deck</TableCell>
+                            <TableCell align="right" sx={{ width: 28 }}>
+                              #
+                            </TableCell>
+                            <TableCell>Colour</TableCell>
+                            <TableCell sx={{ width: '22%' }}>Ink</TableCell>
+                            {showPlate ? <TableCell sx={{ width: '22%' }}>Plate</TableCell> : null}
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {rows.map((r, idx) => (
+                            <TableRow key={`${r.deck}-${r.n}-${r.ink}-${r.plate}-${idx}`}>
+                              <TableCell>{r.deck}</TableCell>
+                              <TableCell align="right">{r.n}</TableCell>
+                              <TableCell sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.colourText || '—'}</TableCell>
+                              <TableCell sx={{ fontFamily: mono, fontWeight: 600 }}>{r.ink || '—'}</TableCell>
+                              {showPlate ? (
+                                <TableCell sx={{ fontFamily: mono, fontWeight: 600 }}>{r.plate || '—'}</TableCell>
+                              ) : null}
+                            </TableRow>
                           ))}
-                        </Stack>
-                      </Box>
-                    ) : null}
-                    {(printing.side === 'back' || printing.side === 'both') && back.length ? (
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                          Back print
-                        </Typography>
-                        <Stack spacing={1}>
-                          {back.map((r, idx) => (
-                            <Box
-                              key={`b-${idx}-${r.ink}-${r.plate}`}
-                              sx={{
-                                border: '1px solid',
-                                borderColor: 'divider',
-                                borderRadius: 1,
-                                p: 1,
-                              }}
-                            >
-                              <Typography variant="caption" color="text.secondary">
-                                Colour {idx + 1}
-                              </Typography>
-                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: r.colourText ? 600 : 400 }}>
-                                {r.colourText || '—'}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                                Ink code / plate
-                              </Typography>
-                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                                Ink: {r.ink || '—'}
-                                {showPlate ? <> · Plate: {r.plate || '—'}</> : null}
-                              </Typography>
-                            </Box>
-                          ))}
-                        </Stack>
-                      </Box>
-                    ) : null}
-                  </Stack>
-                )
-              })()}
-            </Stack>
+                        </TableBody>
+                      </Table>
+                    )
+                  })()}
+                </Stack>
+              )
+            })()}
           </Box>
         ) : null}
 

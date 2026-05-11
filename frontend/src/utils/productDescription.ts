@@ -1,3 +1,5 @@
+import { runUpNumericalFromSlug } from './runUpNumerical'
+
 function up(v: unknown): string {
   if (v == null) return ''
   let s = String(v).trim()
@@ -113,7 +115,8 @@ export function computeProductDescriptionFromSpec(spec: any): string {
   const hasGusset = geometry === 'GUSSET' || gussetMm > 0
   const gussetPrefix = hasGusset ? 'G' : 'LF'
   const canShowGussetPrefix = productType === 'BAG' || productType === 'TUBE'
-  const lfOrG = canShowGussetPrefix ? gussetPrefix : ''
+  const isSheet = productType === 'SHEET' || geometry === 'SHEET'
+  const lfOrG = isSheet ? 'SWS' : canShowGussetPrefix ? gussetPrefix : ''
 
   const width = intStr(dims?.base_width_mm)
   const widthSeg = hasGusset && gussetMm > 0 ? `(${width}mm + ${gussetMm}mm)` : `${width}mm`
@@ -175,6 +178,7 @@ export function computeProductCodeFromSpec(spec: any): string {
   const hasGusset = geometry === 'GUSSET' || gussetMm > 0
   const isCenterfold = productType === 'CENTERFOLD' || geometry === 'CENTREFOLD'
   const isUFilm = productType === 'U-FILM' || productType === 'UFILM'
+  const isSheet = productType === 'SHEET' || geometry === 'SHEET'
 
   let widthSeg = intStr(dims?.base_width_mm, '')
   if (widthSeg) {
@@ -182,6 +186,11 @@ export function computeProductCodeFromSpec(spec: any): string {
       widthSeg = `(${intStr(dims?.base_width_mm)}+${gussetMm})`
     } else if (isCenterfold && baseWidth != null) {
       const layflat = Math.round(baseWidth / 2)
+      widthSeg = `${layflat}(${baseWidth})`
+    } else if (isSheet && baseWidth != null) {
+      const run = spec?.run_requirements || {}
+      const ru = runUpNumericalFromSlug(String(run?.run_up ?? 'none'), String(identity?.product_type ?? 'Sheet'))
+      const layflat = ru > 0 ? Math.round(baseWidth * (ru / 2)) : baseWidth
       widthSeg = `${layflat}(${baseWidth})`
     } else if (isUFilm) {
       const l = intOrNull(dims?.ufilm_left_width_mm) ?? 0

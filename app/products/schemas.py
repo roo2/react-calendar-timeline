@@ -25,6 +25,8 @@ class Geometry(str, Enum):
     GUSSET = "Gusset"
     BOTTOM_GUSSET = "BottomGusset"
     CENTRE_FOLD = "CentreFold"
+    # Single wound sheet (SWS); used when product type is Sheet.
+    SHEET = "Sheet"
 
 
 class PrintMethod(str, Enum):

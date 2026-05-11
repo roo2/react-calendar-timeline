@@ -1,5 +1,6 @@
 import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import { derivedInlineSeal } from '../utils/specCompat'
+import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 
 function fmtMm(v: unknown): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
@@ -20,6 +21,11 @@ function computeLayflatMm(spec: any): number {
     const l = typeof dims.ufilm_left_width_mm === 'number' ? dims.ufilm_left_width_mm : 0
     const r = typeof dims.ufilm_right_width_mm === 'number' ? dims.ufilm_right_width_mm : 0
     return middle + l + r
+  }
+  if (productType === 'Sheet' || geometry === 'Sheet') {
+    const run = spec?.run_requirements || {}
+    const ru = runUpNumericalFromSlug(String(run?.run_up ?? 'none'), productType)
+    return ru > 0 ? middle * (ru / 2) : middle
   }
   // Match quoteCalculator / SpecPayloadForm: gusset_mm is additional layflat once (width + gusset).
   if (geomLower === 'gusset') return middle + gusset

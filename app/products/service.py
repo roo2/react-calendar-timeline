@@ -154,7 +154,8 @@ def compute_product_description(spec_payload: Any, *, max_len: Optional[int] = N
     has_gusset = geometry == "GUSSET" or gusset_mm_i > 0
     gusset_prefix = "G" if has_gusset else "LF"
     can_show_gusset_prefix = product_type in {"BAG", "TUBE"}
-    lf_or_g = gusset_prefix if can_show_gusset_prefix else ""
+    is_sheet = product_type == "SHEET" or geometry == "SHEET"
+    lf_or_g = "SWS" if is_sheet else (gusset_prefix if can_show_gusset_prefix else "")
 
     width = _int_str(dims.get("base_width_mm"))
     width_seg = f"({width}mm + {gusset_mm_i}mm)" if has_gusset and gusset_mm_i > 0 else f"{width}mm"
@@ -315,6 +316,7 @@ def compute_product_code_base(spec_payload: Any) -> str:
     has_gusset = geometry == "GUSSET" or gusset_mm > 0
     is_centerfold = product_type == "CENTERFOLD" or geometry == "CENTREFOLD"
     is_ufilm = product_type in {"U-FILM", "UFILM"} or geometry == "UFILM"
+    is_sheet = product_type == "SHEET" or geometry == "SHEET"
 
     width_seg = _int_str(dims.get("base_width_mm"), fallback="")
     if width_seg:
@@ -322,6 +324,12 @@ def compute_product_code_base(spec_payload: Any) -> str:
             width_seg = f"({_int_str(dims.get('base_width_mm'), fallback='-')}+{gusset_mm})"
         elif is_centerfold and base_width is not None:
             layflat = int(round(base_width / 2))
+            width_seg = f"{layflat}({base_width})"
+        elif is_sheet and base_width is not None:
+            run_req = spec_payload.get("run_requirements") if isinstance(spec_payload.get("run_requirements"), dict) else {}
+            ru_slug = str(run_req.get("run_up") or "none").strip().lower()
+            ru = 1 if ru_slug == "1up" else 2 if ru_slug == "2up" else 4 if ru_slug == "4up" else 6 if ru_slug == "6up" else 2
+            layflat = int(round(base_width * (ru / 2))) if ru > 0 else base_width
             width_seg = f"{layflat}({base_width})"
         elif is_ufilm:
             l = _int_or_null(dims.get("ufilm_left_width_mm")) or 0

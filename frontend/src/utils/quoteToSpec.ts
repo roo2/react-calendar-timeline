@@ -122,8 +122,10 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
       : p.finish_mode === 'Rolls'
         ? (p.base_length_mm != null ? Number(p.base_length_mm) : null) ?? null
         : Math.max(1, Number(p.base_length_mm) || 1)
-  const geometry =
-    (p.geometry as 'Flat' | 'Gusset' | 'BottomGusset' | 'CentreFold') || 'Flat'
+  const productTypeForGeom = String((p as { product_type?: string }).product_type || 'Bag').trim()
+  let geometry =
+    (p.geometry as 'Flat' | 'Gusset' | 'BottomGusset' | 'CentreFold' | 'Sheet') || 'Flat'
+  if (productTypeForGeom === 'Sheet') geometry = 'Sheet'
   const gussetMm =
     p.gusset_mm != null && Number(p.gusset_mm) > 0 ? Math.round(Number(p.gusset_mm)) : null
   const ufilmLeft =

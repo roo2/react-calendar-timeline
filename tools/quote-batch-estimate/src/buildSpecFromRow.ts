@@ -82,7 +82,8 @@ export function buildSpecAndQuantityFromRow(
   const baseWidth = Math.round(numCell(row.base_width_mm, 0))
   const gussetMmRaw = Math.round(numCell(row.gusset_mm, 0))
   const canGusset = productTypeCanHaveGusset(productType)
-  const geometry = canGusset && gussetMmRaw > 0 ? 'Gusset' : 'Flat'
+  const geometry =
+    productType === 'Sheet' ? 'Sheet' : canGusset && gussetMmRaw > 0 ? 'Gusset' : 'Flat'
   const gussetMm = geometry === 'Gusset' ? gussetMmRaw : null
   const baseLengthMm = Math.round(numCell(row.base_length_mm, 0))
   const thicknessUm = Math.round(numCell(row.thickness_um, 0))

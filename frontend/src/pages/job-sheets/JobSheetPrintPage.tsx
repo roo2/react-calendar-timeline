@@ -13,9 +13,10 @@ function geometryLabelForUtecoFilmSupplied(dimsGeometry: unknown, productTypeRaw
     .trim()
     .toLowerCase()
   if (p === 'u-film' || p === 'u_film' || p === 'ufilm') return 'U-Film'
+  // Sheet geometry or Sheet product (legacy rows may still have Flat + Sheet product).
+  if (p === 'sheet' || g === 'sheet') return 'SWS'
   if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return 'Gusseted'
   if (g === 'centrefold' || g === 'centerfold') return 'Centrefold'
-  if (g === 'sheet') return 'Sheet'
   if (g === 'flat' || g === 'layflat') return 'Layflat'
   const head = displayGeometryHeadline(dimsGeometry)
   return head || ''
@@ -387,6 +388,7 @@ function displayGeometryLabel(raw: unknown): string {
   const normalized = label.trim().toLowerCase()
   if (normalized === 'flat') return 'Layflat'
   if (normalized === 'centerfold') return 'Centrefold'
+  if (normalized === 'sheet') return 'Sheet'
   return label
 }
 
@@ -398,7 +400,7 @@ function displayGeometryHeadline(raw: unknown): string {
   if (normalized === 'gusset' || normalized === 'bottomgusset' || normalized === 'bottom_gusset') return 'Gusseted'
   if (normalized === 'centrefold' || normalized === 'centerfold') return 'Centrefold'
   if (normalized === 'u_film' || normalized === 'ufilm') return 'Ufilm'
-  if (normalized === 'sheet') return 'Sheet'
+  if (normalized === 'sheet') return 'SWS'
   return displayGeometryLabel(raw)
 }
 
@@ -411,7 +413,7 @@ function displayGeometryMode(rawGeometry: unknown, rawProductType: unknown): str
     .toLowerCase()
   if (p === 'u-film' || p === 'u_film' || p === 'ufilm') return 'U-Film'
   if (p === 'centerfold' || p === 'centrefold') return 'Centrefold'
-  if (p === 'sheet') return 'Single Sheet'
+  if (p === 'sheet' || g === 'sheet') return 'SWS'
   if (p === 'tube') {
     if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return 'Gusseted Tube'
     return 'Layflat Tube'
@@ -433,9 +435,16 @@ function formatJobSheetFilmSuppliedFromSpec(spec: SpecPayload): string {
   const um = dims.thickness_um
   if (w == null || um == null) return ''
   const geom = String(dims.geometry || '')
+  const productType = String(spec?.identity?.product_type ?? '')
   const gusset = Number(dims.gusset_mm || 0) > 0
   const geoTag =
-    geom === 'Gusset' || geom === 'BottomGusset' || gusset ? 'G' : geom === 'CentreFold' ? 'C/F' : 'L/F'
+    geom === 'Gusset' || geom === 'BottomGusset' || gusset
+      ? 'G'
+      : geom === 'CentreFold'
+        ? 'C/F'
+        : geom === 'Sheet' || productType === 'Sheet'
+          ? 'SWS'
+          : 'L/F'
   return `${intOrDashJob(w)}mm ${intOrDashJob(um)}µm ${geoTag}`
 }
 
