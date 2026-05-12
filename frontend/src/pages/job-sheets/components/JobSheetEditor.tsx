@@ -838,12 +838,19 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   async function onBeforeOpenPrintPreview(): Promise<boolean> {
     if (savingJobSheet) return false
     if (mode !== 'edit' || !jobSheetId) return true
-    // Always save first on edit before opening print preview.
+    // Persist latest edits before opening the printable job sheet (Print button / shortcut).
     return await onSave()
   }
 
-  const onBeforeOpenPrintPreviewRef = useRef(onBeforeOpenPrintPreview)
-  onBeforeOpenPrintPreviewRef.current = onBeforeOpenPrintPreview
+  async function onPrintJobSheet(): Promise<void> {
+    if (savingJobSheet || !jobSheetId) return
+    const ok = await onBeforeOpenPrintPreview()
+    if (!ok) return
+    window.open(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`, '_blank', 'noopener,noreferrer')
+  }
+
+  const onPrintJobSheetRef = useRef(onPrintJobSheet)
+  onPrintJobSheetRef.current = onPrintJobSheet
 
   useEffect(() => {
     if (mode !== 'edit' || !jobSheetId) return
@@ -851,15 +858,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       if (e.key !== 'p' && e.key !== 'P') return
       if (!e.metaKey && !e.ctrlKey) return
       e.preventDefault()
-      void (async () => {
-        const ok = await onBeforeOpenPrintPreviewRef.current()
-        if (!ok) return
-        window.open(
-          `/job-sheets/${encodeURIComponent(jobSheetId)}/print`,
-          '_blank',
-          'noopener,noreferrer',
-        )
-      })()
+      void onPrintJobSheetRef.current()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -914,8 +913,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           <Button
             variant="contained"
             color="primary"
-            component={Link}
-            to={`/job-sheets/${encodeURIComponent(jobSheetId)}/print`}
+            type="button"
+            onClick={() => void onPrintJobSheet()}
+            disabled={savingJobSheet}
             startIcon={<PrintIcon />}
           >
             Print
@@ -1015,7 +1015,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             customerFacingDescription={customerFacingDescription}
             notes={previewNotesLine}
             qualityFlagIds={previewQualityFlagIds}
-            onBeforeOpenPrint={onBeforeOpenPrintPreview}
             quoteSummary={jobSheetPreviewQuoteSummary}
           />
         ) : null}
@@ -1176,7 +1175,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               customerFacingDescription={customerFacingDescription}
               notes={previewNotesLine}
               qualityFlagIds={previewQualityFlagIds}
-              onBeforeOpenPrint={onBeforeOpenPrintPreview}
               quoteSummary={jobSheetPreviewQuoteSummary}
             />
           </StickySideAside>

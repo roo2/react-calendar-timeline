@@ -843,6 +843,7 @@ export function SpecPayloadForm(props: {
                           options={plates}
                           valueCode={r.plate_code}
                           label={`Plate ${idx + 1}`}
+                          freeSolo={showPlateColumn}
                           onChangeCode={(nextCode) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
@@ -960,6 +961,7 @@ export function SpecPayloadForm(props: {
                           options={plates}
                           valueCode={r.plate_code}
                           label={`Plate ${idx + 1}`}
+                          freeSolo={showPlateColumn}
                           onChangeCode={(nextCode) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
@@ -1120,6 +1122,7 @@ export function SpecPayloadForm(props: {
                           options={plates}
                           valueCode={r.plate_code}
                           label={`Plate ${idx + 1}`}
+                          freeSolo={showPlateColumn}
                           onChangeCode={(nextCode) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
@@ -1256,6 +1259,7 @@ export function SpecPayloadForm(props: {
                           options={plates}
                           valueCode={r.plate_code}
                           label={`Plate ${idx + 1}`}
+                          freeSolo={showPlateColumn}
                           onChangeCode={(nextCode) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
@@ -2089,6 +2093,9 @@ export function SpecPayloadForm(props: {
                   : ''
               const mono = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' as const
 
+              const sealTypeForTreatRow =
+                printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== '' ? sealText : '—'
+
               const previewField = (
                 label: string,
                 value: ReactNode,
@@ -2123,12 +2130,23 @@ export function SpecPayloadForm(props: {
                 </Box>
               )
 
-              const gridSx = {
+              const cols3 = {
                 display: 'grid',
                 gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
                 columnGap: 2,
-                rowGap: 1.5,
+                alignItems: 'start',
               } as const
+
+              const cols2 = {
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                columnGap: 2,
+                alignItems: 'start',
+              } as const
+
+              const emptyGridSlot = <Box sx={{ minWidth: 0 }} aria-hidden />
+
+              const showCylinderPlateRow = printing.method === 'Uteco' || Boolean(plateAroundAcross)
 
               const inkTableDenseSx = {
                 width: '100%',
@@ -2141,24 +2159,33 @@ export function SpecPayloadForm(props: {
 
               return (
                 <Stack spacing={1.5}>
-                  <Box sx={gridSx}>
+                  <Box sx={cols3}>
                     {previewField('Print description', printing.print_description ? String(printing.print_description) : '—', {
                       span: true,
                       strong: !!printing.print_description,
                       preWrap: true,
                     })}
+                  </Box>
+
+                  <Box sx={cols3}>
                     {previewField(
                       'No. colours',
                       printing.num_colours != null && String(printing.num_colours).trim() !== '' ? String(printing.num_colours) : '—',
                       { strong: printing.num_colours != null && String(printing.num_colours).trim() !== '' },
                     )}
                     {previewField('Print side', printSideText, { strong: (printing.side || '') !== '' })}
-                    {previewField('Eye spot', eyeSpotText, { strong: !!printing.eye_spot })}
+                    {emptyGridSlot}
+                  </Box>
+
+                  <Box sx={cols3}>
                     {previewField(
                       'Print position details',
                       printing.print_position_notes ? String(printing.print_position_notes) : '—',
                       { span: true, strong: !!printing.print_position_notes, preWrap: true },
                     )}
+                  </Box>
+
+                  <Box sx={cols3}>
                     {previewField('Film type supplied', filmSuppliedReadonly || '—', {
                       strong: !!filmSuppliedReadonly,
                       preWrap: true,
@@ -2167,45 +2194,76 @@ export function SpecPayloadForm(props: {
                       strong: !!finishedBagSizeReadonly,
                       preWrap: true,
                     })}
-                    {previewField('Treat (inside / outside)', treatText, {
-                      strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
-                    })}
                     {finishMode === 'Cartons' && sealTypeUiValue
                       ? previewField('Seal', sealText, { strong: true })
-                      : null}
-                    {printing.method === 'Uteco' && printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0
-                      ? previewField('Cylinder (mm)', Number(printing.cylinder_size_mm), { strong: true })
-                      : null}
-                    {plateAroundAcross
-                      ? previewField('Plate layout (around × across)', plateAroundAcross, { strong: true })
-                      : null}
-                    {printing.barcode != null && String(printing.barcode).trim() !== ''
-                      ? previewField('Bar code', String(printing.barcode), { strong: true, monospace: true })
-                      : null}
-                    {printingArtworkFiles.length > 0
-                      ? previewField(
-                          'Artwork files',
-                          `${printingArtworkFiles.length} file${printingArtworkFiles.length === 1 ? '' : 's'} attached`,
-                          { strong: true },
+                      : emptyGridSlot}
+                  </Box>
+
+                  {showCylinderPlateRow ? (
+                    <Box sx={cols2}>
+                      {printing.method === 'Uteco' ? (
+                        previewField(
+                          'Cylinder (mm)',
+                          printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0
+                            ? Number(printing.cylinder_size_mm)
+                            : '—',
+                          {
+                            strong:
+                              printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0,
+                          },
                         )
-                      : null}
+                      ) : (
+                        emptyGridSlot
+                      )}
+                      {plateAroundAcross
+                        ? previewField('Plate layout (around × across)', plateAroundAcross, { strong: true })
+                        : printing.method === 'Uteco'
+                          ? previewField('Plate layout (around × across)', '—', {})
+                          : emptyGridSlot}
+                    </Box>
+                  ) : null}
+
+                  {(printing.barcode != null && String(printing.barcode).trim() !== '') ||
+                  printingArtworkFiles.length > 0 ? (
+                    <Box sx={cols3}>
+                      {printing.barcode != null && String(printing.barcode).trim() !== ''
+                        ? previewField('Bar code', String(printing.barcode), { strong: true, monospace: true })
+                        : emptyGridSlot}
+                      {printingArtworkFiles.length > 0
+                        ? previewField(
+                            'Artwork files',
+                            `${printingArtworkFiles.length} file${printingArtworkFiles.length === 1 ? '' : 's'} attached`,
+                            { strong: true },
+                          )
+                        : emptyGridSlot}
+                      {emptyGridSlot}
+                    </Box>
+                  ) : null}
+
+                  <Box sx={cols3}>
+                    {previewField('Treat', treatText, {
+                      strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
+                    })}
+                    {printing.method !== 'Inline'
+                      ? previewField('Eye spot', eyeSpotText, { strong: !!printing.eye_spot })
+                      : emptyGridSlot}
+                    {previewField('Seal type', sealTypeForTreatRow, {
+                      strong: !!(printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== ''),
+                    })}
                   </Box>
 
                   {(() => {
                     if (!frontInks.length && !backInks.length) return null
-                    const rows: Array<{ deck: string; n: number; colourText: string; ink: string; plate: string }> = []
-                    frontInks.forEach((r, idx) => rows.push({ deck: 'Front', n: idx + 1, ...r }))
+                    const rows: Array<{ deck: number; colourText: string; ink: string; plate: string }> = []
+                    frontInks.forEach((r, idx) => rows.push({ deck: idx + 1, ...r }))
                     if ((printing.side === 'back' || printing.side === 'both') && backInks.length) {
-                      backInks.forEach((r, idx) => rows.push({ deck: 'Back', n: idx + 1, ...r }))
+                      backInks.forEach((r, idx) => rows.push({ deck: idx + 1, ...r }))
                     }
                     return (
                       <Table size="small" sx={{ ...inkTableDenseSx, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
                         <TableHead>
                           <TableRow>
-                            <TableCell sx={{ width: 56 }}>Deck</TableCell>
-                            <TableCell align="right" sx={{ width: 28 }}>
-                              #
-                            </TableCell>
+                            <TableCell>Deck</TableCell>
                             <TableCell>Colour</TableCell>
                             <TableCell sx={{ width: '22%' }}>Ink</TableCell>
                             {showPlate ? <TableCell sx={{ width: '22%' }}>Plate</TableCell> : null}
@@ -2213,9 +2271,8 @@ export function SpecPayloadForm(props: {
                         </TableHead>
                         <TableBody>
                           {rows.map((r, idx) => (
-                            <TableRow key={`${r.deck}-${r.n}-${r.ink}-${r.plate}-${idx}`}>
+                            <TableRow key={`${r.deck}-${r.ink}-${r.plate}-${idx}`}>
                               <TableCell>{r.deck}</TableCell>
-                              <TableCell align="right">{r.n}</TableCell>
                               <TableCell sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.colourText || '—'}</TableCell>
                               <TableCell sx={{ fontFamily: mono, fontWeight: 600 }}>{r.ink || '—'}</TableCell>
                               {showPlate ? (
@@ -2365,20 +2422,22 @@ export function SpecPayloadForm(props: {
 
                 {printingEnabled ? (
                   <>
-                    <Box sx={{ display: 'grid', marginBottom: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2  }}>
-                      <TextField
-                        sx={{ gridColumn: { xs: 'span 3', sm: 'span 2' } }}
-                        label="Print description"
-                        value={printing.print_description || ''}
-                        onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
-                        multiline
-                        minRows={2}
-                      />
-                      <TextField
-                      label="Bar code"
-                      value={printing.barcode || ''}
-                      onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
-                    />
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+                        Printer
+                      </Typography>
+                      <ToggleButtonGroup
+                        exclusive
+                        size="small"
+                        value={printing.method === 'Uteco' ? 'Uteco' : 'Inline'}
+                        onChange={(_, v) => {
+                          if (!v) return
+                          applyPrintingMethodChange(v)
+                        }}
+                      >
+                        <ToggleButton value="Inline">In-line</ToggleButton>
+                        <ToggleButton value="Uteco">Out of line (Uteco)</ToggleButton>
+                      </ToggleButtonGroup>
                     </Box>
 
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
@@ -2420,25 +2479,21 @@ export function SpecPayloadForm(props: {
                         helperText="Copies side by side (1–3)."
                       />
                     </Box>
-
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
-                        Printer
-                      </Typography>
-                      <ToggleButtonGroup
-                        exclusive
-                        size="small"
-                        value={printing.method === 'Uteco' ? 'Uteco' : 'Inline'}
-                        onChange={(_, v) => {
-                          if (!v) return
-                          applyPrintingMethodChange(v)
-                        }}
-                      >
-                        <ToggleButton value="Inline">In-line</ToggleButton>
-                        <ToggleButton value="Uteco">Out of line (Uteco)</ToggleButton>
-                      </ToggleButtonGroup>
+                    <Box sx={{ display: 'grid', marginBottom: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+                      <TextField
+                        sx={{ gridColumn: { xs: 'span 3', sm: 'span 2' } }}
+                        label="Print description"
+                        value={printing.print_description || ''}
+                        onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
+                        multiline
+                        minRows={2}
+                      />
+                      <TextField
+                        label="Bar code"
+                        value={printing.barcode || ''}
+                        onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
+                      />
                     </Box>
-                    
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
                       {printingNumColoursField}
                       {printingPrintSideField}
@@ -2454,8 +2509,18 @@ export function SpecPayloadForm(props: {
                       placeholder='e.g. 35 mm from bottom of bag'
                     />
 
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, minmax(0, 1fr))' }, gap: 2 }}>
-                        <Box sx={{ width: '100%' }}>{printingTreatField}</Box>
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: {
+                          xs: '1fr',
+                          sm: printing.method === 'Inline' ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))',
+                        },
+                        gap: 2,
+                      }}
+                    >
+                      <Box sx={{ width: '100%' }}>{printingTreatField}</Box>
+                      {printing.method !== 'Inline' ? (
                         <DefaultSelectField
                           sx={{ width: '100%' }}
                           label="Eye spot"
@@ -2474,9 +2539,8 @@ export function SpecPayloadForm(props: {
                           <MenuItem value="yes">Yes</MenuItem>
                           <MenuItem value="no">No</MenuItem>
                         </DefaultSelectField>
-
-                        {/* seal type */}
-                        <Box sx={{ width: '100%' }}>{sealTypeField}</Box>
+                      ) : null}
+                      <Box sx={{ width: '100%' }}>{sealTypeField}</Box>
                     </Box>
 
                     {jobSheetPrintingInkTables}

@@ -1,5 +1,4 @@
-import { Box, Link as MuiLink, Paper, Typography } from '@mui/material'
-import { Link } from 'react-router-dom'
+import { Box, Paper, Typography } from '@mui/material'
 import type { JobSheetPreviewQuoteSummary } from '../utils/jobSheetPreviewQuoteSummary'
 import { JobSheetPrintOrderHeaderFields } from '../pages/job-sheets/components/JobSheetPrintOrderHeaderFields'
 import type { JobSheetPrintOrderHeaderModel } from '../pages/job-sheets/components/jobSheetPrintOrderHeaderModel'
@@ -55,7 +54,7 @@ export function JobSheetPreviewPanel(props: {
   showJobFields?: boolean
   /** Job sheet job number (e.g. CUST_1); shown when editing an existing job sheet. */
   jobCode?: string
-  /** When set, show a link to the job sheet detail page in the preview header. */
+  /** Optional persisted job sheet id (passed through for consistency with callers). */
   jobSheetId?: string | null
   /** Customer display name (matches printed header). */
   customerName?: string
@@ -67,8 +66,6 @@ export function JobSheetPreviewPanel(props: {
   notes?: string | null
   /** Quality expectation flag ids from spec; shown with friendly labels when known. */
   qualityFlagIds?: string[] | null
-  /** Optional hook before opening print preview; return false to cancel navigation. */
-  onBeforeOpenPrint?: () => Promise<boolean> | boolean
   /** Live order qty + quote-calculator estimates (same basis as Quotes page). */
   quoteSummary?: JobSheetPreviewQuoteSummary | null
 }) {
@@ -79,7 +76,6 @@ export function JobSheetPreviewPanel(props: {
     customerFacingDescription = '',
     showJobFields = true,
     jobCode = '',
-    jobSheetId = null,
     customerName = '',
     invoiceNo = '',
     purchaseOrderNo = '',
@@ -87,7 +83,6 @@ export function JobSheetPreviewPanel(props: {
     dueDate = '',
     notes = null,
     qualityFlagIds = null,
-    onBeforeOpenPrint,
     quoteSummary = null,
   } = props
   const user = String(customerFacingDescription || '').trim()
@@ -95,9 +90,6 @@ export function JobSheetPreviewPanel(props: {
   const specDesc = String(description || '').trim()
   const effective = (user || myob || specDesc).trim()
   const showSpecSecondary = Boolean(specDesc && specDesc !== effective)
-  const sheetId = jobSheetId != null && String(jobSheetId).trim() ? String(jobSheetId).trim() : ''
-  const printHref = sheetId ? `/job-sheets/${encodeURIComponent(sheetId)}/print` : ''
-
   const qcLabels = (Array.isArray(qualityFlagIds) ? qualityFlagIds : [])
     .map((id) => QUALITY_FLAG_LABEL[String(id)] || String(id))
     .filter(Boolean)
@@ -135,38 +127,9 @@ export function JobSheetPreviewPanel(props: {
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: 1,
-          mb: 1.5,
-          flexWrap: 'wrap',
-        }}
-      >
-        <Typography variant="h6">Preview</Typography>
-        {sheetId ? (
-          <MuiLink
-            component={Link}
-            to={printHref}
-            target="_blank"
-            rel="noreferrer"
-            underline="hover"
-            variant="body2"
-            sx={{ flexShrink: 0 }}
-            onClick={async (e) => {
-              if (!onBeforeOpenPrint) return
-              e.preventDefault()
-              const ok = await onBeforeOpenPrint()
-              if (!ok || !printHref) return
-              window.open(printHref, '_blank', 'noopener,noreferrer')
-            }}
-          >
-            Print preview
-          </MuiLink>
-        ) : null}
-      </Box>
+      <Typography variant="h6" sx={{ mb: 1.5 }}>
+        Preview
+      </Typography>
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <JobSheetPrintOrderHeaderFields

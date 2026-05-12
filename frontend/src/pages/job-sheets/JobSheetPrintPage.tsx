@@ -22,43 +22,45 @@ function geometryLabelForUtecoFilmSupplied(dimsGeometry: unknown, productTypeRaw
   return head || ''
 }
 
+/** Uteco printed deck table: fixed row count so sheet height does not vary. */
+const UTECO_DECK_COLOUR_PRINT_ROWS = 5
+
 function buildUtecoDeckColourRows(
   front: Array<{ ink: string; plate: string; colourText: string }>,
   back: Array<{ ink: string; plate: string; colourText: string }>,
   printSideRaw: unknown,
-  numColoursRaw: unknown,
-): Array<{ deck: number; colour: string }> {
-  const colourCell = (row: { ink: string; plate: string; colourText: string }) => {
-    const t = String(row.colourText ?? '').trim()
-    if (t) return t
-    const ink = String(row.ink ?? '').trim()
-    if (ink) return ink
-    return ''
-  }
+  _numColoursRaw: unknown,
+): Array<{ deck: number; colourText: string; inkCode: string }> {
+  const rowParts = (row: { ink: string; plate: string; colourText: string }) => ({
+    colourText: String(row.colourText ?? '').trim(),
+    inkCode: String(row.ink ?? '').trim(),
+  })
   const side = String(printSideRaw ?? '')
     .trim()
     .toLowerCase()
-  const rows: Array<{ deck: number; colour: string }> = []
-  let deck = 1
+  const collected: Array<{ colourText: string; inkCode: string }> = []
   const pushFront = side === '' || side === 'front' || side === 'both'
   const pushBack = side === 'back' || side === 'both'
   if (pushFront) {
     for (const r of front) {
-      rows.push({ deck: deck++, colour: colourCell(r) })
+      collected.push(rowParts(r))
     }
   }
   if (pushBack) {
     for (const r of back) {
-      rows.push({ deck: deck++, colour: colourCell(r) })
+      collected.push(rowParts(r))
     }
   }
-  const nCol = n(numColoursRaw)
-  const target =
-    nCol != null && nCol > 0 && Number.isFinite(nCol) ? Math.max(rows.length, Math.round(nCol)) : rows.length
-  while (rows.length < target) {
-    rows.push({ deck: rows.length + 1, colour: '' })
+  const capped = collected.slice(0, UTECO_DECK_COLOUR_PRINT_ROWS)
+  const out: Array<{ deck: number; colourText: string; inkCode: string }> = capped.map((r, i) => ({
+    deck: i + 1,
+    colourText: r.colourText,
+    inkCode: r.inkCode,
+  }))
+  while (out.length < UTECO_DECK_COLOUR_PRINT_ROWS) {
+    out.push({ deck: out.length + 1, colourText: '', inkCode: '' })
   }
-  return rows.map((r, i) => ({ deck: i + 1, colour: r.colour }))
+  return out
 }
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchJobSheet } from '../../store/slices/jobSheetsSlice'
@@ -461,33 +463,41 @@ function formatJobSheetFinishedBagSizeFromSpec(spec: SpecPayload): string {
   return parts.join(' × ')
 }
 
-function JobSheetPrintInkFormList(props: {
-  rows: Array<{ ink: string; plate: string; colourText: string }>
-  showPlate: boolean
-}): ReactNode {
-  const { rows, showPlate } = props
+/** Compact full-width ink table for Inline printing job sheet. */
+function JobSheetPrintInlineInkTable(props: { rows: Array<{ ink: string; plate: string; colourText: string }> }): ReactNode {
+  const { rows } = props
   if (rows.length === 0) return <div className="js-print-form-v">—</div>
   return (
-    <div className="js-print-ink-form-list">
-      {rows.map((r, i) => (
-        <div key={`${r.ink}-${r.plate}-${r.colourText}-${i}`} className="js-print-ink-form-row">
-          <div className="js-print-form-field">
-            <span className="js-print-form-k">{`Colour ${i + 1}`}</span>
-            <div className="js-print-form-v js-print-pre">{r.colourText || '—'}</div>
-          </div>
-          <div className="js-print-form-field">
-            <span className="js-print-form-k">Ink code</span>
-            <div className="js-print-form-v js-print-ink-mono">{r.ink || '—'}</div>
-          </div>
-          {showPlate ? (
-            <div className="js-print-form-field">
-              <span className="js-print-form-k">Plate</span>
-              <div className="js-print-form-v js-print-ink-mono">{r.plate || '—'}</div>
-            </div>
-          ) : null}
-        </div>
-      ))}
-    </div>
+    <table className="js-print-inline-ink-table" role="presentation">
+      <thead>
+        <tr>
+          <th className="js-print-inline-ink-th-deck">Deck</th>
+          <th>Colour</th>
+          <th className="js-print-inline-ink-th-plate">Plate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => {
+          const hasColour = Boolean(String(r.colourText ?? '').trim())
+          const hasInk = Boolean(String(r.ink ?? '').trim())
+          const plate = String(r.plate ?? '').trim()
+          return (
+            <tr key={`${r.ink}-${r.plate}-${r.colourText}-${i}`}>
+              <td className="js-print-inline-ink-td-deck">{i + 1}</td>
+              <td className="js-print-inline-ink-td-colour">
+                {hasColour ? <span className="js-print-pre">{r.colourText}</span> : null}
+                {hasInk ? (
+                  <span className="js-print-inline-ink-code">{hasColour ? ` (${r.ink})` : r.ink}</span>
+                ) : !hasColour ? (
+                  '—'
+                ) : null}
+              </td>
+              <td className="js-print-inline-ink-td-plate">{plate || '—'}</td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
   )
 }
 
@@ -515,7 +525,6 @@ function JobSheetPrintInlinePrintingBlock(props: {
     numColours: string
     printSide: string
     printPosition: string
-    eyeSpot: string
     frontRows: Array<{ ink: string; plate: string; colourText: string }>
     backRows: Array<{ ink: string; plate: string; colourText: string }>
     legacyInkPlate: string | null
@@ -530,38 +539,48 @@ function JobSheetPrintInlinePrintingBlock(props: {
       (p.platesAround && p.platesAround.trim() !== '') ||
       (p.platesAcross && p.platesAcross.trim() !== ''),
   )
+  const showFrontPrint = p.frontRows.length > 0
+  const showBackPrint = p.backRows.length > 0
+
   return (
-    <JobSheetPrintPrintingFormShell title="Inline printing">
-      <JobSheetPrintPrintingFormField label="Print description">
-        {p.printDescription ? <span className="js-print-pre">{p.printDescription}</span> : '—'}
-      </JobSheetPrintPrintingFormField>
-      <div className="js-print-form-row-2">
-        <JobSheetPrintPrintingFormField label="No. colours">{valueOrDash(p.numColours)}</JobSheetPrintPrintingFormField>
-        <JobSheetPrintPrintingFormField label="Print side">{valueOrDash(p.printSide)}</JobSheetPrintPrintingFormField>
-      </div>
-      <JobSheetPrintPrintingFormField label="Print position details">
-        {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
-      </JobSheetPrintPrintingFormField>
-      <JobSheetPrintPrintingFormField label="Eye spot">{valueOrDash(p.eyeSpot)}</JobSheetPrintPrintingFormField>
-      <JobSheetPrintPrintingFormField label="Ink colours">
-        <JobSheetPrintInkFormList rows={p.frontRows} showPlate />
-      </JobSheetPrintPrintingFormField>
-      <JobSheetPrintPrintingFormField label="Back print">
-        <JobSheetPrintInkFormList rows={p.backRows} showPlate />
-      </JobSheetPrintPrintingFormField>
-      {p.legacyInkPlate ? (
-        <JobSheetPrintPrintingFormField label="Legacy ink / plate codes">
-          <span className="js-print-pre">{p.legacyInkPlate}</span>
+    <div className="js-print-inline-block-wrap">
+      <JobSheetPrintPrintingFormShell title="Inline printing">
+        <JobSheetPrintPrintingFormField label="Print description">
+          {p.printDescription ? <span className="js-print-pre">{p.printDescription}</span> : '—'}
         </JobSheetPrintPrintingFormField>
-      ) : null}
-      {showCylinderRow ? (
-        <div className="js-print-form-row-3">
-          <JobSheetPrintPrintingFormField label="Cylinder">{valueOrDash(p.cylinder)}</JobSheetPrintPrintingFormField>
-          <JobSheetPrintPrintingFormField label="Around">{valueOrDash(p.platesAround)}</JobSheetPrintPrintingFormField>
-          <JobSheetPrintPrintingFormField label="Across">{valueOrDash(p.platesAcross)}</JobSheetPrintPrintingFormField>
+        {showCylinderRow ? (
+          <div className="js-print-form-row-3">
+            <JobSheetPrintPrintingFormField label="Cylinder">{valueOrDash(p.cylinder)}</JobSheetPrintPrintingFormField>
+            <JobSheetPrintPrintingFormField label="Around">{valueOrDash(p.platesAround)}</JobSheetPrintPrintingFormField>
+            <JobSheetPrintPrintingFormField label="Across">{valueOrDash(p.platesAcross)}</JobSheetPrintPrintingFormField>
+          </div>
+        ) : null}
+        <div className="js-print-form-row-2">
+          <JobSheetPrintPrintingFormField label="No. colours">{valueOrDash(p.numColours)}</JobSheetPrintPrintingFormField>
+          <JobSheetPrintPrintingFormField label="Print side">{valueOrDash(p.printSide)}</JobSheetPrintPrintingFormField>
         </div>
-      ) : null}
-    </JobSheetPrintPrintingFormShell>
+        <JobSheetPrintPrintingFormField label="Print position details">
+          {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
+        </JobSheetPrintPrintingFormField>
+        {showFrontPrint? (
+          <div>
+            <span className="js-print-form-k">Front print</span>
+            <JobSheetPrintInlineInkTable rows={p.frontRows} />
+          </div>
+        ) : null}
+        {showBackPrint ? (
+          <div>
+            <span className="js-print-form-k">Back print</span>
+            <JobSheetPrintInlineInkTable rows={p.backRows} />
+          </div>
+        ) : null}
+        {p.legacyInkPlate ? (
+          <JobSheetPrintPrintingFormField label="Legacy ink / plate codes">
+            <span className="js-print-pre">{p.legacyInkPlate}</span>
+          </JobSheetPrintPrintingFormField>
+        ) : null}
+      </JobSheetPrintPrintingFormShell>
+    </div>
   )
 }
 
@@ -600,7 +619,7 @@ function JobSheetPrintUtecoPage(props: {
     finishedBagSize: string
     sealTypeLabel: string
     eyeSpotLabel: string
-    deckColours: Array<{ deck: number; colour: string }>
+    deckColours: Array<{ deck: number; colourText: string; inkCode: string }>
   }
 }): ReactNode {
   const { u } = props
@@ -638,32 +657,42 @@ function JobSheetPrintUtecoPage(props: {
             <table className="js-print-uteco-deck-table" role="presentation">
               <thead>
                 <tr>
-                  <th>Deck</th>
+                  <th style={{ width: '100px' }}>Deck</th>
                   <th>Colour</th>
                 </tr>
               </thead>
               <tbody>
-                {u.deckColours.length ? (
-                  u.deckColours.map((r) => (
-                    <tr key={r.deck}>
-                      <td>
-                        <div className="js-print-uteco-table-value">{r.deck}</div>
-                      </td>
-                      <td>
-                        <div className="js-print-uteco-table-value js-print-pre">{r.colour || blankLine}</div>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
+                {u.deckColours.map((r) => (
+                  <tr key={r.deck}>
                     <td>
-                      <div className="js-print-uteco-table-value">1</div>
+                      <div className="js-print-uteco-table-value">{r.deck}</div>
                     </td>
                     <td>
-                      <div className="js-print-uteco-table-value">{blankLine}</div>
+                      <div className="js-print-uteco-table-value">
+                        {r.colourText || r.inkCode ? (
+                          <>
+                            {r.colourText ? (
+                              <span className="js-print-pre js-print-deck-colour-freetext">{r.colourText}</span>
+                            ) : null}
+                            {r.inkCode ? (
+                              <span
+                                className={
+                                  r.colourText
+                                    ? 'js-print-deck-ink-code js-print-deck-ink-code--paired'
+                                    : 'js-print-deck-ink-code'
+                                }
+                              >
+                                {r.colourText ? ` (${r.inkCode})` : r.inkCode}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          blankLine
+                        )}
+                      </div>
                     </td>
                   </tr>
-                )}
+                ))}
               </tbody>
             </table>
           </div>
@@ -1465,7 +1494,6 @@ export function JobSheetPrintPage() {
       printPosition: s(printing?.print_position_notes),
       filmSupplied: formatJobSheetFilmSuppliedFromSpec(specTyped),
       finishedBagSize: formatJobSheetFinishedBagSizeFromSpec(specTyped),
-      eyeSpot: formatEyeSpot(printing?.eye_spot),
       artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '',
       artworkPdfs: artworkPdfNames.length ? artworkPdfNames.join('; ') : '',
       frontRows: frontInkPlatePrint,
@@ -1869,6 +1897,7 @@ export function JobSheetPrintPage() {
         }
         .js-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 8px; }
         .js-extrusion-grid { width: 50%; }
+        .js-print-extrusion-specs { display: flex; gap: 8px; }
         .js-grid td, .js-grid th {
           border: 1px solid #000;
           padding: 5px 7px;
@@ -2489,10 +2518,24 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
           min-height: 1.25em;
           padding: 1px 0 5px;
-          border-bottom: 1px solid #111;
           font-weight: 600;
           font-size: 13px;
           text-align: inherit;
+        }
+        .js-print-deck-colour-freetext {
+          font-weight: 600;
+          color: #111;
+        }
+        .js-print-deck-ink-code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-weight: 700;
+          font-size: 13px;
+          color: #111;
+        }
+        .js-print-deck-ink-code--paired {
+          font-size: 11px;
+          font-weight: 700;
+          color: #555;
         }
         .js-print-uteco-deck-table td:first-child .js-print-uteco-table-value {
           text-align: center;
@@ -2596,22 +2639,59 @@ export function JobSheetPrintPage() {
             border-top: 1px dashed #bbb;
           }
         }
-        .js-order-inline-shell {
+        .js-print-inline-block-wrap {
+          width: 50%;
+          margin-bottom: 8px;
+          box-sizing: border-box;
+        }
+        .js-print-inline-ink-table {
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
-          margin-bottom: 8px;
+          font-size: 10px;
+          padding-top: 10px;
         }
-        .js-order-inline-shell td {
+        .js-print-inline-ink-table th,
+        .js-print-inline-ink-table td {
+          border: 1px solid #000;
+          padding: 2px 6px;
           vertical-align: top;
-          border: none;
-          padding: 0;
-          width: 50%;
-          box-sizing: border-box;
+          word-break: break-word;
         }
-        .js-order-inline-shell td.js-order-inline-left { padding-right: 4px; }
-        .js-order-inline-shell td.js-order-inline-right { padding-left: 4px; }
-        .js-order-inline-shell .js-grid { width: 100%; margin-bottom: 0; }
+        .js-print-inline-ink-table th {
+          background: #ededed;
+          font-weight: 700;
+          font-size: var(--js-print-fs-body);
+          color: #333;
+        }
+        .js-print-inline-ink-th-deck {
+          width: 15%;
+          text-align: center;
+        }
+        .js-print-inline-ink-th-plate {
+          width: 30%;
+        }
+        .js-print-inline-ink-td-deck {
+          text-align: center;
+          font-weight: 700;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: var(--js-print-fs-body);
+        }
+        .js-print-inline-ink-td-colour {
+          font-weight: 600;
+          font-size: var(--js-print-fs-body);
+        }
+        .js-print-inline-ink-td-plate {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-weight: 700;
+          font-size: var(--js-print-fs-body);
+        }
+        .js-print-inline-ink-code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-weight: 700;
+          font-size:  var(--js-print-fs-body);
+          color: #333;
+        }
         .js-print-printing-form {
           border: 1px solid #000;
           padding: 10px 12px 12px;
@@ -2630,17 +2710,17 @@ export function JobSheetPrintPage() {
         .js-print-form-k {
           display: block;
           font-weight: 600;
-          font-size: 10px;
+          font-size: var(--js-print-fs-label);
           color: #333;
-          letter-spacing: 0.03em;
-          text-transform: uppercase;
-          margin-bottom: 4px;
+          margin-bottom: 2px;
         }
         .js-print-form-v {
           font-weight: 700;
           font-size: 12px;
           word-break: break-word;
           min-height: 1.25em;
+          padding: 2px 0 4px 0;
+          border-bottom: 1px solid black;
         }
         .js-print-form-row-2 {
           display: grid;
@@ -2684,149 +2764,175 @@ export function JobSheetPrintPage() {
           header={model.header}
           product={model.product}
         />
-
-        <table className="js-grid js-extrusion-grid">
-          <tbody>
-            <tr><td className="js-sec" colSpan={6}>Extrusion specifications</td></tr>
-            <tr>
-              <td colSpan={6}>
-                <table className="js-headline-split" role="presentation">
-                  <tbody>
-                    <tr>
-                      <td className="js-headline-label">Product Type & Finish</td>
-                      <td className="js-headline-label">Geometry</td>
-                    </tr>
-                    <tr>
-                      <td className="js-headline-value">{e.productFinishHeadline}</td>
-                      <td>{e.geometryHeadline}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={6} className="js-dim-wrap js-extrusion-dim-run-cell">
-                <table className="js-dim-grid" role="presentation">
-                  <thead>
-                    <tr>
-                      <th className="js-dim-h">Width</th>
-                      <th className="js-dim-h">Length</th>
-                      <th className="js-dim-h">Gauge</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="js-dim-col">
-                        <div className="js-dim-stack">
-                          <div className="js-dim-primary"><span>{e.widthPrimarySingle ?? '-'}</span><span className={`js-dim-primary-unit`}>mm</span></div>
-                          <div className={`js-dim-secondary${e.widthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
-                            {e.widthToleranceDisplay}
+        <div className="js-print-extrusion-specs">
+          <table className="js-grid js-extrusion-grid">
+            <tbody>
+              <tr><td className="js-sec" colSpan={6}>Extrusion specifications</td></tr>
+              <tr>
+                <td colSpan={6}>
+                  <table className="js-headline-split" role="presentation">
+                    <tbody>
+                      <tr>
+                        <td className="js-headline-label">Product Type & Finish</td>
+                        <td className="js-headline-label">Geometry</td>
+                      </tr>
+                      <tr>
+                        <td className="js-headline-value">{e.productFinishHeadline}</td>
+                        <td>{e.geometryHeadline}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td colSpan={6} className="js-dim-wrap js-extrusion-dim-run-cell">
+                  <table className="js-dim-grid" role="presentation">
+                    <thead>
+                      <tr>
+                        <th className="js-dim-h">Width</th>
+                        <th className="js-dim-h">Length</th>
+                        <th className="js-dim-h">Gauge</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="js-dim-col">
+                          <div className="js-dim-stack">
+                            <div className="js-dim-primary"><span>{e.widthPrimarySingle ?? '-'}</span><span className={`js-dim-primary-unit`}>mm</span></div>
+                            <div className={`js-dim-secondary${e.widthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
+                              {e.widthToleranceDisplay}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="js-dim-col">
-                        <div className="js-dim-stack">
-                          <div className={`js-dim-primary${e.lengthUnits === 'M' ? ' js-dim-primary-hl' : ''}`}><span>{e.lengthLine || '-'}</span><span className={`js-dim-primary-unit ${e.lengthUnits === 'M' ? 'js-dim-primary-unit-m' : ''}`}>{e.lengthUnits}</span></div>
-                          <div className={`js-dim-secondary${e.lengthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
-                            {e.lengthToleranceDisplay}
+                        </td>
+                        <td className="js-dim-col">
+                          <div className="js-dim-stack">
+                            <div className={`js-dim-primary${e.lengthUnits === 'M' ? ' js-dim-primary-hl' : ''}`}><span>{e.lengthLine || '-'}</span><span className={`js-dim-primary-unit ${e.lengthUnits === 'M' ? 'js-dim-primary-unit-m' : ''}`}>{e.lengthUnits}</span></div>
+                            <div className={`js-dim-secondary${e.lengthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
+                              {e.lengthToleranceDisplay}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="js-dim-col">
-                        <div className="js-dim-stack">
-                          <div className="js-dim-primary"><span>{e.gaugeLine || '-'}</span><span className="js-dim-primary-unit">µm</span></div>
-                          <div className={`js-dim-secondary${e.gaugeTrimExplicit ? ' js-dim-secondary-hl' : ''}`}>
-                            {e.gaugeTrimDisplay || '-'}
+                        </td>
+                        <td className="js-dim-col">
+                          <div className="js-dim-stack">
+                            <div className="js-dim-primary"><span>{e.gaugeLine || '-'}</span><span className="js-dim-primary-unit">µm</span></div>
+                            <div className={`js-dim-secondary${e.gaugeTrimExplicit ? ' js-dim-secondary-hl' : ''}`}>
+                              {e.gaugeTrimDisplay || '-'}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                <table className="js-print-flag-grid" role="presentation" aria-label="Extrusion run flags">
-                  <tbody>
-                    <tr>
-                      <td>
-                        Run up: <b>{valueOrDash(e.runUpLine)}</b>
-                      </td>
-                      <td>
-                        Slit: <b>{e.slit || 'None'}</b>
-                      </td>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <table className="js-print-flag-grid" role="presentation" aria-label="Extrusion run flags">
+                    <tbody>
+                      <tr>
+                        <td>
+                          Run up: <b>{valueOrDash(e.runUpLine)}</b>
+                        </td>
+                        <td>
+                          Slit: <b>{e.slit || 'None'}</b>
+                        </td>
+                        <td
+                          className={
+                            e.treatHighlight === 'outside'
+                              ? 'js-print-flag--treat-outside'
+                              : e.treatHighlight === 'inside'
+                                ? 'js-print-flag--treat-inside'
+                                : undefined
+                          }
+                        >
+                          Treat: <b>{e.treat || 'None'}</b>
+                        </td>
+                        <td className={e.shrink ? 'js-print-flag-val--yes' : undefined}>
+                          Shrink:{' '}
+                          <b >{e.shrink ? 'Yes' : '-'}</b>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={e.inlineSeal ? 'js-print-flag-val--yes js-perf-bg' : undefined}>
+                          Inline Seal:{' '}
+                          <b >{e.inlineSeal ? 'Yes' : '-'}</b>
+                        </td>
+                        <td className={e.inlinePerforated ? 'js-print-flag-val--yes js-perf-bg' : undefined}>
+                          Inline perf:{' '}
+                          <b >
+                            {e.inlinePerforated ? 'Yes' : '-'}
+                          </b>
+                        </td>
+                        <td className={e.inlinePunched ? 'js-print-flag-val--yes' : undefined}>
+                          Inline punch:{' '}
+                          <b>
+                            {e.inlinePunched ? 'Yes' : '-'}
+                          </b>
+                        </td>
+                        <td className={e.coresLine ? 'js-print-flag-val--yes' : undefined}>
+                          Cores:{' '}
+                          
+                          <b >
+                            {valueOrDash(e.coresLine)}
+                          </b>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+              {e.resinMixRows.map((r, idx) => {
+                const specCell = `js-resin-spec-cell${idx === 0 ? ' js-resin-spec-first' : ''}${idx === e.resinMixRows.length - 1 ? ' js-resin-spec-last' : ''}`
+                if (r.kind === 'blend') {
+                  return (
+                    <tr key={idx}>
                       <td
-                        className={
-                          e.treatHighlight === 'outside'
-                            ? 'js-print-flag--treat-outside'
-                            : e.treatHighlight === 'inside'
-                              ? 'js-print-flag--treat-inside'
-                              : undefined
+                        colSpan={6}
+                        className={`js-resin-mix-blend-wrap js-resin-mix-blend--${r.variant} ${specCell}`}
+                      >
+                        <div className="js-resin-mix-blend-caption">{r.caption}</div>
+                        <table className="js-resin-mix-blend-bar" role="presentation">
+                          <tbody>
+                            {r.segments.map((seg, j) => (
+                              <tr key={j}>
+                                <td className="js-resin-mix-blend-resin">{seg.label}</td>
+                                <td className="js-resin-mix-blend-pct">{seg.pct}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )
+                }
+                if (r.kind === 'label_pct') {
+                  return (
+                    <tr key={idx}>
+                      <td
+                        colSpan={6}
+                        className={`js-resin-mix-blend-wrap ${r.highlight ? 'js-resin-mix-hl ' : ''}${specCell}`}
+                        style={
+                          r.bgHex
+                            ? {
+                                backgroundColor: r.bgHex,
+                                color: r.textColor || undefined,
+                              }
+                            : undefined
                         }
                       >
-                        Treat: <b>{e.treat || 'None'}</b>
-                      </td>
-                      <td className={e.shrink ? 'js-print-flag-val--yes' : undefined}>
-                        Shrink:{' '}
-                        <b >{e.shrink ? 'Yes' : '-'}</b>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td className={e.inlineSeal ? 'js-print-flag-val--yes js-perf-bg' : undefined}>
-                        Inline Seal:{' '}
-                        <b >{e.inlineSeal ? 'Yes' : '-'}</b>
-                      </td>
-                      <td className={e.inlinePerforated ? 'js-print-flag-val--yes js-perf-bg' : undefined}>
-                        Inline perf:{' '}
-                        <b >
-                          {e.inlinePerforated ? 'Yes' : '-'}
-                        </b>
-                      </td>
-                      <td className={e.inlinePunched ? 'js-print-flag-val--yes' : undefined}>
-                        Inline punch:{' '}
-                        <b>
-                          {e.inlinePunched ? 'Yes' : '-'}
-                        </b>
-                      </td>
-                      <td className={e.coresLine ? 'js-print-flag-val--yes' : undefined}>
-                        Cores:{' '}
-                        
-                        <b >
-                          {valueOrDash(e.coresLine)}
-                        </b>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-            {e.resinMixRows.map((r, idx) => {
-              const specCell = `js-resin-spec-cell${idx === 0 ? ' js-resin-spec-first' : ''}${idx === e.resinMixRows.length - 1 ? ' js-resin-spec-last' : ''}`
-              if (r.kind === 'blend') {
-                return (
-                  <tr key={idx}>
-                    <td
-                      colSpan={6}
-                      className={`js-resin-mix-blend-wrap js-resin-mix-blend--${r.variant} ${specCell}`}
-                    >
-                      <div className="js-resin-mix-blend-caption">{r.caption}</div>
-                      <table className="js-resin-mix-blend-bar" role="presentation">
-                        <tbody>
-                          {r.segments.map((seg, j) => (
-                            <tr key={j}>
-                              <td className="js-resin-mix-blend-resin">{seg.label}</td>
-                              <td className="js-resin-mix-blend-pct">{seg.pct}%</td>
+                        <table className="js-resin-mix-blend-bar" role="presentation">
+                          <tbody>
+                            <tr>
+                              <td className="js-resin-mix-blend-resin">{r.label}</td>
+                              <td className="js-resin-mix-blend-pct">{r.pct}%</td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
-                )
-              }
-              if (r.kind === 'label_pct') {
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )
+                }
                 return (
                   <tr key={idx}>
                     <td
                       colSpan={6}
-                      className={`js-resin-mix-blend-wrap ${r.highlight ? 'js-resin-mix-hl ' : ''}${specCell}`}
+                      className={`${r.highlight ? 'js-resin-mix-hl ' : ''}${specCell}`}
                       style={
                         r.bgHex
                           ? {
@@ -2836,78 +2942,37 @@ export function JobSheetPrintPage() {
                           : undefined
                       }
                     >
-                      <table className="js-resin-mix-blend-bar" role="presentation">
-                        <tbody>
-                          <tr>
-                            <td className="js-resin-mix-blend-resin">{r.label}</td>
-                            <td className="js-resin-mix-blend-pct">{r.pct}%</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                      {r.text}
                     </td>
                   </tr>
                 )
-              }
-              return (
-                <tr key={idx}>
-                  <td
-                    colSpan={6}
-                    className={`${r.highlight ? 'js-resin-mix-hl ' : ''}${specCell}`}
-                    style={
-                      r.bgHex
-                        ? {
-                            backgroundColor: r.bgHex,
-                            color: r.textColor || undefined,
-                          }
-                        : undefined
-                    }
-                  >
-                    {r.text}
-                  </td>
-                </tr>
-              )
-            })}
-            <tr>
-              <th>Extruder</th>
-              <td colSpan={5}>
-                {extrusionSetup.extruderLabel || extrusionSetup.dieSizeMm != null ? (
-                  <>
-                    {extrusionSetup.extruderLabel ? (
-                      <>
-                        <b>{formatExtruderCodeForPrint(extrusionSetup.extruderLabel)}</b>
-                        {' - '}
-                      </>
-                    ) : null}
-                    Die Size: {extrusionSetup.dieSizeMm != null ? `${String(extrusionSetup.dieSizeMm)}mm` : '-'}
-                  </>
-                ) : (
-                  '-'
-                )}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        {isInlinePrinted ? (
-          <table className="js-order-inline-shell" role="presentation">
-            <tbody>
+              })}
               <tr>
-                <td className="js-order-inline-left">
-                  <table className="js-grid js-order-qty-grid">
-                    <tbody>{orderQuantitiesRows}</tbody>
-                  </table>
-                </td>
-                <td className="js-order-inline-right">
-                  <JobSheetPrintInlinePrintingBlock p={p} />
+                <th>Extruder</th>
+                <td colSpan={5}>
+                  {extrusionSetup.extruderLabel || extrusionSetup.dieSizeMm != null ? (
+                    <>
+                      {extrusionSetup.extruderLabel ? (
+                        <>
+                          <b>{formatExtruderCodeForPrint(extrusionSetup.extruderLabel)}</b>
+                          {' - '}
+                        </>
+                      ) : null}
+                      Die Size: {extrusionSetup.dieSizeMm != null ? `${String(extrusionSetup.dieSizeMm)}mm` : '-'}
+                    </>
+                  ) : (
+                    '-'
+                  )}
                 </td>
               </tr>
             </tbody>
           </table>
-        ) : (
-          <table className="js-grid js-order-qty-grid">
-            <tbody>{orderQuantitiesRows}</tbody>
-          </table>
-        )}
+
+          {isInlinePrinted ? <JobSheetPrintInlinePrintingBlock p={p} /> : null}
+        </div>
+        <table className="js-grid js-order-qty-grid">
+          <tbody>{orderQuantitiesRows}</tbody>
+        </table>
 
         <div className="js-print-page-break">
           <JobSheetPrintExtrusionQcPage
