@@ -10,6 +10,8 @@ It matches the app’s env vars documented in `env.example`:
 
 CORS accepts **one or more** comma-separated origins (no spaces), e.g. `https://a.example.com,https://b.example.com`.
 
+When you use `deploy-printing-artwork-s3.sh`, CORS is applied with **`aws s3api put-bucket-cors` after** CloudFormation succeeds (the template does not set `CorsConfiguration`, because conditional CORS on `AWS::S3::Bucket` fails **AWS::EarlyValidation::PropertyValidation**). **Python 3** is required for that step.
+
 ---
 
 ## Crown Pack: localhost + staging (Heroku)

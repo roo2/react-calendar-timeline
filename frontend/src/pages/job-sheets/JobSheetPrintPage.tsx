@@ -780,43 +780,38 @@ type JobSheetPrintShippingModel = {
 
 function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingModel }): ReactNode {
   const { ship } = props
+  const highlightPalletType = ship.palletType.trim().toLowerCase() !== 'chep'
   return (
     <table className="js-grid js-print-table-shipping ">
       <tbody>
         <tr>
-          <td className="js-sec" colSpan={2}>
+          <td className="js-sec" colSpan={4}>
             Shipping details
           </td>
         </tr>
         <tr>
-          <th style={{ width: '32%' }}>Pallet type</th>
-          <td>{ship.palletType || '—'}</td>
+          <th className={highlightPalletType ? 'js-pink' : undefined} style={{ width: '20%' }}>Pallet type</th>
+          <td className={highlightPalletType ? 'js-pink' : undefined} style={{ width: '30%' }}>{ship.palletType || '—'}</td>
+          <th style={{ width: '20%' }}>{ship.finishModeKey === 'cartons' ? 'Cartons to ship' : 'Rolls to ship'}</th>
+          <td style={{ width: '30%' }}>{ship.qtyToDeliverDisplay || '—'}</td>
         </tr>
         <tr>
           <th>{ship.orderUnitsLabel}</th>
           <td>{ship.orderUnitsForPallets || '—'}</td>
-        </tr>
-        <tr className={ship.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>
-          <th>{ship.finishModeKey === 'cartons' ? 'Cartons to stock' : 'Rolls to stock'}</th>
-          <td>{ship.qtyToStockDisplay || '—'}</td>
-        </tr>
-        <tr>
-          <th>{ship.finishModeKey === 'cartons' ? 'Cartons to ship' : 'Rolls to ship'}</th>
-          <td>{ship.qtyToDeliverDisplay || '—'}</td>
-        </tr>
-        <tr>
           <th>{ship.finishModeKey === 'cartons' ? 'Cartons per pallet' : 'Rolls per pallet'}</th>
           <td>
             {ship.finishModeKey === 'cartons' ? ship.cartonsPerPallet || '—' : ship.rollsPerPallet || '—'}
           </td>
         </tr>
         <tr>
+          <th className={ship.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>{ship.finishModeKey === 'cartons' ? 'Cartons to stock' : 'Rolls to stock'}</th>
+          <td className={ship.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>{ship.qtyToStockDisplay || '—'}</td>
           <th>Pallets required</th>
           <td>{ship.palletsRequired || '—'}</td>
         </tr>
         {ship.palletChecklistCount > 0 ? (
           <tr>
-            <td colSpan={2} className="js-ship-pallet-checklist-cell">
+            <td colSpan={4} className="js-ship-pallet-checklist-cell">
               <div className="js-ship-pallet-checklist-label">Pallet checklist</div>
               <div className="js-ship-pallet-checklist" aria-label="Pallet checklist">
                 {Array.from({ length: ship.palletChecklistCount }, (_, i) => (
@@ -1635,11 +1630,27 @@ export function JobSheetPrintPage() {
     }
 
     let baseParts: Array<{ code: string; pct: number }> = []
+    const lookupKey = hasExplicitBlendType ? blendTypeRaw : blendTypeCode
+    const presetPartsForPrint =
+      !isCustomBlend && !legacyBlendCodeOnly ? lookupPresetParts(lookupKey) : []
+
+    const singleFullPctPlaceholder =
+      explicitParts.length === 1 &&
+      explicitParts[0].pct != null &&
+      Math.abs(explicitParts[0].pct - 100) < 0.0001
+
     if (explicitParts.length > 0) {
-      baseParts = explicitParts
+      if (
+        presetPartsForPrint.length > 0 &&
+        singleFullPctPlaceholder &&
+        presetPartsForPrint.length !== explicitParts.length
+      ) {
+        baseParts = presetPartsForPrint
+      } else {
+        baseParts = explicitParts
+      }
     } else if (!legacyBlendCodeOnly) {
-      const lookupKey = hasExplicitBlendType ? blendTypeRaw : blendTypeCode
-      baseParts = lookupPresetParts(lookupKey)
+      baseParts = presetPartsForPrint
     }
 
     const resinLabelForCode = (code: string): string => {
@@ -2506,7 +2517,6 @@ export function JobSheetPrintPage() {
           text-align: center;
           font-size: var(--js-print-fs-body);
           font-weight: 600;
-          padding: 10px 6px;
           width: 50%;
         }
         .js-headline-split .js-headline-value {
@@ -2729,11 +2739,27 @@ export function JobSheetPrintPage() {
           flex-direction: column;
         }
         .js-quality-list {
-          margin: 4px 0 0 18px;
+          list-style: none;
+          margin: 4px 0 0 0;
           padding: 0;
-          font-weight: 600;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px 6px;
+          align-items: center;
         }
-        .js-quality-list li { margin: 1px 0; }
+        .js-quality-list li {
+          display: inline-flex;
+          align-items: center;
+          margin: 0;
+          padding: 2px 7px;
+          font-size: var(--js-print-fs-label);
+          font-weight: 600;
+          line-height: 1.25;
+          border: 1px solid #000;
+          border-radius: 3px;
+          background: #f0f0f0;
+          color: #111;
+        }
         .js-print-ink-num { width: 2rem; text-align: center; }
         .js-print-barcode-block { padding-top: 4px !important; padding-bottom: 5px !important; }
         .js-print-barcode-k {
@@ -3268,6 +3294,7 @@ export function JobSheetPrintPage() {
         }
         .js-print-table-shipping {
           margin-top: 14px;
+          table-layout:auto;
         }
       `}</style>
 
@@ -3301,7 +3328,7 @@ export function JobSheetPrintPage() {
                       </tr>
                       <tr>
                         <td className="js-headline-value">{e.productFinishHeadline}</td>
-                        <td>{e.geometryHeadline}</td>
+                        <td className="js-headline-value">{e.geometryHeadline}</td>
                       </tr>
                     </tbody>
                   </table>

@@ -278,14 +278,37 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
               component="ul"
               sx={{
                 m: 0,
-                pl: 2,
-                fontSize: '0.8125rem',
-                lineHeight: 1.35,
-                color: 'text.primary',
+                p: 0,
+                pl: 0,
+                listStyle: 'none',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 0.5,
+                alignItems: 'center',
               }}
             >
               {prod.qualityChecks.map((qc, i) => (
-                <li key={`${qc}-${i}`}>{qc}</li>
+                <Box
+                  component="li"
+                  key={`${qc}-${i}`}
+                  sx={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    m: 0,
+                    px: 0.75,
+                    py: 0.25,
+                    fontSize: '0.6875rem',
+                    fontWeight: 600,
+                    lineHeight: 1.35,
+                    border: 1,
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    bgcolor: 'action.hover',
+                    color: 'text.primary',
+                  }}
+                >
+                  {qc}
+                </Box>
               ))}
             </Box>
           ) : (

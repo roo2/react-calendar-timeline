@@ -57,12 +57,6 @@ if [[ ! -f "$TEMPLATE" ]]; then
   exit 1
 fi
 
-# AWS CLI uses commas to separate ParameterKey=Value pairs; escape commas in CORS list.
-cfn_escape_commas() {
-  printf '%s' "$1" | sed 's/,/\\,/g'
-}
-CORS_FOR_CFN="$(cfn_escape_commas "$CORS_ORIGINS")"
-
 echo "Deploying stack ${STACK_NAME} in ${REGION}..."
 aws cloudformation deploy \
   --region "$REGION" \
@@ -71,8 +65,59 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
     "BucketName=${BUCKET_NAME}" \
-    "ObjectPrefix=${PREFIX}" \
-    "AllowedCorsOrigins=${CORS_FOR_CFN}"
+    "ObjectPrefix=${PREFIX}"
+
+# CORS is not set in CloudFormation (conditional CorsConfiguration fails AWS::EarlyValidation::PropertyValidation).
+# Apply browser CORS via S3 API after the bucket exists.
+apply_bucket_cors_from_csv() {
+  local bucket="$1"
+  local region="$2"
+  local origins_csv="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if ! CORS_ORIGINS_CSV="$origins_csv" python3 - "$tmp" <<'PY'
+import json
+import os
+import sys
+
+out_path = sys.argv[1]
+raw = os.environ.get("CORS_ORIGINS_CSV", "").strip()
+origins = [o.strip() for o in raw.split(",") if o.strip()]
+if not origins:
+    sys.stderr.write("CORS: no origins after split; refusing.\n")
+    sys.exit(1)
+cfg = {
+    "CORSRules": [
+        {
+            "AllowedHeaders": ["*"],
+            "AllowedMethods": ["GET", "PUT", "HEAD"],
+            "AllowedOrigins": origins,
+            "ExposeHeaders": ["ETag"],
+            "MaxAgeSeconds": 3000,
+        }
+    ],
+}
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f)
+PY
+  then
+    rm -f "$tmp"
+    echo "Error: failed to build CORS JSON (need python3)." >&2
+    exit 1
+  fi
+  aws s3api put-bucket-cors --bucket "$bucket" --region "$region" --cors-configuration "file://$tmp"
+  rm -f "$tmp"
+}
+
+if [[ -n "$CORS_ORIGINS" ]]; then
+  echo ""
+  echo "Applying S3 CORS for browser uploads (origins: ${CORS_ORIGINS})..."
+  apply_bucket_cors_from_csv "$BUCKET_NAME" "$REGION" "$CORS_ORIGINS"
+else
+  echo ""
+  echo "No --cors-origins: clearing bucket CORS (if any)..."
+  aws s3api delete-bucket-cors --bucket "$BUCKET_NAME" --region "$REGION" 2>/dev/null || true
+fi
 
 echo ""
 echo "Outputs:"

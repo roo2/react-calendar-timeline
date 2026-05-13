@@ -2,6 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Private S3 bucket + IAM user/policy for Crown Pack printing artwork PDFs
   (prefix-scoped Put/Get/Delete + ListBucket).
+  CORS is applied after deploy by infrastructure/scripts/deploy-printing-artwork-s3.sh (S3 API),
+  because CloudFormation early validation rejects conditional CorsConfiguration on AWS::S3::Bucket.
 
 Parameters:
   BucketName:
@@ -15,17 +17,6 @@ Parameters:
     Default: printing/
     Description: >
       Key prefix for app uploads (must end with /). Must match S3_PRINTING_ARTWORK_PREFIX in the app.
-
-  AllowedCorsOrigins:
-    Type: String
-    Default: ''
-    Description: >
-      Comma-separated browser origins for CORS (presigned PUT/GET), no spaces.
-      Example: https://app.example.com,https://other.example.com
-      Leave empty to skip CORS.
-
-Conditions:
-  HasCorsOrigins: !Not [!Equals [!Ref AllowedCorsOrigins, '']]
 
 Resources:
   PrintPdfBucket:
@@ -43,24 +34,6 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-
-  PrintPdfBucketCors:
-    Type: AWS::S3::BucketCorsConfiguration
-    Condition: HasCorsOrigins
-    Properties:
-      Bucket: !Ref PrintPdfBucket
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders:
-              - '*'
-            AllowedMethods:
-              - GET
-              - PUT
-              - HEAD
-            AllowedOrigins: !Split [',', !Ref AllowedCorsOrigins]
-            ExposeHeaders:
-              - ETag
-            MaxAgeSeconds: 3000
 
   PrintingArtworkAppUser:
     Type: AWS::IAM::User
