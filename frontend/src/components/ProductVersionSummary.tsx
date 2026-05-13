@@ -22,6 +22,11 @@ function computeLayflatMm(spec: any): number {
     const r = typeof dims.ufilm_right_width_mm === 'number' ? dims.ufilm_right_width_mm : 0
     return middle + l + r
   }
+  if (productType === 'J-Film') {
+    const l = typeof dims.ufilm_left_width_mm === 'number' ? dims.ufilm_left_width_mm : 0
+    const r = typeof dims.ufilm_right_width_mm === 'number' ? dims.ufilm_right_width_mm : 0
+    return l + r
+  }
   if (productType === 'Sheet' || geometry === 'Sheet') {
     const run = spec?.run_requirements || {}
     const ru = runUpNumericalFromSlug(String(run?.run_up ?? 'none'), productType)
@@ -168,6 +173,7 @@ export function ProductVersionSummary(props: { spec: any }) {
 
   const productType = spec?.identity?.product_type as string | undefined
   const isUFilm = productType === 'U-Film'
+  const isJFilm = productType === 'J-Film'
   const finishMode = spec?.identity?.finish_mode || '-'
 
   const qualityFlags = Array.isArray(spec?.quality_expectations?.flags) ? spec.quality_expectations.flags : []
@@ -196,13 +202,19 @@ export function ProductVersionSummary(props: { spec: any }) {
         <KVTable
           rows={[
             { k: 'Options', v: options.length ? options.join(', ') : '-' },
-            ...(isUFilm
+            ...(isJFilm
               ? [
                   { k: 'Left width (mm)', v: spec?.dimensions?.ufilm_left_width_mm ?? '-' },
-                  { k: 'Middle width (mm)', v: spec?.dimensions?.base_width_mm ?? '-' },
                   { k: 'Right width (mm)', v: spec?.dimensions?.ufilm_right_width_mm ?? '-' },
+                  { k: 'Layflat width (mm)', v: fmtMm(layflatMm) },
                 ]
-              : gussetOn
+              : isUFilm
+                ? [
+                    { k: 'Left width (mm)', v: spec?.dimensions?.ufilm_left_width_mm ?? '-' },
+                    { k: 'Middle width (mm)', v: spec?.dimensions?.base_width_mm ?? '-' },
+                    { k: 'Right width (mm)', v: spec?.dimensions?.ufilm_right_width_mm ?? '-' },
+                  ]
+                : gussetOn
                 ? [
                     { k: `${productType || 'Product'} width (mm)`, v: spec?.dimensions?.base_width_mm ?? '-' },
                     { k: 'Gusset return (mm)', v: spec?.dimensions?.gusset_mm ?? '-' },
@@ -376,6 +388,14 @@ export function ProductVersionSummary(props: { spec: any }) {
         <KVTable
           rows={[
             { k: 'Pallet type', v: spec?.packaging?.pallet_type || '-' },
+            ...(finishMode === 'Rolls'
+              ? [{ k: 'Rolls per pallet', v: spec?.packaging?.rolls_per_pallet ?? '-' }]
+              : finishMode === 'Cartons'
+                ? [{ k: 'Cartons per pallet', v: spec?.packaging?.cartons_per_pallet ?? '-' }]
+                : [
+                    { k: 'Rolls per pallet', v: spec?.packaging?.rolls_per_pallet ?? '-' },
+                    { k: 'Cartons per pallet', v: spec?.packaging?.cartons_per_pallet ?? '-' },
+                  ]),
             { k: 'Packing notes', v: spec?.packaging?.notes || '-' },
           ]}
         />

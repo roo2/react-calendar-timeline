@@ -1,4 +1,5 @@
 import type { QtyType } from './quantityRollFields'
+import { isJFilmProductType } from './filmProductTypes'
 
 export type MaterialsRetailBand = {
   id?: number
@@ -333,6 +334,7 @@ function productUnitsNounPluralForMoq(productType: string): string {
   const pt = String(productType || '').trim()
   if (pt === 'Bag') return 'bags'
   if (pt === 'U-Film') return 'U-films'
+  if (isJFilmProductType(pt)) return 'J-films'
   if (pt === 'Centerfold') return 'centerfolds'
   if (pt === 'Sleeve') return 'sleeves'
   return `${pt}s`.toLowerCase()
@@ -414,6 +416,7 @@ function computeLayflatMm(spec: {
   // Mirror SpecPayloadForm rules:
   // - Centerfold layflat = 0.5 * base width
   // - U-Film layflat = middle width + left + right
+  // - J-Film layflat = left + right (no middle width)
   // Quote-only override:
   // - Sheet/Centerfold with Run Up: 2 up = 1x width, 4 up = 2x width, 6 up = 3x width (layflat = product_width * run_up / 2)
   if ((pt === 'Sheet' || pt === 'Centerfold') && Number.isFinite(ru) && ru > 0) return w * (ru / 2)
@@ -422,6 +425,11 @@ function computeLayflatMm(spec: {
     const l = Number(spec.ufilm_left_width_mm || 0)
     const r = Number(spec.ufilm_right_width_mm || 0)
     return w + l + r
+  }
+  if (isJFilmProductType(pt)) {
+    const l = Number(spec.ufilm_left_width_mm || 0)
+    const r = Number(spec.ufilm_right_width_mm || 0)
+    return l + r
   }
   // For gusset, treat gusset_mm as the total additional layflat width.
   // e.g. width 200 + gusset 100 => layflat 300.
@@ -451,6 +459,11 @@ function computeLayflatMmForMass(spec: {
     const l = Number(spec.ufilm_left_width_mm || 0)
     const r = Number(spec.ufilm_right_width_mm || 0)
     return w + l + r
+  }
+  if (isJFilmProductType(pt)) {
+    const l = Number(spec.ufilm_left_width_mm || 0)
+    const r = Number(spec.ufilm_right_width_mm || 0)
+    return l + r
   }
   if (geom === 'gusset') return w + g
   return w
@@ -557,7 +570,7 @@ export function mapProductTypeToMaterialsRetailGroup(productType: string): NonNu
   if (pt === 'Tube' || pt === 'Sleeve') return 'tube'
   if (pt === 'Centerfold') return 'centerfold'
   if (pt === 'Sheet') return 'sheet'
-  if (pt === 'U-Film') return 'u_film'
+  if (pt === 'U-Film' || isJFilmProductType(pt)) return 'u_film'
   if (pt === 'Bag') return 'bag'
   return null
 }

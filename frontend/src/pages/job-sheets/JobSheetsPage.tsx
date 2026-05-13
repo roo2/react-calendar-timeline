@@ -50,6 +50,7 @@ const PRODUCT_TYPES = [
   { value: 'Sheet', label: 'Sheet' },
   { value: 'Centerfold', label: 'Centrefold' },
   { value: 'U-Film', label: 'U-Film' },
+  { value: 'J-Film', label: 'J-Film' },
 ] as const
 const PRINT_METHODS = ['None', 'Inline', 'Uteco'] as const
 const FINISH_MODES = ['Rolls', 'Cartons'] as const

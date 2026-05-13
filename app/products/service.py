@@ -158,7 +158,17 @@ def compute_product_description(spec_payload: Any, *, max_len: Optional[int] = N
     lf_or_g = "SWS" if is_sheet else (gusset_prefix if can_show_gusset_prefix else "")
 
     width = _int_str(dims.get("base_width_mm"))
-    width_seg = f"({width}mm + {gusset_mm_i}mm)" if has_gusset and gusset_mm_i > 0 else f"{width}mm"
+    uf_l = _int(dims.get("ufilm_left_width_mm")) or 0
+    uf_r = _int(dims.get("ufilm_right_width_mm")) or 0
+    mid_w = _int(dims.get("base_width_mm")) or 0
+    if has_gusset and gusset_mm_i > 0:
+        width_seg = f"({width}mm + {gusset_mm_i}mm)"
+    elif product_type == "J-FILM" and uf_l > 0 and uf_r > 0:
+        width_seg = f"{uf_l}/{uf_r}mm"
+    elif product_type == "U-FILM" and uf_l > 0 and mid_w > 0 and uf_r > 0:
+        width_seg = f"{uf_l}/{mid_w}/{uf_r}mm"
+    else:
+        width_seg = f"{width}mm"
 
     gauge = _int_str(dims.get("thickness_um"))
     base_len_mm = dims.get("base_length_mm")
@@ -279,6 +289,8 @@ PRODUCT_TYPE_PREFIX: dict[str, str] = {
     "CENTERFOLD": "CF",
     "U-FILM": "UF",
     "UFILM": "UF",
+    "J-FILM": "JF",
+    "JFILM": "JF",
 }
 
 
@@ -315,11 +327,14 @@ def compute_product_code_base(spec_payload: Any) -> str:
     gusset_mm = _int_or_null(dims.get("gusset_mm")) or 0
     has_gusset = geometry == "GUSSET" or gusset_mm > 0
     is_centerfold = product_type == "CENTERFOLD" or geometry == "CENTREFOLD"
+    is_jfilm = product_type in {"J-FILM", "JFILM"}
     is_ufilm = product_type in {"U-FILM", "UFILM"} or geometry == "UFILM"
     is_sheet = product_type == "SHEET" or geometry == "SHEET"
 
     width_seg = _int_str(dims.get("base_width_mm"), fallback="")
-    if width_seg:
+    j_l = _int_or_null(dims.get("ufilm_left_width_mm")) or 0
+    j_r = _int_or_null(dims.get("ufilm_right_width_mm")) or 0
+    if width_seg or (is_jfilm and j_l > 0 and j_r > 0):
         if has_gusset and gusset_mm > 0:
             width_seg = f"({_int_str(dims.get('base_width_mm'), fallback='-')}+{gusset_mm})"
         elif is_centerfold and base_width is not None:
@@ -331,9 +346,11 @@ def compute_product_code_base(spec_payload: Any) -> str:
             ru = 1 if ru_slug == "1up" else 2 if ru_slug == "2up" else 4 if ru_slug == "4up" else 6 if ru_slug == "6up" else 2
             layflat = int(round(base_width * (ru / 2))) if ru > 0 else base_width
             width_seg = f"{layflat}({base_width})"
+        elif is_jfilm and j_l > 0 and j_r > 0:
+            width_seg = f"{j_l}/{j_r}"
         elif is_ufilm:
-            l = _int_or_null(dims.get("ufilm_left_width_mm")) or 0
-            r = _int_or_null(dims.get("ufilm_right_width_mm")) or 0
+            l = j_l
+            r = j_r
             w = base_width or 0
             width_seg = f"{l}/{w}/{r}"
 

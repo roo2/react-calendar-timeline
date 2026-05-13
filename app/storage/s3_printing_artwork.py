@@ -19,7 +19,7 @@ def s3_client() -> BaseClient:
 
 
 def normalized_prefix() -> str:
-    p = (settings.S3_PRINTING_ARTWORK_PREFIX or "printing-artwork/").strip()
+    p = (settings.S3_PRINTING_ARTWORK_PREFIX or "printing/").strip()
     if not p.endswith("/"):
         p += "/"
     return p

@@ -119,7 +119,19 @@ export function computeProductDescriptionFromSpec(spec: any): string {
   const lfOrG = isSheet ? 'SWS' : canShowGussetPrefix ? gussetPrefix : ''
 
   const width = intStr(dims?.base_width_mm)
-  const widthSeg = hasGusset && gussetMm > 0 ? `(${width}mm + ${gussetMm}mm)` : `${width}mm`
+  const ufL = intOrNull(dims?.ufilm_left_width_mm) ?? 0
+  const ufR = intOrNull(dims?.ufilm_right_width_mm) ?? 0
+  const midW = intOrNull(dims?.base_width_mm) ?? 0
+  let widthSeg: string
+  if (hasGusset && gussetMm > 0) {
+    widthSeg = `(${width}mm + ${gussetMm}mm)`
+  } else if (productType === 'J-FILM' && ufL > 0 && ufR > 0) {
+    widthSeg = `${ufL}/${ufR}mm`
+  } else if (productType === 'U-FILM' && ufL > 0 && midW > 0 && ufR > 0) {
+    widthSeg = `${ufL}/${midW}/${ufR}mm`
+  } else {
+    widthSeg = `${width}mm`
+  }
   const gauge = intStr(dims?.thickness_um)
   const baseLenMm = dims?.base_length_mm
   const includeLen = baseLenMm != null
@@ -145,6 +157,8 @@ const PRODUCT_TYPE_PREFIX: Record<string, string> = {
   CENTERFOLD: 'CF',
   'U-FILM': 'UF',
   UFILM: 'UF',
+  'J-FILM': 'JF',
+  JFILM: 'JF',
 }
 
 /**
@@ -178,10 +192,13 @@ export function computeProductCodeFromSpec(spec: any): string {
   const hasGusset = geometry === 'GUSSET' || gussetMm > 0
   const isCenterfold = productType === 'CENTERFOLD' || geometry === 'CENTREFOLD'
   const isUFilm = productType === 'U-FILM' || productType === 'UFILM'
+  const isJFilm = productType === 'J-FILM' || productType === 'JFILM'
   const isSheet = productType === 'SHEET' || geometry === 'SHEET'
 
+  const jL = intOrNull(dims?.ufilm_left_width_mm) ?? 0
+  const jR = intOrNull(dims?.ufilm_right_width_mm) ?? 0
   let widthSeg = intStr(dims?.base_width_mm, '')
-  if (widthSeg) {
+  if (widthSeg || (isJFilm && jL > 0 && jR > 0)) {
     if (hasGusset && gussetMm > 0) {
       widthSeg = `(${intStr(dims?.base_width_mm)}+${gussetMm})`
     } else if (isCenterfold && baseWidth != null) {
@@ -192,11 +209,11 @@ export function computeProductCodeFromSpec(spec: any): string {
       const ru = runUpNumericalFromSlug(String(run?.run_up ?? 'none'), String(identity?.product_type ?? 'Sheet'))
       const layflat = ru > 0 ? Math.round(baseWidth * (ru / 2)) : baseWidth
       widthSeg = `${layflat}(${baseWidth})`
+    } else if (isJFilm && jL > 0 && jR > 0) {
+      widthSeg = `${jL}/${jR}`
     } else if (isUFilm) {
-      const l = intOrNull(dims?.ufilm_left_width_mm) ?? 0
-      const r = intOrNull(dims?.ufilm_right_width_mm) ?? 0
       const w = baseWidth ?? 0
-      widthSeg = `${l}/${w}/${r}`
+      widthSeg = `${jL}/${w}/${jR}`
     }
   }
 

@@ -11,9 +11,22 @@ export function ResinSelect(props: {
   reserveHelperTextSpace?: boolean
   fullWidth?: boolean
   sx?: SxProps<Theme>
+  /** When true, the outlined input uses a solid white background (e.g. materials custom blend table). */
+  outlinedInputWhiteBg?: boolean
   onChangeCode: (nextCode: string) => void
 }) {
-  const { options, valueCode, label, error, helperText, reserveHelperTextSpace = true, fullWidth = true, sx, onChangeCode } = props
+  const {
+    options,
+    valueCode,
+    label,
+    error,
+    helperText,
+    reserveHelperTextSpace = true,
+    fullWidth = true,
+    sx,
+    outlinedInputWhiteBg,
+    onChangeCode,
+  } = props
   return (
     <Autocomplete
       size="small"
@@ -31,6 +44,9 @@ export function ResinSelect(props: {
           error={error}
           helperText={helperText !== undefined ? helperText : reserveHelperTextSpace ? ' ' : undefined}
           FormHelperTextProps={reserveHelperTextSpace ? { sx: { minHeight: 20 } } : undefined}
+          sx={[
+            ...(outlinedInputWhiteBg ? [{ '& .MuiOutlinedInput-root': { bgcolor: '#fff' } }] : []),
+          ]}
         />
       )}
     />

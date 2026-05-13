@@ -95,6 +95,10 @@ def layflat_mm_from_spec(spec: dict) -> float:
 		lw = float(dims.get("ufilm_left_width_mm") or 0)
 		rw = float(dims.get("ufilm_right_width_mm") or 0)
 		return w + lw + rw
+	if pt == "J-Film":
+		lw = float(dims.get("ufilm_left_width_mm") or 0)
+		rw = float(dims.get("ufilm_right_width_mm") or 0)
+		return lw + rw
 	if geom == "gusset":
 		return w + g
 	return w
@@ -120,6 +124,10 @@ def layflat_mm_mass_from_spec(spec: dict) -> float:
 		lw = float(dims.get("ufilm_left_width_mm") or 0)
 		rw = float(dims.get("ufilm_right_width_mm") or 0)
 		return w + lw + rw
+	if pt == "J-Film":
+		lw = float(dims.get("ufilm_left_width_mm") or 0)
+		rw = float(dims.get("ufilm_right_width_mm") or 0)
+		return lw + rw
 	if geom == "gusset":
 		return w + g
 	return w

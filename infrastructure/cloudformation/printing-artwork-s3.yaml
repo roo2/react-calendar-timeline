@@ -12,18 +12,20 @@ Parameters:
 
   ObjectPrefix:
     Type: String
-    Default: printing-artwork/
+    Default: printing/
     Description: >
       Key prefix for app uploads (must end with /). Must match S3_PRINTING_ARTWORK_PREFIX in the app.
 
-  AllowedCorsOrigin:
+  AllowedCorsOrigins:
     Type: String
     Default: ''
     Description: >
-      Frontend origin for CORS (e.g. https://app.example.com). Leave empty to skip CORS configuration.
+      Comma-separated browser origins for CORS (presigned PUT/GET), no spaces.
+      Example: https://app.example.com,https://other.example.com
+      Leave empty to skip CORS.
 
 Conditions:
-  HasCorsOrigin: !Not [!Equals [!Ref AllowedCorsOrigin, '']]
+  HasCorsOrigins: !Not [!Equals [!Ref AllowedCorsOrigins, '']]
 
 Resources:
   PrintPdfBucket:
@@ -44,7 +46,7 @@ Resources:
 
   PrintPdfBucketCors:
     Type: AWS::S3::BucketCorsConfiguration
-    Condition: HasCorsOrigin
+    Condition: HasCorsOrigins
     Properties:
       Bucket: !Ref PrintPdfBucket
       CorsConfiguration:
@@ -55,11 +57,10 @@ Resources:
               - GET
               - PUT
               - HEAD
-            AllowedOrigins:
-              - !Ref AllowedCorsOrigin
+            AllowedOrigins: !Split [',', !Ref AllowedCorsOrigins]
             ExposeHeaders:
               - ETag
-            MaxAge: 3000
+            MaxAgeSeconds: 3000
 
   PrintingArtworkAppUser:
     Type: AWS::IAM::User

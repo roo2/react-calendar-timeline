@@ -11,6 +11,7 @@ import {
 } from './quoteCalculator'
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
 import { derivedInlineSeal, productTypeCanHaveGusset } from './specCompat'
+import { isLeftRightWidthFilmProductType } from './filmProductTypes'
 
 function dimensionsAreContinuous(dim: any, productType: string): boolean {
   const lu = String(dim?.length_units || '')
@@ -93,9 +94,9 @@ export function buildQuickQuoteInputsFromSpec(
   const ufilmRightWidthMmNum = Math.round(Number(dim.ufilm_right_width_mm || 0))
   const thicknessUmNum = Math.round(Number(dim.thickness_um || 0))
   const gussetReturnMmNum = Math.round(Number(dim.gusset_mm || 0))
-  const isUFilm = productType === 'U-Film'
+  const isLRFilm = isLeftRightWidthFilmProductType(productType)
 
-  const showRunUp = !isUFilm && (productType === 'Sheet' || productType === 'Centerfold')
+  const showRunUp = !isLRFilm && (productType === 'Sheet' || productType === 'Centerfold')
   const runUp = showRunUp ? runUpToNumber(run.run_up) : 1
 
   const blend = Array.isArray(form.blend)
@@ -155,8 +156,8 @@ export function buildQuickQuoteInputsFromSpec(
     geometry: derivedGeometry,
     base_width_mm: widthMmNum,
     run_up: showRunUp ? runUp : null,
-    ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
-    ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+    ufilm_left_width_mm: isLRFilm ? ufilmLeftWidthMmNum : null,
+    ufilm_right_width_mm: isLRFilm ? ufilmRightWidthMmNum : null,
     thickness_um: thicknessUmNum,
     base_length_mm: baseLengthMm,
     continuous_roll: continuousRoll,

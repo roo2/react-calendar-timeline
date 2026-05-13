@@ -400,6 +400,7 @@ export function productDisplayUnitPlural(productType: string | undefined | null)
   const key = raw.toLowerCase()
   if (key === 'bag') return 'Bags'
   if (key === 'u-film') return 'U-Films'
+  if (key === 'j-film') return 'J-Films'
   if (key === 'other') return 'Products'
   if (!raw) return 'Bags'
   return raw.endsWith('s') ? raw : `${raw}s`

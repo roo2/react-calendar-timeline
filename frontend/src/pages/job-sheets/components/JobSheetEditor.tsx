@@ -60,6 +60,8 @@ import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, t
 import { computeJobSheetPreviewQuoteSummary } from '../../../utils/jobSheetPreviewQuoteSummary'
 import { buildLiveJobSheetRowForOrderQuantityLabel } from '../../../utils/jobSheetQuantityFromApi'
 import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
+import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
+import { computeJobSheetPalletLoadPlanning } from '../../../utils/jobSheetPalletPlanning'
 
 type Mode = 'new' | 'edit'
 
@@ -421,6 +423,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     [spec, ratebook],
   )
 
+  const stockPlanningTotalUnits = useMemo(() => {
+    if (finishMode === 'Cartons') {
+      return qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0 ? qty.cartonCountForDisplay : null
+    }
+    const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
+    return nr > 0 ? nr : null
+  }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
+
   useEffect(() => {
     if (extruderUserTouchedRef.current) return
     if (productionExtruderCode.trim() !== '') return
@@ -487,6 +497,36 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       ),
     [spec, previewJobSheetQuantityRow, ratebook, qty.quickInputs],
   )
+
+  const estimatedUnitsPerPalletVolume = useMemo(
+    () =>
+      estimateUnitsPerPalletVolumeFromLiveSpec({
+        ratebook: ratebook ?? null,
+        spec,
+        quickInputs: qty.quickInputs ?? null,
+        extruderCode: extruderCodeForQty,
+      }),
+    [ratebook, spec, qty.quickInputs, extruderCodeForQty],
+  )
+
+  const jobSheetPalletLoadPlanning = useMemo(() => {
+    const conv = (spec.run_requirements as { conversion?: { qty_to_stock?: unknown } } | undefined)?.conversion
+    return computeJobSheetPalletLoadPlanning({
+      finishMode: finishMode === 'Cartons' ? 'Cartons' : 'Rolls',
+      rollsPerPallet: spec.packaging?.rolls_per_pallet,
+      cartonsPerPallet: spec.packaging?.cartons_per_pallet,
+      estimatedUnitsPerPalletVolume,
+      qtyToStockRaw: conv?.qty_to_stock,
+      orderTotalUnits: stockPlanningTotalUnits,
+    })
+  }, [
+    finishMode,
+    spec.packaging?.rolls_per_pallet,
+    spec.packaging?.cartons_per_pallet,
+    estimatedUnitsPerPalletVolume,
+    spec.run_requirements,
+    stockPlanningTotalUnits,
+  ])
 
   const previewCustomerName = useMemo(() => {
     const c = customers.find((x) => x.id === customerId)
@@ -846,7 +886,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (savingJobSheet || !jobSheetId) return
     const ok = await onBeforeOpenPrintPreview()
     if (!ok) return
-    window.open(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`, '_blank', 'noopener,noreferrer')
+    nav(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`)
   }
 
   const onPrintJobSheetRef = useRef(onPrintJobSheet)
@@ -1016,6 +1056,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             notes={previewNotesLine}
             qualityFlagIds={previewQualityFlagIds}
             quoteSummary={jobSheetPreviewQuoteSummary}
+            palletLoadPlanning={jobSheetPalletLoadPlanning}
+            palletUnitLabel={finishMode === 'Cartons' ? 'cartons' : 'rolls'}
           />
         ) : null}
 
@@ -1031,6 +1073,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               printingArtworkScope={mode === 'edit' && jobSheetId ? { kind: 'job_sheet', jobSheetId } : null}
               jobSheetPrintingContext={jobSheetPrintingContext}
               customerFacingDescription={customerFacingDescription}
+              estimatedUnitsPerPalletVolume={estimatedUnitsPerPalletVolume}
+              stockPlanningTotalUnits={stockPlanningTotalUnits}
               onCustomerFacingDescriptionChange={(v) => {
                 setCustomerFacingDescription(v)
                 setDirty(true)
@@ -1176,6 +1220,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               notes={previewNotesLine}
               qualityFlagIds={previewQualityFlagIds}
               quoteSummary={jobSheetPreviewQuoteSummary}
+              palletLoadPlanning={jobSheetPalletLoadPlanning}
+              palletUnitLabel={finishMode === 'Cartons' ? 'cartons' : 'rolls'}
             />
           </StickySideAside>
         ) : null}

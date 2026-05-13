@@ -6,6 +6,7 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import { computeLayflatWidthMm, type QuoteRatebook } from './quoteCalculator'
 import { productTypeCanHaveGusset } from './specCompat'
+import { isLeftRightWidthFilmProductType, isUFilmProductType } from './filmProductTypes'
 
 function runUpSlugToNumber(runUp: string | undefined): number {
   if (!runUp || runUp === 'none') return 1
@@ -31,9 +32,12 @@ export function suggestSmallestFittingExtruderCode(
     return { extruderCode: null, hintLine: '' }
   }
   const pt = String(spec.identity?.product_type || 'Bag')
-  const isUFilm = pt === 'U-Film'
+  const isLRFilm = isLeftRightWidthFilmProductType(pt)
+  const isUFilm = isUFilmProductType(pt)
   const widthMmNum = Math.round(Number(spec.dimensions?.base_width_mm || 0))
-  if (!(widthMmNum > 0)) {
+  const ufilmL = Math.round(Number(spec.dimensions?.ufilm_left_width_mm || 0) || 0)
+  const ufilmR = Math.round(Number(spec.dimensions?.ufilm_right_width_mm || 0) || 0)
+  if (!(widthMmNum > 0) && !(isLRFilm && ufilmL > 0 && ufilmR > 0)) {
     return { extruderCode: null, hintLine: '' }
   }
   const rawGeom = String(spec.dimensions?.geometry || '')
@@ -41,7 +45,7 @@ export function suggestSmallestFittingExtruderCode(
   const flagGusset = rawGeom === 'Gusset' && canHaveGusset
   const derivedGeometry: 'Flat' | 'Gusset' = flagGusset ? 'Gusset' : 'Flat'
   const run = spec.run_requirements || {}
-  const showRunUp = !isUFilm && (pt === 'Sheet' || pt === 'Centerfold')
+  const showRunUp = !isLRFilm && (pt === 'Sheet' || pt === 'Centerfold')
   const runUpN = showRunUp ? runUpSlugToNumber(String(run.run_up || 'none')) : 1
   const gussetMmRounded =
     derivedGeometry === 'Gusset' ? Math.round(Number(spec.dimensions?.gusset_mm || 0) || 0) || null : null
@@ -53,8 +57,8 @@ export function suggestSmallestFittingExtruderCode(
         base_width_mm: widthMmNum,
         run_up: runUpN,
         gusset_mm: gussetMmRounded,
-        ufilm_left_width_mm: isUFilm ? Math.round(Number(spec.dimensions?.ufilm_left_width_mm || 0) || 0) : null,
-        ufilm_right_width_mm: isUFilm ? Math.round(Number(spec.dimensions?.ufilm_right_width_mm || 0) || 0) : null,
+        ufilm_left_width_mm: isLRFilm ? Math.round(Number(spec.dimensions?.ufilm_left_width_mm || 0) || 0) : null,
+        ufilm_right_width_mm: isLRFilm ? Math.round(Number(spec.dimensions?.ufilm_right_width_mm || 0) || 0) : null,
       })
   if (!(extruderDecisionWidthMm > 0)) {
     return { extruderCode: null, hintLine: '' }

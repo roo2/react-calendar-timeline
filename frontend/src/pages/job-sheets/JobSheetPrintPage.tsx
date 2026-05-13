@@ -13,6 +13,7 @@ function geometryLabelForUtecoFilmSupplied(dimsGeometry: unknown, productTypeRaw
     .trim()
     .toLowerCase()
   if (p === 'u-film' || p === 'u_film' || p === 'ufilm') return 'U-Film'
+  if (p === 'j-film' || p === 'j_film' || p === 'jfilm') return 'J-Film'
   // Sheet geometry or Sheet product (legacy rows may still have Flat + Sheet product).
   if (p === 'sheet' || g === 'sheet') return 'SWS'
   if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return 'Gusseted'
@@ -69,7 +70,7 @@ import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
 import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../../utils/quoteCalculator'
 import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
 import { buildQuickQuoteInputsFromSpec, type SpecQuantitySlice } from '../../utils/specToQuoteInputs'
-import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   jobSheetDescriptionWithPackagingTail,
   jobSheetOrderQuantityLabel,
@@ -77,11 +78,67 @@ import {
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { derivedInlineSeal } from '../../utils/specCompat'
 import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
+import { palletsRequiredCeil } from '../../utils/palletShippingEstimate'
 
 function s(v: unknown, fallback = ''): string {
   if (v == null) return fallback
   const t = String(v).trim()
   return t === '' ? fallback : t
+}
+
+/** Packed bag/film dimensions for conversion print: e.g. `(300+100)mm x 800Lmm x 45µm` (width uses `mm`, not `Wmm`). */
+function formatConversionPackingDimensionShorthand(opts: {
+  widthDisplay: string
+  baseLengthMm: number | null
+  lengthUnitsRaw: string
+  thicknessUm: number | null
+  gaugeLineFallback: string
+}): string {
+  const widthStr = String(opts.widthDisplay || '').trim()
+  const widthNorm = widthStr.replace(/ \+ /g, '+')
+  /** Conversion sheet: show layflat-style width with an `mm` suffix (not `Wmm`). */
+  const widthPart = widthNorm !== '' ? `${widthNorm}mm` : ''
+  const lenU = String(opts.lengthUnitsRaw || '').trim().toLowerCase()
+  const lengthPart =
+    lenU !== 'continuous' &&
+    opts.baseLengthMm != null &&
+    opts.baseLengthMm > 0 &&
+    Number.isFinite(opts.baseLengthMm)
+      ? `${Math.round(opts.baseLengthMm)}Lmm`
+      : ''
+  let gaugePart = ''
+  if (opts.thicknessUm != null && opts.thicknessUm > 0 && Number.isFinite(opts.thicknessUm)) {
+    gaugePart = `${Math.round(opts.thicknessUm)}µm`
+  } else {
+    const g = String(opts.gaugeLineFallback || '').trim()
+    if (g !== '' && g !== '-') {
+      const gNum = Number(g)
+      gaugePart = Number.isFinite(gNum) && gNum > 0 ? `${Math.round(gNum)}µm` : `${g}µm`
+    }
+  }
+  return [widthPart, lengthPart, gaugePart].filter(Boolean).join(' x ')
+}
+
+/** Quantity to stock / deliver lines for print (matches job spec wording). */
+function computeQtyStockDeliverForPrint(opts: {
+  finishNorm: string
+  totalUnits: number | null
+  qtyToStockRaw: unknown
+}): { stockText: string; deliverText: string; highlightStock: boolean } {
+  const unit = opts.finishNorm === 'cartons' ? 'Cartons' : 'Rolls'
+  const raw = String(opts.qtyToStockRaw ?? '').trim()
+  const stockN = raw === '' || !Number.isFinite(Number(raw)) ? 0 : Math.max(0, Math.round(Number(raw)))
+  const total =
+    opts.totalUnits != null && Number.isFinite(opts.totalUnits) && opts.totalUnits > 0
+      ? Math.round(Number(opts.totalUnits))
+      : null
+  const capped = total != null ? Math.min(stockN, total) : stockN
+  const deliverN = total != null ? Math.max(0, total - capped) : null
+  return {
+    stockText: capped > 0 ? `${capped} ${unit}` : '—',
+    deliverText: deliverN != null ? `${deliverN} ${unit}` : '—',
+    highlightStock: capped > 0,
+  }
 }
 
 function n(v: unknown): number | null {
@@ -218,6 +275,12 @@ function yn(v: unknown): string {
 function valueOrDash(v: unknown): string {
   const t = String(v ?? '').trim()
   return t === '' ? '-' : t
+}
+
+/** Print form value: empty string renders as non-breaking space (no em dash) — unset ≠ voided. */
+function printFormValueOrNbsp(v: unknown): string {
+  const t = String(v ?? '').trim()
+  return t === '' ? '\u00a0' : t
 }
 
 function formatEyeSpot(v: unknown): string {
@@ -402,6 +465,7 @@ function displayGeometryHeadline(raw: unknown): string {
   if (normalized === 'gusset' || normalized === 'bottomgusset' || normalized === 'bottom_gusset') return 'Gusseted'
   if (normalized === 'centrefold' || normalized === 'centerfold') return 'Centrefold'
   if (normalized === 'u_film' || normalized === 'ufilm') return 'Ufilm'
+  if (normalized === 'j_film' || normalized === 'jfilm') return 'Jfilm'
   if (normalized === 'sheet') return 'SWS'
   return displayGeometryLabel(raw)
 }
@@ -414,6 +478,7 @@ function displayGeometryMode(rawGeometry: unknown, rawProductType: unknown): str
     .trim()
     .toLowerCase()
   if (p === 'u-film' || p === 'u_film' || p === 'ufilm') return 'U-Film'
+  if (p === 'j-film' || p === 'j_film' || p === 'jfilm') return 'J-Film'
   if (p === 'centerfold' || p === 'centrefold') return 'Centrefold'
   if (p === 'sheet' || g === 'sheet') return 'SWS'
   if (p === 'tube') {
@@ -534,11 +599,6 @@ function JobSheetPrintInlinePrintingBlock(props: {
   }
 }): ReactNode {
   const { p } = props
-  const showCylinderRow = Boolean(
-    (p.cylinder && p.cylinder.trim() !== '') ||
-      (p.platesAround && p.platesAround.trim() !== '') ||
-      (p.platesAcross && p.platesAcross.trim() !== ''),
-  )
   const showFrontPrint = p.frontRows.length > 0
   const showBackPrint = p.backRows.length > 0
 
@@ -548,13 +608,11 @@ function JobSheetPrintInlinePrintingBlock(props: {
         <JobSheetPrintPrintingFormField label="Print description">
           {p.printDescription ? <span className="js-print-pre">{p.printDescription}</span> : '—'}
         </JobSheetPrintPrintingFormField>
-        {showCylinderRow ? (
-          <div className="js-print-form-row-3">
-            <JobSheetPrintPrintingFormField label="Cylinder">{valueOrDash(p.cylinder)}</JobSheetPrintPrintingFormField>
-            <JobSheetPrintPrintingFormField label="Around">{valueOrDash(p.platesAround)}</JobSheetPrintPrintingFormField>
-            <JobSheetPrintPrintingFormField label="Across">{valueOrDash(p.platesAcross)}</JobSheetPrintPrintingFormField>
-          </div>
-        ) : null}
+        <div className="js-print-form-row-3">
+          <JobSheetPrintPrintingFormField label="Cylinder">{printFormValueOrNbsp(p.cylinder)}</JobSheetPrintPrintingFormField>
+          <JobSheetPrintPrintingFormField label="Around">{printFormValueOrNbsp(p.platesAround)}</JobSheetPrintPrintingFormField>
+          <JobSheetPrintPrintingFormField label="Across">{printFormValueOrNbsp(p.platesAcross)}</JobSheetPrintPrintingFormField>
+        </div>
         <div className="js-print-form-row-2">
           <JobSheetPrintPrintingFormField label="No. colours">{valueOrDash(p.numColours)}</JobSheetPrintPrintingFormField>
           <JobSheetPrintPrintingFormField label="Print side">{valueOrDash(p.printSide)}</JobSheetPrintPrintingFormField>
@@ -706,6 +764,75 @@ function JobSheetPrintUtecoPage(props: {
   )
 }
 
+type JobSheetPrintShippingModel = {
+  palletType: string
+  finishModeKey: string
+  rollsPerPallet: string
+  cartonsPerPallet: string
+  orderUnitsForPallets: string
+  orderUnitsLabel: string
+  palletsRequired: string
+  palletChecklistCount: number
+  qtyToStockDisplay: string
+  qtyToDeliverDisplay: string
+  highlightQtyToStock: boolean
+}
+
+function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingModel }): ReactNode {
+  const { ship } = props
+  return (
+    <table className="js-grid js-print-table-shipping ">
+      <tbody>
+        <tr>
+          <td className="js-sec" colSpan={2}>
+            Shipping details
+          </td>
+        </tr>
+        <tr>
+          <th style={{ width: '32%' }}>Pallet type</th>
+          <td>{ship.palletType || '—'}</td>
+        </tr>
+        <tr>
+          <th>{ship.orderUnitsLabel}</th>
+          <td>{ship.orderUnitsForPallets || '—'}</td>
+        </tr>
+        <tr className={ship.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>
+          <th>{ship.finishModeKey === 'cartons' ? 'Cartons to stock' : 'Rolls to stock'}</th>
+          <td>{ship.qtyToStockDisplay || '—'}</td>
+        </tr>
+        <tr>
+          <th>{ship.finishModeKey === 'cartons' ? 'Cartons to ship' : 'Rolls to ship'}</th>
+          <td>{ship.qtyToDeliverDisplay || '—'}</td>
+        </tr>
+        <tr>
+          <th>{ship.finishModeKey === 'cartons' ? 'Cartons per pallet' : 'Rolls per pallet'}</th>
+          <td>
+            {ship.finishModeKey === 'cartons' ? ship.cartonsPerPallet || '—' : ship.rollsPerPallet || '—'}
+          </td>
+        </tr>
+        <tr>
+          <th>Pallets required</th>
+          <td>{ship.palletsRequired || '—'}</td>
+        </tr>
+        {ship.palletChecklistCount > 0 ? (
+          <tr>
+            <td colSpan={2} className="js-ship-pallet-checklist-cell">
+              <div className="js-ship-pallet-checklist-label">Pallet checklist</div>
+              <div className="js-ship-pallet-checklist" aria-label="Pallet checklist">
+                {Array.from({ length: ship.palletChecklistCount }, (_, i) => (
+                  <div key={i} className="js-ship-pallet-tick">
+                    P{i + 1}
+                  </div>
+                ))}
+              </div>
+            </td>
+          </tr>
+        ) : null}
+      </tbody>
+    </table>
+  )
+}
+
 type JobSheetPrintConversionModel = {
   carton: { bagsPerCarton: string; totalCartons: string } | null
   conversion: {
@@ -718,10 +845,22 @@ type JobSheetPrintConversionModel = {
     pack: string
     innerPack: string
     loose: string
-    qtyToStock: string
-    sendAllBags: string
+    qtyToStockDisplay: string
+    qtyToDeliverDisplay: string
+    highlightQtyToStock: boolean
     handle: string
     linedCartons: string
+    highlightSeal?: boolean
+    highlightCartonSize?: boolean
+    highlightPackLayFlat?: boolean
+    highlightTagPacks?: boolean
+    highlightTagCtn?: boolean
+    highlightVent?: boolean
+    highlightPack?: boolean
+    highlightInnerPack?: boolean
+    highlightLoose?: boolean
+    highlightHandle?: boolean
+    highlightLinedCartons?: boolean
   } | null
 }
 
@@ -735,7 +874,7 @@ function JobSheetPrintExtrusionQcPage(props: {
   return (
     <div className="js-print-extrusion-qc-sheet">
       <JobSheetPrintOrderHeader
-        titleLine="EXTRUSION QC SHEET"
+        titleLine="EXTRUSION QC"
         perforated={perforated}
         header={header}
         product={product}
@@ -782,54 +921,12 @@ function JobSheetPrintExtrusionQcPage(props: {
       <table className="js-grid">
         <tbody>
           <tr>
-            <td className="js-sec" colSpan={6}>
-              Extruder output
-            </td>
-          </tr>
-          <tr>
-            <td colSpan={6} className="js-manual-wrap">
-              <table className="js-extruder-output-table" role="presentation">
-                <thead>
-                  <tr>
-                    <th>Roll No.</th>
-                    <th>Operator</th>
-                    <th>Kgs/Roll</th>
-                    <th>Mts/Roll</th>
-                    <th>Width (mm)</th>
-                    <th>Gauge</th>
-                    <th>QC Check</th>
-                    <th>Remark</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Adjustments</th>
-                    <th>Checked</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: q.extruderOutputRollCount }, (_, rollIdx) => (
-                    <tr key={`extruder-out-qc-${rollIdx}`}>
-                      <td>{rollIdx + 1}</td>
-                      {Array.from({ length: 11 }, (_, c) => (
-                        <td key={`extruder-out-qc-${rollIdx}-c-${c}`}>{'\u00a0'}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <table className="js-grid">
-        <tbody>
-          <tr>
             <td colSpan={6} className="js-manual-wrap">
               <table className="js-qc-checklist" role="presentation">
                 <tbody>
                   <tr>
                     <td colSpan={6} className="js-qc-title">
-                      Quality control checklist (non-food grade)
+                      Quality control checklist
                     </td>
                   </tr>
                   <tr>
@@ -875,11 +972,55 @@ function JobSheetPrintExtrusionQcPage(props: {
                       Details of changes/Variations/Concessions:
                     </td>
                   </tr>
-                  <tr>
-                    <td colSpan={6} className="js-qc-notes">
-                      {'\u00a0'}
-                    </td>
+                </tbody>
+              </table>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <table className="js-grid">
+        <tbody>
+          <tr>
+            <td className="js-sec" colSpan={6}>
+              Extruder output
+            </td>
+          </tr>
+          <tr>
+            <td colSpan={6} className="js-manual-wrap">
+              <table className="js-extruder-output-table js-extruder-output-table--pageable" role="presentation">
+                <thead>
+                  <tr className="js-print-extruder-output-repeat-hdr">
+                    <th colSpan={12} className="js-print-extruder-output-repeat-hdr-th">
+                      <div className={`js-title${perforated ? ' js-perf-hl' : ''} js-title--extruder-repeat`}>
+                        EXTRUSION QC — {header.jobCode}
+                      </div>
+                    </th>
                   </tr>
+                  <tr>
+                    <th>Roll No.</th>
+                    <th>Operator</th>
+                    <th>Kgs/Roll</th>
+                    <th>Mts/Roll</th>
+                    <th>Width (mm)</th>
+                    <th>Gauge</th>
+                    <th>QC Check</th>
+                    <th>Remark</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Adjustments</th>
+                    <th>Checked</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: q.extruderOutputRollCount }, (_, rollIdx) => (
+                    <tr key={`extruder-out-qc-${rollIdx}`}>
+                      <td>{rollIdx + 1}</td>
+                      {Array.from({ length: 11 }, (_, c) => (
+                        <td key={`extruder-out-qc-${rollIdx}-c-${c}`}>{'\u00a0'}</td>
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </td>
@@ -892,41 +1033,29 @@ function JobSheetPrintExtrusionQcPage(props: {
 
 function JobSheetPrintConversionInstructionsPage(props: {
   conv: JobSheetPrintConversionModel
-  meta: {
-    orderNumber: string
-    formDate: string
-    customer: string
-    productDescription: string
-    width: string
-    length: string
-    gauge: string
-  }
+  orderHeader: JobSheetPrintOrderHeaderModel
+  packingDimensionShorthand: string
+  /** When set (carton finish + conversion page), rendered at bottom of this sheet. */
+  shipping?: JobSheetPrintShippingModel | null
 }): ReactNode {
-  const { conv, meta } = props
+  const { conv, orderHeader, packingDimensionShorthand, shipping } = props
   const dash = '—'
   const v = (x: unknown) => {
     const t = String(x ?? '').trim()
     return t === '' ? dash : t
   }
+  const c = conv.conversion
+  const convHl = (on?: boolean) => (on ? 'js-print-qty-stock-hl' : undefined)
   return (
     <div className="js-print-conversion-sheet">
+      <JobSheetPrintOrderHeader
+        titleLine="CONVERSION DETAILS"
+        perforated={orderHeader.perforated}
+        header={orderHeader.header}
+        product={orderHeader.product}
+      />
+      <div className="js-conv-section-label">Conversion</div>
       <div className="js-conv-sheet">
-        <table className="js-conv-head" role="presentation">
-          <tbody>
-            <tr>
-              <td className="js-conv-title">CONVERSION SHEET - BAGS</td>
-              <td>Form date: {v(meta.formDate)}</td>
-            </tr>
-            <tr>
-              <td>Order number: {v(meta.orderNumber)}</td>
-              <td>Customer: {v(meta.customer)}</td>
-            </tr>
-            <tr>
-              <td colSpan={2}>Product: {v(meta.productDescription)}</td>
-            </tr>
-          </tbody>
-        </table>
-
         <div className="js-conv-main">
           <table className="js-conv-box" role="presentation">
             <tbody>
@@ -936,15 +1065,29 @@ function JobSheetPrintConversionInstructionsPage(props: {
                 </td>
               </tr>
               <tr>
-                <th>Width (mm)</th>
-                <td>{v(meta.width)}</td>
+                <td colSpan={2} className="js-conv-dimension">
+                  <div className="js-conv-dimension-label">Dimensions:</div>
+                  <div className="js-conv-dimension-value" >
+                  {packingDimensionShorthand.trim() !== '' ? packingDimensionShorthand : dash}
+                  </div>
+                </td>
               </tr>
-              <tr><th>Length</th><td>{v(meta.length)}</td></tr>
-              <tr><th>Gauge</th><td>{v(meta.gauge)}</td></tr>
-              <tr><th>Total cartons</th><td>{v(conv.carton?.totalCartons)}</td></tr>
-              <tr><th>Bags per carton</th><td>{v(conv.carton?.bagsPerCarton)}</td></tr>
-              <tr><th>Seal</th><td>{v(conv.conversion?.sealType)}</td></tr>
-              <tr><th>Carton size</th><td>{v(conv.conversion?.cartonSize)}</td></tr>
+              <tr>
+                <th>Total cartons</th>
+                <td>{v(conv.carton?.totalCartons)}</td>
+              </tr>
+              <tr>
+                <th>Bags per carton</th>
+                <td>{v(conv.carton?.bagsPerCarton)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightSeal)}>
+                <th>Seal</th>
+                <td>{v(c?.sealType)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightCartonSize)}>
+                <th>Carton size</th>
+                <td>{v(c?.cartonSize)}</td>
+              </tr>
             </tbody>
           </table>
 
@@ -955,17 +1098,50 @@ function JobSheetPrintConversionInstructionsPage(props: {
                   Conversion details
                 </td>
               </tr>
-              <tr><th>Pack Lay Flat</th><td>{v(conv.conversion?.packLayFlat)}</td></tr>
-              <tr><th>Tag Packs</th><td>{v(conv.conversion?.tagPacks)}</td></tr>
-              <tr><th>Tag Ctn</th><td>{v(conv.conversion?.tagCtn)}</td></tr>
-              <tr><th>Vent</th><td>{v(conv.conversion?.vent)}</td></tr>
-              <tr><th>Pack</th><td>{v(conv.conversion?.pack)}</td></tr>
-              <tr><th>Inner Pack</th><td>{v(conv.conversion?.innerPack)}</td></tr>
-              <tr><th>Loose</th><td>{v(conv.conversion?.loose)}</td></tr>
-              <tr><th>Qty to Stock</th><td>{v(conv.conversion?.qtyToStock)}</td></tr>
-              <tr><th>Send all bags</th><td>{v(conv.conversion?.sendAllBags)}</td></tr>
-              <tr><th>Handle</th><td>{v(conv.conversion?.handle)}</td></tr>
-              <tr><th>Lined Cartons</th><td>{v(conv.conversion?.linedCartons)}</td></tr>
+              <tr className={convHl(c?.highlightPackLayFlat)}>
+                <th>Pack Lay Flat</th>
+                <td>{v(c?.packLayFlat)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightTagPacks)}>
+                <th>Tag Packs</th>
+                <td>{v(c?.tagPacks)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightTagCtn)}>
+                <th>Tag Ctn</th>
+                <td>{v(c?.tagCtn)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightVent)}>
+                <th>Vent</th>
+                <td>{v(c?.vent)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightPack)}>
+                <th>Pack</th>
+                <td>{v(c?.pack)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightInnerPack)}>
+                <th>Inner Pack</th>
+                <td>{v(c?.innerPack)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightLoose)}>
+                <th>Loose</th>
+                <td>{v(c?.loose)}</td>
+              </tr>
+              <tr className={c?.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>
+                <th>Cartons to stock</th>
+                <td>{v(c?.qtyToStockDisplay)}</td>
+              </tr>
+              <tr>
+                <th>Cartons to ship</th>
+                <td>{v(c?.qtyToDeliverDisplay)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightHandle)}>
+                <th>Handle</th>
+                <td>{v(c?.handle)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightLinedCartons)}>
+                <th>Lined Cartons</th>
+                <td>{v(c?.linedCartons)}</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -995,20 +1171,70 @@ function JobSheetPrintConversionInstructionsPage(props: {
         <div className="js-conv-footer">
           <table className="js-conv-box" role="presentation">
             <tbody>
-              <tr><td className="js-conv-subtitle">Special comments for setup of bagging machine</td></tr>
-              <tr><td className="js-conv-comment">{'\u00a0'}</td></tr>
+              <tr>
+                <td className="js-conv-subtitle">Special comments for setup of bagging machine</td>
+              </tr>
+              <tr>
+                <td className="js-conv-comment">{'\u00a0'}</td>
+              </tr>
             </tbody>
           </table>
           <table className="js-conv-box js-conv-qc" role="presentation">
             <tbody>
-              <tr><td className="js-conv-subtitle" colSpan={6}>QC checks</td></tr>
-              <tr><th>Operator 1</th><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td></tr>
-              <tr><th>Operator 2</th><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td></tr>
-              <tr><th>Water test checks</th><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td><td>{'\u00a0'}</td></tr>
+              <tr>
+                <td className="js-conv-subtitle" colSpan={6}>
+                  QC checks
+                </td>
+              </tr>
+              <tr>
+                <th className="js-conv-qc-corner" scope="col">
+                  QC Checks
+                </th>
+                <th className="js-conv-qc-phase-h" scope="col">
+                  SET-UP
+                </th>
+                <th className="js-conv-qc-phase-h" scope="col">
+                  1/4
+                </th>
+                <th className="js-conv-qc-phase-h" scope="col">
+                  1/2
+                </th>
+                <th className="js-conv-qc-phase-h" scope="col">
+                  3/4
+                </th>
+                <th className="js-conv-qc-phase-h" scope="col">
+                  DONE
+                </th>
+              </tr>
+              <tr>
+                <th scope="row">Operator 1</th>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+              </tr>
+              <tr>
+                <th scope="row">Operator 2</th>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+              </tr>
+              <tr>
+                <th scope="row">Water test checks</th>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+                <td>{'\u00a0'}</td>
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
+      {shipping ? <JobSheetPrintShippingDetailsTable ship={shipping} /> : null}
     </div>
   )
 }
@@ -1056,10 +1282,10 @@ export function JobSheetPrintPage() {
     const productCode = js.product_code ?? ''
     const specTyped = spec as SpecPayload
     const computedSpecDescription = computeProductDescriptionFromSpec(specTyped)
-    const productDescription =
-      String(computedSpecDescription || '').trim() ||
-      String(js.customer_facing_description || '').trim() ||
-      String(js.product_description || '').trim()
+    const customerFacingDescriptionPlain = String(js.customer_facing_description || '').trim()
+    const customerFacingProductCodePlain = String(identity?.customer_code || '').trim()
+    const generatedDescriptionBase =
+      String(computedSpecDescription || '').trim() || String(js.product_description || '').trim()
     const notes = identity?.notes ?? run?.notes ?? packaging?.notes ?? spec?.notes ?? ''
     const qualityChecks = Array.isArray(quality?.flags)
       ? quality.flags
@@ -1068,6 +1294,8 @@ export function JobSheetPrintPage() {
         : []
 
     const productType = identity?.product_type ?? spec?.product_type ?? ''
+    const productTypeNorm = String(productType || '').trim().toLowerCase()
+    const runUpNotApplicable = ['bag', 'tube', 'sleeve', 'u-film', 'j-film', 'u_film', 'j_film', 'ufilm', 'jfilm'].includes(productTypeNorm)
     const finishMode = identity?.finish_mode ?? spec?.finish_mode ?? ''
     const colourLookupRows = Array.isArray(productSpecBundle.colours) ? productSpecBundle.colours : []
     const colourHexByCode = new Map<string, string>()
@@ -1111,10 +1339,16 @@ export function JobSheetPrintPage() {
     const lengthToleranceHighlight =
       (lengthTolMm != null && lengthTolMm > 0) || (lengthTolRaw != null && String(lengthTolRaw).trim() !== '')
 
+    const isJFilmPrint = productTypeNorm === 'j-film' || productTypeNorm === 'j_film' || productTypeNorm === 'jfilm'
     const widthSplitMm: number[] = []
-    if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
-    if (widthMm != null && widthMm > 0) widthSplitMm.push(Math.round(widthMm))
-    if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
+    if (isJFilmPrint) {
+      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
+      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
+    } else {
+      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
+      if (widthMm != null && widthMm > 0) widthSplitMm.push(Math.round(widthMm))
+      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
+    }
     const geometryNorm = String(geometryLabelRaw ?? '')
       .trim()
       .toLowerCase()
@@ -1148,6 +1382,22 @@ export function JobSheetPrintPage() {
       if (widthMm != null && widthMm > 0) return `${widthMm}`
       return widthShorthandWmm
     })()
+
+    /** Uteco / film-supplied line: product width only (no layflat expansion) for sheet, layflat, centrefold, U-Film / J-Film. */
+    const useProductWidthOnlyForFilm =
+      productTypeNorm === 'u-film' ||
+      productTypeNorm === 'u_film' ||
+      productTypeNorm === 'ufilm' ||
+      productTypeNorm === 'j-film' ||
+      productTypeNorm === 'j_film' ||
+      productTypeNorm === 'jfilm' ||
+      geometryNorm === 'sheet' ||
+      geometryNorm === 'flat' ||
+      geometryNorm === 'layflat' ||
+      geometryNorm === 'centrefold' ||
+      geometryNorm === 'centerfold'
+    const widthDisplayProductForFilm =
+      useProductWidthOnlyForFilm && widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}` : widthDisplay
 
     const lengthLine = s(
       String(dimensions?.length_units ?? '').trim().toLowerCase() === 'continuous'
@@ -1194,10 +1444,6 @@ export function JobSheetPrintPage() {
     const inlineSeal = derivedInlineSeal(String(productType || ''), String(finishMode || ''))
     const perforated = !!run?.inline_perforation
     const holePunched = !!run?.hole_punched
-    const productTypeNorm = String(productType || '')
-      .trim()
-      .toLowerCase()
-    const runUpNotApplicable = ['bag', 'tube', 'sleeve'].includes(productTypeNorm)
 
     const qv = n(js.quantity_value)
     const qtyUnitRaw = String(js.quantity_unit || '').trim().toLowerCase()
@@ -1303,6 +1549,32 @@ export function JobSheetPrintPage() {
         totalCartons: totalCtns != null ? String(totalCtns) : '',
       }
     }
+
+    const rollsPerPalletStored = n(packaging?.rolls_per_pallet)
+    const cartonsPerPalletStored = n(packaging?.cartons_per_pallet)
+    const perPalletConfigured =
+      finishNorm === 'cartons'
+        ? cartonsPerPalletStored != null && cartonsPerPalletStored > 0
+          ? cartonsPerPalletStored
+          : null
+        : rollsPerPalletStored != null && rollsPerPalletStored > 0
+          ? rollsPerPalletStored
+          : null
+    const orderUnitsForPallets =
+      finishNorm === 'cartons'
+        ? cartonConversion != null &&
+          cartonConversion.totalCartons.trim() !== '' &&
+          Number.isFinite(Number(cartonConversion.totalCartons)) &&
+          Number(cartonConversion.totalCartons) > 0
+          ? Math.round(Number(cartonConversion.totalCartons))
+          : null
+        : numRolls != null && Number.isFinite(numRolls) && numRolls > 0
+          ? Math.max(1, Math.round(numRolls))
+          : null
+    const palletsRequiredForOrder =
+      orderUnitsForPallets != null && orderUnitsForPallets > 0
+        ? palletsRequiredCeil(orderUnitsForPallets, perPalletConfigured)
+        : null
 
     const blendTypeRaw =
       formulation?.blend_type != null && String(formulation.blend_type).trim() !== ''
@@ -1509,12 +1781,33 @@ export function JobSheetPrintPage() {
         ? { derivedTotalM: derivedTotalM ?? 0, mPerRoll: derivedMPerRoll }
         : null
     const orderedQuantityLabel = jobSheetOrderQuantityLabel(js as Record<string, unknown>, spec as Record<string, unknown>)
-    const descriptionWithPackagingTail = jobSheetDescriptionWithPackagingTail(
-      String(productDescription ?? ''),
+    const generatedDescriptionWithPackagingTail = jobSheetDescriptionWithPackagingTail(
+      String(generatedDescriptionBase ?? ''),
       js as Record<string, unknown>,
       spec as Record<string, unknown>,
       geoSnapshotForTail,
     )
+    const customerFacingDescriptionWithPackagingTail =
+      customerFacingDescriptionPlain !== ''
+        ? jobSheetDescriptionWithPackagingTail(
+            customerFacingDescriptionPlain,
+            js as Record<string, unknown>,
+            spec as Record<string, unknown>,
+            geoSnapshotForTail,
+          )
+        : ''
+    const descriptionWithPackagingTail =
+      customerFacingDescriptionWithPackagingTail.trim() !== ''
+        ? customerFacingDescriptionWithPackagingTail
+        : generatedDescriptionWithPackagingTail
+
+    const generatedProductCode = s(computeProductCodeFromSpec(specTyped))
+    const customerFacingProductCode =
+      customerFacingProductCodePlain !== '' ? customerFacingProductCodePlain : undefined
+    const showGeneratedProductCodeWithCustomer =
+      customerFacingProductCode != null &&
+      generatedProductCode !== '' &&
+      generatedProductCode !== customerFacingProductCode
 
     const totalMNumForUteco =
       derivedTotalM != null && derivedTotalM > 0 && Number.isFinite(derivedTotalM)
@@ -1529,12 +1822,31 @@ export function JobSheetPrintPage() {
     const gaugeUteco =
       umForFilm != null && Number.isFinite(Number(umForFilm)) ? `${Math.round(Number(umForFilm))}um` : ''
     const geoFilmSuffix = geometryLabelForUtecoFilmSupplied(geometryLabelRaw, productType)
+    const baseLenMmForFilmLine = n(dimensions?.base_length_mm ?? spec?.base_length_mm)
+    const lenUnitsForFilm = String(dimensions?.length_units ?? spec?.length_units ?? '').trim().toLowerCase()
+
     let utecoFilmTypeSupplied = ''
-    if (widthDisplay && gaugeUteco) {
-      utecoFilmTypeSupplied = `${widthDisplay} x ${gaugeUteco}`
+    const widthForUtecoFilm = widthDisplayProductForFilm
+    if (useProductWidthOnlyForFilm) {
+      const wPart = widthForUtecoFilm.trim() !== '' ? `${widthForUtecoFilm.trim()}Wmm` : ''
+      const lPart =
+        lenUnitsForFilm !== 'continuous' &&
+        baseLenMmForFilmLine != null &&
+        baseLenMmForFilmLine > 0 &&
+        Number.isFinite(baseLenMmForFilmLine)
+          ? `${Math.round(baseLenMmForFilmLine)}Lmm`
+          : ''
+      const gPart = gaugeUteco
+      const core = [wPart, lPart, gPart].filter((p) => String(p ?? '').trim() !== '')
+      utecoFilmTypeSupplied = core.join(' x ')
+      if (geoFilmSuffix) {
+        utecoFilmTypeSupplied = utecoFilmTypeSupplied ? `${utecoFilmTypeSupplied}, ${geoFilmSuffix}` : geoFilmSuffix
+      }
+    } else if (widthForUtecoFilm && gaugeUteco) {
+      utecoFilmTypeSupplied = `${widthForUtecoFilm} x ${gaugeUteco}`
       if (geoFilmSuffix) utecoFilmTypeSupplied += `, ${geoFilmSuffix}`
-    } else if (widthDisplay) {
-      utecoFilmTypeSupplied = geoFilmSuffix ? `${widthDisplay}, ${geoFilmSuffix}` : widthDisplay
+    } else if (widthForUtecoFilm) {
+      utecoFilmTypeSupplied = geoFilmSuffix ? `${widthForUtecoFilm}, ${geoFilmSuffix}` : widthForUtecoFilm
     } else if (gaugeUteco) {
       utecoFilmTypeSupplied = geoFilmSuffix ? `${gaugeUteco}, ${geoFilmSuffix}` : gaugeUteco
     } else if (geoFilmSuffix) {
@@ -1565,7 +1877,10 @@ export function JobSheetPrintPage() {
 
     const utecoPrinting = {
       customer: s(customer),
-      productDescription: descriptionWithPackagingTail,
+      productDescription:
+        customerFacingDescriptionWithPackagingTail.trim() !== ''
+          ? customerFacingDescriptionWithPackagingTail
+          : generatedDescriptionWithPackagingTail,
       printDescription: printingLayout.printDescription,
       jobNumber: s(jobCode),
       orderDate: s(orderDate),
@@ -1588,13 +1903,46 @@ export function JobSheetPrintPage() {
     const convRaw = (run?.conversion || {}) as Record<string, unknown>
     const ventRows = n(convRaw.vent_rows)
     const ventHoles = n(convRaw.vent_holes_per_row)
-    const ventTotal =
+    const ventLinePrint =
       ventRows != null && ventRows > 0 && ventHoles != null && ventHoles > 0
-        ? Math.round(ventRows) * Math.round(ventHoles)
-        : 0
+        ? `${Math.round(ventRows)} rows x ${Math.round(ventHoles)} holes`
+        : ''
+    const sealTypePrint = formatSealType(run?.seal_type ?? printing?.seal_type ?? 'end') || 'End'
+    const cartonSizePrint =
+      convRaw.carton_size != null && String(convRaw.carton_size).trim() !== '' ? String(convRaw.carton_size) : ''
+    const packSizePrint =
+      convRaw.pack_size != null && String(convRaw.pack_size).trim() !== '' ? String(convRaw.pack_size) : ''
+    const highlightConversionSeal = sealTypePrint !== 'End'
+    const highlightConversionCartonSize = cartonSizePrint.trim() !== ''
+    const highlightConversionPackLayFlat = !!convRaw.pack_lay_flat
+    const highlightConversionTagPacks = !!convRaw.tag_packs
+    const highlightConversionTagCtn = !!convRaw.tag_ctn
+    const highlightConversionVent = ventLinePrint.trim() !== ''
+    const highlightConversionPack = packSizePrint.trim() !== ''
+    const highlightConversionInnerPack = !!convRaw.inner_pack
+    const highlightConversionLoose = !!convRaw.loose
+    const highlightConversionHandle = !!convRaw.handle
+    const highlightConversionLinedCartons = !!convRaw.lined_cartons
+
+    const thicknessUmForConv = n(dimensions?.thickness_um ?? spec?.thickness_um)
+    const baseLenMmForConv = n(dimensions?.base_length_mm ?? spec?.base_length_mm)
+    const lengthUnitsRawForConv = String(dimensions?.length_units ?? spec?.length_units ?? '').trim()
+    const packingDimensionShorthandForConversion = formatConversionPackingDimensionShorthand({
+      widthDisplay,
+      baseLengthMm: baseLenMmForConv,
+      lengthUnitsRaw: lengthUnitsRawForConv,
+      thicknessUm: thicknessUmForConv,
+      gaugeLineFallback: gaugeLine,
+    })
+
+    const qtyStockDeliverPrint = computeQtyStockDeliverForPrint({
+      finishNorm,
+      totalUnits: orderUnitsForPallets,
+      qtyToStockRaw: convRaw.qty_to_stock,
+    })
 
     return {
-      titleLine: `JOB SHEET ${s(jobCode, '') ? `— ${s(jobCode, '')}` : ''}`.trim(),
+      titleLine: "JOB SHEET",
       perforated,
       header: {
         customer: s(customer),
@@ -1606,7 +1954,16 @@ export function JobSheetPrintPage() {
       },
       product: {
         productCode: s(productCode),
-        productDescription: s(productDescription),
+        ...(customerFacingProductCode != null
+          ? {
+              customerFacingProductCode,
+              ...(showGeneratedProductCodeWithCustomer ? { generatedProductCode } : {}),
+            }
+          : {}),
+        generatedDescriptionWithPackagingTail,
+        ...(customerFacingDescriptionWithPackagingTail.trim() !== ''
+          ? { customerFacingDescriptionWithPackagingTail }
+          : {}),
         descriptionWithPackagingTail,
         orderedQuantityLabel,
         notes: s(notes),
@@ -1768,30 +2125,47 @@ export function JobSheetPrintPage() {
       printingLayout,
       shipping: {
         palletType: s(packaging?.pallet_type ?? spec?.pallet_type),
+        finishModeKey: finishNorm,
+        rollsPerPallet: rollsPerPalletStored != null && rollsPerPalletStored > 0 ? String(rollsPerPalletStored) : '',
+        cartonsPerPallet: cartonsPerPalletStored != null && cartonsPerPalletStored > 0 ? String(cartonsPerPalletStored) : '',
+        orderUnitsForPallets: orderUnitsForPallets != null ? `${orderUnitsForPallets} ${finishNorm === 'cartons' ? ' Cartons' : ' Rolls'}` : '',
+        orderUnitsLabel: finishNorm === 'cartons' ? 'Order cartons' : 'Order rolls',
+        palletsRequired: palletsRequiredForOrder != null ? String(palletsRequiredForOrder) : '',
+        palletChecklistCount: palletsRequiredForOrder != null ? palletsRequiredForOrder : 0,
+        qtyToStockDisplay: qtyStockDeliverPrint.stockText,
+        qtyToDeliverDisplay: qtyStockDeliverPrint.deliverText,
+        highlightQtyToStock: qtyStockDeliverPrint.highlightStock,
       },
       conversionInstructions: {
         carton: cartonConversion,
         conversion:
           finishNorm === 'cartons'
             ? {
-                sealType: formatSealType(run?.seal_type ?? printing?.seal_type ?? 'end') || 'End',
-                cartonSize:
-                  convRaw.carton_size != null && String(convRaw.carton_size).trim() !== '' ? String(convRaw.carton_size) : '',
+                sealType: sealTypePrint,
+                cartonSize: cartonSizePrint,
                 packLayFlat: yn(convRaw.pack_lay_flat),
                 tagPacks: yn(convRaw.tag_packs),
                 tagCtn: yn(convRaw.tag_ctn),
-                vent:
-                  ventRows != null && ventRows > 0 && ventHoles != null && ventHoles > 0
-                    ? `${Math.round(ventRows)} x ${Math.round(ventHoles)} -> ${ventTotal}`
-                    : '',
-                pack: convRaw.pack_size != null && String(convRaw.pack_size).trim() !== '' ? String(convRaw.pack_size) : '',
+                vent: ventLinePrint,
+                pack: packSizePrint,
                 innerPack: yn(convRaw.inner_pack),
                 loose: yn(convRaw.loose),
-                qtyToStock:
-                  convRaw.qty_to_stock != null && String(convRaw.qty_to_stock).trim() !== '' ? String(convRaw.qty_to_stock) : '',
-                sendAllBags: yn(convRaw.send_all_bags),
+                qtyToStockDisplay: qtyStockDeliverPrint.stockText,
+                qtyToDeliverDisplay: qtyStockDeliverPrint.deliverText,
+                highlightQtyToStock: qtyStockDeliverPrint.highlightStock,
                 handle: yn(convRaw.handle),
                 linedCartons: yn(convRaw.lined_cartons),
+                highlightSeal: highlightConversionSeal,
+                highlightCartonSize: highlightConversionCartonSize,
+                highlightPackLayFlat: highlightConversionPackLayFlat,
+                highlightTagPacks: highlightConversionTagPacks,
+                highlightTagCtn: highlightConversionTagCtn,
+                highlightVent: highlightConversionVent,
+                highlightPack: highlightConversionPack,
+                highlightInnerPack: highlightConversionInnerPack,
+                highlightLoose: highlightConversionLoose,
+                highlightHandle: highlightConversionHandle,
+                highlightLinedCartons: highlightConversionLinedCartons,
               }
             : null,
       },
@@ -1800,6 +2174,7 @@ export function JobSheetPrintPage() {
         dieSizeMm: extruderDieSizeMm,
       },
       utecoPrinting,
+      packingDimensionShorthandForConversion,
     }
   }, [data, quoteRatebook.data, productSpecBundle.colours, productSpecBundle.resinBlends, productSpecBundle.resins])
 
@@ -1829,6 +2204,8 @@ export function JobSheetPrintPage() {
   const extrusionSetup = model.extrusionSetup
   const conv = model.conversionInstructions
   const ship = model.shipping
+  const hasConversionPrintPage = Boolean(conv.conversion || conv.carton)
+  const shippingOnFirstPage = ship.finishModeKey !== 'cartons' || !hasConversionPrintPage
   const p = model.printingLayout
   const printMethodNorm = String(p.method || '').trim().toLowerCase()
   const isUtecoPrinted = Boolean(p.printed && printMethodNorm === 'uteco')
@@ -1843,7 +2220,7 @@ export function JobSheetPrintPage() {
   return (
     <>
       <style>{`
-        .js-print-root, .js-print-root .js-sec, .js-print-root .js-sub, .js-print-root .js-tol, .js-print-root .js-pink, .js-print-root .js-blue, .js-print-root .js-resin-mix-hl, .js-print-root .js-qc-title, .js-print-root .js-print-printing-form-title {
+        .js-print-root, .js-print-root .js-sec, .js-print-root .js-sub, .js-print-root .js-tol, .js-print-root .js-pink, .js-print-root .js-blue, .js-print-root .js-resin-mix-hl, .js-print-root .js-qc-title, .js-print-root .js-print-printing-form-title, .js-print-root tr.js-print-qty-stock-hl {
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
           color-adjust: exact;
@@ -1859,7 +2236,7 @@ export function JobSheetPrintPage() {
             max-width: none !important;
             width: 100% !important;
             margin: 0 !important;
-            padding: 0 !important;
+            padding: 16px 18px !important;
             font-size: 11pt !important;
             line-height: 1.25;
             box-shadow: none !important;
@@ -1872,7 +2249,8 @@ export function JobSheetPrintPage() {
           width: 210mm;
           max-width: calc(100vw - 24px);
           margin: 0 auto 16px;
-          padding: 8mm 8mm 6mm;
+          --js-print-page-padding: 16px 18px;
+          padding: var(--js-print-page-padding);
           font-size: 11px;
           line-height: 1.35;
           font-weight: 600;
@@ -1882,7 +2260,7 @@ export function JobSheetPrintPage() {
           --js-print-fs-body: 11px;
           --js-print-fs-label: 10px;
           --js-print-fs-title: 15px;
-          --js-print-fs-dim-primary: 15px;
+          --js-print-fs-dim-primary: 14px;
           --js-print-fw-label: 700;
           --js-print-fw-value: 700;
         }
@@ -1943,6 +2321,14 @@ export function JobSheetPrintPage() {
         .js-product-code-val {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           font-weight: 700;
+        }
+        .js-product-code-val.js-order-header-primary {
+          font-weight: 800;
+        }
+        .js-product-code-val.js-order-header-secondary {
+          font-weight: 600;
+          font-size: var(--js-print-fs-label);
+          color: #555;
         }
         .js-print-val { font-weight: 700; font-size: var(--js-print-fs-body); }
         .js-sec {
@@ -2010,8 +2396,7 @@ export function JobSheetPrintPage() {
         }
         .js-dim-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0 0 8px; }
         .js-dim-grid th.js-dim-h {
-          border: 2px solid #000;
-          border-bottom: none;
+          border-top: 2px solid #000;
           background: #d9d9d9;
           font-weight: 700;
           text-align: center;
@@ -2019,19 +2404,40 @@ export function JobSheetPrintPage() {
           font-size: 10px;
           letter-spacing: 0.02em;
         }
-        .js-dim-grid td.js-dim-col {
-          border: 2px solid #000;
-          border-top: none;
+        .js-dim-grid th.js-dim-h:first-child {
+          border-left: 2px solid #000;
+        }
+        .js-dim-grid th.js-dim-h:last-child {
+          border-right: 2px solid #000;
+        }
+        .js-dim-grid tr.js-dim-row-primary td.js-dim-col,
+        .js-dim-grid tr.js-dim-row-secondary td.js-dim-col {
+          border-left: 1px solid #000;
+          border-right: 1px solid #000;
+          background: #e8e8e8;
           padding: 0;
           vertical-align: top;
-          width: 25%;
+          width: 33.33%;
         }
-        .js-dim-stack { display: flex; flex-direction: column; min-height: 100%; }
+        .js-dim-grid tr.js-dim-row-primary td.js-dim-col {
+          // border: none;
+        }
+        .js-dim-grid tr.js-dim-row-secondary td.js-dim-col {
+          border-top: 1px solid #000;
+          border-bottom: 2px solid #000;
+        }
+        .js-dim-grid tr.js-dim-row-primary td.js-dim-col:first-child,
+        .js-dim-grid tr.js-dim-row-secondary td.js-dim-col:first-child {
+          border-left: 2px solid #000;
+        }
+        .js-dim-grid tr.js-dim-row-primary td.js-dim-col:last-child,
+        .js-dim-grid tr.js-dim-row-secondary td.js-dim-col:last-child {
+          border-right: 2px solid #000;
+        }
         .js-dim-primary {
           background: #e8e8e8;
           padding: 8px 10px;
           font-weight: 700;
-          flex: 1;
           text-align: center;
           font-size: var(--js-print-fs-dim-primary);
           line-height: 1.2;
@@ -2055,7 +2461,6 @@ export function JobSheetPrintPage() {
           padding: 6px 8px;
           font-weight: 700;
           font-size: var(--js-print-fs-body);
-          border-top: 1px solid #000;
           white-space: normal;
         }
         .js-print-flag-grid {
@@ -2295,8 +2700,33 @@ export function JobSheetPrintPage() {
           font-size: 12px;
           line-height: 1.25;
         }
+        .js-order-header-value-stack {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 2px;
+          min-width: 0;
+        }
+        .js-order-header-primary {
+          font-weight: 800;
+        }
+        .js-order-header-secondary {
+          font-weight: 600;
+          font-size: var(--js-print-fs-label);
+          color: #555;
+          line-height: 1.25;
+        }
+        .js-order-header-desc-secondary {
+          font-weight: 600;
+          font-size: var(--js-print-fs-label);
+          color: #444;
+          line-height: 1.3;
+        }
         .js-compact-block {
-          margin-top: 8px;
+          margin-top: 6px;
+          gap: 6px;
+          display: flex;
+          flex-direction: column;
         }
         .js-quality-list {
           margin: 4px 0 0 18px;
@@ -2348,10 +2778,26 @@ export function JobSheetPrintPage() {
         .js-extruder-output-table th:first-child {
           width: 5%;
         }
+        .js-extruder-output-table--pageable thead {
+          display: table-header-group;
+        }
+        .js-print-extruder-output-repeat-hdr-th {
+          padding: 0 !important;
+          vertical-align: middle;
+          text-align: center;
+          background: #fff !important;
+        }
+        .js-title.js-title--extruder-repeat {
+          font-size: 10px;
+          line-height: 1.25;
+          padding: 5px 6px;
+          margin: 0;
+          border: 1px solid #000;
+          letter-spacing: 0.04em;
+        }
         .js-qc-checklist {
           width: 100%;
           border-collapse: collapse;
-          table-layout: fixed;
           font-size: var(--js-print-fs-body);
         }
         .js-qc-checklist th,
@@ -2362,18 +2808,16 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
         }
         .js-qc-checklist td.js-qc-title {
-          text-align: center;
           font-weight: 800;
           font-size: var(--js-print-fs-body);
           letter-spacing: 0.03em;
           text-transform: uppercase;
-          padding: 8px 6px;
           background: #d9d9d9;
         }
         .js-qc-checklist .js-qc-check-for {
           text-align: left;
           font-weight: 600;
-          width: 56%;
+          width: 35%;
         }
         .js-qc-checklist .js-qc-wi {
           width: 12%;
@@ -2385,14 +2829,10 @@ export function JobSheetPrintPage() {
           text-align: center;
         }
         .js-qc-checklist .js-qc-details-label {
-          font-weight: 700;
+          font-weight: 600;
           text-align: left;
-        }
-        .js-qc-checklist .js-qc-notes {
-          min-height: 6.5rem;
-          vertical-align: top;
-          text-align: left;
-          font-weight: 400;
+          height: 46px;
+          vertical-align: top
         }
         .js-print-page-break {
           page-break-before: always;
@@ -2402,6 +2842,7 @@ export function JobSheetPrintPage() {
           font-size: 12px;
           line-height: 1.4;
           margin-bottom: 6px;
+          padding: 0;
           box-sizing: border-box;
         }
         .js-print-uteco-card {
@@ -2439,7 +2880,7 @@ export function JobSheetPrintPage() {
           font-size: 13px;
           color: #111;
           min-height: 1.25em;
-          padding: 4px 2px 6px;
+          padding: 2px 2px 2px;
           border-bottom: 1px solid #111;
         }
         .js-print-uteco-meta-grid {
@@ -2541,11 +2982,24 @@ export function JobSheetPrintPage() {
           text-align: center;
         }
         .js-print-conversion-sheet {
-          padding: 16px 18px;
+          padding: 0;
           box-sizing: border-box;
         }
+        .js-print-conversion-sheet .js-title {
+          margin-bottom: 4px;
+          font-size: var(--js-print-fs-title);
+        }
+        .js-print-conversion-sheet .js-compact {
+          margin-bottom: 10px;
+        }
+        .js-conv-section-label {
+          font-size: 13px;
+          font-weight: 800;
+          margin: 0 0 8px;
+          letter-spacing: 0.02em;
+        }
         .js-print-extrusion-qc-sheet {
-          padding: 6px 0 0;
+          padding: 0;
           box-sizing: border-box;
           font-size: var(--js-print-fs-body);
           line-height: 1.35;
@@ -2578,7 +3032,6 @@ export function JobSheetPrintPage() {
         .js-conv-ops {
           width: 100%;
           border-collapse: collapse;
-          table-layout: fixed;
         }
         .js-conv-head td,
         .js-conv-box td,
@@ -2617,13 +3070,46 @@ export function JobSheetPrintPage() {
         }
         .js-conv-footer {
           display: grid;
-          grid-template-columns: 68% 32%;
+          grid-template-columns: 60% 40%;
         }
         .js-conv-comment { height: 70px; }
         .js-conv-qc th {
-          width: 40%;
           text-align: left;
           font-weight: 700;
+        }
+        .js-conv-dimension {
+          text-align: center;
+          font-size: 9px;
+          vertical-align: middle;
+        }
+        .js-conv-dimension-label {
+          font-weight: 700;
+          text-align: center;
+          padding: 3px 6px;
+          font-size: 10px;
+        }
+        .js-conv-dimension-value {
+          padding: 8px 10px;
+          font-weight: 700;
+          text-align: center;
+          font-size: var(--js-print-fs-dim-primary);
+        }
+        .js-conv-qc th.js-conv-qc-corner {
+          width: 34%;
+          min-width: 4.5rem;
+          font-size: 9px;
+          vertical-align: middle;
+        }
+        .js-conv-qc th.js-conv-qc-phase-h {
+          width: 13.2%;
+          text-align: center;
+          font-size: 9px;
+          letter-spacing: 0.02em;
+          vertical-align: middle;
+        }
+        .js-conv-qc tbody > tr:not(:first-child) > th:first-child {
+          width: 34%;
+          text-align: left;
         }
         .js-conv-qc td {
           text-align: center;
@@ -2698,10 +3184,11 @@ export function JobSheetPrintPage() {
         }
         .js-print-printing-form-title {
           margin: -10px -12px 10px -12px;
-          padding: 8px 12px;
+          padding: 5px 12px;
+          border-bottom: 2px solid #000;
           background: #d9d9d9;
           font-weight: 800;
-          font-size: 11px;
+          font-size: var(--js-print-fs-body);
           letter-spacing: 0.04em;
           text-transform: uppercase;
         }
@@ -2746,6 +3233,42 @@ export function JobSheetPrintPage() {
         .js-print-ink-form-row:last-child { margin-bottom: 0; }
         .js-print-ink-form-row .js-print-form-field { margin-bottom: 8px; }
         .js-print-ink-form-row .js-print-form-field:last-child { margin-bottom: 0; }
+        .js-ship-pallet-checklist-cell {
+          vertical-align: top;
+        }
+        .js-ship-pallet-checklist-label {
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+        .js-ship-pallet-checklist {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px 8px;
+          align-items: stretch;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .js-ship-pallet-tick {
+          border: 1px solid #000;
+          min-width: 2.1rem;
+          text-align: center;
+          padding: 3px 5px 4px;
+          font-size: 10px;
+          font-weight: 800;
+          line-height: 1.2;
+          box-sizing: border-box;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+        tr.js-print-qty-stock-hl > th,
+        tr.js-print-qty-stock-hl > td {
+          font-weight: 800;
+          background: #fff59d;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        .js-print-table-shipping {
+          margin-top: 14px;
+        }
       `}</style>
 
       <div className="js-print-root">
@@ -2795,29 +3318,42 @@ export function JobSheetPrintPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr>
+                      <tr className="js-dim-row-primary">
                         <td className="js-dim-col">
-                          <div className="js-dim-stack">
-                            <div className="js-dim-primary"><span>{e.widthPrimarySingle ?? '-'}</span><span className={`js-dim-primary-unit`}>mm</span></div>
-                            <div className={`js-dim-secondary${e.widthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
-                              {e.widthToleranceDisplay}
-                            </div>
+                          <div className="js-dim-primary">
+                            <span>{e.widthPrimarySingle ?? '-'}</span>
+                            <span className="js-dim-primary-unit">mm</span>
                           </div>
                         </td>
                         <td className="js-dim-col">
-                          <div className="js-dim-stack">
-                            <div className={`js-dim-primary${e.lengthUnits === 'M' ? ' js-dim-primary-hl' : ''}`}><span>{e.lengthLine || '-'}</span><span className={`js-dim-primary-unit ${e.lengthUnits === 'M' ? 'js-dim-primary-unit-m' : ''}`}>{e.lengthUnits}</span></div>
-                            <div className={`js-dim-secondary${e.lengthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
-                              {e.lengthToleranceDisplay}
-                            </div>
+                          <div className={`js-dim-primary${e.lengthUnits === 'M' ? ' js-dim-primary-hl' : ''}`}>
+                            <span>{e.lengthLine || '-'}</span>
+                            <span className={`js-dim-primary-unit ${e.lengthUnits === 'M' ? 'js-dim-primary-unit-m' : ''}`}>
+                              {e.lengthUnits}
+                            </span>
                           </div>
                         </td>
                         <td className="js-dim-col">
-                          <div className="js-dim-stack">
-                            <div className="js-dim-primary"><span>{e.gaugeLine || '-'}</span><span className="js-dim-primary-unit">µm</span></div>
-                            <div className={`js-dim-secondary${e.gaugeTrimExplicit ? ' js-dim-secondary-hl' : ''}`}>
-                              {e.gaugeTrimDisplay || '-'}
-                            </div>
+                          <div className="js-dim-primary">
+                            <span>{e.gaugeLine || '-'}</span>
+                            <span className="js-dim-primary-unit">µm</span>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr className="js-dim-row-secondary">
+                        <td className="js-dim-col">
+                          <div className={`js-dim-secondary${e.widthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
+                            {e.widthToleranceDisplay}
+                          </div>
+                        </td>
+                        <td className="js-dim-col">
+                          <div className={`js-dim-secondary${e.lengthToleranceHighlight ? ' js-dim-secondary-hl' : ''}`}>
+                            {e.lengthToleranceDisplay}
+                          </div>
+                        </td>
+                        <td className="js-dim-col">
+                          <div className={`js-dim-secondary${e.gaugeTrimExplicit ? ' js-dim-secondary-hl' : ''}`}>
+                            {e.gaugeTrimDisplay || '-'}
                           </div>
                         </td>
                       </tr>
@@ -2974,6 +3510,8 @@ export function JobSheetPrintPage() {
           <tbody>{orderQuantitiesRows}</tbody>
         </table>
 
+        {shippingOnFirstPage ? <JobSheetPrintShippingDetailsTable ship={ship} /> : null}
+
         <div className="js-print-page-break">
           <JobSheetPrintExtrusionQcPage
             perforated={model.perforated}
@@ -3003,28 +3541,18 @@ export function JobSheetPrintPage() {
           <div className="js-print-page-break">
             <JobSheetPrintConversionInstructionsPage
               conv={conv}
-              meta={{
-                orderNumber: model.header.jobCode,
-                formDate: model.header.orderDate,
-                customer: model.header.customer,
-                productDescription: model.product.productDescription,
-                width: e.widthPrimarySingle ?? '',
-                length: e.lengthLine,
-                gauge: e.gaugeLine,
+              orderHeader={{
+                titleLine: model.titleLine,
+                perforated: model.perforated,
+                header: model.header,
+                product: model.product,
               }}
+              packingDimensionShorthand={model.packingDimensionShorthandForConversion}
+              shipping={ship.finishModeKey === 'cartons' && hasConversionPrintPage ? ship : null}
             />
           </div>
         ) : null}
 
-        <table className="js-grid">
-          <tbody>
-            <tr><td className="js-sec" colSpan={2}>Shipping details</td></tr>
-            <tr>
-              <th style={{ width: '32%' }}>Pallet type</th>
-              <td>{ship.palletType}</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </>
   )

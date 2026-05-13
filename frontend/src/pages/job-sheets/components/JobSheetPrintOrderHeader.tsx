@@ -11,7 +11,9 @@ export function JobSheetPrintOrderHeader(props: JobSheetPrintOrderHeaderModel): 
   const { titleLine, perforated, header, product, printingFooter } = props
   return (
     <>
-      <div className={`js-title${perforated ? ' js-perf-hl' : ''}`}>{titleLine}</div>
+      <div className={`js-title${perforated ? ' js-perf-hl' : ''}`}>
+        {titleLine} — {header.jobCode}
+      </div>
       <JobSheetPrintOrderHeaderFields variant="print" header={header} product={product} printingFooter={printingFooter} />
     </>
   )

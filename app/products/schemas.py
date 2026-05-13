@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Literal, Dict, Any
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, root_validator, validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, root_validator, validator
 
 
 class ProductType(str, Enum):
@@ -13,6 +13,7 @@ class ProductType(str, Enum):
     SHEET = "Sheet"
     CENTERFOLD = "Centerfold"
     U_FILM = "U-Film"
+    J_FILM = "J-Film"
 
 
 class FinishMode(str, Enum):
@@ -70,6 +71,8 @@ class IdentitySpec(BaseModel):
     notes: Optional[str] = None
     # Customer-facing product code override (UI label); persisted on the version spec.
     customer_code: Optional[str] = Field(None, max_length=64)
+    # Roll weight billing for extrusion (job sheet UI); optional for older stored specs.
+    roll_weight_billing: Optional[Literal["core_included", "core_off", "core_half_off"]] = "core_off"
 
 
 class DimensionsSpec(BaseModel):
@@ -79,7 +82,8 @@ class DimensionsSpec(BaseModel):
     thickness_um: int = Field(..., gt=0)
     geometry: Geometry
     gusset_mm: Optional[int] = Field(None, gt=0)
-    # For U-Film, left/right widths can differ. Middle width uses base_width_mm.
+    # For U-Film, left/right widths can differ; middle width uses base_width_mm.
+    # For J-Film, only left/right widths apply (no middle); base_width_mm is the total layflat (left+right).
     ufilm_left_width_mm: Optional[int] = Field(None, gt=0)
     ufilm_right_width_mm: Optional[int] = Field(None, gt=0)
     length_units: Optional[Literal["mm", "M", "Continuous"]] = "mm"
@@ -162,6 +166,36 @@ class QualityExpectationsSpec(BaseModel):
     known_issues: Optional[str] = None
 
 
+_DEPRECATED_CONVERSION_FLAG_KEYS = frozenset({"send_all_bags", "sendAllBags"})
+
+
+class ConversionSpec(BaseModel):
+    """Conversion / finishing options stored on job sheet specs under ``run_requirements.conversion``."""
+
+    model_config = ConfigDict(extra="allow")
+
+    carton_size: Optional[str] = None
+    pack_lay_flat: Optional[bool] = False
+    tag_packs: Optional[bool] = False
+    tag_ctn: Optional[bool] = False
+    vent_rows: Optional[int] = Field(None, ge=0)
+    vent_holes_per_row: Optional[int] = Field(None, ge=0)
+    pack_size: Optional[int] = Field(None, ge=0)
+    inner_pack: Optional[bool] = False
+    loose: Optional[bool] = False
+    qty_to_stock: Optional[int] = Field(None, ge=0)
+    handle: Optional[bool] = False
+    lined_cartons: Optional[bool] = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_deprecated_conversion_flags(cls, data: Any) -> Any:
+        """Remove retired UI flags so they are not persisted on the product version spec."""
+        if not isinstance(data, dict):
+            return data
+        return {k: v for k, v in data.items() if k not in _DEPRECATED_CONVERSION_FLAG_KEYS}
+
+
 class RunRequirementsSpec(BaseModel):
     preferred_extruders: List[str] = []
     preferred_printer: Optional[str] = None
@@ -173,6 +207,10 @@ class RunRequirementsSpec(BaseModel):
     hole_punched: Optional[bool] = False
     inline_seal: Optional[bool] = False
     notes: Optional[str] = None
+    # Seal for conversion (job sheet); distinct from ``printing.seal_type`` when migrating.
+    seal_type: Optional[Literal["end", "side", "none"]] = None
+    shrink: Optional[bool] = False
+    conversion: Optional[ConversionSpec] = None
 
 
 class PackagingSpec(BaseModel):
@@ -181,6 +219,9 @@ class PackagingSpec(BaseModel):
     core_policy: Literal["Include", "Half", "Exclude"]
     bags_per_carton: Optional[int] = Field(None, gt=0)
     pallet_type: Literal["Chep", "Plain", "Resin", "None"]
+    # User-entered packing: used with order quantity on job sheet print to derive pallet count / checklist.
+    rolls_per_pallet: Optional[int] = Field(None, gt=0)
+    cartons_per_pallet: Optional[int] = Field(None, gt=0)
     notes: Optional[str] = None
 
     @root_validator(skip_on_failure=True)

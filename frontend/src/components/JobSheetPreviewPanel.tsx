@@ -1,5 +1,6 @@
 import { Box, Paper, Typography } from '@mui/material'
 import type { JobSheetPreviewQuoteSummary } from '../utils/jobSheetPreviewQuoteSummary'
+import type { JobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { JobSheetPrintOrderHeaderFields } from '../pages/job-sheets/components/JobSheetPrintOrderHeaderFields'
 import type { JobSheetPrintOrderHeaderModel } from '../pages/job-sheets/components/jobSheetPrintOrderHeaderModel'
 
@@ -68,6 +69,10 @@ export function JobSheetPreviewPanel(props: {
   qualityFlagIds?: string[] | null
   /** Live order qty + quote-calculator estimates (same basis as Quotes page). */
   quoteSummary?: JobSheetPreviewQuoteSummary | null
+  /** Pallet count for ship quantity (job sheet packaging / volume estimate). */
+  palletLoadPlanning?: JobSheetPalletLoadPlanning | null
+  /** Lowercase unit label for display (`rolls` / `cartons`). */
+  palletUnitLabel?: 'rolls' | 'cartons'
 }) {
   const {
     productCode,
@@ -84,12 +89,14 @@ export function JobSheetPreviewPanel(props: {
     notes = null,
     qualityFlagIds = null,
     quoteSummary = null,
+    palletLoadPlanning = null,
+    palletUnitLabel = 'rolls',
   } = props
   const user = String(customerFacingDescription || '').trim()
   const myob = String(myobImportLineDescription || '').trim()
   const specDesc = String(description || '').trim()
   const effective = (user || myob || specDesc).trim()
-  const showSpecSecondary = Boolean(specDesc && specDesc !== effective)
+  const showSpecSecondary = Boolean(specDesc && specDesc !== effective && !user)
   const qcLabels = (Array.isArray(qualityFlagIds) ? qualityFlagIds : [])
     .map((id) => QUALITY_FLAG_LABEL[String(id)] || String(id))
     .filter(Boolean)
@@ -114,9 +121,20 @@ export function JobSheetPreviewPanel(props: {
       }
     : emptyHeader
 
+  const hasUserDesc = user !== ''
+  const generatedDescriptionWithPackagingTail = hasUserDesc
+    ? (specDesc || myob || '—').trim() || '—'
+    : (effective || '—')
+  const customerFacingDescriptionWithPackagingTail = hasUserDesc ? user : undefined
+  const descriptionWithPackagingTail = hasUserDesc ? user : effective || '—'
+
   const product: JobSheetPrintOrderHeaderModel['product'] = {
     productCode: productCode || '—',
-    descriptionWithPackagingTail: effective || '—',
+    generatedDescriptionWithPackagingTail,
+    ...(customerFacingDescriptionWithPackagingTail
+      ? { customerFacingDescriptionWithPackagingTail }
+      : {}),
+    descriptionWithPackagingTail,
     orderedQuantityLabel:
       showJobFields && quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
         ? String(quoteSummary.orderQuantityLabel).trim()
@@ -171,6 +189,24 @@ export function JobSheetPreviewPanel(props: {
                 value={
                   quoteSummary.estimatedWasteFactorPct ? `${quoteSummary.estimatedWasteFactorPct} of extruded resin` : ''
                 }
+              />
+            </Box>
+          </>
+        ) : null}
+
+        {showJobFields && palletLoadPlanning != null ? (
+          <>
+            <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1, mt: 0.25 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.02 }}>
+              Shipping (pallets)
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, pl: 0.25 }}>
+              <PreviewInlineRow label="Pallets:" value={String(palletLoadPlanning.palletsRequired)} />
+              <PreviewInlineRow
+                label={`${palletUnitLabel === 'cartons' ? 'Cartons' : 'Rolls'} per pallet:`}
+                value={`${palletLoadPlanning.unitsPerPallet}${
+                  palletLoadPlanning.perPalletSource === 'volume_estimate' ? ' (volume est.)' : ''
+                }`}
               />
             </Box>
           </>

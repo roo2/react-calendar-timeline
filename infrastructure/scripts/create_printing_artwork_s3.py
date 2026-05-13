@@ -6,8 +6,8 @@ Example:
   python create_printing_artwork_s3.py \\
     --bucket-name my-unique-bucket \\
     --region ap-southeast-2 \\
-    --prefix printing-artwork/ \\
-    --cors-origin https://localhost:5173 \\
+    --prefix printing/ \\
+    --cors-origins http://localhost:5173 \\
     --create-access-key
 """
 
@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--region", default="ap-southeast-2", help="AWS region")
     p.add_argument(
         "--prefix",
-        default="printing-artwork/",
+        default="printing/",
         help="Object prefix (trailing slash recommended); use same as S3_PRINTING_ARTWORK_PREFIX",
     )
     p.add_argument(
@@ -37,9 +37,14 @@ def parse_args() -> argparse.Namespace:
         help="IAM user name (default: printing-artwork-<short uuid>)",
     )
     p.add_argument(
+        "--cors-origins",
+        default="",
+        help="Comma-separated browser origins for CORS (no spaces), e.g. https://a.com,https://b.com",
+    )
+    p.add_argument(
         "--cors-origin",
         default="",
-        help="If set, configure bucket CORS for this origin (GET/PUT/HEAD)",
+        help="Single origin; same as passing one value to --cors-origins (backward compatible)",
     )
     p.add_argument(
         "--create-access-key",
@@ -103,8 +108,14 @@ def main() -> int:
         },
     )
 
-    cors_origin = (args.cors_origin or "").strip()
-    if cors_origin:
+    def parse_cors_origins() -> list[str]:
+        raw = (args.cors_origins or "").strip() or (args.cors_origin or "").strip()
+        if not raw:
+            return []
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
+    cors_origins = parse_cors_origins()
+    if cors_origins:
         s3.put_bucket_cors(
             Bucket=bucket,
             CORSConfiguration={
@@ -112,7 +123,7 @@ def main() -> int:
                     {
                         "AllowedHeaders": ["*"],
                         "AllowedMethods": ["GET", "PUT", "HEAD"],
-                        "AllowedOrigins": [cors_origin],
+                        "AllowedOrigins": cors_origins,
                         "ExposeHeaders": ["ETag"],
                         "MaxAgeSeconds": 3000,
                     }

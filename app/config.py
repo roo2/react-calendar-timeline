@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     S3_REGION: str = "ap-southeast-2"
     # Optional (e.g. MinIO / LocalStack). Leave unset for real AWS.
     S3_ENDPOINT_URL: str | None = None
-    S3_PRINTING_ARTWORK_PREFIX: str = "printing-artwork/"
+    S3_PRINTING_ARTWORK_PREFIX: str = "printing/"
     S3_PRINTING_ARTWORK_URL_TTL_SECONDS: int = 900
     PRINTING_ARTWORK_MAX_BYTES: int = 25 * 1024 * 1024
 

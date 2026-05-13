@@ -113,21 +113,7 @@ function quoteLengthUnitsToSpec(p: QuotePayload, continuous: boolean): 'mm' | 'M
 
 export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
   const p = payload as QuotePayload
-  const baseWidthMm = Math.max(1, Number(p.base_width_mm) || 1)
-  const thicknessUm = Math.max(1, Number(p.thickness_um) || 1)
-  const continuousLength = quotePayloadUsesContinuousLength(p)
-  const baseLengthMm =
-    continuousLength && p.finish_mode === 'Rolls'
-      ? null
-      : p.finish_mode === 'Rolls'
-        ? (p.base_length_mm != null ? Number(p.base_length_mm) : null) ?? null
-        : Math.max(1, Number(p.base_length_mm) || 1)
-  const productTypeForGeom = String((p as { product_type?: string }).product_type || 'Bag').trim()
-  let geometry =
-    (p.geometry as 'Flat' | 'Gusset' | 'BottomGusset' | 'CentreFold' | 'Sheet') || 'Flat'
-  if (productTypeForGeom === 'Sheet') geometry = 'Sheet'
-  const gussetMm =
-    p.gusset_mm != null && Number(p.gusset_mm) > 0 ? Math.round(Number(p.gusset_mm)) : null
+  const pt = String((p as { product_type?: string }).product_type || 'Bag').trim()
   const ufilmLeft =
     p.ufilm_left_width_mm != null && Number(p.ufilm_left_width_mm) > 0
       ? Math.round(Number(p.ufilm_left_width_mm))
@@ -136,6 +122,26 @@ export function buildSpecFromQuotePayload(payload: QuotePayload): SpecPayload {
     p.ufilm_right_width_mm != null && Number(p.ufilm_right_width_mm) > 0
       ? Math.round(Number(p.ufilm_right_width_mm))
       : null
+  let baseWidthMm = Math.max(1, Number(p.base_width_mm) || 1)
+  if (pt === 'J-Film' && ufilmLeft != null && ufilmRight != null) {
+    const sum = ufilmLeft + ufilmRight
+    if (sum > 0) baseWidthMm = Math.max(1, sum)
+  }
+
+  const thicknessUm = Math.max(1, Number(p.thickness_um) || 1)
+  const continuousLength = quotePayloadUsesContinuousLength(p)
+  const baseLengthMm =
+    continuousLength && p.finish_mode === 'Rolls'
+      ? null
+      : p.finish_mode === 'Rolls'
+        ? (p.base_length_mm != null ? Number(p.base_length_mm) : null) ?? null
+        : Math.max(1, Number(p.base_length_mm) || 1)
+  const productTypeForGeom = pt
+  let geometry =
+    (p.geometry as 'Flat' | 'Gusset' | 'BottomGusset' | 'CentreFold' | 'Sheet') || 'Flat'
+  if (productTypeForGeom === 'Sheet') geometry = 'Sheet'
+  const gussetMm =
+    p.gusset_mm != null && Number(p.gusset_mm) > 0 ? Math.round(Number(p.gusset_mm)) : null
 
   const blend = normalizeBlend(p.blend)
   const colourComponents = (p.colour_components || []).map((c) => ({

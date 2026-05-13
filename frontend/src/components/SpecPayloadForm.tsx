@@ -40,6 +40,7 @@ import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
 import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type PrintingArtworkScope } from './PrintingArtworkUploadSection'
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
+import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 
 type DerivedDimensions = {
@@ -48,13 +49,14 @@ type DerivedDimensions = {
 
 export type SpecPayload = any
 
-const PRODUCT_TYPE = {
+export const PRODUCT_TYPE = {
   Bag: 'Bag',
   Tube: 'Tube',
   Sleeve: 'Sleeve',
   Sheet: 'Sheet',
   Centerfold: 'Centerfold',
   UFilm: 'U-Film',
+  JFilm: 'J-Film',
 } as const
 
 type ProductType = (typeof PRODUCT_TYPE)[keyof typeof PRODUCT_TYPE]
@@ -66,6 +68,7 @@ const PRODUCT_TYPES: ProductType[] = [
   PRODUCT_TYPE.Sheet,
   PRODUCT_TYPE.Centerfold,
   PRODUCT_TYPE.UFilm,
+  PRODUCT_TYPE.JFilm,
 ]
 
 function productTypeLabel(v: ProductType): string {
@@ -223,7 +226,6 @@ export function makeDefaultSpec(): SpecPayload {
         inner_pack: false,
         loose: false,
         qty_to_stock: null,
-        send_all_bags: false,
         handle: false,
         lined_cartons: false,
       },
@@ -234,10 +236,31 @@ export function makeDefaultSpec(): SpecPayload {
       core_policy: 'Include',
       bags_per_carton: null,
       pallet_type: 'Chep',
+      rolls_per_pallet: null,
+      cartons_per_pallet: null,
       notes: null,
     },
     tool_requirements: [],
   }
+}
+
+function getEstimatedUnitsPerPalletHelperText(
+  estimatedUnitsPerPalletVolume: number | null | undefined,
+  finishModeForLabel: string,
+): ReactNode {
+  if (
+    estimatedUnitsPerPalletVolume != null &&
+    Number.isFinite(estimatedUnitsPerPalletVolume) &&
+    estimatedUnitsPerPalletVolume > 0
+  ) {
+    return (
+      <span>
+        Est. Maximum {finishModeForLabel === 'Rolls' ? 'rolls' : 'cartons'}/pallet:{' '}
+        <b>{Math.round(estimatedUnitsPerPalletVolume)}</b> (rough estimate only)
+      </span>
+    )
+  }
+  return undefined
 }
 
 export type SpecPayloadFormPrintingSurface = 'full' | 'job_sheet_summary'
@@ -260,6 +283,10 @@ export function SpecPayloadForm(props: {
   onCustomerFacingDescriptionChange?: (value: string) => void
   /** Placeholder when `customerFacingDescription` is empty (e.g. generated from product spec). */
   customerFacingDescriptionPlaceholder?: string
+  /** Job sheet editor only: volume heuristic for units per pallet (on-screen guide; not printed). */
+  estimatedUnitsPerPalletVolume?: number | null
+  /** When set (job sheet), total order cartons/rolls used to compute quantity to deliver. */
+  stockPlanningTotalUnits?: number | null
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -278,6 +305,8 @@ export function SpecPayloadForm(props: {
     customerFacingDescription = '',
     onCustomerFacingDescriptionChange,
     customerFacingDescriptionPlaceholder: customerFacingDescriptionPlaceholderProp,
+    estimatedUnitsPerPalletVolume,
+    stockPlanningTotalUnits = null,
   } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
@@ -287,6 +316,14 @@ export function SpecPayloadForm(props: {
     const flags = Array.isArray(d?.identity?.industry_flags) ? d.identity.industry_flags : []
     // "non_food" is redundant (inverse of food_contact) and should not be persisted.
     d.identity.industry_flags = Array.from(new Set(flags)).filter((x) => x !== 'non_food')
+    // Retired conversion flags (replaced by qty_to_stock / ship quantity); strip if still present in loaded JSON.
+    const rr = (d as any).run_requirements
+    const conv = rr?.conversion
+    if (conv && typeof conv === 'object') {
+      for (const k of ['send_all_bags', 'sendAllBags']) {
+        if (Object.prototype.hasOwnProperty.call(conv, k)) delete conv[k]
+      }
+    }
     // Sheet product type always uses geometry "Sheet" (single wound sheet / SWS), not legacy Flat.
     const pt = String(d?.identity?.product_type || '').trim()
     if (pt === 'Sheet' && d.dimensions) {
@@ -353,6 +390,50 @@ export function SpecPayloadForm(props: {
 
   const printingEnabled = printing.method && printing.method !== 'None'
   const finishMode = identity.finish_mode || 'Rolls'
+  const stockPlanningDerived = useMemo(() => {
+    const unitPlural = finishMode === 'Cartons' ? 'Cartons' : 'Rolls'
+    const unitLower = finishMode === 'Cartons' ? 'cartons' : 'rolls'
+    const raw = String(conversion.qty_to_stock ?? '').trim()
+    const stockN = raw === '' || !Number.isFinite(Number(raw)) ? 0 : Math.max(0, Math.round(Number(raw)))
+    const total =
+      stockPlanningTotalUnits != null &&
+      Number.isFinite(Number(stockPlanningTotalUnits)) &&
+      Number(stockPlanningTotalUnits) > 0
+        ? Math.round(Number(stockPlanningTotalUnits))
+        : null
+    const capped = total != null ? Math.min(stockN, total) : stockN
+    const deliverN = total != null ? Math.max(0, total - capped) : null
+    return {
+      unitPlural,
+      unitLower,
+      orderTotalText: total != null ? `${total} ${unitLower}` : '—',
+      shipQuantityText: deliverN != null ? String(deliverN) : '—',
+      stockFieldLabel: finishMode === 'Cartons' ? 'Cartons to Stock' : 'Rolls to Stock',
+      shipFieldLabel: finishMode === 'Cartons' ? 'Cartons to Ship' : 'Rolls to Ship',
+      overTotal: total != null && stockN > total,
+    }
+  }, [finishMode, conversion.qty_to_stock, stockPlanningTotalUnits])
+
+  const palletLoadPlanning = useMemo(
+    () =>
+      computeJobSheetPalletLoadPlanning({
+        finishMode: finishMode === 'Cartons' ? 'Cartons' : 'Rolls',
+        rollsPerPallet: packaging.rolls_per_pallet,
+        cartonsPerPallet: packaging.cartons_per_pallet,
+        estimatedUnitsPerPalletVolume,
+        qtyToStockRaw: conversion.qty_to_stock,
+        orderTotalUnits: stockPlanningTotalUnits,
+      }),
+    [
+      finishMode,
+      packaging.rolls_per_pallet,
+      packaging.cartons_per_pallet,
+      estimatedUnitsPerPalletVolume,
+      conversion.qty_to_stock,
+      stockPlanningTotalUnits,
+    ],
+  )
+
   const inkPrinterType = printing.method === 'Inline' ? 'inline' : printing.method === 'Uteco' ? 'uteco' : null
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
@@ -361,8 +442,10 @@ export function SpecPayloadForm(props: {
   const isTubeProduct = productType === PRODUCT_TYPE.Tube
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
   const isUFilm = productType === PRODUCT_TYPE.UFilm
+  const isJFilm = productType === PRODUCT_TYPE.JFilm
+  const isLeftRightFilm = isUFilm || isJFilm
   const gussetEnabled =
-    !isUFilm &&
+    !isLeftRightFilm &&
     canHaveGusset &&
     (((dimensions.geometry as string) || 'Flat') === 'Gusset' || Number(dimensions.gusset_mm || 0) > 0)
 
@@ -551,6 +634,10 @@ export function SpecPayloadForm(props: {
       const l = typeof dimensions.ufilm_left_width_mm === 'number' ? dimensions.ufilm_left_width_mm : 0
       const r = typeof dimensions.ufilm_right_width_mm === 'number' ? dimensions.ufilm_right_width_mm : 0
       layflat = width + l + r
+    } else if (productType === PRODUCT_TYPE.JFilm) {
+      const l = typeof dimensions.ufilm_left_width_mm === 'number' ? dimensions.ufilm_left_width_mm : 0
+      const r = typeof dimensions.ufilm_right_width_mm === 'number' ? dimensions.ufilm_right_width_mm : 0
+      layflat = l + r
     } else if ((productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') && ru > 0) {
       layflat = width * (ru / 2)
     } else if (productType === PRODUCT_TYPE.Centerfold || dimensions.geometry === 'CentreFold') {
@@ -1014,25 +1101,22 @@ export function SpecPayloadForm(props: {
           </Box>
         </Box>
       )}
-
-      {printing.method === 'Uteco' && (
-        <Box sx={{ mt: 2, maxWidth: { xs: '100%', md: 400 } }}>
-          <TextField
-            label="Cylinder size (mm)"
-            type="number"
-            value={printing.cylinder_size_mm ?? ''}
-            onChange={(e) => {
-              const v = e.target.value
-              update((d) => {
-                d.printing.cylinder_size_mm = v === '' ? null : Number(v)
-              })
-            }}
-            fullWidth
-            inputProps={{ min: 0, step: 'any' }}
-            helperText="Cylinder width in millimetres"
-          />
-        </Box>
-      )}
+      <Box sx={{ mt: 2, maxWidth: { xs: '100%', md: 400 } }}>
+        <TextField
+          label="Cylinder size (mm)"
+          type="number"
+          value={printing.cylinder_size_mm ?? ''}
+          onChange={(e) => {
+            const v = e.target.value
+            update((d) => {
+              d.printing.cylinder_size_mm = v === '' ? null : Number(v)
+            })
+          }}
+          fullWidth
+          inputProps={{ min: 0, step: 'any' }}
+          helperText="Cylinder width in millimetres"
+        />
+      </Box>
     </>
   ) : null
 
@@ -1446,10 +1530,10 @@ export function SpecPayloadForm(props: {
             control={
               <Checkbox
                 checked={gussetEnabled}
-                disabled={!canHaveGusset || isUFilm}
+                disabled={!canHaveGusset || isLeftRightFilm}
                 onChange={(e) =>
                   update((d) => {
-                    if (!canHaveGusset || isUFilm) return
+                    if (!canHaveGusset || isLeftRightFilm) return
                     if (e.target.checked) {
                       d.dimensions.geometry = 'Gusset'
                       d.dimensions.gusset_mm =
@@ -1518,42 +1602,79 @@ export function SpecPayloadForm(props: {
         </FormGroup>
 
         <Stack spacing={2}>
-          {isUFilm ? (
+          {isLeftRightFilm ? (
             <>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
-                <TextField
-                  label="Left Width (mm)"
-                  type="number"
-                  inputProps={{ min: 1, step: 1 }}
-                  value={dimensions.ufilm_left_width_mm ?? ''}
-                  onChange={(e) =>
-                    update((d) => (d.dimensions.ufilm_left_width_mm = e.target.value ? parseInt(e.target.value) : null))
-                  }
-                  error={!!errorFor('spec.dimensions.ufilm_left_width_mm')}
-                  helperText={errorFor('spec.dimensions.ufilm_left_width_mm') || ''}
-                />
-                <TextField
-                  label="Middle Width (mm)"
-                  type="number"
-                  inputProps={{ min: 1, step: 1 }}
-                  value={dimensions.base_width_mm == null || dimensions.base_width_mm === 0 ? '' : dimensions.base_width_mm}
-                  onChange={(e) => update((d) => (d.dimensions.base_width_mm = e.target.value === '' ? null : parseInt(e.target.value, 10)))}
-                  required
-                  error={!!errorFor('spec.dimensions.base_width_mm')}
-                  helperText={errorFor('spec.dimensions.base_width_mm') || ''}
-                />
-                <TextField
-                  label="Right Width (mm)"
-                  type="number"
-                  inputProps={{ min: 1, step: 1 }}
-                  value={dimensions.ufilm_right_width_mm ?? ''}
-                  onChange={(e) =>
-                    update((d) => (d.dimensions.ufilm_right_width_mm = e.target.value ? parseInt(e.target.value) : null))
-                  }
-                  error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
-                  helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
-                />
-              </Box>
+              {isJFilm ? (
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
+                  <TextField
+                    label="Left Width (mm)"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={dimensions.ufilm_left_width_mm ?? ''}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.dimensions.ufilm_left_width_mm = e.target.value ? parseInt(e.target.value, 10) : null
+                        const l = typeof d.dimensions.ufilm_left_width_mm === 'number' ? d.dimensions.ufilm_left_width_mm : 0
+                        const r = typeof d.dimensions.ufilm_right_width_mm === 'number' ? d.dimensions.ufilm_right_width_mm : 0
+                        d.dimensions.base_width_mm = l + r > 0 ? l + r : null
+                      })
+                    }
+                    error={!!errorFor('spec.dimensions.ufilm_left_width_mm')}
+                    helperText={errorFor('spec.dimensions.ufilm_left_width_mm') || ''}
+                  />
+                  <TextField
+                    label="Right Width (mm)"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={dimensions.ufilm_right_width_mm ?? ''}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.dimensions.ufilm_right_width_mm = e.target.value ? parseInt(e.target.value, 10) : null
+                        const l = typeof d.dimensions.ufilm_left_width_mm === 'number' ? d.dimensions.ufilm_left_width_mm : 0
+                        const r = typeof d.dimensions.ufilm_right_width_mm === 'number' ? d.dimensions.ufilm_right_width_mm : 0
+                        d.dimensions.base_width_mm = l + r > 0 ? l + r : null
+                      })
+                    }
+                    error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
+                    helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
+                  />
+                </Box>
+              ) : (
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
+                  <TextField
+                    label="Left Width (mm)"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={dimensions.ufilm_left_width_mm ?? ''}
+                    onChange={(e) =>
+                      update((d) => (d.dimensions.ufilm_left_width_mm = e.target.value ? parseInt(e.target.value) : null))
+                    }
+                    error={!!errorFor('spec.dimensions.ufilm_left_width_mm')}
+                    helperText={errorFor('spec.dimensions.ufilm_left_width_mm') || ''}
+                  />
+                  <TextField
+                    label="Middle Width (mm)"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={dimensions.base_width_mm == null || dimensions.base_width_mm === 0 ? '' : dimensions.base_width_mm}
+                    onChange={(e) => update((d) => (d.dimensions.base_width_mm = e.target.value === '' ? null : parseInt(e.target.value, 10)))}
+                    required
+                    error={!!errorFor('spec.dimensions.base_width_mm')}
+                    helperText={errorFor('spec.dimensions.base_width_mm') || ''}
+                  />
+                  <TextField
+                    label="Right Width (mm)"
+                    type="number"
+                    inputProps={{ min: 1, step: 1 }}
+                    value={dimensions.ufilm_right_width_mm ?? ''}
+                    onChange={(e) =>
+                      update((d) => (d.dimensions.ufilm_right_width_mm = e.target.value ? parseInt(e.target.value) : null))
+                    }
+                    error={!!errorFor('spec.dimensions.ufilm_right_width_mm')}
+                    helperText={errorFor('spec.dimensions.ufilm_right_width_mm') || ''}
+                  />
+                </Box>
+              )}
             </>
           ) : (
             <Stack spacing={2}>
@@ -1877,20 +1998,35 @@ export function SpecPayloadForm(props: {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Percentage (%)</TableCell>
                       <TableCell>Resin</TableCell>
+                      <TableCell>Percentage (%)</TableCell>
                       <TableCell />
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {rowsToShow.map((row: any, idx: number) => {
-                      const presetComponent = selectedPreset?.components?.[idx]
-                      const isDefault =
-                        !!presetComponent &&
-                        (row.resin_code || '').trim() === (presetComponent.resin_code || '').trim() &&
-                        Number(row.pct) === Number(presetComponent.pct)
                       return (
-                        <TableRow key={idx} hover sx={defaultRowSx(isDefault)}>
+                        <TableRow key={idx} hover sx={{ '& > td': { bgcolor: '#fff' } }}>
+                          <TableCell sx={{ width: '55%' }}>
+                            <ResinSelect
+                              options={resins}
+                              valueCode={row.resin_code || ''}
+                              outlinedInputWhiteBg
+                              error={
+                                !!errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
+                                !!firstErrorForPrefix('spec.formulation.blend')
+                              }
+                              helperText={
+                                errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
+                                (idx === 0 ? firstErrorForPrefix('spec.formulation.blend') || '' : '')
+                              }
+                              onChangeCode={(nextCode) =>
+                                update((d) => {
+                                  d.formulation.blend[idx].resin_code = nextCode
+                                })
+                              }
+                            />
+                          </TableCell>
                           <TableCell sx={{ width: '35%' }}>
                             <TextField
                               size="small"
@@ -1909,25 +2045,7 @@ export function SpecPayloadForm(props: {
                               }
                               helperText={errorFor(`spec.formulation.blend[${idx}].pct`) || ''}
                               fullWidth
-                            />
-                          </TableCell>
-                          <TableCell sx={{ width: '55%' }}>
-                            <ResinSelect
-                              options={resins}
-                              valueCode={row.resin_code || ''}
-                              error={
-                                !!errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
-                                !!firstErrorForPrefix('spec.formulation.blend')
-                              }
-                              helperText={
-                                errorFor(`spec.formulation.blend[${idx}].resin_code`) ||
-                                (idx === 0 ? firstErrorForPrefix('spec.formulation.blend') || '' : '')
-                              }
-                              onChangeCode={(nextCode) =>
-                                update((d) => {
-                                  d.formulation.blend[idx].resin_code = nextCode
-                                })
-                              }
+                              sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#fff' } }}
                             />
                           </TableCell>
                           <TableCell sx={{ width: '10%' }}>
@@ -2054,11 +2172,7 @@ export function SpecPayloadForm(props: {
               const eyeSpotText =
                 printing.eye_spot === 'yes'
                   ? 'Yes'
-                  : printing.eye_spot === 'no'
-                    ? 'No'
-                    : printing.eye_spot
-                      ? String(printing.eye_spot)
-                      : '—'
+                  : 'No'
               const treatText =
                 run.treat_inside_outside === 'inside'
                   ? 'Inside'
@@ -2146,7 +2260,7 @@ export function SpecPayloadForm(props: {
 
               const emptyGridSlot = <Box sx={{ minWidth: 0 }} aria-hidden />
 
-              const showCylinderPlateRow = printing.method === 'Uteco' || Boolean(plateAroundAcross)
+              const showCylinderPlateRow = Boolean(plateAroundAcross)
 
               const inkTableDenseSx = {
                 width: '100%',
@@ -2201,8 +2315,7 @@ export function SpecPayloadForm(props: {
 
                   {showCylinderPlateRow ? (
                     <Box sx={cols2}>
-                      {printing.method === 'Uteco' ? (
-                        previewField(
+                       { previewField(
                           'Cylinder (mm)',
                           printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0
                             ? Number(printing.cylinder_size_mm)
@@ -2212,9 +2325,7 @@ export function SpecPayloadForm(props: {
                               printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0,
                           },
                         )
-                      ) : (
-                        emptyGridSlot
-                      )}
+                      }
                       {plateAroundAcross
                         ? previewField('Plate layout (around × across)', plateAroundAcross, { strong: true })
                         : printing.method === 'Uteco'
@@ -2244,12 +2355,12 @@ export function SpecPayloadForm(props: {
                     {previewField('Treat', treatText, {
                       strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
                     })}
-                    {printing.method !== 'Inline'
-                      ? previewField('Eye spot', eyeSpotText, { strong: !!printing.eye_spot })
-                      : emptyGridSlot}
                     {previewField('Seal type', sealTypeForTreatRow, {
                       strong: !!(printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== ''),
                     })}
+                    {printing.method !== 'Inline'
+                      ? previewField('Eye spot', eyeSpotText, { strong: printing.eye_spot === 'yes' })
+                      : emptyGridSlot}
                   </Box>
 
                   {(() => {
@@ -2520,12 +2631,14 @@ export function SpecPayloadForm(props: {
                       }}
                     >
                       <Box sx={{ width: '100%' }}>{printingTreatField}</Box>
+                      
+                      <Box sx={{ width: '100%' }}>{sealTypeField}</Box>
                       {printing.method !== 'Inline' ? (
                         <DefaultSelectField
                           sx={{ width: '100%' }}
                           label="Eye spot"
-                          defaultValue=""
-                          value={printing.eye_spot || ''}
+                          defaultValue="no"
+                          value={printing.eye_spot || 'no'}
                           onChange={(e) =>
                             update((d) => {
                               const v = e.target.value
@@ -2533,14 +2646,10 @@ export function SpecPayloadForm(props: {
                             })
                           }
                         >
-                          <MenuItem value="">
-                            <em>Not set</em>
-                          </MenuItem>
                           <MenuItem value="yes">Yes</MenuItem>
                           <MenuItem value="no">No</MenuItem>
                         </DefaultSelectField>
                       ) : null}
-                      <Box sx={{ width: '100%' }}>{sealTypeField}</Box>
                     </Box>
 
                     {jobSheetPrintingInkTables}
@@ -2687,7 +2796,7 @@ export function SpecPayloadForm(props: {
             </DefaultSelectField>
           ) : printingSurface === 'job_sheet_summary' ? null : (
             <TextField
-              label="Bags per Carton"
+              label={`${quality.productUnitLabel} per Carton`}
               type="number"
               inputProps={{ min: 1, step: 1 }}
               value={packaging.bags_per_carton ?? ''}
@@ -2763,23 +2872,25 @@ export function SpecPayloadForm(props: {
           </Typography>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-            <DefaultSelectField
-              label="Seal"
-              defaultValue="end"
-              value={sealTypeUiValue || 'end'}
+            <TextField
+              label="Bags per Carton"
+              type="number"
+              inputProps={{ min: 1, step: 1 }}
+              value={packaging.bags_per_carton ?? ''}
               onChange={(e) =>
-                update((d) => {
-                  const v = e.target.value
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  d.run_requirements.seal_type = v ? (v as any) : null
-                  if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
-                })
+                update((d) => (d.packaging.bags_per_carton = e.target.value ? parseInt(e.target.value) : null))
               }
-            >
-              <MenuItem value="end">End Seal</MenuItem>
-              <MenuItem value="side">Side Seal</MenuItem>
-              <MenuItem value="none">None</MenuItem>
-            </DefaultSelectField>
+              required
+              error={
+                !!errorFor('spec.packaging.bags_per_carton') ||
+                (!!errorFor('spec.packaging') && finishMode === 'Cartons')
+              }
+              helperText={
+                errorFor('spec.packaging.bags_per_carton') ||
+                (finishMode === 'Cartons' ? errorFor('spec.packaging') : '') ||
+                ''
+              }
+            />
             <DefaultSelectField
               label="Carton size"
               defaultValue=""
@@ -2802,6 +2913,43 @@ export function SpecPayloadForm(props: {
                   {String(r?.carton_size ?? '')}
                 </MenuItem>
               ))}
+            </DefaultSelectField>
+
+            <TextField
+              label="Qty per pack"
+              type="number"
+              inputProps={{ min: 0, step: 1 }}
+              value={conversion.pack_size ?? ''}
+              onChange={(e) =>
+                update((d) => {
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  ;(d.run_requirements as any).conversion = {
+                    ...((d.run_requirements as any).conversion || {}),
+                    pack_size: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
+                  }
+                })
+              }
+            />
+          </Box>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
+
+            <DefaultSelectField
+              label="Seal"
+              defaultValue="end"
+              value={sealTypeUiValue || 'end'}
+              onChange={(e) =>
+                update((d) => {
+                  const v = e.target.value
+                  if (!d.run_requirements) (d as any).run_requirements = {}
+                  d.run_requirements.seal_type = v ? (v as any) : null
+                  if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+                })
+              }
+            >
+              <MenuItem value="end">End Seal</MenuItem>
+              <MenuItem value="side">Side Seal</MenuItem>
+              <MenuItem value="none">None</MenuItem>
             </DefaultSelectField>
 
             <TextField
@@ -2834,37 +2982,6 @@ export function SpecPayloadForm(props: {
                 })
               }
               helperText={`Total holes: ${Math.max(0, Number(conversion.vent_rows || 0)) * Math.max(0, Number(conversion.vent_holes_per_row || 0))}`}
-            />
-
-            <TextField
-              label="Pack"
-              type="number"
-              inputProps={{ min: 0, step: 1 }}
-              value={conversion.pack_size ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  ;(d.run_requirements as any).conversion = {
-                    ...((d.run_requirements as any).conversion || {}),
-                    pack_size: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
-                  }
-                })
-              }
-            />
-            <TextField
-              label="Qty to Stock"
-              type="number"
-              inputProps={{ min: 0, step: 1 }}
-              value={conversion.qty_to_stock ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  ;(d.run_requirements as any).conversion = {
-                    ...((d.run_requirements as any).conversion || {}),
-                    qty_to_stock: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
-                  }
-                })
-              }
             />
           </Box>
 
@@ -2957,23 +3074,6 @@ export function SpecPayloadForm(props: {
             <FormControlLabel
               control={
                 <Checkbox
-                  checked={!!conversion.send_all_bags}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (!d.run_requirements) (d as any).run_requirements = {}
-                      ;(d.run_requirements as any).conversion = {
-                        ...((d.run_requirements as any).conversion || {}),
-                        send_all_bags: e.target.checked,
-                      }
-                    })
-                  }
-                />
-              }
-              label="Send all bags"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
                   checked={!!conversion.handle}
                   onChange={(e) =>
                     update((d) => {
@@ -3020,8 +3120,71 @@ export function SpecPayloadForm(props: {
           </Alert>
         )}
 
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' },
+            gap: 2,
+            mb: 2,
+            pb: 2,
+            borderBottom: 1,
+            borderColor: 'divider',
+          }}
+        >
+          <TextField
+            label="Order Total"
+            value={stockPlanningDerived.orderTotalText}
+            disabled
+            helperText={
+              stockPlanningTotalUnits == null
+                ? `Set order quantity in the Quantity section to show order total (${stockPlanningDerived.unitLower}).`
+                : undefined
+            }
+          />
+          <TextField
+            label={stockPlanningDerived.shipFieldLabel}
+            value={stockPlanningDerived.shipQuantityText}
+            disabled
+          />
+          <TextField
+            label={stockPlanningDerived.stockFieldLabel}
+            type="number"
+            inputProps={{ min: 0, step: 1 }}
+            value={
+              conversion.qty_to_stock === null || conversion.qty_to_stock === undefined || conversion.qty_to_stock === ''
+                ? ''
+                : String(conversion.qty_to_stock)
+            }
+            onChange={(e) =>
+              update((d) => {
+                if (!d.run_requirements) (d as any).run_requirements = {}
+                const raw = e.target.value.trim()
+                ;(d.run_requirements as any).conversion = {
+                  ...((d.run_requirements as any).conversion || {}),
+                  qty_to_stock: raw === '' ? null : Math.max(0, Math.round(Number(raw))),
+                }
+              })
+            }
+            error={stockPlanningDerived.overTotal}
+          />
+          <TextField
+            label="Pallets (shipment)"
+            value={palletLoadPlanning != null ? String(palletLoadPlanning.palletsRequired) : '—'}
+            disabled
+            helperText={
+              palletLoadPlanning != null
+                ? `${palletLoadPlanning.unitsPerPallet} ${stockPlanningDerived.unitLower}/pallet${
+                    palletLoadPlanning.perPalletSource === 'volume_estimate' ? ' (volume est.)' : ''
+                  }`
+                : stockPlanningTotalUnits == null
+                  ? `Set order total and ${finishMode === 'Cartons' ? 'cartons' : 'rolls'} per pallet (or volume estimate) to calculate pallets.`
+                  : `Set ${finishMode === 'Cartons' ? 'cartons' : 'rolls'} per pallet or ensure the volume estimate is available to calculate pallets.`
+            }
+          />
+        </Box>
+
         <Stack spacing={2}>
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
             <DefaultSelectField
               label="Pallet Type"
               defaultValue="Chep"
@@ -3034,6 +3197,61 @@ export function SpecPayloadForm(props: {
                 </MenuItem>
               ))}
             </DefaultSelectField>
+            {finishMode === 'Rolls' ? (
+              <TextField
+                label="Rolls per pallet"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={
+                  packaging.rolls_per_pallet == null || packaging.rolls_per_pallet === 0
+                    ? ''
+                    : String(packaging.rolls_per_pallet)
+                }
+                onChange={(e) =>
+                  update((d) => {
+                    const raw = e.target.value.trim()
+                    if (raw === '') {
+                      d.packaging.rolls_per_pallet = null
+                      return
+                    }
+                    const n = Math.round(Number(raw))
+                    d.packaging.rolls_per_pallet = Number.isFinite(n) && n > 0 ? n : null
+                  })
+                }
+                error={!!errorFor('spec.packaging.rolls_per_pallet')}
+                helperText={
+                  errorFor('spec.packaging.rolls_per_pallet') ||
+                  getEstimatedUnitsPerPalletHelperText(estimatedUnitsPerPalletVolume, finishMode)
+                }
+              />
+            ) : (
+              <TextField
+                label="Cartons per pallet"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={
+                  packaging.cartons_per_pallet == null || packaging.cartons_per_pallet === 0
+                    ? ''
+                    : String(packaging.cartons_per_pallet)
+                }
+                onChange={(e) =>
+                  update((d) => {
+                    const raw = e.target.value.trim()
+                    if (raw === '') {
+                      d.packaging.cartons_per_pallet = null
+                      return
+                    }
+                    const n = Math.round(Number(raw))
+                    d.packaging.cartons_per_pallet = Number.isFinite(n) && n > 0 ? n : null
+                  })
+                }
+                error={!!errorFor('spec.packaging.cartons_per_pallet')}
+                helperText={
+                  errorFor('spec.packaging.cartons_per_pallet') ||
+                  getEstimatedUnitsPerPalletHelperText(estimatedUnitsPerPalletVolume, finishMode)
+                }
+              />
+            )}
           </Box>
         </Stack>
 

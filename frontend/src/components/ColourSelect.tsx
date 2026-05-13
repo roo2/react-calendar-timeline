@@ -1,4 +1,4 @@
-import { Autocomplete, Box, TextField } from '@mui/material'
+import { Autocomplete, Box, TextField, type SxProps, type Theme } from '@mui/material'
 
 export type ColourOption = { colour_code: string; name: string; hex_code?: string | null }
 
@@ -8,9 +8,12 @@ export function ColourSelect(props: {
   label?: string
   error?: boolean
   helperText?: string
+  /** When true, the outlined input uses a solid white background (e.g. materials tables on tinted rows). */
+  outlinedInputWhiteBg?: boolean
+  textFieldSx?: SxProps<Theme>
   onChangeCode: (nextCode: string) => void
 }) {
-  const { options, valueCode, label, error, helperText, onChangeCode } = props
+  const { options, valueCode, label, error, helperText, outlinedInputWhiteBg, textFieldSx, onChangeCode } = props
   return (
     <Autocomplete
       size="small"
@@ -35,7 +38,18 @@ export function ColourSelect(props: {
           <span>{`${option.colour_code} — ${option.name}`}</span>
         </Box>
       )}
-      renderInput={(params) => <TextField {...params} label={label || 'Colour'} error={error} helperText={helperText} />}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label || 'Colour'}
+          error={error}
+          helperText={helperText}
+          sx={[
+            ...(outlinedInputWhiteBg ? [{ '& .MuiOutlinedInput-root': { bgcolor: '#fff' } }] : []),
+            ...(Array.isArray(textFieldSx) ? textFieldSx : textFieldSx != null ? [textFieldSx] : []),
+          ]}
+        />
+      )}
     />
   )
 }

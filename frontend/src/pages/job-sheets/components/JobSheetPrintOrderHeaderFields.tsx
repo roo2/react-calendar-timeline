@@ -24,6 +24,13 @@ function dash(v: unknown): string {
 export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFieldsProps): ReactElement {
   const { header: h, product: prod, printingFooter, variant, hideHeaderGrid = false } = props
 
+  const codeCustomer = String(prod.customerFacingProductCode ?? '').trim()
+  const codeGen = String(prod.generatedProductCode ?? '').trim()
+  const descCustomer = String(prod.customerFacingDescriptionWithPackagingTail ?? '').trim()
+  const descGen = String(prod.generatedDescriptionWithPackagingTail ?? '').trim()
+  const hasSplitProductCode = codeCustomer !== ''
+  const hasSplitProductDescription = descCustomer !== ''
+
   if (variant === 'print') {
     return (
       <div className="js-compact">
@@ -47,7 +54,7 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
             </div>
             <div className="js-compact-item">
               <span className="js-compact-k">Purchase order:</span>
-              <span className="js-compact-v">{h.purchaseOrderNo}</span>
+              <span className="js-compact-v">{dash(h.purchaseOrderNo)}</span>
             </div>
             <div className="js-compact-item">
               <span className="js-compact-k">Due date:</span>
@@ -59,12 +66,32 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
         <div className="js-compact-block">
           <div className="js-compact-item">
             <span className="js-compact-k">Product code:</span>
-            <span className="js-compact-v js-product-code-val">{prod.productCode}</span>
+            <span className="js-compact-v js-order-header-value-stack">
+              {hasSplitProductCode ? (
+                <>
+                  <span className="js-product-code-val js-order-header-primary">{codeCustomer}</span>
+                  {codeGen && codeGen !== codeCustomer ? (
+                    <span className="js-product-code-val js-order-header-secondary">{codeGen}</span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="js-product-code-val">{prod.productCode}</span>
+              )}
+            </span>
           </div>
           <div className="js-compact-item">
             <span className="js-compact-k">Product description:</span>
-            <span className="js-compact-v js-compact-v-strong" style={{ whiteSpace: 'pre-wrap' }}>
-              {prod.descriptionWithPackagingTail}
+            <span className="js-compact-v js-order-header-value-stack" style={{ whiteSpace: 'pre-wrap' }}>
+              {hasSplitProductDescription ? (
+                <>
+                  <span className="js-compact-v-strong js-order-header-primary">{descCustomer}</span>
+                  {descGen && descGen !== descCustomer ? (
+                    <span className="js-order-header-secondary js-order-header-desc-secondary">{descGen}</span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="js-compact-v-strong">{prod.generatedDescriptionWithPackagingTail}</span>
+              )}
             </span>
           </div>
           <div className="js-compact-item">
@@ -74,7 +101,7 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
           <div className="js-compact-item">
             <span className="js-compact-k">Notes:</span>
             <span className="js-compact-v js-compact-v-strong" style={{ whiteSpace: 'pre-wrap' }}>
-              {prod.notes}
+              {dash(prod.notes)}
             </span>
           </div>
           <div className="js-compact-item">
@@ -86,7 +113,9 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
                     <li key={`${qc}-${i}`}>{qc}</li>
                   ))}
                 </ul>
-              ) : null}
+              ) : (
+                '—'
+              )}
             </span>
           </div>
           {printingFooter ? (
@@ -151,10 +180,6 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
   return (
     <Box
       sx={{
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        p: 1.25,
         bgcolor: 'background.paper',
       }}
     >
@@ -188,8 +213,60 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
           gap: 0.25,
         }}
       >
-        {row('Product code:', prod.productCode, { mono: true, strong: true })}
-        {row('Product description:', prod.descriptionWithPackagingTail, { strong: true, pre: true })}
+        {hasSplitProductCode ? (
+          <Box sx={{ py: 0.125 }}>
+            <Typography component="div" sx={{ ...kSx, mb: 0.25 }}>
+              Product code:
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.125, pl: 0.125 }}>
+              <Typography component="span" sx={{ ...vSx({ mono: true, strong: true }) }}>
+                {codeCustomer}
+              </Typography>
+              {codeGen && codeGen !== codeCustomer ? (
+                <Typography
+                  component="span"
+                  sx={{
+                    ...vSx({ mono: true }),
+                    fontWeight: 500,
+                    color: 'text.secondary',
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  {codeGen}
+                </Typography>
+              ) : null}
+            </Box>
+          </Box>
+        ) : (
+          row('Product code:', prod.productCode, { mono: true, strong: true })
+        )}
+        {hasSplitProductDescription ? (
+          <Box sx={{ py: 0.125 }}>
+            <Typography component="div" sx={{ ...kSx, mb: 0.25 }}>
+              Product description:
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, pl: 0.125 }}>
+              <Typography component="span" sx={{ ...vSx({ strong: true, pre: true }) }}>
+                {descCustomer}
+              </Typography>
+              {descGen && descGen !== descCustomer ? (
+                <Typography
+                  component="span"
+                  sx={{
+                    ...vSx({ pre: true }),
+                    fontWeight: 500,
+                    color: 'text.secondary',
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  {descGen}
+                </Typography>
+              ) : null}
+            </Box>
+          </Box>
+        ) : (
+          row('Product description:', prod.generatedDescriptionWithPackagingTail, { strong: true, pre: true })
+        )}
         {row('Ordered quantity:', prod.orderedQuantityLabel, { strong: true })}
         {row('Notes:', prod.notes, { strong: true, pre: true })}
         <Box sx={{ py: 0.125 }}>

@@ -1,5 +1,4 @@
 import { Box, Button, Table, TableBody, TableCell, TableHead, TableRow, TextField } from '@mui/material'
-import { defaultRowSx, isDefaultRow } from './DefaultRowTable'
 import { ColourSelect, type ColourOption } from './ColourSelect'
 import { AdditiveSelect, type AdditiveOption } from './AdditiveSelect'
 
@@ -8,6 +7,9 @@ export type AdditiveRow = { additive_code: string; pct: string }
 
 const COLOUR_DEFAULTS: ColourRow = { colour_code: '', strength_pct: '' }
 const ADDITIVE_DEFAULTS: AdditiveRow = { additive_code: '', pct: '' }
+
+const MATERIALS_TABLE_ROW_SX = { '& > td': { bgcolor: '#fff' } } as const
+const MATERIALS_PCT_FIELD_SX = { '& .MuiOutlinedInput-root': { bgcolor: '#fff' } } as const
 
 /** Pad array to at least `min` rows; reused for materials and printing tables. */
 export function ensureMinRows<T extends Record<string, unknown>>(rows: T[], defaults: T, min: number): T[] {
@@ -84,15 +86,14 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
         </TableHead>
         <TableBody>
           {colours.map((row, idx) => {
-            const isDefault = isDefaultRow(row, COLOUR_DEFAULTS)
-            const colourHex = colourOptions.find((o) => o.colour_code === row.colour_code)?.hex_code || ''
             return (
-              <TableRow key={idx} hover sx={{ ...defaultRowSx(isDefault), ...(colourHex ? { '& td': { bgcolor: colourHex } } : {}) }}>
+              <TableRow key={idx} hover sx={MATERIALS_TABLE_ROW_SX}>
                 <TableCell sx={{ width: '55%' }}>
                   <ColourSelect
                     options={colourOptions}
                     valueCode={row.colour_code}
                     label={idx === 0 ? 'Colour 1' : `Colour ${idx + 1}`}
+                    outlinedInputWhiteBg
                     onChangeCode={(nextCode) => setColourRow(idx, { colour_code: nextCode })}
                   />
                 </TableCell>
@@ -105,6 +106,7 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
                     value={row.strength_pct}
                     onChange={(e) => setColourRow(idx, { strength_pct: e.target.value })}
                     fullWidth
+                    sx={MATERIALS_PCT_FIELD_SX}
                   />
                 </TableCell>
                 <TableCell sx={{ width: '10%' }}>
@@ -142,15 +144,14 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
           </TableHead>
           <TableBody>
             {additives.map((row, idx) => {
-              const isDefault = isDefaultRow(row, ADDITIVE_DEFAULTS)
-              const additiveHex = additiveOptions.find((o) => o.additive_code === row.additive_code)?.highlight_hex_code || ''
               return (
-                <TableRow key={idx} hover sx={{ ...defaultRowSx(isDefault), ...(additiveHex ? { '& td': { bgcolor: additiveHex } } : {}) }}>
+                <TableRow key={idx} hover sx={MATERIALS_TABLE_ROW_SX}>
                   <TableCell sx={{ width: '55%' }}>
                     <AdditiveSelect
                       options={additiveOptions}
                       valueCode={row.additive_code}
                       label={`Additive ${idx + 1}`}
+                      outlinedInputWhiteBg
                       onChangeCode={(nextCode) => setAdditiveRow(idx, { additive_code: nextCode })}
                     />
                   </TableCell>
@@ -163,6 +164,7 @@ export function MaterialsColoursAndAdditives(props: MaterialsColoursAndAdditives
                       value={row.pct}
                       onChange={(e) => setAdditiveRow(idx, { pct: e.target.value })}
                       fullWidth
+                      sx={MATERIALS_PCT_FIELD_SX}
                     />
                   </TableCell>
                   <TableCell sx={{ width: '10%' }}>

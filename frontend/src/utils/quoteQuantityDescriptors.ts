@@ -15,6 +15,7 @@ export function quoteProductUnitLabel(productType: string): string {
   if (!pt) return 'Units'
   if (pt === 'Bag') return 'Bags'
   if (pt === 'U-Film') return 'U-Films'
+  if (pt === 'J-Film') return 'J-Films'
   return `${pt}s`
 }
 

@@ -45,6 +45,7 @@ import type { AdditiveOption } from '../../components/AdditiveSelect'
 import { MaterialsColoursAndAdditives } from '../../components/MaterialsColoursAndAdditives'
 import { DefaultSelectField } from '../../components/DefaultSelectField'
 import { derivedInlineSeal, productTypeCanHaveGusset } from '../../utils/specCompat'
+import { isJFilmProductType, isLeftRightWidthFilmProductType, isUFilmProductType } from '../../utils/filmProductTypes'
 import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
 import { computeWeightPerRollDisplay, qtyTypeFromPersisted } from '../../utils/quantityRollFields'
 import { getDisplayProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
@@ -315,7 +316,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
 
   const showNumColours = printMethod && printMethod !== 'None'
   const canHaveGusset = productTypeCanHaveGusset(productType)
-  const isUFilm = productType === 'U-Film'
+  const isUFilm = isUFilmProductType(productType)
+  const isJFilm = isJFilmProductType(productType)
+  const isLRFilm = isLeftRightWidthFilmProductType(productType)
   const derivedGeometry: 'Flat' | 'Gusset' = canHaveGusset && flagGusset ? 'Gusset' : 'Flat'
 
   useEffect(() => {
@@ -514,12 +517,18 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   }, [canHaveGusset, flagGusset])
 
   useEffect(() => {
-    // Mirror SpecPayloadForm behavior: U-Film uses left/right widths and no gusset.
-    if (!isUFilm) {
+    // Mirror SpecPayloadForm: U-Film / J-Film use left/right widths; clear when leaving those types.
+    if (!isLRFilm) {
       setUfilmLeftWidthMm('')
       setUfilmRightWidthMm('')
     }
-  }, [isUFilm])
+  }, [isLRFilm])
+
+  useEffect(() => {
+    if (!isLRFilm || !flagGusset) return
+    setFlagGusset(false)
+    setGussetReturnMm('')
+  }, [isLRFilm, flagGusset])
 
   function setPrinted(next: boolean) {
     setFlagPrinted(next)
@@ -587,7 +596,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const metersPerRollNum = Number(metersPerRoll || 0)
   const weightPerRollNum = parsePositiveKgLoose(weightPerRoll) ?? 0
 
-  const showRunUp = !isUFilm && (productType === 'Sheet' || productType === 'Centerfold')
+  const showRunUp = !isLRFilm && (productType === 'Sheet' || productType === 'Centerfold')
   const runUpOptions: number[] = productType === 'Centerfold' ? [1, 2] : productType === 'Sheet' ? [2, 4, 6] : [1]
   const qtyMode: 'units' | 'kg' | 'roll' | 'ctn' =
     qtyType === 'units'
@@ -606,6 +615,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (!runUpOptions.includes(runUp)) setRunUp(runUpOptions[0] || 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productType, showRunUp])
+
+  useEffect(() => {
+    if (!isJFilm) return
+    const l = ufilmLeftWidthMmNum
+    const r = ufilmRightWidthMmNum
+    if (l > 0 && r > 0) setWidthMm(String(l + r))
+  }, [isJFilm, ufilmLeftWidthMmNum, ufilmRightWidthMmNum])
 
   /** Tube is continuous web on rolls only; snap away from Cartons when product type is Tube. */
   useEffect(() => {
@@ -804,8 +820,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           geometry: derivedGeometry,
           base_width_mm: widthMmNum,
           run_up: showRunUp ? runUp : null,
-          ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
-          ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+          ufilm_left_width_mm: isLRFilm ? ufilmLeftWidthMmNum : null,
+          ufilm_right_width_mm: isLRFilm ? ufilmRightWidthMmNum : null,
           thickness_um: thicknessUmNum,
           base_length_mm: baseLengthMm,
           continuous_roll: isContinuousLength,
@@ -846,8 +862,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         geometry: derivedGeometry,
         base_width_mm: widthMmNum,
         run_up: showRunUp ? runUp : null,
-        ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
-        ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+        ufilm_left_width_mm: isLRFilm ? ufilmLeftWidthMmNum : null,
+        ufilm_right_width_mm: isLRFilm ? ufilmRightWidthMmNum : null,
         thickness_um: thicknessUmNum,
         base_length_mm: baseLengthMm,
         continuous_roll: isContinuousLength,
@@ -916,8 +932,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       geometry: derivedGeometry,
       base_width_mm: widthMmNum,
       run_up: showRunUp ? runUp : null,
-      ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
-      ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+      ufilm_left_width_mm: isLRFilm ? ufilmLeftWidthMmNum : null,
+      ufilm_right_width_mm: isLRFilm ? ufilmRightWidthMmNum : null,
       thickness_um: thicknessUmNum,
       continuous_roll: isContinuousLength,
       base_length_mm: baseLengthMm,
@@ -975,7 +991,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     flagPunched,
     gussetReturnMmNum,
     isContinuousLength,
-    isUFilm,
+    isLRFilm,
     lengthUnits,
     effectiveLengthUnits,
     numColours,
@@ -1225,7 +1241,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     ratebook,
   ])
 
-  const productUnitLabel = productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : `${productType}s`
+  const productUnitLabel =
+    productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType === 'J-Film' ? 'J-Films' : `${productType}s`
 
   /**
    * Pricing panel “Current override” line: show the rate in the same basis as Qty Type ($/ROLL, $/CTN, …),
@@ -2049,13 +2066,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         base_width_mm: widthMmNum,
         run_up: showRunUp ? runUp : null,
         gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
-        ufilm_left_width_mm: isUFilm ? ufilmLeftWidthMmNum : null,
-        ufilm_right_width_mm: isUFilm ? ufilmRightWidthMmNum : null,
+        ufilm_left_width_mm: isLRFilm ? ufilmLeftWidthMmNum : null,
+        ufilm_right_width_mm: isLRFilm ? ufilmRightWidthMmNum : null,
       })
     } catch {
       return 0
     }
-  }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isUFilm, productType, runUp, showRunUp, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
+  }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isLRFilm, productType, runUp, showRunUp, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
 
   const extruderDecisionWidthMm = useMemo(() => {
     // For U-Film, use the middle width as the "decision width" (per SpecPayloadForm behavior).
@@ -2588,7 +2605,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const canCalculate =
     (quoteUsesMoqOnly ? moqPayloadHasQty : userQtyComplete) &&
     widthMmNum > 0 &&
-    (!isUFilm || (ufilmLeftWidthMmNum > 0 && ufilmRightWidthMmNum > 0)) &&
+    (!isLRFilm || (ufilmLeftWidthMmNum > 0 && ufilmRightWidthMmNum > 0)) &&
     thicknessUmNum > 0 &&
     (isContinuousLength || baseLengthMm > 0) &&
     (!(canHaveGusset && flagGusset) || gussetReturnMmNum > 0) &&
@@ -2601,7 +2618,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (!quoteUsesMoqOnly) {
       if ((qtyType === 'units') && !(numUnitsNum > 0))
         missing.push(
-          `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType + 's'}`
+          `No. of ${productType === 'Bag' ? 'Bags' : productType === 'U-Film' ? 'U-Films' : productType === 'J-Film' ? 'J-Films' : productType + 's'}`
         )
       else if (
         (qtyType === 'units') &&
@@ -2653,8 +2670,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       }
     }
     if (!(widthMmNum > 0)) missing.push(`${productType} Width`)
-    if (isUFilm && !(ufilmLeftWidthMmNum > 0)) missing.push('U-Film Left Width')
-    if (isUFilm && !(ufilmRightWidthMmNum > 0)) missing.push('U-Film Right Width')
+    if (isLRFilm && !(ufilmLeftWidthMmNum > 0)) missing.push(`${productType} Left Width`)
+    if (isLRFilm && !(ufilmRightWidthMmNum > 0)) missing.push(`${productType} Right Width`)
     if (!(thicknessUmNum > 0)) missing.push('Gauge')
     if (!isContinuousLength && !(baseLengthMm > 0)) missing.push('Length')
     if (canHaveGusset && flagGusset && !(gussetReturnMmNum > 0)) missing.push('Gusset Return')
@@ -2671,7 +2688,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     flagPrinted,
     gussetReturnMmNum,
     isContinuousLength,
-    isUFilm,
+    isLRFilm,
     numColours,
     printMethod,
     printingErrorComputed,
@@ -3381,7 +3398,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                 <FormGroup row>
                   <FormControlLabel
                     control={
-                      <Checkbox checked={canHaveGusset && flagGusset} onChange={(e) => setFlagGusset(e.target.checked)} disabled={!canHaveGusset} />
+                      <Checkbox checked={canHaveGusset && flagGusset} onChange={(e) => setFlagGusset(e.target.checked)} disabled={!canHaveGusset || isLRFilm} />
                     }
                     label="Gusset"
                   />
@@ -3390,12 +3407,19 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                   <FormControlLabel control={<Checkbox checked={flagPunched} onChange={(e) => setFlagPunched(e.target.checked)} />} label="Punched" />
                 </FormGroup>
 
-                {isUFilm ? (
-                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
-                    <TextField label="Left Width (mm)" type="number" value={ufilmLeftWidthMm} onChange={(e) => setUfilmLeftWidthMm(e.target.value)} />
-                    <TextField label="Middle Width (mm)" type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
-                    <TextField label="Right Width (mm)" type="number" value={ufilmRightWidthMm} onChange={(e) => setUfilmRightWidthMm(e.target.value)} />
-                  </Box>
+                {isLRFilm ? (
+                  isJFilm ? (
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 2 }}>
+                      <TextField label="Left Width (mm)" type="number" value={ufilmLeftWidthMm} onChange={(e) => setUfilmLeftWidthMm(e.target.value)} />
+                      <TextField label="Right Width (mm)" type="number" value={ufilmRightWidthMm} onChange={(e) => setUfilmRightWidthMm(e.target.value)} />
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 2 }}>
+                      <TextField label="Left Width (mm)" type="number" value={ufilmLeftWidthMm} onChange={(e) => setUfilmLeftWidthMm(e.target.value)} />
+                      <TextField label="Middle Width (mm)" type="number" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
+                      <TextField label="Right Width (mm)" type="number" value={ufilmRightWidthMm} onChange={(e) => setUfilmRightWidthMm(e.target.value)} />
+                    </Box>
+                  )
                 ) : (
                   <Stack spacing={2}>
                     {showRunUp ? (
