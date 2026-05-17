@@ -2343,7 +2343,18 @@ export function SpecPayloadForm(props: {
                       {printingArtworkFiles.length > 0
                         ? previewField(
                             'Artwork files',
-                            `${printingArtworkFiles.length} file${printingArtworkFiles.length === 1 ? '' : 's'} attached`,
+                            <Box component="ul" sx={{ m: 0, pl: 2.25, listStyleType: 'disc' }}>
+                              {printingArtworkFiles.map((f: { id?: unknown; filename?: unknown }) => {
+                                const row = f
+                                const name = String(row.filename ?? '').trim() || 'Untitled.pdf'
+                                const key = String(row.id ?? name)
+                                return (
+                                  <Box component="li" key={key} sx={{ typography: 'body2', fontWeight: 600 }}>
+                                    {name}
+                                  </Box>
+                                )
+                              })}
+                            </Box>,
                             { strong: true },
                           )
                         : emptyGridSlot}

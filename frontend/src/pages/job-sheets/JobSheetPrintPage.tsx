@@ -1,6 +1,7 @@
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Alert, Box, Button, Stack, Typography } from '@mui/material'
+import { ApiError, apiFetch } from '../../api/client'
 import { Link, useParams } from 'react-router-dom'
-import { Button } from '@mui/material'
 import type { SpecPayload } from '../../components/SpecPayloadForm'
 import { JobSheetPrintOrderHeader, type JobSheetPrintOrderHeaderModel } from './components/JobSheetPrintOrderHeader'
 
@@ -584,12 +585,142 @@ function JobSheetPrintPrintingFormField(props: { label: string; children: ReactN
   )
 }
 
+function JobSheetPrintArtworkFileList(props: { names: string[] }): ReactNode {
+  if (!props.names.length) return <>—</>
+  return (
+    <ul className="js-print-artwork-file-list">
+      {props.names.map((name) => (
+        <li key={name}>{name}</li>
+      ))}
+    </ul>
+  )
+}
+
+function JobSheetPrintWorkflowPanel(props: {
+  jobSheetId: string
+  files: Array<{ id: string; filename: string }>
+  onPrintJobSheet: () => void
+}): ReactNode {
+  const { jobSheetId, files, onPrintJobSheet } = props
+  const [busyFileId, setBusyFileId] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function openArtworkPdf(fileId: string) {
+    setErr(null)
+    setBusyFileId(fileId)
+    try {
+      const res = await apiFetch<{ url: string }>(
+        `/api/job-sheets/${encodeURIComponent(jobSheetId)}/printing-artwork/${encodeURIComponent(fileId)}/download-url`,
+      )
+      if (!res?.url) throw new Error('No download URL returned')
+      window.open(res.url, '_blank', 'noopener,noreferrer')
+    } catch (e: unknown) {
+      setErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to open PDF')
+    } finally {
+      setBusyFileId(null)
+    }
+  }
+
+  return (
+    <Box className="no-print js-print-workflow-panel" sx={{ mb: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.5 }}>
+        How to print this job
+      </Typography>
+
+      {err ? (
+        <Alert severity="error" sx={{ mb: 1.5 }} onClose={() => setErr(null)}>
+          {err}
+        </Alert>
+      ) : null}
+
+      <Stack spacing={1.5}>
+        <Box
+          sx={{
+            p: 2,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1,
+            bgcolor: 'background.paper',
+          }}
+        >
+          <Box sx={{ display: 'flex', justifyContent: 'space-between',gap: 2, alignItems: 'center' }}>
+            <Stack spacing={1}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
+                Step 1 — Print the job sheet
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                Print this page first (all sections below: extrusion, printing details, QC, conversion, etc.).
+              </Typography>
+            </Stack>
+            <Box sx={{ flexShrink: 0 }}>
+              <Button type="button" variant="contained" color="primary" onClick={onPrintJobSheet}>
+                Print job sheet
+              </Button>
+            </Box>
+          </Box>
+        </Box>
+
+        <Box
+          sx={{
+            p: 2,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1,
+            bgcolor: 'background.paper',
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
+            Step 2 — Print each artwork PDF
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, maxWidth: '550px' }}>
+            Open each PDF below and use the browser&apos;s print command (e.g.{' '}
+            <strong>Ctrl+P</strong>) on that PDF.
+          </Typography>
+          <Stack spacing={1}>
+            {files.map((f, idx) => (
+              <Box
+                key={f.id}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                  flexWrap: 'wrap',
+                  py: 0.75,
+                  px: 1,
+                  borderRadius: 1,
+                  bgcolor: 'action.hover',
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {idx + 1}. {f.filename}
+                </Typography>
+                <Button
+                  type="button"
+                  size="small"
+                  variant="contained"
+                  disabled={busyFileId !== null}
+                  onClick={() => void openArtworkPdf(f.id)}
+                >
+                  {busyFileId === f.id ? 'Opening…' : 'Open PDF to print'}
+                </Button>
+              </Box>
+            ))}
+          </Stack>
+        </Box>
+      </Stack>
+    </Box>
+  )
+}
+
+
 function JobSheetPrintInlinePrintingBlock(props: {
   p: {
     printDescription: string
     numColours: string
     printSide: string
     printPosition: string
+    artworkPdfNames: string[]
     frontRows: Array<{ ink: string; plate: string; colourText: string }>
     backRows: Array<{ ink: string; plate: string; colourText: string }>
     legacyInkPlate: string | null
@@ -620,6 +751,11 @@ function JobSheetPrintInlinePrintingBlock(props: {
         <JobSheetPrintPrintingFormField label="Print position details">
           {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
         </JobSheetPrintPrintingFormField>
+        {p.artworkPdfNames.length > 0 ? (
+          <JobSheetPrintPrintingFormField label="Artwork files">
+            <JobSheetPrintArtworkFileList names={p.artworkPdfNames} />
+          </JobSheetPrintPrintingFormField>
+        ) : null}
         {showFrontPrint? (
           <div>
             <span className="js-print-form-k">Front print</span>
@@ -677,6 +813,7 @@ function JobSheetPrintUtecoPage(props: {
     finishedBagSize: string
     sealTypeLabel: string
     eyeSpotLabel: string
+    artworkPdfNames: string[]
     deckColours: Array<{ deck: number; colourText: string; inkCode: string }>
   }
 }): ReactNode {
@@ -701,6 +838,11 @@ function JobSheetPrintUtecoPage(props: {
         <JobSheetPrintUtecoField label="Print position details">
           <span className="js-print-pre">{u.printPosition || blankLine}</span>
         </JobSheetPrintUtecoField>
+        {u.artworkPdfNames.length > 0 ? (
+          <JobSheetPrintUtecoField label="Artwork files">
+            <JobSheetPrintArtworkFileList names={u.artworkPdfNames} />
+          </JobSheetPrintUtecoField>
+        ) : null}
       </div>
 
       <div className="js-print-uteco-card">
@@ -1744,11 +1886,15 @@ export function JobSheetPrintPage() {
     const artworkRefs = Array.isArray(printing?.artwork_refs)
       ? (printing.artwork_refs as unknown[]).filter((x) => String(x ?? '').trim() !== '')
       : []
-    const artworkPdfNames = Array.isArray(printing?.artwork_files)
-      ? (printing.artwork_files as Array<{ filename?: unknown }>)
-          .map((f) => String(f?.filename ?? '').trim())
-          .filter(Boolean)
+    const artworkFileRows = Array.isArray(printing?.artwork_files)
+      ? (printing.artwork_files as Array<{ id?: unknown; filename?: unknown }>)
+          .map((f) => ({
+            id: String(f?.id ?? '').trim(),
+            filename: String(f?.filename ?? '').trim() || 'Untitled.pdf',
+          }))
+          .filter((row) => row.id)
       : []
+    const artworkPdfNames = artworkFileRows.map((f) => f.filename)
 
     const cylMm = n(printing?.cylinder_size_mm)
     const platesAroundDisp =
@@ -1779,6 +1925,7 @@ export function JobSheetPrintPage() {
       finishedBagSize: formatJobSheetFinishedBagSizeFromSpec(specTyped),
       artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '',
       artworkPdfs: artworkPdfNames.length ? artworkPdfNames.join('; ') : '',
+      artworkPdfNames,
       frontRows: frontInkPlatePrint,
       backRows: backInkPlatePrint,
       legacyInkPlate,
@@ -1908,6 +2055,7 @@ export function JobSheetPrintPage() {
       finishedBagSize: utecoFinishedBagSize,
       sealTypeLabel: sealTypeLabelUteco,
       eyeSpotLabel: eyeSpotLabelUteco,
+      artworkPdfNames,
       deckColours: deckColoursUteco,
     }
 
@@ -2134,6 +2282,7 @@ export function JobSheetPrintPage() {
         resinMixRows,
       },
       printingLayout,
+      artworkFiles: artworkFileRows,
       shipping: {
         palletType: s(packaging?.pallet_type ?? spec?.pallet_type),
         finishModeKey: finishNorm,
@@ -2227,6 +2376,7 @@ export function JobSheetPrintPage() {
     : '/job-sheets'
 
   const orderQuantitiesRows = jobSheetPrintOrderQuantitiesRows(q)
+  const artworkFiles = model.artworkFiles ?? []
 
   return (
     <>
@@ -3295,6 +3445,13 @@ export function JobSheetPrintPage() {
           margin-top: 14px;
           table-layout:auto;
         }
+        .js-print-artwork-file-list {
+          margin: 0;
+          padding-left: 1.1em;
+          font-size: var(--js-print-fs-body);
+          font-weight: 700;
+        }
+        .js-print-artwork-file-list li { margin: 0.15em 0; }
       `}</style>
 
       <div className="js-print-root">
@@ -3302,10 +3459,20 @@ export function JobSheetPrintPage() {
           <Button variant="text" color="primary" component={Link} to={editHref}>
             Edit job sheet
           </Button>
-          <Button type="button" variant="contained" color="primary" onClick={() => window.print()}>
-            Print
-          </Button>
+          {artworkFiles.length === 0 ? (
+            <Button type="button" variant="contained" color="primary" onClick={() => window.print()}>
+              Print job sheet
+            </Button>
+          ) : null}
         </div>
+
+        {jobSheetId && artworkFiles.length > 0 ? (
+          <JobSheetPrintWorkflowPanel
+            jobSheetId={jobSheetId}
+            files={artworkFiles}
+            onPrintJobSheet={() => window.print()}
+          />
+        ) : null}
 
         <JobSheetPrintOrderHeader
           titleLine={model.titleLine}
