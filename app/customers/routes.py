@@ -85,10 +85,7 @@ async def create_customer(payload: CustomerCreateRequest):
     try:
         c = service.create_customer(payload)
     except ValueError as e:
-        msg = str(e)
-        if "Invalid pricing_tier_id" in msg:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
-        raise
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return {"ok": True, "customer": _customer_summary(c)}
 
 
@@ -118,6 +115,7 @@ async def get_customer(customer_id: str):
             "myob_last_modified": c.myob_last_modified.isoformat() if getattr(c, "myob_last_modified", None) else None,
             "myob_synced_at": c.myob_synced_at.isoformat() if getattr(c, "myob_synced_at", None) else None,
             "myob_notes": getattr(c, "myob_notes", None),
+            "xero_contact_id": getattr(c, "xero_contact_id", None),
             "products_count": products_count,
             "orders_count": orders_count,
             "quotes_count": quotes_count,
@@ -134,7 +132,7 @@ async def update_customer(customer_id: str, payload: CustomerUpdateRequest):
         c = service.update_customer(customer_id, payload)
     except ValueError as e:
         msg = str(e)
-        if "Invalid pricing_tier_id" in msg:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from e
     return {"ok": True, "customer": _customer_summary(c)}

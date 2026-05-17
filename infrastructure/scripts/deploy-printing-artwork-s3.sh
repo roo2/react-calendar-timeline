@@ -2,6 +2,9 @@
 # Deploy printing-artwork S3 stack (CloudFormation).
 set -euo pipefail
 
+# Use Crown Pack prod credentials by default (override with AWS_PROFILE=… if needed).
+export AWS_PROFILE="${AWS_PROFILE:-prod}"
+
 STACK_NAME=""
 BUCKET_NAME=""
 REGION="${AWS_REGION:-ap-southeast-2}"
@@ -22,6 +25,9 @@ Optional:
   --prefix PREFIX         Object key prefix, trailing slash recommended (default: printing/)
   --cors-origins LIST     Comma-separated origins, no spaces (omit to skip CORS)
   --cors-origin ORIGIN    Same as a single-value --cors-origins (backward compatible)
+
+Environment:
+  AWS_PROFILE             AWS CLI profile (this script defaults to prod; set AWS_PROFILE=default to use default)
 
 Example:
   ./deploy-printing-artwork-s3.sh \\
@@ -57,7 +63,7 @@ if [[ ! -f "$TEMPLATE" ]]; then
   exit 1
 fi
 
-echo "Deploying stack ${STACK_NAME} in ${REGION}..."
+echo "Deploying stack ${STACK_NAME} in ${REGION} (AWS_PROFILE=${AWS_PROFILE})..."
 aws cloudformation deploy \
   --region "$REGION" \
   --stack-name "$STACK_NAME" \

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 import re
+import uuid
 
 try:
     import email_validator  # noqa: F401
@@ -135,6 +136,23 @@ class CustomerCreateRequest(BaseModel):
     delivery_preferences: Optional[DeliveryPreferencesInput] = Field(None, description="Delivery preferences")
     payment_terms: Optional[PaymentTermsInput] = Field(None, description="MYOB-style payment terms (JSON in DB)")
     notes: Optional[str] = Field(None, description="General notes about the customer")
+    xero_contact_id: Optional[str] = Field(
+        None,
+        description="Xero Contact UUID (ContactID). Set this to link the customer for Xero quotes and invoices.",
+    )
+
+    @field_validator("xero_contact_id", mode="before")
+    @classmethod
+    def normalize_xero_contact_id(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        s = str(v).strip()
+        try:
+            return str(uuid.UUID(s))
+        except Exception:
+            raise ValueError("xero_contact_id must be a valid UUID (Xero ContactID)")
 
     @field_validator("status")
     @classmethod
@@ -188,5 +206,6 @@ class CustomerResponse(BaseModel):
     myob_last_modified: Optional[str] = None
     myob_synced_at: Optional[str] = None
     myob_notes: Optional[str] = None
+    xero_contact_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

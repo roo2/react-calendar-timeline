@@ -40,6 +40,7 @@ export type CustomerDetail = {
   myob_last_modified?: string | null
   myob_synced_at?: string | null
   myob_notes?: string | null
+  xero_contact_id?: string | null
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
@@ -61,6 +62,7 @@ export type CustomerUpsertPayload = {
   delivery_preferences: any
   payment_terms: Record<string, unknown> | null
   notes: string | null
+  xero_contact_id: string | null
 }
 
 type Status = 'idle' | 'loading' | 'succeeded' | 'failed'

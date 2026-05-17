@@ -101,6 +101,8 @@ class Customer(Base):
     myob_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # MYOB Notes field only; app-edited free-text stays in `notes`.
     myob_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Xero Accounting API Contact GUID (links quotes/invoices to the Xero contact).
+    xero_contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True)
 
     brand: Mapped[Optional["Brand"]] = relationship(back_populates="customers")
     pricing_tier: Mapped[Optional["CustomerPricingTier"]] = relationship(back_populates="customers")
@@ -914,6 +916,40 @@ class MyobConnection(Base):
     scope: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     myob_user_uid: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     myob_username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    last_refreshed_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[Optional[str]] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+
+class XeroOAuthState(Base):
+    """Short-lived CSRF/state token for the Xero OAuth authorize redirect."""
+
+    __tablename__ = "xero_oauth_states"
+
+    state: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[Optional[str]] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp(),
+    )
+    expires_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class XeroConnection(Base):
+    """Singleton (id=1): stored Xero OAuth tokens + selected organisation tenant."""
+
+    __tablename__ = "xero_connection"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_xero_connection_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token_expires_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    tenant_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    scope: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     last_refreshed_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[Optional[str]] = mapped_column(
         DateTime(timezone=True),

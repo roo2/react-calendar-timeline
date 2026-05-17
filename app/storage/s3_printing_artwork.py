@@ -13,8 +13,6 @@ def printing_artwork_bucket_configured() -> bool:
 
 def s3_client() -> BaseClient:
     kwargs: dict = {"region_name": settings.S3_REGION}
-    if settings.S3_ENDPOINT_URL:
-        kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
     return boto3.client("s3", **kwargs)
 
 

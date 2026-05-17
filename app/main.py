@@ -36,6 +36,10 @@ try:
 except Exception:
     myob_router = None
 try:
+    from app.integrations.xero.routes import router as xero_router  # type: ignore
+except Exception:
+    xero_router = None
+try:
     # Test imports step by step
     try:
         from app.customers import service
@@ -294,6 +298,8 @@ if telemetry_router is not None:
     app.include_router(telemetry_router)
 if myob_router is not None:
     app.include_router(myob_router)
+if xero_router is not None:
+    app.include_router(xero_router)
 
 
 @app.exception_handler(DomainError)

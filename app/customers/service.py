@@ -4,7 +4,8 @@ from typing import Dict, List, Optional, Tuple
 
 import uuid
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import SessionLocal
@@ -106,10 +107,15 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             delivery_preferences=delivery_prefs,
             payment_terms=_payment_terms_to_store(payload),
             notes=payload.notes,
+            xero_contact_id=payload.xero_contact_id,
         )
 
         db.add(customer)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise ValueError("That Xero contact is already linked to another customer.") from None
         # Re-load with brand so the instance is safe to use after the session closes (routes call _customer_summary).
         out = db.scalars(
             select(Customer)
@@ -148,8 +154,13 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         customer.delivery_preferences = delivery_prefs
         customer.payment_terms = _payment_terms_to_store(payload)
         customer.notes = payload.notes
-        
-        db.commit()
+        customer.xero_contact_id = payload.xero_contact_id
+
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise ValueError("That Xero contact is already linked to another customer.") from None
         out = db.scalars(
             select(Customer)
             .options(joinedload(Customer.brand), joinedload(Customer.pricing_tier))

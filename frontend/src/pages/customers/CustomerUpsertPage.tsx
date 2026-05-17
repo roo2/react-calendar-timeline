@@ -103,6 +103,7 @@ type CustomerDetail = {
   contacts: any[]
   delivery_addresses: any[]
   delivery_preferences: any
+  xero_contact_id?: string | null
 }
 
 type BrandOption = {
@@ -200,6 +201,7 @@ export function CustomerUpsertPage() {
 
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermsForm>(() => emptyPaymentTermsForm())
   const [notes, setNotes] = useState('')
+  const [xeroContactId, setXeroContactId] = useState('')
 
   const [localErr, setLocalErr] = useState<string | null>(null)
 
@@ -304,6 +306,7 @@ export function CustomerUpsertPage() {
 
     setPaymentTerms(paymentTermsFromApi(c.payment_terms))
     setNotes(c.notes || '')
+    setXeroContactId((c as { xero_contact_id?: string | null }).xero_contact_id || '')
     setPricingTierId((c as { pricing_tier_id?: string | null }).pricing_tier_id || '')
 
     setHydratedId(customerId)
@@ -342,6 +345,7 @@ export function CustomerUpsertPage() {
         } satisfies DeliveryPrefs,
         payment_terms: paymentTermsToPayload(paymentTerms),
         notes: notes || null,
+        xero_contact_id: xeroContactId.trim() || null,
       }
 
       if (isEdit) {
@@ -795,6 +799,21 @@ export function CustomerUpsertPage() {
             </Typography>
           ) : null}
           <Box sx={{ mt: 2 }}>
+            <TextField
+              label="Xero contact id (optional)"
+              value={xeroContactId}
+              onChange={(e) => {
+                setXeroContactId(e.target.value)
+                clearFieldError('xero_contact_id')
+              }}
+              error={!!fieldErrors['xero_contact_id']}
+              helperText={
+                fieldErrors['xero_contact_id'] ||
+                'Xero Contact UUID (ContactID). Used when creating quotes or invoices in Xero for this customer.'
+              }
+              fullWidth
+              sx={{ mb: 2 }}
+            />
             <TextField
               label="Notes"
               value={notes}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import copy
 import uuid
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -825,5 +826,71 @@ def extract_tool_requirements(spec: SpecPayload) -> List[Dict[str, Any]]:
             )
     return tools
 
+
+def append_printing_artwork_file_to_product_version(
+    *,
+    product_id: str,
+    version_id: str,
+    file_id: str,
+    filename: str,
+    byte_size: int,
+) -> None:
+    """
+    Record a printing PDF in ``ProductVersion.spec_payload`` under ``printing.artwork_files``
+    so download-url / delete can resolve the S3 object key.
+    """
+    with SessionLocal.begin() as db:
+        pid = str(uuid.UUID(str(product_id)))
+        vid = str(uuid.UUID(str(version_id)))
+        v = db.get(ProductVersion, vid)
+        if not v or str(getattr(v, "product_id", "")) != pid:
+            raise DomainError("Product version not found")
+        raw = getattr(v, "spec_payload", None)
+        if not isinstance(raw, dict):
+            raise DomainError("Version has no spec")
+        spec = copy.deepcopy(raw)
+        printing = spec.get("printing")
+        if not isinstance(printing, dict):
+            printing = {}
+            spec["printing"] = printing
+        files = printing.get("artwork_files")
+        if not isinstance(files, list):
+            files = []
+            printing["artwork_files"] = files
+        fid_s = str(file_id)
+        for it in files:
+            if isinstance(it, dict) and str(it.get("id")) == fid_s:
+                it["filename"] = str(filename)
+                it["byte_size"] = int(byte_size)
+                v.spec_payload = spec
+                db.add(v)
+                return
+        files.append({"id": fid_s, "filename": str(filename), "byte_size": int(byte_size)})
+        v.spec_payload = spec
+        db.add(v)
+
+
+def remove_printing_artwork_file_from_product_version(*, product_id: str, version_id: str, file_id: str) -> None:
+    """Remove ``file_id`` from ``printing.artwork_files`` on the product version spec."""
+    with SessionLocal.begin() as db:
+        pid = str(uuid.UUID(str(product_id)))
+        vid = str(uuid.UUID(str(version_id)))
+        v = db.get(ProductVersion, vid)
+        if not v or str(getattr(v, "product_id", "")) != pid:
+            return
+        raw = getattr(v, "spec_payload", None)
+        if not isinstance(raw, dict):
+            return
+        spec = copy.deepcopy(raw)
+        printing = spec.get("printing")
+        if not isinstance(printing, dict):
+            return
+        files = printing.get("artwork_files")
+        if not isinstance(files, list):
+            return
+        fid_s = str(file_id)
+        printing["artwork_files"] = [it for it in files if not (isinstance(it, dict) and str(it.get("id")) == fid_s)]
+        v.spec_payload = spec
+        db.add(v)
 
 

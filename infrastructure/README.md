@@ -18,6 +18,8 @@ When you use `deploy-printing-artwork-s3.sh`, CORS is applied with **`aws s3api 
 
 Use **two buckets** (two stacks): one for local Vite (`http://localhost:5173/`) and one shared **production** bucket for the app on [Heroku](https://crownpack-production-38f4b529d3b6.herokuapp.com/) (bucket name **`crownpack-production`**, with all printing PDFs under the **`printing/`** prefix).
 
+`deploy-crownpack-printing-s3-envs.sh` creates the **local** stack using the AWS CLI profile **`default`** and the **production** stack using the profile **`prod`**. Override with `PROFILE_LOCAL` / `PROFILE_PRODUCTION` if your profile names differ.
+
 1. From the **repo root**, deploy both stacks:
 
    ```bash
@@ -25,20 +27,20 @@ Use **two buckets** (two stacks): one for local Vite (`http://localhost:5173/`) 
    ./infrastructure/scripts/deploy-crownpack-printing-s3-envs.sh
    ```
 
-   S3 bucket names are **globally unique**. If `crownpack-print-local` or **`crownpack-production`** is already taken in AWS, set your own before running:
+   S3 bucket names are **globally unique**. If `crownpack-production-local` or **`crownpack-production`** is already taken in AWS, set your own before running:
 
    ```bash
-   export BUCKET_LOCAL=crownpack-print-local-me
+   export BUCKET_LOCAL=crownpack-production-local-me
    export BUCKET_STAGING=crownpack-production-yourcompany
    ./infrastructure/scripts/deploy-crownpack-printing-s3-envs.sh
    ```
 
    This creates:
 
-   | Stack | Default bucket name | Object prefix | CORS origins |
-   |-------|---------------------|---------------|--------------|
-   | `crownpack-printing-artwork-local` | `crownpack-print-local` | `printing/` | `http://localhost:5173` |
-   | `crownpack-printing-artwork-staging` | **`crownpack-production`** | **`printing/`** | `https://crownpack-production-38f4b529d3b6.herokuapp.com` |
+   | Stack | Default bucket name | AWS profile (default) | Object prefix | CORS origins |
+   |-------|---------------------|------------------------|---------------|--------------|
+   | `crownpack-printing-artwork-local` | `crownpack-production-local` | `default` | `printing/` | `http://localhost:5173` |
+   | `crownpack-printing-artwork-staging` | **`crownpack-production`** | **`prod`** | **`printing/`** | `https://crownpack-production-38f4b529d3b6.herokuapp.com` |
 
 2. Create **separate** IAM access keys for each environment’s backend (local `.env` vs Heroku config vars), using the `IamUserName` output from each stack (see below).
 
@@ -47,7 +49,7 @@ Use **two buckets** (two stacks): one for local Vite (`http://localhost:5173/`) 
    **Local** (`.env`):
 
    ```bash
-   S3_BUCKET=crownpack-print-local
+   S3_BUCKET=crownpack-production-local
    S3_REGION=ap-southeast-2
    S3_PRINTING_ARTWORK_PREFIX=printing/
    AWS_ACCESS_KEY_ID=...   # key for local stack’s IAM user
@@ -76,7 +78,7 @@ If you only want to change CORS (not redeploy local), run `deploy-printing-artwo
 
 If you retire Heroku, set `STAGING_CORS_ORIGINS` to production only and redeploy.
 
-Optional overrides: `STACK_LOCAL`, `STACK_STAGING`, `BUCKET_LOCAL`, `BUCKET_STAGING`, `AWS_REGION` — see comments in `infrastructure/scripts/deploy-crownpack-printing-s3-envs.sh`.
+Optional overrides: `STACK_LOCAL`, `STACK_STAGING`, `BUCKET_LOCAL`, `BUCKET_STAGING`, `AWS_REGION`, `PROFILE_LOCAL`, `PROFILE_PRODUCTION` — see comments in `infrastructure/scripts/deploy-crownpack-printing-s3-envs.sh`.
 
 ---
 

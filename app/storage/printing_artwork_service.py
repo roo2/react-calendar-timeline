@@ -94,8 +94,22 @@ def upload_job_sheet_printing_pdf(*, job_sheet_id: str, filename: str, data: byt
         raise DomainError("Invalid job_sheet_id") from e
     fid = str(uuid.uuid4())
     key = object_key_job_sheet(str(jid), fid)
-    put_pdf(bucket=bucket, key=key, body=data, original_filename=sanitize_filename(filename))
-    return {"id": fid, "filename": sanitize_filename(filename), "byte_size": len(data)}
+    meta = {"id": fid, "filename": sanitize_filename(filename), "byte_size": len(data)}
+    put_pdf(bucket=bucket, key=key, body=data, original_filename=meta["filename"])
+    try:
+        job_sheets_service.append_printing_artwork_file_to_job_sheet_version(
+            str(jid),
+            file_id=fid,
+            filename=meta["filename"],
+            byte_size=meta["byte_size"],
+        )
+    except DomainError:
+        try:
+            delete_object(bucket=bucket, key=key)
+        except Exception:
+            pass
+        raise
+    return meta
 
 
 def presign_job_sheet_printing_pdf(*, job_sheet_id: str, file_id: str) -> str:
@@ -137,6 +151,7 @@ def delete_job_sheet_printing_pdf(*, job_sheet_id: str, file_id: str) -> None:
     except Exception as e:
         raise DomainError("Invalid id") from e
     key = object_key_job_sheet(jid, str(fid))
+    job_sheets_service.remove_printing_artwork_file_from_job_sheet_version(job_sheet_id, file_id=str(fid))
     delete_object(bucket=bucket, key=key)
 
 
@@ -162,8 +177,23 @@ def upload_product_printing_pdf(
     fid = str(uuid.uuid4())
     # Store per product (not per version) so copied specs keep valid keys.
     key = object_key_product(pid, fid)
-    put_pdf(bucket=bucket, key=key, body=data, original_filename=sanitize_filename(filename))
-    return {"id": fid, "filename": sanitize_filename(filename), "byte_size": len(data)}
+    meta = {"id": fid, "filename": sanitize_filename(filename), "byte_size": len(data)}
+    put_pdf(bucket=bucket, key=key, body=data, original_filename=meta["filename"])
+    try:
+        products_service.append_printing_artwork_file_to_product_version(
+            product_id=str(pid),
+            version_id=str(version_id),
+            file_id=fid,
+            filename=meta["filename"],
+            byte_size=meta["byte_size"],
+        )
+    except DomainError:
+        try:
+            delete_object(bucket=bucket, key=key)
+        except Exception:
+            pass
+        raise
+    return meta
 
 
 def presign_product_printing_pdf(*, product_id: str, version_id: str, file_id: str) -> str:
@@ -207,4 +237,7 @@ def delete_product_printing_pdf(*, product_id: str, version_id: str, file_id: st
     except Exception as e:
         raise DomainError("Invalid id") from e
     key = object_key_product(pid, str(fid))
+    products_service.remove_printing_artwork_file_from_product_version(
+        product_id=str(pid), version_id=str(version_id), file_id=str(fid)
+    )
     delete_object(bucket=bucket, key=key)

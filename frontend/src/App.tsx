@@ -61,6 +61,7 @@ const ProductionCalendarAdminPage = lazy(async () => ({
 }))
 const ToolsAdminPage = lazy(async () => ({ default: (await import('./pages/admin/ToolsAdminPage')).ToolsAdminPage }))
 const MyobAdminPage = lazy(async () => ({ default: (await import('./pages/admin/MyobAdminPage')).MyobAdminPage }))
+const XeroAdminPage = lazy(async () => ({ default: (await import('./pages/admin/XeroAdminPage')).XeroAdminPage }))
 const MyobDataAdminPage = lazy(async () => ({
   default: (await import('./pages/admin/MyobDataAdminPage')).MyobDataAdminPage,
 }))
@@ -274,6 +275,14 @@ function App() {
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <MyobAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="xero"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <XeroAdminPage />
                     </Suspense>
                   }
                 />

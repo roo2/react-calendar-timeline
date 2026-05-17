@@ -2558,9 +2558,8 @@ export function JobSheetPrintPage() {
           margin: 0;
         }
         .js-resin-mix-blend-bar td {
-          border: 1px solid #000;
-          padding: 6px 8px;
-          font-size: 12px;
+          border: none;
+          font-size: var(--js-print-fs-body);
           vertical-align: middle;
           word-break: break-word;
           box-sizing: border-box;

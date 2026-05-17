@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 import uuid
 from datetime import date, datetime, time, timezone
@@ -690,6 +691,88 @@ def production_job_snapshots_by_job_sheet_ids(job_sheet_ids: list[str]) -> dict[
 def production_job_status_by_job_sheet_ids(job_sheet_ids: list[str]) -> dict[str, str]:
     snap = production_job_snapshots_by_job_sheet_ids(job_sheet_ids)
     return {k: str(v.get("status") or "") for k, v in snap.items()}
+
+
+def append_printing_artwork_file_to_job_sheet_version(
+    job_sheet_id: str,
+    *,
+    file_id: str,
+    filename: str,
+    byte_size: int,
+) -> None:
+    """
+    Record a printing PDF in the job sheet's linked ``ProductVersion.spec_payload`` under
+    ``printing.artwork_files`` so download-url / delete can resolve the S3 object key.
+    """
+    with SessionLocal.begin() as db:
+        try:
+            jid = str(uuid.UUID(str(job_sheet_id)))
+        except Exception as e:
+            raise DomainError("Invalid job_sheet_id") from e
+        js = db.get(JobSheet, jid)
+        if not js:
+            raise DomainError("Job sheet not found")
+        vid = getattr(js, "product_version_id", None)
+        if not vid:
+            raise DomainError("Job sheet has no product version")
+        version = db.get(ProductVersion, str(vid))
+        if not version:
+            raise DomainError("Product version not found")
+        raw = getattr(version, "spec_payload", None)
+        if not isinstance(raw, dict):
+            raise DomainError("Job sheet has no spec")
+        spec = copy.deepcopy(raw)
+        printing = spec.get("printing")
+        if not isinstance(printing, dict):
+            printing = {}
+            spec["printing"] = printing
+        files = printing.get("artwork_files")
+        if not isinstance(files, list):
+            files = []
+            printing["artwork_files"] = files
+        fid_s = str(file_id)
+        for it in files:
+            if isinstance(it, dict) and str(it.get("id")) == fid_s:
+                it["filename"] = str(filename)
+                it["byte_size"] = int(byte_size)
+                version.spec_payload = spec
+                db.add(version)
+                return
+        files.append({"id": fid_s, "filename": str(filename), "byte_size": int(byte_size)})
+        version.spec_payload = spec
+        db.add(version)
+
+
+def remove_printing_artwork_file_from_job_sheet_version(job_sheet_id: str, *, file_id: str) -> None:
+    """Remove ``file_id`` from ``printing.artwork_files`` on the job sheet's linked version spec."""
+    with SessionLocal.begin() as db:
+        try:
+            jid = str(uuid.UUID(str(job_sheet_id)))
+        except Exception as e:
+            raise DomainError("Invalid job_sheet_id") from e
+        js = db.get(JobSheet, jid)
+        if not js:
+            raise DomainError("Job sheet not found")
+        vid = getattr(js, "product_version_id", None)
+        if not vid:
+            return
+        version = db.get(ProductVersion, str(vid))
+        if not version:
+            return
+        raw = getattr(version, "spec_payload", None)
+        if not isinstance(raw, dict):
+            return
+        spec = copy.deepcopy(raw)
+        printing = spec.get("printing")
+        if not isinstance(printing, dict):
+            return
+        files = printing.get("artwork_files")
+        if not isinstance(files, list):
+            return
+        fid_s = str(file_id)
+        printing["artwork_files"] = [it for it in files if not (isinstance(it, dict) and str(it.get("id")) == fid_s)]
+        version.spec_payload = spec
+        db.add(version)
 
 
 def get_job_sheet(job_sheet_id: str) -> Optional[JobSheet]:

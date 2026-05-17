@@ -172,6 +172,14 @@ export function CustomerShowPage() {
               <p style={{ margin: '4px 0 0' }}>{customer.contact_phone}</p>
             </div>
           )}
+          {customer.xero_contact_id && (
+            <div>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Xero contact id</strong>
+              <p style={{ margin: '4px 0 0', fontFamily: 'ui-monospace, monospace', fontSize: '0.875rem' }}>
+                {customer.xero_contact_id}
+              </p>
+            </div>
+          )}
           {(() => {
             const summary =
               (customer.payment_terms_summary && String(customer.payment_terms_summary).trim()) ||
