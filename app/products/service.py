@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
 from app.db.myob_import_placeholders import MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID
-from app.db.models.domain import Product, ProductVersion, OperatorSuggestion, Customer, JobSheet, OrderItem
+from app.db.models.domain import Product, ProductVersion, OperatorSuggestion, Customer, JobSheet, OrderItem, Order
 from app.exceptions import DomainError
 from app.products.schemas import (
     CreateProductRequest,
@@ -903,6 +903,68 @@ def append_printing_artwork_file_to_product_version(
         files.append({"id": fid_s, "filename": str(filename), "byte_size": int(byte_size)})
         v.spec_payload = spec
         db.add(v)
+
+
+def recent_job_sheets_for_product(product_id: str, *, limit: int = 10) -> List[Dict[str, Any]]:
+    """Most recent job sheets using this product (for product detail page)."""
+    try:
+        pid = str(uuid.UUID(str(product_id)))
+    except Exception as e:
+        raise DomainError("Invalid product id") from e
+    if pid == MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID:
+        return []
+    lim = max(1, min(int(limit), 50))
+    with SessionLocal() as db:
+        rows = list(
+            db.scalars(
+                select(JobSheet)
+                .where(JobSheet.product_id == pid)
+                .order_by(JobSheet.created_at.desc())
+                .limit(lim)
+            ).all()
+        )
+        if not rows:
+            return []
+        js_ids = [str(r.id) for r in rows]
+        order_by_js: Dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
+        order_rows = (
+            db.query(OrderItem.job_sheet_id, Order.id, Order.code, Order.order_date, Order.status)
+            .join(Order, Order.id == OrderItem.order_id)
+            .filter(OrderItem.job_sheet_id.in_(js_ids))
+            .order_by(Order.created_at.desc())
+            .all()
+        )
+        for jid, oid, code, order_date, ost in order_rows:
+            jid_s = str(jid)
+            if jid_s in order_by_js:
+                continue
+            st_s: str | None = None
+            if ost is not None:
+                st_s = str(getattr(ost, "value", ost))
+            order_by_js[jid_s] = (
+                str(oid),
+                str(code) if code is not None else None,
+                str(order_date) if order_date is not None else None,
+                st_s,
+            )
+        out: List[Dict[str, Any]] = []
+        for js in rows:
+            jid = str(js.id)
+            oid, inv, od, ost = order_by_js.get(jid, (None, None, None, None))
+            out.append(
+                {
+                    "id": jid,
+                    "job_no": str(getattr(js, "job_no", "") or ""),
+                    "order_id": oid,
+                    "invoice_no": inv,
+                    "order_date": od,
+                    "order_status": ost,
+                    "quantity_value": float(getattr(js, "quantity_value", 0) or 0),
+                    "quantity_unit": str(getattr(js, "quantity_unit", "") or ""),
+                    "due_date": str(js.due_date.date()) if getattr(js, "due_date", None) is not None else None,
+                }
+            )
+        return out
 
 
 def product_usage(product_id: str) -> Dict[str, Any]:

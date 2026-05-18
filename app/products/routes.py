@@ -9,6 +9,7 @@ from starlette.responses import Response
 
 from app.auth.deps import require_roles, allow_roles_any, csrf_protect, current_identity
 from app.config import settings
+from app.datetime_serialize import datetime_to_api_iso
 from app.exceptions import DomainError
 from app.products import service
 from app.storage import printing_artwork_service as printing_artwork_service
@@ -78,7 +79,7 @@ def _product_summary(p) -> dict:
         "active_version_id": p.active_version_id,
         "active_version_number": active_version_number,
         "version_count": _product_version_count(p),
-        "created_at": str(getattr(p, "created_at", "")),
+        "created_at": datetime_to_api_iso(getattr(p, "created_at", None)),
         "customer_name": customer_name,
         "product_type": product_type,
         "finish_mode": finish_mode,
@@ -96,7 +97,7 @@ def _version_summary(v) -> dict:
         "product_id": v.product_id,
         "version_number": v.version_number,
         "created_by": v.created_by,
-        "created_at": str(getattr(v, "created_at", "")),
+        "created_at": datetime_to_api_iso(getattr(v, "created_at", None)),
         "spec_payload": v.spec_payload,
         "description": service.compute_product_description(v.spec_payload) if isinstance(v.spec_payload, dict) else None,
     }
@@ -144,6 +145,7 @@ async def get_product(product_id: str):
         "product": _product_summary(p),
         "versions": [_version_summary(v) for v in (p.versions or [])],
         "usage": service.product_usage(product_id),
+        "recent_job_sheets": service.recent_job_sheets_for_product(product_id, limit=10),
     }
 
 

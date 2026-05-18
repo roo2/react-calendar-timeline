@@ -1153,8 +1153,6 @@ export function ProductVersionEditor(props: {
             <MuiLink
               component={Link}
               to={`/job-sheets/${encodeURIComponent(jobSheetId)}/edit`}
-              target="_blank"
-              rel="noopener noreferrer"
               underline="hover"
               sx={{ fontSize: '0.875rem', whiteSpace: 'nowrap' }}
             >

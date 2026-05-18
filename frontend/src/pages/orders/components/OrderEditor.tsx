@@ -478,7 +478,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [customerDisplayName, setCustomerDisplayName] = useState<string | null>(null)
 
   const [saving, setSaving] = useState(false)
-  const [orderStatus, setOrderStatus] = useState<string>('draft')
+  const [orderStatus, setOrderStatus] = useState<string>(mode === 'new' ? 'draft' : '')
+  const [orderLoaded, setOrderLoaded] = useState(mode === 'new')
 
   const [pvOpen, setPvOpen] = useState(false)
   const [pvProductId, setPvProductId] = useState<string | null>(null)
@@ -803,11 +804,12 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   useEffect(() => {
     if (mode !== 'edit') return
     if (!orderId) return
+    setOrderLoaded(false)
     void (async () => {
       try {
         setErr(null)
         const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-        setOrderStatus(String(res?.status || 'draft'))
+        setOrderStatus(String(res?.status || ''))
         setCustomerId(String(res?.customer_id || ''))
         setCustomerDisplayName(res?.customer_name ? String(res.customer_name) : null)
         setInvoiceNumber(String(res?.code ?? ''))
@@ -822,8 +824,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         originalRef.current = {
           lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])),
         }
+        setOrderLoaded(true)
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Failed to load order')
+        setOrderLoaded(true)
       }
     })()
   }, [mode, orderId, dispatch])
@@ -1656,6 +1660,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       <OrderFormFooter
         variant={mode === 'new' ? 'new' : 'edit'}
         orderId={effectiveOrderId ?? undefined}
+        orderLoaded={orderLoaded}
         orderStatus={orderStatus}
         importSource={importSource}
         importReviewStatus={importReviewStatus}

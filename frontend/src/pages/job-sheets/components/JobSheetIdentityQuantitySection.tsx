@@ -361,10 +361,9 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
 
         <TextField
           label="Purchase order"
-          value={String(purchaseOrderNo ?? '')}
+          value={String(purchaseOrderNo?.trim()?.length > 0 ? purchaseOrderNo?.trim() : '—')}
           disabled
           InputProps={{ readOnly: true }}
-          helperText={purchaseOrderNo?.trim() ? undefined : 'No order linked yet'}
         />
       </Box>
 

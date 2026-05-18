@@ -52,6 +52,8 @@ type Props = {
   onAfterPatch?: () => void | Promise<void>
   /** Called after a draft order is deleted (e.g. navigate to orders list). */
   onAfterDelete?: () => void | Promise<void>
+  /** When false, hide draft-only actions (e.g. delete) until order data has loaded. Defaults to true. */
+  orderLoaded?: boolean
 }
 
 export function OrderFormFooter(props: Props) {
@@ -72,6 +74,7 @@ export function OrderFormFooter(props: Props) {
     onCancel,
     onAfterPatch,
     onAfterDelete,
+    orderLoaded = true,
   } = props
   const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
@@ -83,7 +86,7 @@ export function OrderFormFooter(props: Props) {
   const [footerErr, setFooterErr] = useState<string | null>(null)
 
   const st = String(orderStatus || '').trim().toLowerCase()
-  const canDeleteDraft = canEdit && Boolean(orderId) && st === 'draft'
+  const canDeleteDraft = canEdit && Boolean(orderId) && orderLoaded && st === 'draft'
   const [localStatus, setLocalStatus] = useState(st)
   useEffect(() => {
     setLocalStatus(st)
