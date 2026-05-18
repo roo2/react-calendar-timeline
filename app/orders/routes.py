@@ -250,7 +250,7 @@ async def list_orders(
     ),
     sort_dir: str | None = Query(default=None, description="asc or desc"),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=100, ge=1, le=200),
+    page_size: int = Query(default=20, ge=1, le=200),
 ):
     if customer_id:
         try:

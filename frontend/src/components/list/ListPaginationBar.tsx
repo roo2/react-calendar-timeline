@@ -1,7 +1,10 @@
 import { Paper, TablePagination } from '@mui/material'
 
-/** Fixed page size for all list views using this bar (MUI hides the selector when only one option). */
-export const LIST_PAGE_SIZE = 100
+/** Fixed page size for Orders, Job Sheets, and Products list views (MUI hides the selector when only one option). */
+export const LIST_PAGE_SIZE = 20
+
+/** Customers list keeps a larger page size. */
+export const CUSTOMERS_LIST_PAGE_SIZE = 100
 
 export type ListPaginationBarProps = {
   total: number
@@ -11,7 +14,7 @@ export type ListPaginationBarProps = {
 }
 
 /**
- * Bottom pagination bar consistent across list pages (100 rows per page, not user-editable).
+ * Bottom pagination bar consistent across list pages (fixed rows per page, not user-editable).
  */
 export function ListPaginationBar({ total, page, onPageChange }: ListPaginationBarProps) {
   const rowsPerPage = LIST_PAGE_SIZE

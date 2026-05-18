@@ -296,7 +296,7 @@ def list_orders(
     sort_by: Optional[str] = None,
     sort_dir: Optional[str] = None,
     page: int = 1,
-    page_size: int = 100,
+    page_size: int = 20,
 ) -> tuple[List[OrderModel], int]:
     with SessionLocal() as db:
         effective_brand_id: str | None = None

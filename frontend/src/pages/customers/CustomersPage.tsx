@@ -6,7 +6,12 @@ import { can } from '../../auth/permissions'
 import { fetchCustomers } from '../../store/slices/customersSlice'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { useCustomersListUrlSync } from '../../hooks/urlSearchParamsSync'
-import { ListFiltersCard, ListPaginationBar, ListTableSurface, LIST_PAGE_SIZE } from '../../components/list'
+import {
+  ListFiltersCard,
+  ListPaginationBar,
+  ListTableSurface,
+  CUSTOMERS_LIST_PAGE_SIZE,
+} from '../../components/list'
 import { Alert, Box, Button, Table, TableBody, TableCell, TableHead, TableRow, Typography, Link as MuiLink } from '@mui/material'
 
 export function CustomersPage() {
@@ -41,7 +46,7 @@ export function CustomersPage() {
       fetchCustomers({
         q: debouncedQ.trim(),
         page: pageIdx + 1,
-        page_size: LIST_PAGE_SIZE,
+        page_size: CUSTOMERS_LIST_PAGE_SIZE,
       }),
     )
   }, [dispatch, debouncedQ, pageIdx])
@@ -51,7 +56,7 @@ export function CustomersPage() {
     setPageIdx(0)
   }
 
-  const maxPage = Math.max(0, Math.ceil(total / LIST_PAGE_SIZE) - 1)
+  const maxPage = Math.max(0, Math.ceil(total / CUSTOMERS_LIST_PAGE_SIZE) - 1)
   const safePageIdx = Math.min(pageIdx, maxPage)
 
   return (

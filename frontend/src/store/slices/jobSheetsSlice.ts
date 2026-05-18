@@ -111,7 +111,7 @@ type JobSheetsState = {
 }
 
 const initialState: JobSheetsState = {
-  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 100 },
+  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 20 },
   detail: { byId: {} },
 }
 
@@ -127,7 +127,7 @@ export const fetchJobSheets = createAsyncThunk(
       items: res.items || [],
       total: Number(res.total) || 0,
       page: Number(res.page) || Number(query?.page) || 1,
-      pageSize: Number(res.page_size) || Number(query?.page_size) || 100,
+      pageSize: Number(res.page_size) || Number(query?.page_size) || 20,
     }
   },
 )

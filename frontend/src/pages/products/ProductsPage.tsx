@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchProducts } from '../../store/slices/productsSlice'
@@ -18,6 +18,8 @@ import {
   Typography,
   Link as MuiLink,
 } from '@mui/material'
+import { LIST_PAGE_SIZE, ListPaginationBar } from '../../components/list'
+
 export function ProductsPage() {
   const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
@@ -26,6 +28,7 @@ export function ProductsPage() {
   const isPm = can(roles, 'PROD_MANAGER')
 
   const [q, setQ] = useState('')
+  const [pageIdx, setPageIdx] = useState(0)
 
   useEffect(() => {
     void dispatch(fetchProducts(undefined))
@@ -33,6 +36,7 @@ export function ProductsPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
+    setPageIdx(0)
     try {
       await dispatch(fetchProducts({ q })).unwrap()
     } catch {
@@ -41,6 +45,13 @@ export function ProductsPage() {
   }
 
   const listErr = lastQuery === q.trim() && status === 'failed' ? error : null
+  const total = items.length
+  const maxPage = Math.max(0, Math.ceil(total / LIST_PAGE_SIZE) - 1)
+  const safePageIdx = Math.min(pageIdx, maxPage)
+  const pageItems = useMemo(() => {
+    const start = safePageIdx * LIST_PAGE_SIZE
+    return items.slice(start, start + LIST_PAGE_SIZE)
+  }, [items, safePageIdx])
 
   return (
     <Stack spacing={2}>
@@ -89,7 +100,7 @@ export function ProductsPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((p) => (
+              {pageItems.map((p) => (
                 <TableRow key={p.id} hover>
                   <TableCell>{p.customer_name || '-'}</TableCell>
                   <TableCell>
@@ -126,6 +137,10 @@ export function ProductsPage() {
           </Table>
         )}
       </Paper>
+
+      {total > 0 ? (
+        <ListPaginationBar total={total} page={safePageIdx} onPageChange={setPageIdx} />
+      ) : null}
     </Stack>
   )
 }

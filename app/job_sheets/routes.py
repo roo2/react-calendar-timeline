@@ -309,7 +309,7 @@ async def list_job_sheets(
     ),
     sort_dir: str | None = Query(default=None, description="asc or desc"),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200),
+    page_size: int = Query(default=20, ge=1, le=200),
 ):
     rows, total = service.list_job_sheets(
         customer_id=customer_id,

@@ -126,7 +126,7 @@ type OrdersState = {
 }
 
 const initialState: OrdersState = {
-  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 100, lastCustomerId: null },
+  list: { status: 'idle', error: null, items: [], total: 0, page: 1, pageSize: 20, lastCustomerId: null },
   detail: { byId: {} },
   bootstrap: { status: 'idle', error: null, customers: null, resell_products: null },
 }
@@ -145,7 +145,7 @@ export const fetchOrders = createAsyncThunk(
         items: res,
         total: res.length,
         page: Number(query?.page) || 1,
-        pageSize: Number(query?.page_size) || 100,
+        pageSize: Number(query?.page_size) || 20,
         customer_id: customerId,
       }
     }
@@ -153,7 +153,7 @@ export const fetchOrders = createAsyncThunk(
       items: Array.isArray(res.items) ? res.items : [],
       total: Number(res.total) || 0,
       page: Number(res.page) || Number(query?.page) || 1,
-      pageSize: Number(res.page_size) || Number(query?.page_size) || 100,
+      pageSize: Number(res.page_size) || Number(query?.page_size) || 20,
       customer_id: customerId,
     }
   },
