@@ -52,6 +52,15 @@ export type ProductListItem = {
   finish_mode?: 'Rolls' | 'Cartons' | string | null
   customer_id?: string
   pack_mode?: string | null
+  /** Preferred qty_type for repeat orders (from product row). */
+  default_qty_type?: string | null
+  /** Latest job sheet qty/rate for this customer + product when listing with customer_id. */
+  last_order_defaults?: {
+    quantity_value?: number | null
+    quantity_unit?: string | null
+    qty_type?: string | null
+    rate?: number | null
+  } | null
 }
 
 export function productVersionCacheKey(productId: string, versionId: string) {
@@ -160,6 +169,20 @@ export const fetchProduct = createAsyncThunk('products/detail', async (productId
   const data = await apiFetch<any>(`/api/products/${encodeURIComponent(productId)}`)
   return { productId, data }
 })
+
+export const deleteProduct = createAsyncThunk(
+  'products/delete',
+  async (productId: string, { rejectWithValue }) => {
+    try {
+      await apiFetch<void>(`/api/products/${encodeURIComponent(productId)}`, { method: 'DELETE' })
+      return { productId }
+    } catch (e) {
+      const err = toUpsertError(e)
+      if (err) return rejectWithValue(err)
+      throw e
+    }
+  },
+)
 
 export const fetchProductVersion = createAsyncThunk(
   'products/versionDetail',
@@ -322,6 +345,12 @@ const slice = createSlice({
       s.versionDetail.byKey[key].status = 'failed'
       s.versionDetail.byKey[key].error = a.error.message || 'Failed to load product version'
       s.versionDetail.byKey[key].data = null
+    })
+
+    b.addCase(deleteProduct.fulfilled, (s, a) => {
+      const pid = a.payload.productId
+      delete s.detail.byId[pid]
+      s.list.items = s.list.items.filter((p) => p.id !== pid)
     })
   },
 })

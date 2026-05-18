@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { can } from '../../../auth/permissions'
 import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../../components/SpecPayloadForm'
 import type { PrintingArtworkScope } from '../../../components/PrintingArtworkUploadSection'
 import {
+  Alert,
   Box,
   Button,
   FormControl,
@@ -26,15 +28,17 @@ import {
   clearNewVersionErrors,
   createProduct,
   createProductVersion,
+  deleteProduct,
   fetchProduct,
+  fetchProductVersion,
   fetchProducts,
+  productVersionCacheKey,
 } from '../../../store/slices/productsSlice'
-import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../../store/slices/customersSlice'
-import { fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
+import { fetchJobSheet, saveJobSheetAsNewProduct, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
-import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
-import { StickySideAside } from '../../../components/StickySideAside'
+import { SaveAsNewProductButton, SaveFormButton } from '../../../components/SaveActionButtons'
+import { ProductVersionEditorLiveAside } from './ProductVersionEditorLiveAside'
 import {
   JobSheetIdentityQuantitySection,
   type JobSheetQuantityFieldsProps,
@@ -93,6 +97,8 @@ export type EmbeddedNewJobSheetFlow = {
   orderMode: 'new' | 'edit'
   orderId?: string | null
   initialOrderDate?: string | null
+  /** Customer PO from the parent order header (read-only on the job sheet form). */
+  initialCustomerPurchaseOrderNumber?: string | null
   onCancel: () => void
   onFinished: () => void
   /** Draft new order only: append a local line with quantities from the job sheet editor. */
@@ -252,6 +258,8 @@ function buildSpecLinkedHydrateFromJobSheetJs(
 
 export function ProductVersionEditor(props: {
   productId: string
+  /** When set, load and edit this product version spec (save creates a new version). */
+  versionId?: string | null
   /** When set (e.g. order line edit), show job sheet identity + quantity and save via `updateJobSheet` + spec (creates product version server-side). */
   jobSheetId?: string | null
   /**
@@ -259,22 +267,29 @@ export function ProductVersionEditor(props: {
    * (the job sheet GET payload would otherwise lag until the order is saved).
    */
   orderLineQtySnapshot?: OrderLineQtySnapshot | null
+  /** Live customer PO from the parent order header (may differ from job sheet GET until order save). */
+  orderHeaderCustomerPurchaseOrderNumber?: string | null
   /** New Order / Edit Order: full job sheet + spec flow before a product exists (`productId` must be {@link EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID}). */
   embeddedNewJobSheetFlow?: EmbeddedNewJobSheetFlow | null
   returnTo?: string | null
   /** May return a Promise (e.g. parent refetches order); callers should await after save. */
   onDone?: (versionId?: string) => void | Promise<void>
+  /** After “Save As New Product”, parent should point the editor at the new product id (same job sheet). */
+  onRepointedToNewProduct?: (newProductId: string) => void
   onCancel?: () => void
   title?: string
   submitLabel?: string
 }) {
   const {
     productId,
+    versionId,
     jobSheetId,
     orderLineQtySnapshot,
+    orderHeaderCustomerPurchaseOrderNumber,
     embeddedNewJobSheetFlow,
     returnTo,
     onDone,
+    onRepointedToNewProduct,
     onCancel,
     title,
     submitLabel,
@@ -284,13 +299,21 @@ export function ProductVersionEditor(props: {
   const embOrderMode = embeddedNewJobSheetFlow?.orderMode
   const embOrderId = embeddedNewJobSheetFlow?.orderId ?? null
   const embInitialOrderDate = embeddedNewJobSheetFlow?.initialOrderDate ?? null
+  const embInitialCustomerPo = embeddedNewJobSheetFlow?.initialCustomerPurchaseOrderNumber ?? null
   const nav = useNavigate()
+  const location = useLocation()
   const dispatch = useAppDispatch()
+
+  const roles = useAppSelector((s) => s.auth.identity?.roles || [])
+  const isPm = can(roles, 'PROD_MANAGER')
 
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [jobSaveErr, setJobSaveErr] = useState<string | null>(null)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [deletingProduct, setDeletingProduct] = useState(false)
   const [savingEmbeddedJob, setSavingEmbeddedJob] = useState(false)
+  const [savingAsNew, setSavingAsNew] = useState(false)
 
   const [customerId, setCustomerId] = useState('')
   const [dueDate, setDueDate] = useState('')
@@ -299,27 +322,50 @@ export function ProductVersionEditor(props: {
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
   const [productionExtruderCode, setProductionExtruderCode] = useState('')
   const [dieSize, setDieSize] = useState('')
+  const [customerFacingDescription, setCustomerFacingDescription] = useState('')
   const extruderUserTouchedRef = useRef(false)
 
   const productDetail = useAppSelector((s) => s.products.detail.byId[productId])
   const data = productDetail?.data
-  const customers = useAppSelector((s) => s.customers.list.items)
-  const customersStatus = useAppSelector((s) => s.customers.list.status)
+  const versionDetailKey =
+    versionId && !jobSheetId && !embedded ? productVersionCacheKey(productId, versionId) : ''
+  const versionDetailEntry = useAppSelector((s) =>
+    versionDetailKey ? s.products.versionDetail.byKey[versionDetailKey] : undefined,
+  )
+  const versionDetailData = versionDetailEntry?.data
   const jobSheetDetail = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
-  const myobImportLineDescription = useMemo(() => {
-    const raw = jobSheetDetail?.data?.myob_import_line_description
-    if (raw == null || typeof raw !== 'string') return ''
-    return raw.trim()
-  }, [jobSheetDetail?.data?.myob_import_line_description])
+  const invoiceNoFromOrder = useMemo(() => {
+    const js = jobSheetDetail?.data?.job_sheet
+    return js?.invoice_no != null ? String(js.invoice_no).trim() : ''
+  }, [jobSheetDetail?.data?.job_sheet])
+
+  const purchaseOrderNoFromOrder = useMemo(() => {
+    const headerPo = String(orderHeaderCustomerPurchaseOrderNumber ?? '').trim()
+    if (headerPo) return headerPo
+    if (embedded && embInitialCustomerPo != null && String(embInitialCustomerPo).trim()) {
+      return String(embInitialCustomerPo).trim()
+    }
+    const js = jobSheetDetail?.data?.job_sheet
+    return js?.customer_purchase_order_number != null ? String(js.customer_purchase_order_number).trim() : ''
+  }, [
+    orderHeaderCustomerPurchaseOrderNumber,
+    embedded,
+    embInitialCustomerPo,
+    jobSheetDetail?.data?.job_sheet,
+  ])
   const ratebook = useAppSelector((s) => s.quotes.quoteRatebook.data)
 
   const extruderCodeForQty =
     productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : null
 
+  const showFullJobSheetPreview = Boolean(jobSheetId || embedded)
+  const syncDerivedQuantity = showFullJobSheetPreview
+
   const qty = useSpecLinkedQuantityFields({
     spec,
     ratebook: ratebook ?? null,
     extruderCode: extruderCodeForQty,
+    syncDerivedQuantity,
   })
 
   const upsert = useAppSelector((s) => s.products.newVersion)
@@ -335,10 +381,21 @@ export function ProductVersionEditor(props: {
   const createFieldErrors = createState.fieldErrors
   const { setDirty } = useUnsavedChanges()
   const specHydratedRef = useRef(false)
+  /** Avoid mounting {@link SpecPayloadForm} with a placeholder spec before the real payload is loaded. */
+  const [specReady, setSpecReady] = useState(false)
+  const lastHydratedVersionKeyRef = useRef<string | null>(null)
   /** Re-hydrate when GET /job-sheets/:id returns a new `data` object (avoids stale qty after a slow/out-of-order fetch). */
   const lastHydratedJobDetailDataRef = useRef<unknown>(null)
   /** Re-hydrate when {@link orderLineQtySnapshot} changes while job sheet payload is unchanged (unsaved order line edits). */
   const lastHydratedOrderQtySnapRef = useRef<string | null>(null)
+  useEffect(() => {
+    const st = location.state as { productSaveMsg?: string } | null
+    if (st?.productSaveMsg) {
+      setSaveMsg(st.productSaveMsg)
+      nav({ pathname: location.pathname, search: location.search }, { replace: true, state: null })
+    }
+  }, [location.pathname, location.search, location.state, nav])
+
   useEffect(() => {
     void dispatch(clearNewVersionErrors())
   }, [dispatch, productId])
@@ -349,25 +406,30 @@ export function ProductVersionEditor(props: {
 
   useEffect(() => {
     specHydratedRef.current = false
+    lastHydratedVersionKeyRef.current = null
     lastHydratedJobDetailDataRef.current = null
     lastHydratedOrderQtySnapRef.current = null
-    setSpec(makeDefaultSpec())
+    setSpecReady(false)
     qty.resetNewDraft()
     setCustomerId('')
     setDueDate('')
     setOrderDate('')
     setProductionExtruderCode('')
     setDieSize('')
+    setCustomerFacingDescription('')
     extruderUserTouchedRef.current = false
     setJobSaveErr(null)
     const emb = embeddedNewJobSheetFlow
     if (emb) {
+      setSpec(makeDefaultSpec())
       setCustomerId(emb.customerId)
       setDueDate(defaultDueDateStr())
       setOrderDate(emb.initialOrderDate?.trim() || new Date().toISOString().slice(0, 10))
       specHydratedRef.current = true
+      setSpecReady(true)
     }
-  }, [productId, jobSheetId, embedded, embCustomerId, embOrderMode, embOrderId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset identity fields only; `qty.resetNewDraft` is stable
+  }, [productId, versionId, jobSheetId, embedded, embCustomerId, embOrderMode, embOrderId])
 
   useEffect(() => {
     if (!embedded) return
@@ -378,7 +440,12 @@ export function ProductVersionEditor(props: {
   useEffect(() => {
     if (embedded) return
     void dispatch(fetchProduct(productId))
-  }, [dispatch, productId, embedded])
+  }, [dispatch, productId, versionId, embedded])
+
+  useEffect(() => {
+    if (embedded || jobSheetId || !versionId) return
+    void dispatch(fetchProductVersion({ productId, versionId }))
+  }, [dispatch, productId, versionId, embedded, jobSheetId])
 
   useEffect(() => {
     if (!jobSheetId) return
@@ -391,13 +458,7 @@ export function ProductVersionEditor(props: {
   }, [dispatch, jobSheetId, embedded])
 
   useEffect(() => {
-    if (!jobSheetId && !embedded) return
-    if (customersStatus !== 'idle') return
-    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
-  }, [dispatch, jobSheetId, embedded, customersStatus])
-
-  useEffect(() => {
-    if (jobSheetId || embedded) return
+    if (jobSheetId || embedded || versionId) return
     if (productDetail?.status === 'failed') {
       setLoadErr(productDetail.error || 'Failed to load product')
       return
@@ -416,7 +477,46 @@ export function ProductVersionEditor(props: {
     const latest = versions.slice().sort((a: any, b: any) => (b.version_number || 0) - (a.version_number || 0))[0]
     const srcSpec = (active?.spec_payload || latest?.spec_payload) ?? null
     setSpec(ensureSpec(srcSpec))
-  }, [jobSheetId, embedded, data, productDetail?.status, productDetail?.error])
+    setSpecReady(true)
+  }, [jobSheetId, embedded, versionId, data, productDetail?.status, productDetail?.error])
+
+  useEffect(() => {
+    if (jobSheetId || embedded || !versionId) return
+    if (versionDetailEntry?.status === 'failed') {
+      setLoadErr(versionDetailEntry.error || 'Failed to load product version')
+      return
+    }
+    if (versionDetailEntry?.status === 'loading' || versionDetailEntry?.status === 'idle' || !versionDetailData) {
+      if (versionDetailEntry?.status === 'loading') setLoadErr(null)
+      return
+    }
+    if (productDetail?.status === 'failed') {
+      setLoadErr(productDetail.error || 'Failed to load product')
+      return
+    }
+    if (productDetail?.status === 'loading' || !data) {
+      if (productDetail?.status === 'loading') setLoadErr(null)
+      return
+    }
+    setLoadErr(null)
+    const hydrateKey = `${productId}:${versionId}`
+    if (lastHydratedVersionKeyRef.current === hydrateKey) return
+    lastHydratedVersionKeyRef.current = hydrateKey
+    specHydratedRef.current = true
+    const srcSpec = versionDetailData?.version?.spec_payload ?? null
+    setSpec(ensureSpec(srcSpec))
+    setSpecReady(true)
+  }, [
+    jobSheetId,
+    embedded,
+    versionId,
+    productId,
+    versionDetailData,
+    versionDetailEntry?.status,
+    versionDetailEntry?.error,
+    productDetail?.status,
+    productDetail?.error,
+  ])
 
   useEffect(() => {
     if (!jobSheetId) return
@@ -473,8 +573,14 @@ export function ProductVersionEditor(props: {
     setCustomerId(js?.customer_id || '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setDueDate(orderLineQtySnapshot ? orderLineQtySnapshot.due_date || '' : js?.due_date || '')
+    setCustomerFacingDescription(
+      js?.customer_facing_description != null && String(js.customer_facing_description).trim()
+        ? String(js.customer_facing_description).trim()
+        : '',
+    )
     qty.hydrate(buildSpecLinkedHydrateFromJobSheetJs(loadedSpec0, jsQty, isImportDraft))
     specHydratedRef.current = true
+    setSpecReady(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `qty.hydrate` is stable; listing `qty` reruns on every render.
   }, [jobSheetId, jobSheetDetail, orderLineQtySnapshot])
 
@@ -510,6 +616,8 @@ export function ProductVersionEditor(props: {
   }, [jobSheetId, embedded, finishMode, totalKgNum, qty.totalKgDisplay])
 
   const loadedJobSheet = jobSheetId && jobSheetDetail?.status === 'succeeded' ? jobSheetDetail.data?.job_sheet : undefined
+
+  const specFormMountKey = versionId ? `${productId}:${versionId}` : `${productId}:new`
 
   const extruderSuggestion = useMemo(
     () => suggestSmallestFittingExtruderCode(spec, ratebook ?? null),
@@ -552,9 +660,232 @@ export function ProductVersionEditor(props: {
   }
 
   const canSubmit = useMemo(() => {
-    if (embedded) return !savingEmbeddedJob && !createSaving
-    return !!productId && !saving && !savingEmbeddedJob
-  }, [embedded, productId, saving, savingEmbeddedJob, createSaving])
+    if (embedded) return !savingEmbeddedJob && !savingAsNew && !createSaving
+    return !!productId && !saving && !savingEmbeddedJob && !savingAsNew
+  }, [embedded, productId, saving, savingEmbeddedJob, savingAsNew, createSaving])
+
+  const showSaveAsNewProduct = Boolean((jobSheetId && !embedded) || (!jobSheetId && !embedded && productId))
+
+  const productUsage = data?.usage as
+    | { can_delete?: boolean; job_sheet_count?: number; order_count?: number }
+    | undefined
+  const canDeleteProduct = Boolean(
+    isPm && !jobSheetId && !embedded && productId && productUsage?.can_delete === true,
+  )
+
+  const PRODUCT_SAVE_AS_NEW_MSG = 'Saved as new product. You are now editing the new product.'
+
+  async function reloadProductAndVersion(versionIdToLoad: string) {
+    lastHydratedVersionKeyRef.current = null
+    specHydratedRef.current = false
+    setSpecReady(false)
+    await dispatch(fetchProduct(productId)).unwrap()
+    await dispatch(fetchProductVersion({ productId, versionId: versionIdToLoad })).unwrap()
+  }
+
+  function buildJobSheetUpdateBody(): Record<string, unknown> | null {
+    const missing: string[] = []
+    if (!customerId) missing.push('Customer')
+    if (missing.length > 0) {
+      setJobSaveErr(`Missing required fields: ${missing.join(', ')}`)
+      return null
+    }
+    const qtyErr = validateJobSheetQuantityInputs(
+      finishMode,
+      effectiveQtyType,
+      totalKgForScheduling,
+      numUnitsNum,
+      numRollsNum,
+      finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
+      unitsPerRollNum,
+    )
+    if (qtyErr) {
+      setJobSaveErr(qtyErr)
+      return null
+    }
+    const persistedRolls = resolveNumRollsForPersistence(
+      finishMode,
+      effectiveQtyType,
+      totalKgNum,
+      numRollsNum,
+      weightPerRollNum,
+      derivedDisplay,
+    )
+    const persistedWpr = resolveWeightPerRollForPersistence(
+      finishMode,
+      effectiveQtyType,
+      totalKgForScheduling,
+      numRollsNum,
+      weightPerRollNum,
+      derivedDisplay,
+    )
+    const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
+    const bpc = spec.packaging?.bags_per_carton
+    const oq = getOrderQuantityFromJobSheetFields(
+      effectiveQtyType,
+      fallbackLegacy,
+      totalKgForScheduling,
+      numUnitsNum,
+      persistedRolls,
+      finishMode,
+      bpc != null ? Number(bpc) : null,
+      finishMode === 'Cartons' && effectiveQtyType === 'units' ? qty.cartonQtyMode : undefined,
+    )
+    const keepUnitRate =
+      loadedJobSheet?.unit_rate != null && Number.isFinite(Number(loadedJobSheet.unit_rate))
+        ? Number(loadedJobSheet.unit_rate)
+        : null
+    const keepLineTotal =
+      loadedJobSheet?.line_total != null && Number.isFinite(Number(loadedJobSheet.line_total))
+        ? Number(loadedJobSheet.line_total)
+        : null
+    return {
+      due_date: dueDate || null,
+      order_date: orderDate || null,
+      quantity_value: oq.quantity_value,
+      quantity_unit: oq.quantity_unit,
+      qty_type: effectiveQtyType,
+      num_product_units:
+        effectiveQtyType === 'units'
+          ? numUnitsNum
+          : derivedDisplay?.units != null
+            ? Math.round(Number(derivedDisplay.units))
+            : null,
+      weight_per_roll_kg: persistedWpr,
+      num_rolls: persistedRolls,
+      spec,
+      production_extruder_code: productionExtruderCode.trim() || null,
+      die_size: dieSize.trim() || null,
+      customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
+      ...(keepUnitRate != null ? { unit_rate: keepUnitRate } : {}),
+      ...(keepLineTotal != null ? { line_total: keepLineTotal } : {}),
+    }
+  }
+
+  async function persistJobSheet(asNewProduct: boolean) {
+    if (!jobSheetId) return
+    setJobSaveErr(null)
+    const body = buildJobSheetUpdateBody()
+    if (!body) return
+    if (asNewProduct) setSavingAsNew(true)
+    else setSavingEmbeddedJob(true)
+    try {
+      if (asNewProduct) {
+        const res = await dispatch(saveJobSheetAsNewProduct({ jobSheetId, body })).unwrap()
+        const newPid = String(res.product_id || '').trim()
+        if (!newPid) throw new Error('New product was created but no id was returned')
+        onRepointedToNewProduct?.(newPid)
+        await dispatch(fetchProduct(newPid)).unwrap()
+        await dispatch(fetchJobSheet(jobSheetId)).unwrap()
+        const cid = (customerId || embCustomerId || '').trim()
+        if (cid) await dispatch(fetchProducts({ customer_id: cid })).unwrap()
+        setSaveMsg(PRODUCT_SAVE_AS_NEW_MSG)
+      } else {
+        await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
+        await Promise.resolve(onDone?.())
+      }
+      setDirty(false)
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setJobSaveErr(p.message || (asNewProduct ? 'Failed to save as new product' : 'Failed to save job sheet'))
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { messages } = parseFastApiValidationDetail(e.body.detail)
+        setJobSaveErr(
+          messages.length > 0
+            ? messages.join(' · ')
+            : e.message || (asNewProduct ? 'Failed to save as new product' : 'Failed to save job sheet'),
+        )
+      } else {
+        setJobSaveErr(
+          e instanceof Error
+            ? e.message
+            : asNewProduct
+              ? 'Failed to save as new product'
+              : 'Failed to save job sheet',
+        )
+      }
+    } finally {
+      if (asNewProduct) setSavingAsNew(false)
+      else setSavingEmbeddedJob(false)
+    }
+  }
+
+  /** Standalone product editor: fork current spec onto a new product row (same customer). */
+  async function saveAsNewProductStandalone() {
+    if (jobSheetId || embedded) return
+    setJobSaveErr(null)
+    void dispatch(clearCreateErrors())
+    const customer_id = String(product?.customer_id || data?.product?.customer_id || '').trim()
+    if (!customer_id) {
+      setJobSaveErr('Product customer is missing.')
+      return
+    }
+    const code = getDisplayProductCodeFromSpec(spec).trim()
+    if (!code) {
+      setJobSaveErr(
+        'Customer-facing product code is empty. Set a customer-facing product code or complete dimensions and product type.',
+      )
+      return
+    }
+    setSavingAsNew(true)
+    try {
+      const createRes = await dispatch(createProduct({ data: { customer_id, code, spec } })).unwrap()
+      const newPid = String(createRes?.product?.id || '').trim()
+      const newVid = String(createRes?.version?.id || '').trim()
+      if (!newPid) throw new Error('Product was created but no id was returned')
+      setDirty(false)
+      await dispatch(fetchProduct(newPid)).unwrap()
+      if (newVid) {
+        await dispatch(fetchProductVersion({ productId: newPid, versionId: newVid })).unwrap()
+      }
+      await dispatch(fetchProducts({ customer_id })).unwrap()
+      if (newVid) {
+        nav(`/products/${newPid}/versions/${newVid}`, { state: { productSaveMsg: PRODUCT_SAVE_AS_NEW_MSG } })
+      } else {
+        nav(`/products/${newPid}`, { state: { productSaveMsg: PRODUCT_SAVE_AS_NEW_MSG } })
+      }
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setJobSaveErr(p.message || 'Failed to create product')
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { messages } = parseFastApiValidationDetail(e.body.detail)
+        setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+      } else {
+        setJobSaveErr(e instanceof Error ? e.message : 'Failed to create product')
+      }
+    } finally {
+      setSavingAsNew(false)
+    }
+  }
+
+  async function onDeleteProduct() {
+    if (!canDeleteProduct || deletingProduct) return
+    const code = product?.code || data?.product?.code || 'this product'
+    const ok = window.confirm(
+      `Delete product "${code}" permanently? This removes all versions. This cannot be undone.`,
+    )
+    if (!ok) return
+    setJobSaveErr(null)
+    setDeletingProduct(true)
+    try {
+      await dispatch(deleteProduct(productId)).unwrap()
+      setDirty(false)
+      nav('/products')
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setJobSaveErr(p.message || 'Failed to delete product')
+      } else if (e instanceof ApiError) {
+        setJobSaveErr(e.message || 'Failed to delete product')
+      } else {
+        setJobSaveErr(e instanceof Error ? e.message : 'Failed to delete product')
+      }
+    } finally {
+      setDeletingProduct(false)
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -702,94 +1033,7 @@ export function ProductVersionEditor(props: {
     }
 
     if (jobSheetId) {
-      setJobSaveErr(null)
-      const missing: string[] = []
-      if (!customerId) missing.push('Customer')
-      if (missing.length > 0) {
-        setJobSaveErr(`Missing required fields: ${missing.join(', ')}`)
-        return
-      }
-      const qtyErr = validateJobSheetQuantityInputs(
-        finishMode,
-        effectiveQtyType,
-        totalKgForScheduling,
-        numUnitsNum,
-        numRollsNum,
-        finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
-        unitsPerRollNum,
-      )
-      if (qtyErr) {
-        setJobSaveErr(qtyErr)
-        return
-      }
-      setSavingEmbeddedJob(true)
-      try {
-        const persistedRolls = resolveNumRollsForPersistence(
-          finishMode,
-          effectiveQtyType,
-          totalKgNum,
-          numRollsNum,
-          weightPerRollNum,
-          derivedDisplay,
-        )
-        const persistedWpr = resolveWeightPerRollForPersistence(
-          finishMode,
-          effectiveQtyType,
-          totalKgForScheduling,
-          numRollsNum,
-          weightPerRollNum,
-          derivedDisplay,
-        )
-        const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
-        const bpc = spec.packaging?.bags_per_carton
-        const oq = getOrderQuantityFromJobSheetFields(
-          effectiveQtyType,
-          fallbackLegacy,
-          totalKgForScheduling,
-          numUnitsNum,
-          persistedRolls,
-          finishMode,
-          bpc != null ? Number(bpc) : null,
-          finishMode === 'Cartons' && effectiveQtyType === 'units' ? qty.cartonQtyMode : undefined,
-        )
-        await dispatch(
-          updateJobSheet({
-            jobSheetId,
-            body: {
-              due_date: dueDate || null,
-              order_date: orderDate || null,
-              quantity_value: oq.quantity_value,
-              quantity_unit: oq.quantity_unit,
-              qty_type: effectiveQtyType,
-              num_product_units:
-                effectiveQtyType === 'units'
-                  ? numUnitsNum
-                  : derivedDisplay?.units != null
-                    ? Math.round(Number(derivedDisplay.units))
-                    : null,
-              weight_per_roll_kg: persistedWpr,
-              num_rolls: persistedRolls,
-              spec,
-              production_extruder_code: productionExtruderCode.trim() || null,
-              die_size: dieSize.trim() || null,
-            },
-          }),
-        ).unwrap()
-        setDirty(false)
-        await Promise.resolve(onDone?.())
-      } catch (e: unknown) {
-        if (isRejectedWithValue(e)) {
-          const p = e.payload as UpsertError
-          setJobSaveErr(p.message || 'Failed to save job sheet')
-        } else if (e instanceof ApiError && e.body?.detail != null) {
-          const { messages } = parseFastApiValidationDetail(e.body.detail)
-          setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
-        } else {
-          setJobSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
-        }
-      } finally {
-        setSavingEmbeddedJob(false)
-      }
+      await persistJobSheet(false)
       return
     }
 
@@ -801,9 +1045,15 @@ export function ProductVersionEditor(props: {
         await Promise.resolve(onDone(vid))
         return
       }
-      if (returnTo) nav(returnTo)
-      else if (vid) nav(`/products/${productId}/versions/${vid}`)
-      else nav(`/products/${productId}`)
+      if (vid) {
+        await reloadProductAndVersion(vid)
+        nav(`/products/${productId}/versions/${vid}`)
+      } else if (returnTo) {
+        nav(returnTo)
+      } else {
+        await dispatch(fetchProduct(productId)).unwrap()
+        nav(`/products/${productId}`)
+      }
     } catch {
       // errors in slice
     }
@@ -830,17 +1080,35 @@ export function ProductVersionEditor(props: {
   const printingArtworkScope = useMemo<PrintingArtworkScope | null>(() => {
     if (jobSheetId) return { kind: 'job_sheet', jobSheetId }
     if (embedded) return null
-    const vid = data?.product?.active_version_id
+    const vid = versionId || data?.product?.active_version_id
     if (productId && vid) return { kind: 'product_version', productId, versionId: String(vid) }
     return null
-  }, [jobSheetId, embedded, data?.product?.active_version_id, productId])
+  }, [jobSheetId, embedded, versionId, data?.product?.active_version_id, productId])
+
+  const editingVersionNumber = useMemo(() => {
+    if (!versionId) return null
+    const fromDetail = versionDetailData?.version?.version_number
+    if (fromDetail != null) return Number(fromDetail)
+    const fromList = (data?.versions || []).find((v: { id?: string }) => v.id === versionId)
+    return fromList?.version_number != null ? Number(fromList.version_number) : null
+  }, [versionId, versionDetailData, data?.versions])
 
   const theme = useTheme()
   const isNarrow = useMediaQuery(theme.breakpoints.down('md'))
+  /** Order modal keeps the order open; standalone product/job sheet editors navigate in-tab. */
+  const previousVersionsLinkOpensNewTab = Boolean(jobSheetId && onCancel)
 
   const waitingForJobSheet =
     !!jobSheetId &&
     (!jobSheetDetail || jobSheetDetail.status === 'loading' || jobSheetDetail.status === 'idle')
+
+  const waitingForVersion =
+    !!versionId &&
+    !jobSheetId &&
+    !embedded &&
+    (!versionDetailEntry ||
+      versionDetailEntry.status === 'loading' ||
+      versionDetailEntry.status === 'idle')
 
   if (loadErr && !data && !embedded) {
     return (
@@ -861,9 +1129,10 @@ export function ProductVersionEditor(props: {
   }
 
   if (!data && !embedded) return <p>Loading…</p>
-  if (waitingForJobSheet) return <p>Loading…</p>
+  if (waitingForVersion || waitingForJobSheet) return <p>Loading…</p>
+  if (!embedded && !specReady) return <p>Loading…</p>
 
-  const busy = saving || savingEmbeddedJob || createSaving
+  const busy = saving || savingEmbeddedJob || savingAsNew || createSaving || deletingProduct
 
   return (
     <Box
@@ -873,7 +1142,32 @@ export function ProductVersionEditor(props: {
       }}
     >
       <Stack spacing={2}>
-        <Typography variant="h5">{title || `Edit ${product?.code || ''}`.trim()}</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+          <Typography variant="h5">
+            {title ||
+              (versionId && editingVersionNumber != null
+                ? `${product?.code || 'Product'} — Version ${editingVersionNumber}`
+                : `Edit ${product?.code || ''}`.trim())}
+          </Typography>
+          {jobSheetId ? (
+            <MuiLink
+              component={Link}
+              to={`/job-sheets/${encodeURIComponent(jobSheetId)}/edit`}
+              target="_blank"
+              rel="noopener noreferrer"
+              underline="hover"
+              sx={{ fontSize: '0.875rem', whiteSpace: 'nowrap' }}
+            >
+              Open full job sheet editor
+            </MuiLink>
+          ) : null}
+        </Box>
+
+        {saveMsg ? (
+          <Alert severity="success" onClose={() => setSaveMsg(null)}>
+            {saveMsg}
+          </Alert>
+        ) : null}
 
         <FormErrorAlert
           error={embedded ? createErr || jobSaveErr : err || jobSaveErr}
@@ -882,6 +1176,22 @@ export function ProductVersionEditor(props: {
           scrollMarginTop={80}
         />
 
+        {isPm && !jobSheetId && !embedded && productUsage && !productUsage.can_delete ? (
+          <Alert severity="info">
+            This product cannot be deleted because it is used on
+            {Number(productUsage.job_sheet_count || 0) > 0
+              ? ` ${productUsage.job_sheet_count} job sheet${Number(productUsage.job_sheet_count) !== 1 ? 's' : ''}`
+              : ''}
+            {Number(productUsage.job_sheet_count || 0) > 0 && Number(productUsage.order_count || 0) > 0
+              ? ' and'
+              : ''}
+            {Number(productUsage.order_count || 0) > 0
+              ? ` ${productUsage.order_count} order${Number(productUsage.order_count) !== 1 ? 's' : ''}`
+              : ''}
+            .
+          </Alert>
+        ) : null}
+
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
           <form onSubmit={onSubmit} style={{ flex: 1, minWidth: 0 }}>
             <Stack spacing={2}>
@@ -889,8 +1199,8 @@ export function ProductVersionEditor(props: {
                 <JobSheetIdentityQuantitySection
                   title="Job Sheet"
                   jobCode={loadedJobSheet?.job_no ? String(loadedJobSheet.job_no) : null}
-                  customers={customers as any}
-                  customersStatus={customersStatus}
+                  invoiceNo={invoiceNoFromOrder}
+                  purchaseOrderNo={purchaseOrderNoFromOrder}
                   customerId={customerId}
                   onCustomerIdChange={(id) => {
                     setCustomerId(id)
@@ -924,13 +1234,20 @@ export function ProductVersionEditor(props: {
                 />
               ) : null}
 
-              {isNarrow ? (
-                <JobSheetPreviewPanel
-                  showJobFields={false}
-                  jobSheetId={jobSheetId ? String(jobSheetId) : null}
-                  productCode={previewProductCode}
-                  description={previewDescription}
-                  myobImportLineDescription={myobImportLineDescription}
+              {isNarrow && showFullJobSheetPreview ? (
+                <ProductVersionEditorLiveAside
+                  spec={spec}
+                  qty={qty}
+                  customerId={customerId}
+                  customerFacingDescription={customerFacingDescription}
+                  orderDate={orderDate}
+                  dueDate={dueDate}
+                  showJobFields={showFullJobSheetPreview}
+                  jobSheetId={jobSheetId ?? null}
+                  loadedJobSheet={(loadedJobSheet as Record<string, unknown> | undefined) ?? null}
+                  jobSheetDetailData={jobSheetDetail?.data ?? null}
+                  productionExtruderCode={productionExtruderCode}
+                  includeProductionEstimates={showFullJobSheetPreview}
                 />
               ) : null}
 
@@ -951,8 +1268,9 @@ export function ProductVersionEditor(props: {
                       <MuiLink
                         component={Link}
                         to={`/products/${encodeURIComponent(productId)}`}
-                        target="_blank"
-                        rel="noreferrer"
+                        {...(previousVersionsLinkOpensNewTab
+                          ? { target: '_blank', rel: 'noreferrer' }
+                          : {})}
                         underline="hover"
                         sx={{ fontSize: '0.875rem' }}
                       >
@@ -961,6 +1279,7 @@ export function ProductVersionEditor(props: {
                     ) : null}
                   </Box>
                   <SpecPayloadForm
+                    key={specFormMountKey}
                     value={spec}
                     onChange={(next) => {
                       setSpec(next)
@@ -971,6 +1290,12 @@ export function ProductVersionEditor(props: {
                     customerId={product?.customer_id || customerId || undefined}
                     printingSurface="job_sheet_summary"
                     printingArtworkScope={printingArtworkScope}
+                    customerFacingDescription={customerFacingDescription}
+                    onCustomerFacingDescriptionChange={(v) => {
+                      setCustomerFacingDescription(v)
+                      setDirty(true)
+                    }}
+                    customerFacingDescriptionPlaceholder={previewDescription}
                     afterDimensionsSlot={
                       <>
                         <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1100,8 +1425,6 @@ export function ProductVersionEditor(props: {
                     <MuiLink
                       component={Link}
                       to={`/products/${encodeURIComponent(productId)}`}
-                      target="_blank"
-                      rel="noreferrer"
                       underline="hover"
                       sx={{ fontSize: '0.875rem' }}
                     >
@@ -1109,6 +1432,7 @@ export function ProductVersionEditor(props: {
                     </MuiLink>
                   </Box>
                   <SpecPayloadForm
+                    key={specFormMountKey}
                     value={spec}
                     onChange={(next) => {
                       setSpec(next)
@@ -1123,7 +1447,7 @@ export function ProductVersionEditor(props: {
                 </>
               )}
 
-              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
                 {onCancel ? (
                   <Button type="button" variant="text" color="primary" onClick={onCancel}>
                     Cancel
@@ -1133,25 +1457,58 @@ export function ProductVersionEditor(props: {
                     Cancel
                   </Button>
                 )}
-                <Button type="submit" variant="contained" disabled={!canSubmit || busy}>
-                  {busy
-                    ? 'Saving…'
-                    : submitLabel || (embedded ? 'Create job sheet' : jobSheetId ? 'Save job sheet & spec' : 'Save Changes')}
-                </Button>
+                {canDeleteProduct ? (
+                  <Button
+                    type="button"
+                    variant="outlined"
+                    color="error"
+                    disabled={busy}
+                    onClick={() => void onDeleteProduct()}
+                  >
+                    {deletingProduct ? 'Deleting…' : 'Delete product'}
+                  </Button>
+                ) : null}
+                {showSaveAsNewProduct ? (
+                  <SaveAsNewProductButton
+                    disabled={!canSubmit || busy}
+                    saving={savingAsNew}
+                    onClick={() =>
+                      void (jobSheetId ? persistJobSheet(true) : saveAsNewProductStandalone())
+                    }
+                  />
+                ) : null}
+                <SaveFormButton
+                  type="submit"
+                  disabled={!canSubmit || busy}
+                  saving={busy && !savingAsNew}
+                  label={
+                    submitLabel ||
+                    (embedded
+                      ? 'Create job sheet'
+                      : jobSheetId || versionId
+                        ? 'Save'
+                        : 'Save Changes')
+                  }
+                />
               </Box>
             </Stack>
           </form>
 
-          {!isNarrow ? (
-            <StickySideAside>
-              <JobSheetPreviewPanel
-                showJobFields={false}
-                jobSheetId={jobSheetId ? String(jobSheetId) : null}
-                productCode={previewProductCode}
-                description={previewDescription}
-                myobImportLineDescription={myobImportLineDescription}
-              />
-            </StickySideAside>
+          {!isNarrow && showFullJobSheetPreview ? (
+            <ProductVersionEditorLiveAside
+              spec={spec}
+              qty={qty}
+              customerId={customerId}
+              customerFacingDescription={customerFacingDescription}
+              orderDate={orderDate}
+              dueDate={dueDate}
+              showJobFields={showFullJobSheetPreview}
+              jobSheetId={jobSheetId ?? null}
+              loadedJobSheet={(loadedJobSheet as Record<string, unknown> | undefined) ?? null}
+              jobSheetDetailData={jobSheetDetail?.data ?? null}
+              productionExtruderCode={productionExtruderCode}
+              includeProductionEstimates={showFullJobSheetPreview}
+            />
           ) : null}
         </Box>
       </Stack>

@@ -237,6 +237,11 @@ export const patchOrder = createAsyncThunk(
   },
 )
 
+export const deleteOrder = createAsyncThunk('orders/delete', async (orderId: string) => {
+  await apiFetch(`/api/orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' })
+  return { orderId }
+})
+
 export const addOrderItem = createAsyncThunk(
   'orders/addItem',
   async (payload: { orderId: string; body: Record<string, unknown> }) => {
@@ -426,6 +431,12 @@ const slice = createSlice({
         row.import_review_status =
           v === 'complete' || v === 'incomplete' ? (v as 'complete' | 'incomplete') : null
       }
+    })
+
+    b.addCase(deleteOrder.fulfilled, (s, a) => {
+      const { orderId } = a.payload
+      s.list.items = s.list.items.filter((x) => x.id !== orderId)
+      delete s.detail.byId[orderId]
     })
   },
 })

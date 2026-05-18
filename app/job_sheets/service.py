@@ -22,6 +22,22 @@ from app.job_context import ensure_scheduling_job_for_job_sheet
 from app.job_production_timestamps import apply_job_production_timestamps
 
 
+def sync_product_default_qty_type_from_job_sheet(db, js: JobSheet) -> None:
+    """Keep product.default_qty_type aligned with how this product is usually ordered."""
+    if bool(getattr(js, "is_import_draft", False)):
+        return
+    pid = str(getattr(js, "product_id", "") or "")
+    if not pid or pid == str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID):
+        return
+    qt = str(getattr(js, "qty_type", "") or "").strip()
+    if not qt:
+        return
+    prod = db.get(Product, pid)
+    if prod is not None and getattr(prod, "default_qty_type", None) != qt:
+        prod.default_qty_type = qt
+        db.add(prod)
+
+
 def _utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
     if dt is None:
         return None
@@ -100,11 +116,29 @@ def _next_order_line_index(db, order_id: str) -> int:
     return int(m if m is not None else -1) + 1
 
 
-def sync_job_numbers_for_order(db, order_id: str) -> None:
+def _invoice_job_no_pattern(invoice: str) -> re.Pattern[str]:
+    return re.compile(r"^" + re.escape(invoice) + r"_(\d+)$")
+
+
+def _max_invoice_job_suffix_for_invoice(db, invoice: str) -> int:
+    """Highest ``{invoice}_{n}`` suffix in use (including orphaned sheets)."""
+    prefix = f"{invoice}_"
+    rows = db.execute(select(JobSheet.job_no).where(JobSheet.job_no.like(f"{prefix}%"))).scalars().all()
+    pat = _invoice_job_no_pattern(invoice)
+    max_n = 0
+    for jno in rows:
+        m = pat.match(str(jno or "").strip())
+        if m:
+            max_n = max(max_n, int(m.group(1)))
+    return max_n
+
+
+def assign_order_job_no(db, order_id: str, js: JobSheet) -> None:
     """
-    Recompute job numbers for all job-sheet-backed order lines as:
-      {invoice_number}_{1-based-line-counter}
-    where invoice_number is ``orders.code``.
+    Assign ``{orders.code}_{n}`` to a job sheet on an order.
+
+    Existing invoice-based numbers are left unchanged. New sheets receive the next
+    available suffix (highest existing + 1), including gaps from removed lines.
     """
     o = db.get(Order, str(order_id))
     if o is None:
@@ -112,25 +146,18 @@ def sync_job_numbers_for_order(db, order_id: str) -> None:
     invoice = str(getattr(o, "code", "") or "").strip()
     if not invoice:
         return
-    items = (
-        db.execute(
-            select(OrderItem)
-            .where(OrderItem.order_id == str(o.id), OrderItem.job_sheet_id.is_not(None))
-            .order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
-        )
-        .scalars()
-        .all()
-    )
-    for i, oi in enumerate(items, start=1):
-        jsid = getattr(oi, "job_sheet_id", None)
-        if not jsid:
-            continue
-        js = db.get(JobSheet, str(jsid))
-        if js is None:
-            continue
-        js.job_no = f"{invoice}_{i}"
-        db.add(js)
+    jno = str(getattr(js, "job_no", "") or "").strip()
+    if _invoice_job_no_pattern(invoice).match(jno):
+        return
+    n = _max_invoice_job_suffix_for_invoice(db, invoice) + 1
+    js.job_no = f"{invoice}_{n}"
+    db.add(js)
     db.flush()
+
+
+def sync_job_numbers_for_order(db, order_id: str) -> None:
+    """Deprecated: use :func:`assign_order_job_no` for new sheets only."""
+    _ = order_id
 
 
 def _ensure_draft_order_for_job_sheet_in_db(db, job_sheet_id: str, *, new_order_date: Optional[date] = None) -> str:
@@ -264,7 +291,7 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
         _ensure_draft_order_for_job_sheet_in_db(db, str(js.id), new_order_date=payload.order_date)
         oi = db.scalar(select(OrderItem).where(OrderItem.job_sheet_id == str(js.id)))
         if oi is not None:
-            sync_job_numbers_for_order(db, str(oi.order_id))
+            assign_order_job_no(db, str(oi.order_id), js)
         job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
         if job is None:
             raise DomainError("Could not create production job for job sheet")
@@ -369,6 +396,7 @@ def create_job_sheet_from_product_latest_version(
             continue
     if js is None:
         raise DomainError("Failed to allocate job number") from last_err
+    sync_product_default_qty_type_from_job_sheet(db, js)
     return js
 
 
@@ -918,6 +946,7 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
 
         db.add(js)
         db.flush()
+        sync_product_default_qty_type_from_job_sheet(db, js)
         if payload.spec is not None and import_draft_before:
             finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
 
@@ -933,7 +962,112 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
                 db.add(prod)
 
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
-        sync_job_numbers_for_order(db, str(oid))
+        assign_order_job_no(db, str(oid), js)
+        if "order_date" in upd:
+            o = db.get(Order, oid)
+            if o:
+                o.order_date = payload.order_date
+                db.add(o)
+                db.flush()
+
+        prod_touch = (
+            ("production_status" in upd and payload.production_status is not None)
+            or "production_started_at" in upd
+            or "production_finished_at" in upd
+        )
+        if prod_touch:
+            job = ensure_scheduling_job_for_job_sheet(db, str(js.id))
+            if job is not None:
+                if "production_status" in upd and payload.production_status is not None:
+                    job.status = payload.production_status
+                    apply_job_production_timestamps(job, job.status)
+                if "production_started_at" in upd:
+                    job.production_started_at = _utc_aware(payload.production_started_at)
+                if "production_finished_at" in upd:
+                    job.production_finished_at = _utc_aware(payload.production_finished_at)
+                db.add(job)
+                db.flush()
+
+        return str(js.id)
+
+
+def save_job_sheet_as_new_product(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updated_by: str) -> str:
+    """
+    Create a new customer product (v1) from the current spec, repoint this job sheet to it,
+    and apply quantity/pricing fields. The job sheet's former product is not modified.
+    """
+    if payload.spec is None:
+        raise DomainError("Product spec is required to save as a new product")
+
+    with SessionLocal.begin() as db:
+        try:
+            jid = str(uuid.UUID(job_sheet_id))
+        except Exception as e:
+            raise DomainError("Invalid job_sheet_id") from e
+
+        js = db.get(JobSheet, jid)
+        if not js:
+            raise DomainError("Job sheet not found")
+
+        import_draft_before = bool(getattr(js, "is_import_draft", False))
+
+        new_product, version = create_product_v1_in_session(
+            db,
+            customer_id=str(js.customer_id),
+            spec=payload.spec,
+            created_by=updated_by or "system",
+        )
+        js.product_id = str(new_product.id)
+        js.product_version_id = str(version.id)
+        if import_draft_before:
+            js.is_import_draft = False
+
+        upd = payload.model_dump(exclude_unset=True)
+
+        js.quantity_value = float(payload.quantity_value)
+        js.quantity_unit = str(payload.quantity_unit)
+
+        if "qty_type" in upd and payload.qty_type is not None:
+            js.qty_type = str(payload.qty_type)
+        if "num_product_units" in upd:
+            js.num_product_units = payload.num_product_units
+        if "weight_per_roll_kg" in upd:
+            js.weight_per_roll_kg = payload.weight_per_roll_kg
+        if "num_rolls" in upd:
+            if payload.num_rolls is None:
+                raise DomainError("num_rolls cannot be null")
+            js.num_rolls = int(payload.num_rolls)
+
+        if "due_date" in upd:
+            js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
+
+        if "unit_rate" in upd:
+            js.unit_rate = upd["unit_rate"]
+        if "line_total" in upd:
+            js.line_total = upd["line_total"]
+
+        if "customer_facing_description" in upd:
+            v = payload.customer_facing_description
+            if v is None:
+                js.customer_facing_description = None
+            else:
+                t = str(v).strip()
+                js.customer_facing_description = t if t else None
+
+        if "production_extruder_code" in upd:
+            new_product.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
+        if "die_size" in upd:
+            new_product.die_size = _norm_job_sheet_die_size(payload.die_size)
+        db.add(new_product)
+
+        db.add(js)
+        db.flush()
+        sync_product_default_qty_type_from_job_sheet(db, js)
+        if import_draft_before:
+            finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
+
+        oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
+        assign_order_job_no(db, str(oid), js)
         if "order_date" in upd:
             o = db.get(Order, oid)
             if o:

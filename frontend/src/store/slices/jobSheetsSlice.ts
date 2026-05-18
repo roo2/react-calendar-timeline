@@ -22,6 +22,7 @@ export type JobSheetSummary = {
   created_at?: string | null
   order_id?: string | null
   invoice_no?: string | null
+  customer_purchase_order_number?: string | null
   order_date?: string | null
   order_status?: string | null
   production_status?: string | null
@@ -154,6 +155,27 @@ export const updateJobSheet = createAsyncThunk(
   },
 )
 
+export type SaveJobSheetAsNewProductResult = {
+  ok: boolean
+  job_sheet: JobSheetSummary
+  product_id: string
+  product_version_id: string
+}
+
+export const saveJobSheetAsNewProduct = createAsyncThunk(
+  'jobSheets/saveAsNewProduct',
+  async (payload: { jobSheetId: string; body: Record<string, unknown> }) => {
+    const { jobSheetId, body } = payload
+    return await apiFetch<SaveJobSheetAsNewProductResult>(
+      `/api/job-sheets/${encodeURIComponent(jobSheetId)}/save-as-new-product`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    )
+  },
+)
+
 const slice = createSlice({
   name: 'jobSheets',
   initialState,
@@ -209,6 +231,23 @@ const slice = createSlice({
       const prevData = s.detail.byId[id].data
       if (prevData && typeof prevData === 'object' && prevData !== null) {
         s.detail.byId[id].data = { ...prevData, job_sheet: a.payload.job_sheet }
+      }
+    })
+    b.addCase(saveJobSheetAsNewProduct.fulfilled, (s, a) => {
+      const id = a.meta.arg.jobSheetId
+      if (!a.payload?.job_sheet?.id) return
+      const prev = s.detail.byId[id]
+      s.detail.byId[id] = prev || { status: 'succeeded', error: null, data: null }
+      s.detail.byId[id].status = 'succeeded'
+      s.detail.byId[id].error = null
+      const prevData = s.detail.byId[id].data
+      if (prevData && typeof prevData === 'object' && prevData !== null) {
+        s.detail.byId[id].data = {
+          ...prevData,
+          job_sheet: a.payload.job_sheet,
+          product_id: a.payload.product_id,
+          product_version_id: a.payload.product_version_id,
+        }
       }
     })
   },

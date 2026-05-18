@@ -85,6 +85,8 @@ def _product_summary(p) -> dict:
         "pack_mode": pack_mode,
         "production_extruder_code": getattr(p, "production_extruder_code", None),
         "die_size": getattr(p, "die_size", None),
+        "default_qty_type": getattr(p, "default_qty_type", None),
+        "last_order_defaults": getattr(p, "_last_order_defaults", None),
     }
 
 
@@ -138,7 +140,25 @@ async def get_product(product_id: str):
     p = service.get_with_versions(product_id)
     if not p:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-    return {"product": _product_summary(p), "versions": [_version_summary(v) for v in (p.versions or [])]}
+    return {
+        "product": _product_summary(p),
+        "versions": [_version_summary(v) for v in (p.versions or [])],
+        "usage": service.product_usage(product_id),
+    }
+
+
+@router.delete(
+    "/{product_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(require_roles("PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def delete_product(product_id: str):
+    try:
+        service.delete_product(product_id)
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{product_id}/versions/{version_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER", "OPERATOR"))])

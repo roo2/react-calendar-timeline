@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { clearUpsertErrors, clearUpsertFieldError, createCustomer, fetchCustomer, updateCustomer } from '../../store/slices/customersSlice'
 import { FormErrorAlert } from '../../components/FormErrorAlert'
+import { SaveFormButton } from '../../components/SaveActionButtons'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import {
   Box,
@@ -835,9 +836,12 @@ export function CustomerUpsertPage() {
           >
             Cancel
           </Button>
-          <Button variant="contained" onClick={submit} disabled={saving}>
-            {saving ? 'Saving…' : isEdit ? 'Update Customer' : 'Create Customer'}
-          </Button>
+          <SaveFormButton
+            onClick={submit}
+            disabled={saving}
+            saving={saving}
+            label={isEdit ? 'Update Customer' : 'Create Customer'}
+          />
         </Box>
       </Stack>
     </Box>

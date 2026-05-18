@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { can } from '../../../auth/permissions'
-import { fetchOrder, patchOrder } from '../../../store/slices/ordersSlice'
+import { deleteOrder, fetchOrder, patchOrder } from '../../../store/slices/ordersSlice'
+import { SaveOutlinedButton } from '../../../components/SaveActionButtons'
 import {
   Alert,
   Box,
@@ -49,6 +50,8 @@ type Props = {
   onCancel: () => void
   /** After any successful PATCH; parent refreshes local state from API. */
   onAfterPatch?: () => void | Promise<void>
+  /** Called after a draft order is deleted (e.g. navigate to orders list). */
+  onAfterDelete?: () => void | Promise<void>
 }
 
 export function OrderFormFooter(props: Props) {
@@ -68,6 +71,7 @@ export function OrderFormFooter(props: Props) {
     formBusy = false,
     onCancel,
     onAfterPatch,
+    onAfterDelete,
   } = props
   const dispatch = useAppDispatch()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
@@ -75,9 +79,11 @@ export function OrderFormFooter(props: Props) {
 
   const [statusBusy, setStatusBusy] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [footerErr, setFooterErr] = useState<string | null>(null)
 
   const st = String(orderStatus || '').trim().toLowerCase()
+  const canDeleteDraft = canEdit && Boolean(orderId) && st === 'draft'
   const [localStatus, setLocalStatus] = useState(st)
   useEffect(() => {
     setLocalStatus(st)
@@ -129,23 +135,39 @@ export function OrderFormFooter(props: Props) {
     void applyStatus(next)
   }
 
+  async function onDeleteDraftOrder() {
+    if (!orderId || !canDeleteDraft || deleteBusy) return
+    const ok = window.confirm(
+      'Delete this draft order permanently? All lines, job sheets, and related production jobs will be removed.',
+    )
+    if (!ok) return
+    setFooterErr(null)
+    setDeleteBusy(true)
+    try {
+      await dispatch(deleteOrder(orderId)).unwrap()
+      await onAfterDelete?.()
+    } catch (e) {
+      setFooterErr(e instanceof Error ? e.message : 'Failed to delete order')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
   const trailingAction =
     variant === 'new' ? (
-      <Button
-        variant="outlined"
+      <SaveOutlinedButton
         onClick={() => void onSaveDraft?.()}
         disabled={Boolean(saveDraftDisabled) || Boolean(saveDraftPending)}
-      >
-        {saveDraftPending ? 'Saving…' : 'Save draft'}
-      </Button>
+        saving={Boolean(saveDraftPending)}
+        label="Save draft"
+      />
     ) : variant === 'edit' ? (
-      <Button
-        variant="outlined"
+      <SaveOutlinedButton
         onClick={() => void onSaveChanges?.()}
         disabled={Boolean(saveChangesDisabled) || Boolean(saveChangesPending) || !onSaveChanges}
-      >
-        {saveChangesPending ? 'Saving…' : 'Save changes'}
-      </Button>
+        saving={Boolean(saveChangesPending)}
+        label="Save changes"
+      />
     ) : variant === 'view' && orderId && canEdit ? (
       <Button variant="outlined" component={Link} to={`/orders/${encodeURIComponent(orderId)}/edit`}>
         Edit order
@@ -181,29 +203,49 @@ export function OrderFormFooter(props: Props) {
           {footerErr}
         </Alert>
       ) : null}
-      <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center" useFlexGap sx={{ justifyContent: 'flex-start' }}>
+      <Stack
+        direction="row"
+        spacing={2}
+        flexWrap="wrap"
+        alignItems="center"
+        useFlexGap
+        sx={{ justifyContent: 'flex-start', width: '100%' }}
+      >
         <Button variant="text" color="inherit" onClick={onCancel}>
           Cancel
         </Button>
-        {showStatus ? (
-          <FormControl size="small" sx={{ minWidth: 200 }} disabled={!statusEditable || statusBusy}>
-            <InputLabel id="order-form-footer-status">Order status</InputLabel>
-            <Select
-              labelId="order-form-footer-status"
-              label="Order status"
-              value={localStatus}
-              onChange={onStatusSelectChange}
-            >
-              {ORDER_STATUS_OPTIONS.map((s) => (
-                <MenuItem key={s} value={s}>
-                  {s}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        ) : null}
         {importControl}
-        {trailingAction}
+        <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap">
+          {trailingAction}
+          {showStatus ? (
+            <FormControl size="small" sx={{ minWidth: 200 }} disabled={!statusEditable || statusBusy}>
+              <InputLabel id="order-form-footer-status">Order status</InputLabel>
+              <Select
+                labelId="order-form-footer-status"
+                label="Order status"
+                value={localStatus}
+                onChange={onStatusSelectChange}
+              >
+                {ORDER_STATUS_OPTIONS.map((s) => (
+                  <MenuItem key={s} value={s}>
+                    {s}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          ) : null}
+        </Stack>
+        {canDeleteDraft ? <Box sx={{ flex: '1 1 auto', minWidth: 16 }} /> : null}
+        {canDeleteDraft ? (
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={() => void onDeleteDraftOrder()}
+            disabled={deleteBusy || formBusy || statusBusy || importBusy}
+          >
+            {deleteBusy ? 'Deleting…' : 'Delete order'}
+          </Button>
+        ) : null}
       </Stack>
     </Box>
   )

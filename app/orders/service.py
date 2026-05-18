@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any, List, Optional
 
-from sqlalchemy import func, nulls_last, select
+from sqlalchemy import delete, func, nulls_last, or_, select
 from sqlalchemy.orm import joinedload
 
 from app.db.session import SessionLocal
@@ -18,6 +18,17 @@ from app.db.models.domain import (
     Product,
     JobSheet,
     ResellProduct,
+    OperationRun,
+    RunOutputEntry,
+    ExtrusionQueueItem,
+    UtecoQueueItem,
+    BaggingQueueItem,
+    ToolReservation,
+    JobQCSummary,
+    DispatchRecord,
+    InventoryTransaction,
+    QCCheck,
+    QCReading,
 )
 from app.db.models.enums import OrderStatus, JobStatus
 from app.exceptions import DomainError
@@ -31,6 +42,7 @@ from app.orders.schemas import (
     UpdateResellOrderLineRequest,
 )
 from app.job_sheets import service as job_sheets_service
+from app.orders.product_line_display import product_code_for_version, product_display_name_for_line
 
 def _require_order_editable(o: OrderModel) -> None:
     """Orders may be edited in any status (e.g. dispatched); reserved for future policy hooks."""
@@ -251,9 +263,17 @@ def _order_tokens(o: OrderModel) -> str:
         js = getattr(oi, "job_sheet", None)
         if js is not None:
             p = getattr(js, "product", None)
+            pv = getattr(js, "version", None)
             if p is not None:
-                toks.append(str(getattr(p, "code", "") or ""))
-                toks.append(str(getattr(p, "description", "") or ""))
+                toks.append(product_code_for_version(p, pv))
+                dn = product_display_name_for_line(
+                    p=p,
+                    pv=pv,
+                    js=js,
+                    import_line_description=getattr(oi, "import_line_description", None),
+                )
+                if dn:
+                    toks.append(dn)
     return " ".join(toks).casefold()
 
 
@@ -294,6 +314,7 @@ def list_orders(
             select(OrderModel)
             .options(joinedload(OrderModel.customer))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.job_sheet).joinedload(JobSheet.product))
+            .options(joinedload(OrderModel.items).joinedload(OrderItemModel.job_sheet).joinedload(JobSheet.version))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.resell_product))
             .order_by(nulls_last(OrderModel.order_date.desc()), OrderModel.created_at.desc())
         )
@@ -418,7 +439,8 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
             db.add(oi)
 
         db.flush()
-        job_sheets_service.sync_job_numbers_for_order(db, str(order.id))
+        for js in created_job_sheets:
+            job_sheets_service.assign_order_job_no(db, str(order.id), js)
         for rit in resell_items:
             _add_resell_line_core(db, str(order.id), rit)
 
@@ -512,8 +534,6 @@ def update_order(order_id: str, payload: UpdateOrderRequest) -> OrderModel:
                 o.import_review_status = s
         db.add(o)
         db.flush()
-        if "invoice_number" in updates:
-            job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
         db.refresh(o)
         return o
 
@@ -577,7 +597,7 @@ def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: s
             db.add(o)
 
         db.flush()
-        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
+        job_sheets_service.assign_order_job_no(db, str(o.id), js)
         ensure_scheduling_job_for_job_sheet(db, str(js.id))
         db.refresh(oi)
         return oi
@@ -606,13 +626,7 @@ def remove_order_item(order_id: str, order_item_id: str) -> None:
         db.delete(oi)
         db.flush()
 
-        if oi_js and bool(getattr(oi_js, "is_import_draft", False)):
-            n = db.scalar(
-                select(func.count()).select_from(OrderItemModel).where(OrderItemModel.job_sheet_id == str(oi_js.id))
-            )
-            if int(n or 0) == 0:
-                db.delete(oi_js)
-                db.flush()
+        # Keep orphaned job sheets (and their job_no) for printed references and suffix allocation.
 
         rows = (
             db.query(OrderItemModel, JobSheet)
@@ -628,7 +642,6 @@ def remove_order_item(order_id: str, order_item_id: str) -> None:
             o.product_version_id = None
         db.add(o)
         db.flush()
-        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
 
 
 def add_order_resell_line(order_id: str, item: CreateResellOrderLineRequest, *, created_by: str) -> OrderItemModel:
@@ -782,7 +795,7 @@ def convert_resell_line_to_myob_import_job_sheet(order_id: str, line_id: str, *,
         oi.job_sheet_id = str(js.id)
         db.add(oi)
         db.flush()
-        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
+        job_sheets_service.assign_order_job_no(db, str(o.id), js)
         db.refresh(oi)
         return oi
 
@@ -821,6 +834,75 @@ def link_myob_import_line_job_sheet(order_id: str, line_id: str, job_sheet_id: s
             if int(n or 0) == 0:
                 db.delete(old_js)
         db.flush()
-        job_sheets_service.sync_job_numbers_for_order(db, str(o.id))
+        job_sheets_service.assign_order_job_no(db, str(o.id), new_js)
 
         _ = ensure_scheduling_job_for_job_sheet(db, str(new_js.id))
+
+
+def _order_status_value(o: OrderModel) -> str:
+    st = getattr(o, "status", None)
+    return str(getattr(st, "value", st) or "").strip().lower()
+
+
+def _purge_jobs_for_order_delete(db, job_ids: list[str]) -> None:
+    if not job_ids:
+        return
+    ids = [str(x) for x in job_ids]
+    db.execute(delete(ExtrusionQueueItem).where(ExtrusionQueueItem.job_id.in_(ids)))
+    db.execute(delete(UtecoQueueItem).where(UtecoQueueItem.job_id.in_(ids)))
+    db.execute(delete(BaggingQueueItem).where(BaggingQueueItem.job_id.in_(ids)))
+    db.execute(delete(ToolReservation).where(ToolReservation.job_id.in_(ids)))
+    run_ids = list(db.scalars(select(OperationRun.id).where(OperationRun.job_id.in_(ids))).all())
+    if run_ids:
+        db.execute(delete(RunOutputEntry).where(RunOutputEntry.run_id.in_(run_ids)))
+        db.execute(
+            delete(InventoryTransaction).where(
+                or_(InventoryTransaction.job_id.in_(ids), InventoryTransaction.run_id.in_(run_ids))
+            )
+        )
+        db.execute(delete(QCCheck).where(QCCheck.operation_run_id.in_(run_ids)))
+        db.execute(delete(QCReading).where(QCReading.operation_run_id.in_(run_ids)))
+        db.execute(delete(OperationRun).where(OperationRun.id.in_(run_ids)))
+    else:
+        db.execute(delete(InventoryTransaction).where(InventoryTransaction.job_id.in_(ids)))
+    db.execute(delete(JobQCSummary).where(JobQCSummary.job_id.in_(ids)))
+    db.execute(delete(DispatchRecord).where(DispatchRecord.job_id.in_(ids)))
+    db.execute(delete(JobModel).where(JobModel.id.in_(ids)))
+    db.flush()
+
+
+def delete_order(order_id: str) -> None:
+    """Permanently remove a draft order and its lines, job sheets, and production jobs."""
+    with SessionLocal.begin() as db:
+        try:
+            uuid.UUID(str(order_id))
+        except Exception as e:
+            raise DomainError("Invalid identifiers") from e
+        oid = str(order_id)
+        o = db.get(OrderModel, oid)
+        if not o:
+            raise DomainError("Order not found")
+        if _order_status_value(o) != OrderStatus.DRAFT.value:
+            raise DomainError("Only draft orders can be deleted")
+
+        items = list(db.scalars(select(OrderItemModel).where(OrderItemModel.order_id == oid)).all())
+        js_ids = sorted({str(it.job_sheet_id) for it in items if getattr(it, "job_sheet_id", None)})
+
+        job_id_stmt = select(JobModel.id).where(JobModel.order_id == oid)
+        if js_ids:
+            job_id_stmt = job_id_stmt.union(select(JobModel.id).where(JobModel.job_sheet_id.in_(js_ids)))
+        job_ids = list(db.scalars(job_id_stmt).all())
+
+        db.execute(delete(DispatchRecord).where(DispatchRecord.order_id == oid))
+        _purge_jobs_for_order_delete(db, job_ids)
+        db.execute(delete(OrderItemModel).where(OrderItemModel.order_id == oid))
+        db.flush()
+
+        for jsid in js_ids:
+            n = db.scalar(select(func.count()).select_from(OrderItemModel).where(OrderItemModel.job_sheet_id == jsid))
+            if int(n or 0) == 0:
+                js = db.get(JobSheet, jsid)
+                if js is not None:
+                    db.delete(js)
+        db.flush()
+        db.delete(o)

@@ -1,9 +1,8 @@
 import type { ReactNode, RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import { Box, Link as MuiLink, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { CustomerSearchAutocomplete } from '../../../components/CustomerSearchAutocomplete'
 import type { FinishMode, QtyType } from '../../../utils/quantityRollFields'
-
-export type JobSheetCustomerOption = { id: string; name: string; code?: string | null }
 
 export type JobSheetQuantityFieldsProps = {
   productUnitLabel: string
@@ -206,8 +205,6 @@ export type JobSheetIdentityQuantitySectionProps = JobSheetQuantityFieldsProps &
   /** Read-only customer purchase order line (matches printed header). */
   purchaseOrderNo?: string
   headerActions?: ReactNode
-  customers: JobSheetCustomerOption[]
-  customersStatus: 'idle' | 'loading' | 'succeeded' | 'failed'
   customerId: string
   onCustomerIdChange: (customerId: string) => void
   customerSelectDisabled: boolean
@@ -244,8 +241,6 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
     invoiceNo = '',
     purchaseOrderNo = '',
     headerActions,
-    customers,
-    customersStatus,
     customerId,
     onCustomerIdChange,
     customerSelectDisabled,
@@ -309,25 +304,21 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
       </Box>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-        <TextField
-          select
-          label="Customer"
+        <CustomerSearchAutocomplete
           value={customerId}
-          onChange={(e) => onCustomerIdChange(e.target.value)}
+          onChange={(id) => onCustomerIdChange(id)}
+          disabled={customerSelectDisabled}
           required
-          disabled={customerSelectDisabled || customersStatus === 'loading' || customersStatus === 'idle'}
-        >
-          <MenuItem value="" disabled>
-            Select…
-          </MenuItem>
-          {customers.map((c) => (
-            <MenuItem key={c.id} value={c.id}>
-              {c.name} {c.code ? `(${String(c.code).toUpperCase()})` : ''}
-            </MenuItem>
-          ))}
-        </TextField>
+          disableClearable
+        />
 
-        <TextField label="Invoice no." value={String(invoiceNo ?? '')} InputProps={{ readOnly: true }} />
+        <TextField
+          label="Invoice no."
+          value={String(invoiceNo ?? '')}
+          disabled
+          InputProps={{ readOnly: true }}
+          helperText={invoiceNo?.trim() ? undefined : 'No order linked yet'}
+        />
 
         <TextField label="Job code" value={jobCode ? String(jobCode) : ''} InputProps={{ readOnly: true }} />
 
@@ -368,7 +359,13 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           InputLabelProps={{ shrink: true }}
         />
 
-        <TextField label="Purchase order" value={String(purchaseOrderNo ?? '')} InputProps={{ readOnly: true }} />
+        <TextField
+          label="Purchase order"
+          value={String(purchaseOrderNo ?? '')}
+          disabled
+          InputProps={{ readOnly: true }}
+          helperText={purchaseOrderNo?.trim() ? undefined : 'No order linked yet'}
+        />
       </Box>
 
       {onProductionStatusChange ? (

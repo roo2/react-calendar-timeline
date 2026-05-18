@@ -466,6 +466,11 @@ export function SpecPayloadForm(props: {
   const platesErr = platesState.status === 'failed' ? platesState.error : null
 
   const [layflatInput, setLayflatInput] = useState<string | null>(null)
+  const resinLdPresetAppliedRef = useRef(false)
+
+  useEffect(() => {
+    resinLdPresetAppliedRef.current = false
+  }, [value])
 
   useEffect(() => {
     if (bundle.status === 'idle') void dispatch(fetchProductSpecBundle())
@@ -480,6 +485,7 @@ export function SpecPayloadForm(props: {
   }, [customerId, dispatch])
 
   useEffect(() => {
+    if (resinLdPresetAppliedRef.current) return
     if (!Array.isArray(resinBlends) || resinBlends.length === 0) return
     const preset = resinBlends.find((b) => b.blend_code === 'LD')
     if (!preset) return
@@ -491,12 +497,13 @@ export function SpecPayloadForm(props: {
       (curBlend.length === 1 && curBlend[0]?.resin_code === 'LDPE' && Math.abs(Number(curBlend[0]?.pct || 0) - 100) < 0.0001)
     if (!looksPlaceholder) return
 
+    resinLdPresetAppliedRef.current = true
     update((d) => {
       d.formulation.blend_type = 'LD'
       d.formulation.blend = preset.components.map((c) => ({ resin_code: c.resin_code, pct: c.pct }))
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resinBlends])
+  }, [resinBlends, formulation.blend_type, formulation.blend])
 
   function emptyInkPlateRow(_method: string | undefined): { ink_code: string; plate_code: string; ink_text: string } {
     return { ink_code: '', plate_code: '', ink_text: '' }

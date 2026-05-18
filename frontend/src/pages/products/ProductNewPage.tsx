@@ -4,9 +4,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../components/SpecPayloadForm'
-import { Box, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
+import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
 import { FormErrorAlert } from '../../components/FormErrorAlert'
-import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
 import { checkProductCodeExists, clearCreateErrors, clearCreateFieldError, createProduct } from '../../store/slices/productsSlice'
 
 export function ProductNewPage() {
@@ -19,8 +19,6 @@ export function ProductNewPage() {
   const preCustomerId = qs0.get('customerId') || qs0.get('customer_id')
   const customerLocked = !!(preCustomerId && String(preCustomerId).trim())
 
-  const customers = useAppSelector((s) => s.customers.list.items)
-  const customersStatus = useAppSelector((s) => s.customers.list.status)
   const customersErr = useAppSelector((s) => s.customers.list.error)
 
   const upsert = useAppSelector((s) => s.products.create)
@@ -37,11 +35,6 @@ export function ProductNewPage() {
   const codeExistsReq = useRef(0)
 
   const canSubmit = useMemo(() => customerId && code && !saving, [customerId, code, saving])
-
-  useEffect(() => {
-    if (customersStatus !== 'idle') return
-    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
-  }, [customersStatus, dispatch])
 
   useEffect(() => {
     // Allow preselecting a customer when navigating from "New Order" via query string.
@@ -143,28 +136,18 @@ export function ProductNewPage() {
             </Typography>
 
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-              <TextField
-                select
-                label="Customer"
+              <CustomerSearchAutocomplete
                 value={customerId}
-                onChange={(e) => {
-                  setCustomerId(e.target.value)
+                onChange={(id) => {
+                  setCustomerId(id)
                   dispatch(clearCreateFieldError('customer_id'))
                 }}
                 required
                 error={!!fieldErrors['customer_id']}
                 helperText={fieldErrors['customer_id'] || ''}
-                disabled={customersStatus === 'loading' || customersStatus === 'idle' || customerLocked}
-              >
-                <MenuItem value="" disabled>
-                  Select customer
-                </MenuItem>
-                {customers.map((c) => (
-                  <MenuItem key={c.id} value={c.id}>
-                    {c.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+                disabled={customerLocked}
+                disableClearable
+              />
 
               <TextField
                 label="Customer-facing product code"

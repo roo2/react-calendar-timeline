@@ -1,9 +1,12 @@
-import { useEffect } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
-import { fetchProduct } from '../../store/slices/productsSlice'
+import { deleteProduct, fetchProduct } from '../../store/slices/productsSlice'
 import { can } from '../../auth/permissions'
+import { isRejectedWithValue } from '@reduxjs/toolkit'
+import type { UpsertError } from '../../store/slices/productsSlice'
+import { ApiError } from '../../api/client'
 import {
   Alert,
   Box,
@@ -22,6 +25,7 @@ import {
 export function ProductShowPage() {
   const { productId } = useParams()
   const dispatch = useAppDispatch()
+  const nav = useNavigate()
 
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const isPm = can(roles, 'PROD_MANAGER')
@@ -30,10 +34,44 @@ export function ProductShowPage() {
   const data = entry?.data
   const err = entry?.error
 
+  const [deleteErr, setDeleteErr] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
   useEffect(() => {
     if (!productId) return
     void dispatch(fetchProduct(productId))
   }, [productId, dispatch])
+
+  const usage = data?.usage as
+    | { can_delete?: boolean; job_sheet_count?: number; order_count?: number }
+    | undefined
+  const canDelete = Boolean(isPm && productId && usage?.can_delete === true)
+
+  async function onDeleteProduct() {
+    if (!productId || !canDelete || deleting) return
+    const code = data?.product?.code || 'this product'
+    const ok = window.confirm(
+      `Delete product "${code}" permanently? This removes all versions. This cannot be undone.`,
+    )
+    if (!ok) return
+    setDeleteErr(null)
+    setDeleting(true)
+    try {
+      await dispatch(deleteProduct(productId)).unwrap()
+      nav('/products')
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setDeleteErr(p.message || 'Failed to delete product')
+      } else if (e instanceof ApiError) {
+        setDeleteErr(e.message || 'Failed to delete product')
+      } else {
+        setDeleteErr(e instanceof Error ? e.message : 'Failed to delete product')
+      }
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (err && !data && entry?.status === 'failed') {
     return (
@@ -60,12 +98,40 @@ export function ProductShowPage() {
             Customer: {product.customer_name || '-'} • Active Version: {product.active_version_id || '-'}
           </Typography>
         </Box>
-        {isPm && (
-          <Button variant="contained" component={Link} to={`/products/${productId}/versions/new`}>
-            Create New Version
-          </Button>
-        )}
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+          {canDelete ? (
+            <Button
+              variant="outlined"
+              color="error"
+              disabled={deleting}
+              onClick={() => void onDeleteProduct()}
+            >
+              {deleting ? 'Deleting…' : 'Delete product'}
+            </Button>
+          ) : null}
+          {isPm ? (
+            <Button variant="contained" component={Link} to={`/products/${productId}/versions/new`}>
+              Create New Version
+            </Button>
+          ) : null}
+        </Box>
       </Box>
+
+      {deleteErr ? <Alert severity="error">{deleteErr}</Alert> : null}
+
+      {isPm && usage && !usage.can_delete ? (
+        <Alert severity="info">
+          This product cannot be deleted because it is used on
+          {Number(usage.job_sheet_count || 0) > 0
+            ? ` ${usage.job_sheet_count} job sheet${Number(usage.job_sheet_count) !== 1 ? 's' : ''}`
+            : ''}
+          {Number(usage.job_sheet_count || 0) > 0 && Number(usage.order_count || 0) > 0 ? ' and' : ''}
+          {Number(usage.order_count || 0) > 0
+            ? ` ${usage.order_count} order${Number(usage.order_count) !== 1 ? 's' : ''}`
+            : ''}
+          .
+        </Alert>
+      ) : null}
 
       <Paper variant="outlined">
         <Table size="small">
@@ -103,7 +169,7 @@ export function ProductShowPage() {
                   <TableCell>{v.created_at}</TableCell>
                   <TableCell>
                     <MuiLink component={Link} to={`/products/${productId}/versions/${v.id}`} underline="hover">
-                      View
+                      Edit
                     </MuiLink>
                   </TableCell>
                 </TableRow>

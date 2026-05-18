@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, MenuItem, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
-import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../store/slices/customersSlice'
+import { fetchCustomer } from '../../store/slices/customersSlice'
 import {
   adminDeleteInk,
   adminDeletePlate,
@@ -28,8 +29,25 @@ export function PrintingAdminPage() {
   const tiers = useAppSelector((s) => s.adminRateCards.printingPricingTiers.items)
   const inks = useAppSelector((s) => s.adminRateCards.inks.items)
   const plates = useAppSelector((s) => s.adminRateCards.plates.items)
-  const customers = useAppSelector((s) => s.customers.list.items) as CustomerSummary[]
-  const customersById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers])
+  const listCustomers = useAppSelector((s) => s.customers.list.items) as CustomerSummary[]
+  const customerDetailsById = useAppSelector((s) => s.customers.detail.byId)
+  const customersById = useMemo(() => {
+    const m = new Map<string, CustomerSummary>()
+    for (const c of listCustomers) m.set(c.id, c)
+    for (const p of plates) {
+      const id = String(p.customer_id || '').trim()
+      if (!id || m.has(id)) continue
+      const d = customerDetailsById[id]?.customer
+      if (d) {
+        m.set(id, {
+          id: d.id,
+          name: d.name,
+          code: d.brand_code,
+        })
+      }
+    }
+    return m
+  }, [listCustomers, customerDetailsById, plates])
   const { status, error: bundleErr } = useAppSelector((s) => s.adminRateCards.printingBundle)
   const loading = status === 'loading'
 
@@ -96,8 +114,16 @@ export function PrintingAdminPage() {
 
   useEffect(() => {
     void dispatch(fetchAdminPrintingBundle())
-    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
   }, [dispatch])
+
+  useEffect(() => {
+    const ids = new Set(plates.map((p) => String(p.customer_id || '').trim()).filter(Boolean))
+    for (const id of ids) {
+      if (listCustomers.some((c) => c.id === id)) continue
+      if (customerDetailsById[id]?.customer) continue
+      void dispatch(fetchCustomer(id))
+    }
+  }, [plates, listCustomers, customerDetailsById, dispatch])
 
   const displayErr = err || bundleErr
 
@@ -529,16 +555,12 @@ export function PrintingAdminPage() {
               ))}
               <TableRow>
                 <TableCell>
-                  <TextField select size="small" label="Customer" value={newPlateCustomerId} onChange={(e) => setNewPlateCustomerId(e.target.value)} fullWidth>
-                    <MenuItem value="">
-                      <em>Select…</em>
-                    </MenuItem>
-                    {customers.map((c) => (
-                      <MenuItem key={c.id} value={c.id}>
-                        {c.code ? `${c.code} — ${c.name}` : c.name}
-                      </MenuItem>
-                    ))}
-                  </TextField>
+                  <CustomerSearchAutocomplete
+                    value={newPlateCustomerId}
+                    onChange={(id) => setNewPlateCustomerId(id)}
+                    getOptionLabel={(c) => (c.brand_code ? `${c.brand_code} — ${c.name}` : c.name || c.id)}
+                    disableClearable
+                  />
                 </TableCell>
                 <TableCell>
                   <TextField size="small" label="Plate code" value={newPlateCode} onChange={(e) => setNewPlateCode(e.target.value)} />

@@ -64,6 +64,8 @@ class JobSheetSummary(BaseModel):
     # From order when this job sheet is attached to an order line
     order_id: Optional[str] = None
     invoice_no: Optional[str] = None
+    customer_purchase_order_number: Optional[str] = None
+    """Customer PO from linked order when this line is on an order."""
     order_date: Optional[str] = None
     order_status: Optional[str] = None
     """Commercial order lifecycle (draft → confirmed → …). From linked Order when present."""

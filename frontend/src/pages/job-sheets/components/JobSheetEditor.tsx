@@ -36,16 +36,13 @@ import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { isRejectedWithValue } from '@reduxjs/toolkit'
 import type { UpsertError } from '../../../store/slices/productsSlice'
-import { fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE } from '../../../store/slices/customersSlice'
-import { clearCreateErrors, createProduct, fetchProducts } from '../../../store/slices/productsSlice'
-import { createJobSheet, fetchJobSheet, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
+import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '../../../store/slices/productsSlice'
+import { createJobSheet, fetchJobSheet, saveJobSheetAsNewProduct, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
-import {
-  joinQuoteDescriptionWithPackagingTail,
-  quotePackagingPerUnitTail,
-  type QuoteQtyMode,
-} from '../../../utils/quoteQuantityDescriptors'
-import { JobSheetPreviewPanel } from '../../../components/JobSheetPreviewPanel'
+import { SaveAsNewProductButton, SaveFormButton } from '../../../components/SaveActionButtons'
+import { JobSheetLivePreview } from '../../../components/JobSheetLivePreview'
+import { hideMyobProductPlaceholderText } from '../../../utils/jobSheetPreviewText'
+import { useJobSheetLivePreviewProps } from '../../../hooks/useJobSheetLivePreviewProps'
 import {
   makeDefaultSpec,
   SpecPayloadForm,
@@ -53,15 +50,11 @@ import {
   type SpecPayload,
 } from '../../../components/SpecPayloadForm'
 import { sanitizeSpecFormulationMixes } from '../../../utils/specFormulationSanitize'
-import { StickySideAside } from '../../../components/StickySideAside'
 import { LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
-import { computeJobSheetPreviewQuoteSummary } from '../../../utils/jobSheetPreviewQuoteSummary'
-import { buildLiveJobSheetRowForOrderQuantityLabel } from '../../../utils/jobSheetQuantityFromApi'
 import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
-import { computeJobSheetPalletLoadPlanning } from '../../../utils/jobSheetPalletPlanning'
 
 type Mode = 'new' | 'edit'
 
@@ -74,15 +67,6 @@ function isoToDatetimeLocalValue(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-/** Internal placeholder `Product` row for MYOB import–linked draft job sheets. */
-const MYOB_IMPORT_PLACEHOLDER_DESC_RE = /^placeholder for myob import draft job sheets$/i
-
-function hideMyobProductPlaceholderText(s: string | null | undefined): string {
-  const t = String(s ?? '').trim()
-  if (!t) return ''
-  return MYOB_IMPORT_PLACEHOLDER_DESC_RE.test(t) ? '' : t
 }
 
 /** `datetime-local` (interpreted as local) → ISO UTC string, or null if empty. */
@@ -128,18 +112,16 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const dispatch = useAppDispatch()
   const nav = useNavigate()
 
-  const customers = useAppSelector((s) => s.customers.list.items)
-  const customersStatus = useAppSelector((s) => s.customers.list.status)
 
   const createState = useAppSelector((s) => s.products.create)
   const jobSheetDetail = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
   const loadedJobSheet = mode === 'edit' && jobSheetId ? jobSheetDetail?.data?.job_sheet : undefined
   const { setDirty } = useUnsavedChanges()
   const [savingJobSheet, setSavingJobSheet] = useState(false)
+  const [savingAsNew, setSavingAsNew] = useState(false)
 
   const [customerId, setCustomerId] = useState('')
   const [dueDate, setDueDate] = useState('')
-  const [invoiceNo, setInvoiceNo] = useState('')
   const [orderDate, setOrderDate] = useState('')
   const [orderId, setOrderId] = useState('')
   /** Linked production Job.status (edit only). */
@@ -163,11 +145,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [productionExtruderCode, setProductionExtruderCode] = useState('')
   /** After the user changes the extruder dropdown, do not auto-fill over an explicit empty selection. */
   const extruderUserTouchedRef = useRef(false)
-
-  useEffect(() => {
-    if (customersStatus !== 'idle') return
-    void dispatch(fetchCustomers({ page: 1, page_size: CUSTOMER_PICKER_PAGE_SIZE, q: '' }))
-  }, [customersStatus, dispatch])
 
   const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
   const ratebook = quoteRatebookState.data
@@ -226,7 +203,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         : null,
     )
     setDueDate(js?.due_date || '')
-    setInvoiceNo(js?.invoice_no ?? '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setOrderId(js?.order_id ? String(js.order_id) : '')
     const importLineDesc =
@@ -388,7 +364,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const theme = useTheme()
   const isNarrow = useMediaQuery(theme.breakpoints.down('md'))
-  const previewDescription = useMemo(() => computeProductDescriptionFromSpec(spec), [spec])
   const previewProductCode = useMemo(() => getDisplayProductCodeFromSpec(spec), [spec])
 
   const finishMode = qty.finishMode
@@ -439,65 +414,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionExtruderCode(code)
   }, [productionExtruderCode, extruderSuggestion.extruderCode])
 
-  const previewJobSheetQuantityRow = useMemo(() => {
-    const totalKgForScheduling =
-      finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
-        ? Number(totalKgDisplay)
-        : totalKgNum
-    const persistedRolls = resolveNumRollsForPersistence(
-      finishMode,
-      effectiveQtyType,
-      totalKgNum,
-      numRollsNum,
-      weightPerRollNum,
-      derivedDisplay,
-    )
-    const fallbackLegacy =
-      mode === 'edit' &&
-      loadedJobSheet != null &&
-      loadedJobSheet.quantity_value != null &&
-      Number(loadedJobSheet.quantity_value) > 0
-        ? Number(loadedJobSheet.quantity_value)
-        : 1
-    const bpc = spec.packaging?.bags_per_carton
-    return buildLiveJobSheetRowForOrderQuantityLabel({
-      effectiveQtyType,
-      finishMode,
-      totalKgForScheduling,
-      numUnitsNum,
-      numRollsPersisted: persistedRolls,
-      derivedProductUnits: derivedForDisplay?.units,
-      quantityValueFallback: fallbackLegacy,
-      bagsPerCarton: bpc != null ? Number(bpc) : null,
-      cartonQtyMode: qty.cartonQtyMode,
-      isImportDraft: Boolean(loadedJobSheet?.is_import_draft),
-    })
-  }, [
-    finishMode,
-    effectiveQtyType,
-    totalKgNum,
-    totalKgDisplay,
-    qty.cartonQtyMode,
-    numRollsNum,
-    weightPerRollNum,
-    numUnitsNum,
-    derivedDisplay,
-    mode,
-    loadedJobSheet,
-    spec.packaging?.bags_per_carton,
-  ])
-
-  const jobSheetPreviewQuoteSummary = useMemo(
-    () =>
-      computeJobSheetPreviewQuoteSummary(
-        spec,
-        previewJobSheetQuantityRow,
-        ratebook ?? null,
-        qty.quickInputs ?? null,
-      ),
-    [spec, previewJobSheetQuantityRow, ratebook, qty.quickInputs],
-  )
-
   const estimatedUnitsPerPalletVolume = useMemo(
     () =>
       estimateUnitsPerPalletVolumeFromLiveSpec({
@@ -509,122 +425,30 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     [ratebook, spec, qty.quickInputs, extruderCodeForQty],
   )
 
-  const jobSheetPalletLoadPlanning = useMemo(() => {
-    const conv = (spec.run_requirements as { conversion?: { qty_to_stock?: unknown } } | undefined)?.conversion
-    return computeJobSheetPalletLoadPlanning({
-      finishMode: finishMode === 'Cartons' ? 'Cartons' : 'Rolls',
-      rollsPerPallet: spec.packaging?.rolls_per_pallet,
-      cartonsPerPallet: spec.packaging?.cartons_per_pallet,
-      estimatedUnitsPerPalletVolume,
-      qtyToStockRaw: conv?.qty_to_stock,
-      orderTotalUnits: stockPlanningTotalUnits,
-    })
-  }, [
-    finishMode,
-    spec.packaging?.rolls_per_pallet,
-    spec.packaging?.cartons_per_pallet,
-    estimatedUnitsPerPalletVolume,
-    spec.run_requirements,
-    stockPlanningTotalUnits,
-  ])
-
-  const previewCustomerName = useMemo(() => {
-    const c = customers.find((x) => x.id === customerId)
-    return (c?.name || '').trim()
-  }, [customers, customerId])
-
-  const previewPurchaseOrderNo = useMemo(() => {
-    if (mode !== 'edit' || !loadedJobSheet) return ''
-    const js = loadedJobSheet as Record<string, unknown>
-    const v = js.customer_purchase_order_number ?? js.purchase_order_no
-    return v != null && String(v).trim() ? String(v).trim() : ''
-  }, [mode, loadedJobSheet])
-
-  const previewNotesLine = useMemo(() => {
-    const a = String(spec?.identity?.notes ?? '').trim()
-    const b = String(spec?.run_requirements?.notes ?? '').trim()
-    return (a || b || '').trim() || null
-  }, [spec?.identity?.notes, spec?.run_requirements?.notes])
-
-  const previewQualityFlagIds = useMemo(() => {
-    const f = spec?.quality_expectations?.flags
-    if (!Array.isArray(f) || f.length === 0) return null
-    return f.map((x: unknown) => String(x))
-  }, [spec?.quality_expectations?.flags])
-
-  const myobImportLineDescription = useMemo(() => {
-    const raw = jobSheetDetail?.data?.myob_import_line_description
-    if (raw == null || typeof raw !== 'string') return ''
-    return raw.trim()
-  }, [jobSheetDetail?.data?.myob_import_line_description])
-
   const displayProductCode =
     (previewProductCode.trim() || (mode === 'edit' ? (productInfo?.code || '').trim() : '')).trim() || '—'
-  const previewPackagingTail = useMemo(() => {
-    const bagsPerCarton =
-      spec.packaging?.bags_per_carton != null ? Math.max(0, Math.round(Number(spec.packaging.bags_per_carton))) : 0
-    const d = qty.derivedForDisplay
-    const quantityTotalM =
-      d?.derivedTotalM != null && Number(d.derivedTotalM) > 0 ? Number(d.derivedTotalM) : 0
-    let quantityRolls = Math.max(0, Math.round(Number(qty.numRolls || 0)))
-    if (
-      qty.finishMode === 'Rolls' &&
-      qty.isContinuousLength &&
-      qty.effectiveQtyType === 'units' &&
-      !(quantityRolls > 0)
-    ) {
-      const nu = Math.max(0, Math.round(Number(qty.numUnits || 0)))
-      if (nu > 0) quantityRolls = nu
-    }
-    const qtyModeForTail: QuoteQtyMode =
-      qty.effectiveQtyType === 'kg' ? 'kg' : qty.effectiveQtyType === 'units' ? 'units' : 'roll'
-    let unitsPerRollForTail = Math.max(0, Math.round(Number(qty.unitsPerRoll || 0)))
-    const nu = Math.max(0, Math.round(Number(qty.numUnits || 0)))
-    const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
-    if (unitsPerRollForTail <= 0 && nu > 0 && nr > 0) {
-      unitsPerRollForTail = Math.max(1, Math.round(nu / nr))
-    }
-    return quotePackagingPerUnitTail({
-      finishMode: qty.finishMode,
-      productType: qty.productType,
-      bagsPerCarton,
-      isContinuousLength: qty.isContinuousLength,
-      metersPerRoll: Number(qty.metersPerRoll || 0),
-      weightPerRollKg: Number(qty.weightPerRoll || 0),
-      quantityTotalM,
-      quantityRolls,
-      qtyMode: qtyModeForTail,
-      unitsPerRoll: unitsPerRollForTail,
-    })
-  }, [
-    spec.packaging?.bags_per_carton,
-    qty.finishMode,
-    qty.productType,
-    qty.isContinuousLength,
-    qty.metersPerRoll,
-    qty.weightPerRoll,
-    qty.numRolls,
-    qty.numUnits,
-    qty.unitsPerRoll,
-    qty.effectiveQtyType,
-    qty.derivedForDisplay?.derivedTotalM,
-  ])
 
-  const previewDescriptionWithPackagingTail = useMemo(
-    () =>
-      hideMyobProductPlaceholderText(
-        joinQuoteDescriptionWithPackagingTail(previewDescription, previewPackagingTail),
-      ),
-    [previewDescription, previewPackagingTail],
-  )
+  const livePreviewProps = useJobSheetLivePreviewProps({
+    spec,
+    qty,
+    customerId,
+    customerFacingDescription,
+    orderDate,
+    dueDate,
+    showJobFields: true,
+    jobSheetId: mode === 'edit' ? jobSheetId : null,
+    loadedJobSheet: (loadedJobSheet as Record<string, unknown> | undefined) ?? null,
+    jobSheetDetailData: jobSheetDetail?.data ?? null,
+    productionExtruderCode,
+    includeProductionEstimates: true,
+  })
 
   const jobSheetPrintingContext: JobSheetPrintingContext = useMemo(() => {
-    const c = customers.find((x) => x.id === customerId)
-    const customerLabel = (c?.name || '').trim() || '—'
+    const customerLabel = livePreviewProps.customerName || '—'
     const importLine = (jobSheetDetail?.data as { myob_import_line_description?: string } | null | undefined)
       ?.myob_import_line_description
     const fromImport = typeof importLine === 'string' && importLine.trim() ? importLine.trim() : ''
-    const fromSpec = previewDescriptionWithPackagingTail
+    const fromSpec = livePreviewProps.description
     const fromInfo = mode === 'edit' ? hideMyobProductPlaceholderText((productInfo?.description as string | null | undefined) || '') : ''
     const fromUser = (customerFacingDescription || '').trim()
     const productDescription = fromUser || fromImport || (fromSpec || fromInfo) || '—'
@@ -632,38 +456,29 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       mode === 'edit' && loadedJobSheet?.job_no != null && String(loadedJobSheet.job_no).trim()
         ? String(loadedJobSheet.job_no).trim()
         : ''
-    const poLine =
-      mode === 'edit' && loadedJobSheet
-        ? String(
-            (loadedJobSheet as Record<string, unknown>).customer_purchase_order_number ??
-              (loadedJobSheet as Record<string, unknown>).purchase_order_no ??
-              '',
-          ).trim()
-        : ''
     return {
       customerLabel,
       productDescription,
-      invoiceNo: (invoiceNo || '').trim() || undefined,
+      invoiceNo: (livePreviewProps.invoiceNo || '').trim() || undefined,
       jobCode: jobNo || undefined,
-      purchaseOrderNo: poLine || undefined,
+      purchaseOrderNo: (livePreviewProps.purchaseOrderNo || '').trim() || undefined,
       orderNumber: orderId.trim() || '—',
       orderDateLabel: orderDate.trim() || '—',
       dueDateLabel: dueDate.trim() || '—',
       totalMetersLabel: qty.totalMetersReadonly,
     }
   }, [
-    customers,
-    customerId,
+    livePreviewProps.customerName,
+    livePreviewProps.description,
+    livePreviewProps.invoiceNo,
     customerFacingDescription,
     jobSheetDetail?.data,
     mode,
-    previewDescriptionWithPackagingTail,
     productInfo,
     orderId,
     orderDate,
     dueDate,
     qty.totalMetersReadonly,
-    invoiceNo,
     loadedJobSheet,
   ])
 
@@ -813,9 +628,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         const id = res?.job_sheet?.id
         if (res?.job_sheet?.order_id) setOrderId(String(res.job_sheet.order_id))
         if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
-        if (res?.job_sheet?.invoice_no != null && res?.job_sheet?.invoice_no !== undefined) {
-          setInvoiceNo(String(res.job_sheet.invoice_no))
-        }
         setSaveMsg('Saved job sheet.')
         setDirty(false)
         if (id) nav(returnTo || `/job-sheets/${encodeURIComponent(id)}/edit`)
@@ -846,9 +658,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
         if (res?.job_sheet?.order_id) setOrderId(String(res.job_sheet.order_id))
         if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
-        if (res?.job_sheet?.invoice_no != null && res?.job_sheet?.invoice_no !== undefined) {
-          setInvoiceNo(String(res.job_sheet.invoice_no))
-        }
         setSaveMsg('Saved job sheet.')
         setSpecDirty(false)
         setDirty(false)
@@ -872,6 +681,144 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       return false
     } finally {
       setSavingJobSheet(false)
+    }
+  }
+
+  async function onSaveAsNewProduct(): Promise<boolean> {
+    setSaveMsg(null)
+    setSaveErr(null)
+    setSpecFieldErrors({})
+
+    if (mode !== 'edit' || !jobSheetId) return false
+
+    const missing: string[] = []
+    if (!customerId) missing.push('Customer')
+    if (!productId) missing.push('Product')
+    if (missing.length > 0) {
+      setSaveErr(`Missing required fields: ${missing.join(', ')}`)
+      return false
+    }
+    const totalKgForScheduling =
+      qty.finishMode === 'Cartons' && !(Number(qty.totalKg || 0) > 0) && qty.totalKgDisplay != null && Number(qty.totalKgDisplay) > 0
+        ? Number(qty.totalKgDisplay)
+        : Number(qty.totalKg || 0)
+    const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
+    const weightPerRollNum = Number(qty.weightPerRoll || 0)
+    const numUnitsNum = Math.max(0, Math.round(Number(qty.numUnits || 0)))
+    const derivedForDisplay = qty.derivedForDisplay
+    const qtyErr = validateJobSheetQuantityInputs(
+      qty.finishMode,
+      qty.effectiveQtyType,
+      totalKgForScheduling,
+      numUnitsNum,
+      numRollsNum,
+      qty.finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
+      Math.max(0, Math.round(Number(qty.unitsPerRoll || 0))),
+    )
+    if (qtyErr) {
+      setSaveErr(qtyErr)
+      return false
+    }
+    if (savingJobSheet || savingAsNew) return false
+
+    const sendProdDates = productionStatusShowsDatetimeFields(productionStatus)
+    const specForSave = sanitizeSpecFormulationMixes(JSON.parse(JSON.stringify(spec)) as SpecPayload)
+
+    try {
+      setSavingAsNew(true)
+
+      const totalKgNum = Number(qty.totalKg || 0)
+      const persistedRolls = resolveNumRollsForPersistence(
+        qty.finishMode,
+        qty.effectiveQtyType,
+        totalKgNum,
+        numRollsNum,
+        weightPerRollNum,
+        derivedForDisplay,
+      )
+      const persistedWpr = resolveWeightPerRollForPersistence(
+        qty.finishMode,
+        qty.effectiveQtyType,
+        totalKgForScheduling,
+        numRollsNum,
+        weightPerRollNum,
+        derivedForDisplay,
+      )
+      const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
+      const bpc = spec.packaging?.bags_per_carton
+      const oq = getOrderQuantityFromJobSheetFields(
+        qty.effectiveQtyType,
+        fallbackLegacy,
+        totalKgForScheduling,
+        numUnitsNum,
+        persistedRolls,
+        qty.finishMode,
+        bpc != null ? Number(bpc) : null,
+        qty.cartonQtyMode,
+      )
+
+      const body: Record<string, unknown> = {
+        due_date: dueDate.trim() ? dueDate : null,
+        order_date: orderDate || null,
+        quantity_value: oq.quantity_value,
+        quantity_unit: oq.quantity_unit,
+        qty_type: qty.effectiveQtyType,
+        num_product_units:
+          qty.effectiveQtyType === 'units'
+            ? numUnitsNum
+            : derivedForDisplay?.units != null
+              ? Math.round(Number(derivedForDisplay.units))
+              : null,
+        weight_per_roll_kg: persistedWpr,
+        num_rolls: persistedRolls,
+        spec: specForSave,
+        production_status: productionStatus,
+        production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
+        production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
+        customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
+        production_extruder_code: productionExtruderCode.trim() || null,
+      }
+
+      const res = await dispatch(saveJobSheetAsNewProduct({ jobSheetId, body })).unwrap()
+      const newPid = String(res.product_id || '').trim()
+      if (!newPid) throw new Error('New product was created but no id was returned')
+
+      lastJobDetailDataRef.current = null
+      setProductId(newPid)
+      const js = res.job_sheet
+      setProductInfo({
+        id: newPid,
+        code: String(js?.product_code || getDisplayProductCodeFromSpec(specForSave)),
+        description: computeProductDescriptionFromSpec(specForSave),
+        customer_id: customerId,
+        active_version_id: String(res.product_version_id || js?.product_version_id || ''),
+      })
+
+      await dispatch(fetchProduct(newPid)).unwrap()
+      await dispatch(fetchJobSheet(jobSheetId)).unwrap()
+      if (customerId) await dispatch(fetchProducts({ customer_id: customerId })).unwrap()
+
+      setSaveMsg('Saved as new product. You are now editing the new product.')
+      setSpecDirty(false)
+      setDirty(false)
+      setSpec(ensureSpec(specForSave))
+      return true
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setSpecFieldErrors(p.fieldErrors || {})
+        setSaveErr(p.message || 'Failed to save as new product')
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { fieldErrors, messages } = parseFastApiValidationDetail(e.body.detail)
+        setSpecFieldErrors(fieldErrors)
+        setSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+      } else {
+        setSpecFieldErrors({})
+        setSaveErr(e instanceof Error ? e.message : 'Failed to save as new product')
+      }
+      return false
+    } finally {
+      setSavingAsNew(false)
     }
   }
 
@@ -946,16 +893,27 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             View Order
           </Button>
         ) : null}
-        <Button variant="outlined" color="primary" onClick={onSave} disabled={savingJobSheet}>
-          {savingJobSheet ? 'Saving…' : mode === 'new' ? 'Save job sheet' : 'Save changes'}
-        </Button>
+        {mode === 'edit' && jobSheetId ? (
+          <SaveAsNewProductButton
+            onClick={() => void onSaveAsNewProduct()}
+            disabled={savingJobSheet || savingAsNew}
+            saving={savingAsNew}
+          />
+        ) : null}
+        <SaveFormButton
+          variant="outlined"
+          onClick={onSave}
+          disabled={savingJobSheet || savingAsNew}
+          saving={savingJobSheet}
+          label={mode === 'new' ? 'Save job sheet' : 'Save'}
+        />
         {mode === 'edit' && jobSheetId ? (
           <Button
             variant="contained"
             color="primary"
             type="button"
             onClick={() => void onPrintJobSheet()}
-            disabled={savingJobSheet}
+            disabled={savingJobSheet || savingAsNew}
             startIcon={<PrintIcon />}
           >
             Print
@@ -974,11 +932,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
         <JobSheetIdentityQuantitySection
           jobCode={mode === 'edit' && loadedJobSheet?.job_no ? loadedJobSheet.job_no : null}
-          invoiceNo={invoiceNo}
-          purchaseOrderNo={previewPurchaseOrderNo}
+          invoiceNo={livePreviewProps.invoiceNo}
+          purchaseOrderNo={livePreviewProps.purchaseOrderNo}
           headerActions={renderJobSheetActions()}
-          customers={customers as any}
-          customersStatus={customersStatus}
           customerId={customerId}
           onCustomerIdChange={(id) => {
             setCustomerId(id)
@@ -1028,8 +984,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 <MuiLink
                   component={Link}
                   to={`/products/${encodeURIComponent(productId)}`}
-                  target="_blank"
-                  rel="noreferrer"
                   underline="hover"
                   sx={{ display: 'inline-block', mt: 1, fontSize: '0.875rem' }}
                 >
@@ -1040,26 +994,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           }
         />
 
-        {isNarrow ? (
-          <JobSheetPreviewPanel
-            jobSheetId={mode === 'edit' && jobSheetId ? jobSheetId : null}
-            jobCode={mode === 'edit' && loadedJobSheet?.job_no ? loadedJobSheet.job_no : ''}
-            customerName={previewCustomerName}
-            invoiceNo={invoiceNo}
-            purchaseOrderNo={previewPurchaseOrderNo}
-            orderDate={orderDate}
-            dueDate={dueDate}
-            productCode={previewProductCode}
-            description={previewDescriptionWithPackagingTail}
-            myobImportLineDescription={myobImportLineDescription}
-            customerFacingDescription={customerFacingDescription}
-            notes={previewNotesLine}
-            qualityFlagIds={previewQualityFlagIds}
-            quoteSummary={jobSheetPreviewQuoteSummary}
-            palletLoadPlanning={jobSheetPalletLoadPlanning}
-            palletUnitLabel={finishMode === 'Cartons' ? 'cartons' : 'rolls'}
-          />
-        ) : null}
+        {isNarrow ? <JobSheetLivePreview panelProps={livePreviewProps} /> : null}
 
         {mode === 'edit' || mode === 'new' ? (
           <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1079,7 +1014,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 setCustomerFacingDescription(v)
                 setDirty(true)
               }}
-              customerFacingDescriptionPlaceholder={previewDescriptionWithPackagingTail}
+              customerFacingDescriptionPlaceholder={livePreviewProps.description}
               value={spec}
               fieldErrors={specFieldErrors}
               onChange={(next) => {
@@ -1203,28 +1138,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>{renderJobSheetActions()}</Box>
         </Stack>
 
-        {!isNarrow ? (
-          <StickySideAside>
-            <JobSheetPreviewPanel
-              jobSheetId={mode === 'edit' && jobSheetId ? jobSheetId : null}
-              jobCode={mode === 'edit' && loadedJobSheet?.job_no ? loadedJobSheet.job_no : ''}
-              customerName={previewCustomerName}
-              invoiceNo={invoiceNo}
-              purchaseOrderNo={previewPurchaseOrderNo}
-              orderDate={orderDate}
-              dueDate={dueDate}
-              productCode={previewProductCode}
-              description={previewDescriptionWithPackagingTail}
-              myobImportLineDescription={myobImportLineDescription}
-              customerFacingDescription={customerFacingDescription}
-              notes={previewNotesLine}
-              qualityFlagIds={previewQualityFlagIds}
-              quoteSummary={jobSheetPreviewQuoteSummary}
-              palletLoadPlanning={jobSheetPalletLoadPlanning}
-              palletUnitLabel={finishMode === 'Cartons' ? 'cartons' : 'rolls'}
-            />
-          </StickySideAside>
-        ) : null}
+        {!isNarrow ? <JobSheetLivePreview panelProps={livePreviewProps} wrapInAside /> : null}
       </Box>
 
     </Box>

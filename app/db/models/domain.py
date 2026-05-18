@@ -126,6 +126,8 @@ class Product(Base):
     # Ratebook extruder + extrusion die (shared by all job sheets for this product).
     production_extruder_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     die_size: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Preferred job-sheet qty_type for repeat orders (kg, units, total_rolls, rolls_units).
+    default_qty_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="products")
     versions: Mapped[list["ProductVersion"]] = relationship(

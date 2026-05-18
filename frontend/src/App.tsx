@@ -24,8 +24,7 @@ import { CustomerUpsertPage } from './pages/customers/CustomerUpsertPage'
 import { ProductShowPage } from './pages/products/ProductShowPage'
 import { ProductNewPage } from './pages/products/ProductNewPage'
 import { ProductVersionNewPage } from './pages/products/ProductVersionNewPage'
-import { ProductVersionShowPage } from './pages/products/ProductVersionShowPage'
-import { ProductVersionPrintPage } from './pages/products/ProductVersionPrintPage'
+import { ProductVersionEditPage } from './pages/products/ProductVersionEditPage'
 import { InventoryReceivePage } from './pages/inventory/InventoryReceivePage'
 import { InventoryAdjustPage } from './pages/inventory/InventoryAdjustPage'
 import { InventoryTransactionsPage } from './pages/inventory/InventoryTransactionsPage'
@@ -247,8 +246,7 @@ function App() {
               <Route path="/products/new" element={<ProductNewPage />} />
               <Route path="/products/:productId" element={<ProductShowPage />} />
               <Route path="/products/:productId/versions/new" element={<ProductVersionNewPage />} />
-              <Route path="/products/:productId/versions/:versionId" element={<ProductVersionShowPage />} />
-              <Route path="/products/:productId/versions/:versionId/print" element={<ProductVersionPrintPage />} />
+              <Route path="/products/:productId/versions/:versionId" element={<ProductVersionEditPage />} />
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/orders/new" element={<OrderNewPage />} />
               <Route path="/orders/:orderId" element={<OrderShowPage />} />

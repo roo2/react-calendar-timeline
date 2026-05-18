@@ -58,8 +58,10 @@ export function useSpecLinkedQuantityFields(opts: {
   spec: SpecPayload
   ratebook: QuoteRatebook | null
   extruderCode?: string | null
+  /** When false, skip auto-derived quantity sync (standalone product spec editor). */
+  syncDerivedQuantity?: boolean
 }) {
-  const { spec, ratebook, extruderCode } = opts
+  const { spec, ratebook, extruderCode, syncDerivedQuantity = true } = opts
 
   const finishMode: FinishMode = spec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
   const productType = String(spec.identity?.product_type || 'Bag')
@@ -367,11 +369,13 @@ export function useSpecLinkedQuantityFields(opts: {
   const productTypeIsBag = productType.toLowerCase() === 'bag'
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     const coerced = coerceQtyTypeForFinishMode(finishMode, qtyType, isContinuousLength)
     if (coerced !== qtyType) setQtyType(coerced)
-  }, [finishMode, isContinuousLength, qtyType])
+  }, [syncDerivedQuantity, finishMode, isContinuousLength, qtyType])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (finishMode === 'Cartons' && qtyType === 'kg') {
       setQtyType('units')
       setCartonQtyMode('ctn')
@@ -383,18 +387,20 @@ export function useSpecLinkedQuantityFields(opts: {
       return
     }
     if (isContinuousLength && qtyType === 'rolls_units') setQtyType('total_rolls')
-  }, [finishMode, qtyType, isContinuousLength])
+  }, [syncDerivedQuantity, finishMode, qtyType, isContinuousLength])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (!isContinuousLength || finishMode !== 'Rolls') return
     if (!(effectiveQtyType === 'total_rolls' || effectiveQtyType === 'rolls_units')) return
     const t = String(unitsPerRoll ?? '').trim()
     if (t === '1') return
     const n = Number(t)
     if (t === '' || !Number.isFinite(n) || n !== 1) setUnitsPerRoll('1')
-  }, [isContinuousLength, finishMode, effectiveQtyType, unitsPerRoll])
+  }, [syncDerivedQuantity, isContinuousLength, finishMode, effectiveQtyType, unitsPerRoll])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (!(finishMode === 'Cartons' && effectiveQtyType === 'units' && cartonQtyMode === 'ctn')) return
     if (!(numCartonsNum > 0) || !(bagsPerCartonNum > 0)) {
       if (numUnits !== '') setNumUnits('')
@@ -402,9 +408,10 @@ export function useSpecLinkedQuantityFields(opts: {
     }
     const nextUnits = String(numCartonsNum * bagsPerCartonNum)
     if (numUnits !== nextUnits) setNumUnits(nextUnits)
-  }, [finishMode, effectiveQtyType, cartonQtyMode, numCartonsNum, bagsPerCartonNum, numUnits])
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, cartonQtyMode, numCartonsNum, bagsPerCartonNum, numUnits])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (!(finishMode === 'Cartons' && effectiveQtyType === 'kg')) {
       prevCartonKgMassDriversRef.current = null
       return
@@ -427,9 +434,10 @@ export function useSpecLinkedQuantityFields(opts: {
       const nextU = String(nu)
       if (numUnits !== nextU) setNumUnits(nextU)
     }
-  }, [finishMode, effectiveQtyType, totalKgNum, weightPerRollNum, numCartons, numUnits, derivedForDisplay?.kgPerUnit])
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, totalKgNum, weightPerRollNum, numCartons, numUnits, derivedForDisplay?.kgPerUnit])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (!(finishMode === 'Rolls' && effectiveQtyType === 'kg' && !isContinuousLength)) {
       prevRollsKgMassDriversRef.current = null
       return
@@ -450,9 +458,10 @@ export function useSpecLinkedQuantityFields(opts: {
       const nu = Math.max(0, Math.round(cur.tk / Number(kpu)))
       if (numUnits !== String(nu)) setNumUnits(String(nu))
     }
-  }, [finishMode, effectiveQtyType, isContinuousLength, totalKgNum, weightPerRollNum, numRolls, numUnits, derivedForDisplay?.kgPerUnit])
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, isContinuousLength, totalKgNum, weightPerRollNum, numRolls, numUnits, derivedForDisplay?.kgPerUnit])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (!(finishMode === 'Cartons' && effectiveQtyType === 'units' && cartonQtyMode === 'ctn')) return
     const ku = derivedForDisplay?.kgPerUnit
     if (!(bagsPerCartonNum > 0 && ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0)) return
@@ -460,7 +469,7 @@ export function useSpecLinkedQuantityFields(opts: {
     if (!(next > 0) || !Number.isFinite(next)) return
     const formatted = formatKgDisplay(next)
     if (weightPerRoll !== formatted) setWeightPerRoll(formatted)
-  }, [finishMode, effectiveQtyType, cartonQtyMode, bagsPerCartonNum, derivedForDisplay?.kgPerUnit, weightPerRoll])
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, cartonQtyMode, bagsPerCartonNum, derivedForDisplay?.kgPerUnit, weightPerRoll])
 
   const qtyCascadeCtxRef = useRef({
     finishMode,
@@ -799,6 +808,7 @@ export function useSpecLinkedQuantityFields(opts: {
   )
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (effectiveQtyType === 'kg') {
       if (
         (totalKg == null || String(totalKg).trim() === '') &&
@@ -852,6 +862,7 @@ export function useSpecLinkedQuantityFields(opts: {
       }
     }
   }, [
+    syncDerivedQuantity,
     effectiveQtyType,
     totalKg,
     numUnits,
@@ -867,6 +878,7 @@ export function useSpecLinkedQuantityFields(opts: {
   ])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (effectiveQtyType === 'units' || effectiveQtyType === 'rolls_units') return
     if (derivedForDisplay?.units == null) return
     const fromKgOrRollsMode =
@@ -885,6 +897,7 @@ export function useSpecLinkedQuantityFields(opts: {
     if (numUnits === nextU) return
     setNumUnits(nextU)
   }, [
+    syncDerivedQuantity,
     effectiveQtyType,
     totalKgNum,
     numRollsNum,
@@ -898,6 +911,7 @@ export function useSpecLinkedQuantityFields(opts: {
   ])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (effectiveQtyType !== 'rolls_units') return
     const wpr = parsePositiveKgLoose(weightPerRoll)
     if (wpr != null && wpr > 0) return
@@ -909,9 +923,10 @@ export function useSpecLinkedQuantityFields(opts: {
     const next = roundTo2Decimals(String(implied))
     if (String(weightPerRoll).trim() === next) return
     setWeightPerRoll(next)
-  }, [effectiveQtyType, weightPerRoll, numRollsNum, derivedForDisplay?.derivedTotalKg])
+  }, [syncDerivedQuantity, effectiveQtyType, weightPerRoll, numRollsNum, derivedForDisplay?.derivedTotalKg])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (effectiveQtyType !== 'total_rolls') return
     if (isContinuousLength) return
     if (!(numRollsNum > 0 && weightPerRollNum > 0)) return
@@ -921,9 +936,10 @@ export function useSpecLinkedQuantityFields(opts: {
         ? formatKgDisplay(Number(dkg))
         : formatKgDisplay(numRollsNum * weightPerRollNum)
     if (!kgDisplayStringsCloseEnough(totalKgStrRef.current, next)) setTotalKg(next)
-  }, [effectiveQtyType, isContinuousLength, numRollsNum, weightPerRollNum, derivedForDisplay?.derivedTotalKg])
+  }, [syncDerivedQuantity, effectiveQtyType, isContinuousLength, numRollsNum, weightPerRollNum, derivedForDisplay?.derivedTotalKg])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (effectiveQtyType !== 'units' || finishMode !== 'Rolls' || isContinuousLength) {
       prevDiscreteUnitsRollsKpuRef.current = undefined
       return
@@ -946,15 +962,16 @@ export function useSpecLinkedQuantityFields(opts: {
       const nextWpr = roundTo2Decimals(String(unitsPerRollNum * kpuNum))
       if (weightPerRoll !== nextWpr) setWeightPerRoll(nextWpr)
     }
-  }, [effectiveQtyType, finishMode, isContinuousLength, numUnitsNum, unitsPerRollNum, derivedForDisplay?.kgPerUnit])
+  }, [syncDerivedQuantity, effectiveQtyType, finishMode, isContinuousLength, numUnitsNum, unitsPerRollNum, derivedForDisplay?.kgPerUnit])
 
   useEffect(() => {
+    if (!syncDerivedQuantity) return
     if (effectiveQtyType !== 'rolls_units') return
     const w = derivedForDisplay?.billedKgPerRoll ?? derivedForDisplay?.kgPerRoll
     if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) {
       setWeightPerRoll(roundTo2Decimals(String(w)))
     }
-  }, [effectiveQtyType, derivedForDisplay?.billedKgPerRoll, derivedForDisplay?.kgPerRoll])
+  }, [syncDerivedQuantity, effectiveQtyType, derivedForDisplay?.billedKgPerRoll, derivedForDisplay?.kgPerRoll])
 
   const hydrate = useCallback((h: SpecLinkedQuantityHydrate) => {
     if (h.qtyType != null) setQtyType(h.qtyType)

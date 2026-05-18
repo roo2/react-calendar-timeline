@@ -33,6 +33,7 @@ from app.orders.schemas import (
     UpdateOrderRequest,
     UpdateResellOrderLineRequest,
 )
+from app.orders.product_line_display import product_code_for_version, product_display_name_for_line
 from app.products.service import compute_product_code_full
 from app.str_norm import (
     customer_facing_product_code_from_import_description,
@@ -167,7 +168,8 @@ def _products_summary(o) -> tuple[str | None, int]:
         if kind == "manufactured":
             js = getattr(oi, "job_sheet", None)
             p = getattr(js, "product", None) if js is not None else None
-            code = str(getattr(p, "code", None) or "").strip()
+            pv = getattr(js, "version", None) if js is not None else None
+            code = product_code_for_version(p, pv) if p is not None else ""
         elif kind == "myob_import":
             code = _myob_import_line_product_code(oi, getattr(o, "import_source", None))
         else:
@@ -317,6 +319,8 @@ async def list_orders(
                 "resell_supply_line_count": r_sup,
             }
         )
+        if first_man_code:
+            dto.product_code = first_man_code
         m = meta.get(str(o.product_version_id)) if getattr(o, "product_version_id", None) else None
         if m:
             dto.product_code = dto.product_code or m.get("product_code")
@@ -345,6 +349,19 @@ async def update_order(order_id: str, payload: UpdateOrderRequest):
     try:
         o = service.update_order(order_id, payload)
         return {"ok": True, "order_id": str(o.id)}
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.delete("/{order_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])
+async def delete_order(order_id: str):
+    try:
+        uuid.UUID(str(order_id))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid order_id")
+    try:
+        service.delete_order(order_id)
+        return {"ok": True}
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)
 
@@ -584,6 +601,7 @@ async def show_order(order_id: str):
                 dto.items.append(
                     {
                         "line_kind": "resell",
+                        "line_index": oi.line_index,
                         "id": str(oi.id),
                         "resell_line_id": str(oi.id),
                         "myob_item_uid": getattr(oi, "myob_item_uid", None),
@@ -678,21 +696,27 @@ async def show_order(order_id: str):
             iden = iden_raw if isinstance(iden_raw, dict) else {}
             item_finish_mode = iden.get("finish_mode")
             myob_line = (str(oi.import_line_description).strip() if getattr(oi, "import_line_description", None) else "") or None
-            spec_desc = getattr(p, "description", None)
-            display_name = myob_line or spec_desc
+            line_code = product_code_for_version(p, pv) or str(getattr(p, "code", "") or "")
+            display_name = product_display_name_for_line(
+                p=p,
+                pv=pv,
+                js=js,
+                import_line_description=oi.import_line_description,
+            )
             id_disp, nm_income = _myob_income_display_for_order_item(db, oi)
             if not id_disp and not nm_income:
                 id_disp, nm_income = _default_income_display_for_new_job_sheet(db)
             dto.items.append(
                 {
                     "line_kind": "product",
+                    "line_index": oi.line_index,
                     "id": str(oi.id),
                     "job_sheet_id": str(js.id),
                     "job_no": js.job_no,
                     "is_import_draft": bool(getattr(js, "is_import_draft", False)),
                     "import_line_description": myob_line,
                     "product_id": str(p.id),
-                    "product_code": p.code,
+                    "product_code": line_code,
                     "product_name": display_name,
                     "product_version_id": str(pv.id),
                     "version_number": pv.version_number,

@@ -45,27 +45,41 @@ def _printing_artwork_http_error(e: DomainError) -> None:
 
 def _order_info_for_job_sheets(
     job_sheet_ids: list[str],
-) -> dict[str, tuple[str | None, str | None, str | None, str | None]]:
-    """Return map job_sheet_id -> (order_id, order_code, order_date, order_status). Prefer most recently created order if multiple."""
+) -> dict[str, tuple[str | None, str | None, str | None, str | None, str | None]]:
+    """Return map job_sheet_id -> (order_id, order_code, order_date, order_status, customer_po). Prefer most recently created order if multiple."""
     if not job_sheet_ids:
         return {}
-    out: dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
+    out: dict[str, tuple[str | None, str | None, str | None, str | None, str | None]] = {}
     with SessionLocal() as db:
         rows = (
-            db.query(OrderItem.job_sheet_id, Order.id, Order.code, Order.order_date, Order.status)
+            db.query(
+                OrderItem.job_sheet_id,
+                Order.id,
+                Order.code,
+                Order.order_date,
+                Order.status,
+                Order.customer_purchase_order_number,
+            )
             .join(Order, Order.id == OrderItem.order_id)
             .filter(OrderItem.job_sheet_id.in_(job_sheet_ids))
             .order_by(Order.created_at.desc())
             .all()
         )
-        for jid, oid, code, order_date, ost in rows:
+        for jid, oid, code, order_date, ost, customer_po in rows:
             jid_s = str(jid)
             if jid_s in out:
                 continue
             st_s: str | None = None
             if ost is not None:
                 st_s = str(getattr(ost, "value", ost))
-            out[jid_s] = (str(oid), code, str(order_date) if order_date is not None else None, st_s)
+            po_s = str(customer_po).strip() if customer_po is not None and str(customer_po).strip() else None
+            out[jid_s] = (
+                str(oid),
+                code,
+                str(order_date) if order_date is not None else None,
+                st_s,
+                po_s,
+            )
     return out
 
 
@@ -140,7 +154,7 @@ def _price_per_kg(line_total: float | None, totals_kg: float | None) -> float | 
 
 def _to_summary(
     js,
-    order_info: tuple[str | None, str | None, str | None, str | None] | None = None,
+    order_info: tuple[str | None, str | None, str | None, str | None, str | None] | None = None,
     *,
     production_snapshot: dict | None = None,
 ) -> JobSheetSummary:
@@ -154,8 +168,9 @@ def _to_summary(
     invoice_no = None
     order_date = None
     order_status = None
+    customer_purchase_order_number = None
     if order_info:
-        order_id, invoice_no, order_date, order_status = order_info
+        order_id, invoice_no, order_date, order_status, customer_purchase_order_number = order_info
     lt = float(js.line_total) if getattr(js, "line_total", None) is not None else None
     ur = float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None
     tkg = _totals_kg_for_price(js, spec)
@@ -190,6 +205,7 @@ def _to_summary(
         customer_name=getattr(customer, "name", None),
         order_id=order_id,
         invoice_no=invoice_no,
+        customer_purchase_order_number=customer_purchase_order_number,
         order_date=order_date,
         order_status=order_status,
         production_status=production_status,
@@ -224,13 +240,13 @@ def _job_sheet_order_date_sort_tuple(order_date_s: str | None) -> tuple[int, flo
 
 def _job_sheet_list_sort_tuple(
     js,
-    order_map: dict[str, tuple[str | None, str | None, str | None, str | None]],
+    order_map: dict[str, tuple[str | None, str | None, str | None, str | None, str | None]],
     snap_map: dict[str, dict],
     sort_by: str,
 ) -> tuple:
     oid = str(js.id)
     oi = order_map.get(oid)
-    _, inv, od_s, ost = oi if oi else (None, None, None, None)
+    _, inv, od_s, ost, _ = oi if oi else (None, None, None, None, None)
     snap = snap_map.get(oid) or {}
     ps_raw = snap.get("status")
     prod_stat = None if ps_raw is None else str(ps_raw)
@@ -316,7 +332,7 @@ async def list_job_sheets(
         prod_map_all = service.production_job_status_by_job_sheet_ids([str(i) for i in ids_all]) if ps_f else {}
         filtered_rows = []
         for r in rows:
-            _, _, od_s, os_s = order_map_all.get(str(r.id), (None, None, None, None))
+            _, _, od_s, os_s, _ = order_map_all.get(str(r.id), (None, None, None, None, None))
             if from_date is not None or to_date is not None:
                 if not od_s:
                     continue
@@ -354,7 +370,7 @@ async def list_job_sheets(
     end = start + page_size
     page_rows = rows[start:end]
     ids = [r.id for r in page_rows]
-    order_map = {str(i): order_map_all.get(str(i), (None, None, None, None)) for i in ids}
+    order_map = {str(i): order_map_all.get(str(i), (None, None, None, None, None)) for i in ids}
     snap_map = service.production_job_snapshots_by_job_sheet_ids([str(i) for i in ids])
     return {
         "items": [
@@ -439,6 +455,30 @@ async def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, id
             "job_sheet": _to_summary(
                 full, order_map.get(str(jid)), production_snapshot=snap_map.get(str(jid))
             ).model_dump(),
+        }
+    except DomainError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+@router.post(
+    "/{job_sheet_id}/save-as-new-product",
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def save_job_sheet_as_new_product(job_sheet_id: str, payload: JobSheetUpdateRequest, identity=Depends(current_identity)):
+    try:
+        u = identity.get("user")
+        updated_by = (u.get("username") if isinstance(u, dict) else getattr(u, "username", None) if u else None) or "system"
+        jid = service.save_job_sheet_as_new_product(job_sheet_id, payload, updated_by=updated_by)
+        full = service.get_job_sheet(jid)
+        assert full is not None
+        order_map = _order_info_for_job_sheets([str(jid)])
+        snap_map = service.production_job_snapshots_by_job_sheet_ids([str(jid)])
+        js_summary = _to_summary(full, order_map.get(str(jid)), production_snapshot=snap_map.get(str(jid)))
+        return {
+            "ok": True,
+            "job_sheet": js_summary.model_dump(),
+            "product_id": str(full.product_id),
+            "product_version_id": str(full.product_version_id),
         }
     except DomainError as e:
         raise HTTPException(status_code=400, detail=e.message)

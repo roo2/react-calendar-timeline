@@ -357,6 +357,9 @@ export function OrderShowPage() {
           onAfterPatch={async () => {
             if (orderId) await dispatch(fetchOrder(orderId)).unwrap()
           }}
+          onAfterDelete={() => {
+            nav('/orders', { replace: true })
+          }}
         />
       ) : null}
     </Box>

@@ -12,7 +12,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  ListSubheader,
   MenuItem,
   Paper,
   Stack,
@@ -24,6 +23,9 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import { CustomerSearchAutocomplete } from '../../../components/CustomerSearchAutocomplete'
+import { ProductSearchAutocomplete } from '../../../components/ProductSearchAutocomplete'
+import { buildOrderLineDefaultsFromProduct } from '../../../utils/orderLineDefaults'
 import { OrderFormFooter } from './OrderFormFooter'
 import {
   EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID,
@@ -98,6 +100,8 @@ type OrderLine = {
   myob_row_id?: number | null
   import_line_description?: string | null
   is_import_draft?: boolean
+  /** Display / merge order (matches server `line_index` when persisted). */
+  line_index?: number
 }
 
 function normalizeFinishFromApi(v: unknown): 'Rolls' | 'Cartons' | null {
@@ -129,7 +133,127 @@ function jobSheetIdFromApi(raw: unknown): string {
 function orderLinesFromApiItems(items: unknown): OrderLine[] {
   return (Array.isArray(items) ? items : [])
     .filter((x: any) => x && x.line_kind !== 'myob_import')
-    .map((x: any) => lineFromApiItem(x))
+    .map((x: any, i: number) => {
+      const line = lineFromApiItem(x)
+      const li =
+        x?.line_index != null && Number.isFinite(Number(x.line_index)) ? Number(x.line_index) : i
+      return { ...line, line_index: li }
+    })
+}
+
+function nextLineIndex(lines: OrderLine[]): number {
+  let max = -1
+  for (const l of lines) {
+    if (l.line_index != null && l.line_index > max) max = l.line_index
+  }
+  return max + 1
+}
+
+function isUnpersistedLocalResellLine(l: OrderLine): boolean {
+  return l.line_kind === 'resell' && !l.resell_line_id
+}
+
+function buildResellOrderItemBody(it: OrderLine) {
+  const rate = parseOptionalMoney(it.rate)
+  const totalPrice = computedLineTotal(it)
+  return {
+    resell_product_id: String(it.resell_product_id || ''),
+    due_date: it.due_date || null,
+    quantity_unit: it.quantity_unit,
+    quantity_value: Number(it.quantity_value || '0'),
+    ...(rate != null ? { rate } : {}),
+    ...(totalPrice != null ? { total_price: totalPrice } : {}),
+  }
+}
+
+function buildResellItemsPayloadFromLines(resellLines: OrderLine[]) {
+  return resellLines.map((it) => buildResellOrderItemBody(it))
+}
+
+function sortOrderLinesByIndex(lines: OrderLine[]): OrderLine[] {
+  return [...lines].sort((a, b) => {
+    const ia = a.line_index ?? 0
+    const ib = b.line_index ?? 0
+    if (ia !== ib) return ia - ib
+    return String(a.id).localeCompare(String(b.id))
+  })
+}
+
+function findMatchingLocalOrderLine(apiLine: OrderLine, localLines: OrderLine[]): OrderLine | undefined {
+  if (apiLine.order_item_id) {
+    const byOrderItem = localLines.find(
+      (l) => l.order_item_id && String(l.order_item_id) === String(apiLine.order_item_id),
+    )
+    if (byOrderItem) return byOrderItem
+  }
+  if (apiLine.line_kind === 'resell') {
+    if (apiLine.resell_line_id) {
+      return localLines.find(
+        (l) => l.resell_line_id && String(l.resell_line_id) === String(apiLine.resell_line_id),
+      )
+    }
+    return undefined
+  }
+  if (apiLine.job_sheet_id) {
+    return localLines.find(
+      (l) => l.job_sheet_id && String(l.job_sheet_id) === String(apiLine.job_sheet_id),
+    )
+  }
+  return undefined
+}
+
+function applyPreservedFieldsFromLocal(
+  apiLine: OrderLine,
+  local: OrderLine,
+  fields: { rate?: boolean; quantity?: boolean; dueDate?: boolean },
+): OrderLine {
+  return {
+    ...apiLine,
+    ...(fields.rate ? { rate: local.rate } : {}),
+    ...(fields.quantity
+      ? { quantity_value: local.quantity_value, quantity_unit: local.quantity_unit }
+      : {}),
+    ...(fields.dueDate ? { due_date: local.due_date } : {}),
+  }
+}
+
+/**
+ * Merge a fresh GET /orders/:id payload with local table state.
+ * Handles multiple resell lines (including same catalog product) without dropping or duplicating rows.
+ */
+function reconcileOrderLinesWithLocal(
+  apiLines: OrderLine[],
+  localLines: OrderLine[],
+  fields: { rate?: boolean; quantity?: boolean; dueDate?: boolean },
+): OrderLine[] {
+  if (!localLines.length) return apiLines
+
+  const localUnpersistedResell = localLines.filter(isUnpersistedLocalResellLine)
+  const apiResell = apiLines.filter((l) => l.line_kind === 'resell')
+  const nonResellApi = apiLines.filter((l) => l.line_kind !== 'resell')
+
+  const mergedNonResell = nonResellApi.map((apiLine) => {
+    const local = findMatchingLocalOrderLine(apiLine, localLines)
+    return local ? applyPreservedFieldsFromLocal(apiLine, local, fields) : apiLine
+  })
+
+  const pool = [...localUnpersistedResell]
+  const mergedResell = apiResell.map((apiLine) => {
+    const idx = pool.findIndex((l) => String(l.resell_product_id) === String(apiLine.resell_product_id))
+    if (idx < 0) {
+      const local = findMatchingLocalOrderLine(apiLine, localLines)
+      return local ? applyPreservedFieldsFromLocal(apiLine, local, fields) : apiLine
+    }
+    const local = pool.splice(idx, 1)[0]
+    return applyPreservedFieldsFromLocal(apiLine, local, fields)
+  })
+
+  let next = nextLineIndex([...mergedNonResell, ...mergedResell])
+  for (const l of pool) {
+    mergedResell.push({ ...l, line_index: next++ })
+  }
+
+  return sortOrderLinesByIndex([...mergedNonResell, ...mergedResell])
 }
 
 function lineFromApiItem(it: any): OrderLine {
@@ -214,6 +338,41 @@ function qtyTypeForSavedJobSheet(unit: QuantityUnit): string | undefined {
   return undefined
 }
 
+function buildProductOrderItemBody(
+  productId: string,
+  lineDefaults: { quantity_unit: QuantityUnit; quantity_value: string; rate: string },
+) {
+  const qv = Number(lineDefaults.quantity_value || '1')
+  const qt = qtyTypeForSavedJobSheet(lineDefaults.quantity_unit)
+  const rate = parseOptionalMoney(lineDefaults.rate)
+  return {
+    product_id: productId,
+    due_date: defaultDueDate(),
+    quantity_unit: lineDefaults.quantity_unit,
+    quantity_value: qv,
+    ...(rate != null ? { rate } : {}),
+    ...(qt ? { qty_type: qt } : {}),
+    ...(lineDefaults.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
+  }
+}
+
+function buildProductOrderItemBodyFromLine(it: OrderLine) {
+  const qv = Number(it.quantity_value || '0')
+  const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
+  const rate = parseOptionalMoney(it.rate)
+  const totalPrice = computedLineTotal(it)
+  return {
+    product_id: it.product_id,
+    due_date: it.due_date || null,
+    quantity_unit: it.quantity_unit,
+    quantity_value: qv,
+    ...(rate != null ? { rate } : {}),
+    ...(totalPrice != null ? { total_price: totalPrice } : {}),
+    ...(qt ? { qty_type: qt } : {}),
+    ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
+  }
+}
+
 /** Default due date: 4 weeks from today (YYYY-MM-DD). */
 function defaultDueDate(): string {
   const d = new Date()
@@ -241,6 +400,20 @@ function isValidMoneyField(s: string): boolean {
   if (t === '') return true
   const n = Number(t)
   return Number.isFinite(n) && n >= 0
+}
+
+function buildJobSheetUpdateBodyFromLine(it: OrderLine) {
+  const qv = Number(it.quantity_value || '0')
+  const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
+  return {
+    due_date: it.due_date || null,
+    quantity_value: qv,
+    quantity_unit: it.quantity_unit,
+    ...(qt ? { qty_type: qt } : {}),
+    ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
+    unit_rate: parseOptionalMoney(it.rate),
+    line_total: computedLineTotal(it),
+  }
 }
 
 type OrderNewDraft = {
@@ -283,17 +456,6 @@ function myobLinesFromApi(res: { items?: unknown; myob_import_lines?: unknown } 
   }))
 }
 
-function isImportedManufacturedLine(it: OrderLine): boolean {
-  if (it.line_kind !== 'product') return false
-  return Boolean((it.import_line_description || '').trim())
-}
-
-function orderLineRank(it: OrderLine): number {
-  if (it.line_kind === 'product') return isImportedManufacturedLine(it) ? 1 : 3
-  if (it.line_kind === 'resell') return it.resell_catalog_kind === 'outsourced_manufacturing' ? 4 : 5
-  return 6
-}
-
 function resellLineHasMyobIdentifiers(it: OrderLine): boolean {
   if (it.line_kind !== 'resell') return false
   if (String(it.myob_item_uid || '').trim()) return true
@@ -312,8 +474,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const ordersBootstrap = useAppSelector((s) => s.orders.bootstrap)
   const { setDirty } = useUnsavedChanges()
 
-  const customers = ordersBootstrap.customers || []
   const [err, setErr] = useState<string | null>(null)
+  const [customerDisplayName, setCustomerDisplayName] = useState<string | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [orderStatus, setOrderStatus] = useState<string>('draft')
@@ -333,12 +495,12 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [customerPoNumber, setCustomerPoNumber] = useState('')
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [productId, setProductId] = useState('')
   const [items, setItems] = useState<OrderLine[]>(() =>
-    (initialDraft?.items || []).map((it) => ({
+    (initialDraft?.items || []).map((it, i) => ({
       ...it,
       rate: (it as OrderLine).rate ?? '',
       total_price: (it as OrderLine).total_price ?? '',
+      line_index: (it as OrderLine).line_index ?? i,
     }))
   )
   const [myobImportLines, setMyobImportLines] = useState<MyobImportLineRow[]>([])
@@ -349,6 +511,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [convertingResellLineId, setConvertingResellLineId] = useState<string | null>(null)
   const [importSource, setImportSource] = useState<string | null>(null)
   const [importReviewStatus, setImportReviewStatus] = useState<'incomplete' | 'complete' | null>(null)
+  /** New-order screen: server draft created when the first manufactured line is added (before “Save draft”). */
+  const [draftOrderId, setDraftOrderId] = useState<string | null>(null)
+  const effectiveOrderId = orderId || draftOrderId
 
   /** Order lines and header fields stay editable for all lifecycle statuses. */
   const orderLocked = false
@@ -360,21 +525,22 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     return {
       customerId,
       orderMode: mode,
-      orderId: mode === 'edit' ? orderId ?? null : null,
+      orderId: effectiveOrderId ?? null,
       initialOrderDate: orderDate,
+      initialCustomerPurchaseOrderNumber: customerPoNumber,
       onCancel: () => setNewJobSheetOpen(false),
       onFinished: () => {
         setNewJobSheetOpen(false)
         void dispatch(fetchProducts({ customer_id: customerId }))
-        if (mode === 'edit' && orderId) {
+        if (effectiveOrderId) {
           void (async () => {
             try {
-              const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
+              const { order: res } = await dispatch(fetchOrder(effectiveOrderId)).unwrap()
               setOrderStatus(String(res?.status || 'draft'))
               setInvoiceNumber(String(res?.code ?? ''))
               setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
               setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-              const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+              const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
               setItems(nextItems)
               setMyobImportLines(myobLinesFromApi(res))
               originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
@@ -401,27 +567,129 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                   quantity_value: String(args.quantity_value),
                   rate: '',
                   total_price: '',
+                  line_index: nextLineIndex(prev),
                 },
               ])
             }
           : undefined,
     }
-  }, [newJobSheetOpen, customerId, mode, orderId, orderDate, dispatch])
+  }, [newJobSheetOpen, customerId, mode, effectiveOrderId, orderDate, customerPoNumber, dispatch])
 
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
 
   /** One-shot: open embedded job sheet dialog after quote → order (see `openJobSheetFor` in location state). */
   const convertJobSheetModalHandledRef = useRef(false)
 
-  const products = useMemo((): Product[] => {
-    if (!customerId || productList.lastCustomerId !== customerId) return []
-    return productList.items as Product[]
-  }, [customerId, productList.items, productList.lastCustomerId])
   const resellCatalog = ordersBootstrap.resell_products || []
-  const loadingProducts = Boolean(customerId && productList.status === 'loading')
   const bootstrapErr = ordersBootstrap.status === 'failed' ? ordersBootstrap.error : null
   const productListErr =
     customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
+
+  function applyOrderResponse(
+    res: { status?: string; code?: string; customer_purchase_order_number?: string | null; order_date?: string | null; items?: unknown },
+    opts?: { preserveLocalLines?: OrderLine[]; preserveFields?: { rate?: boolean; quantity?: boolean; dueDate?: boolean } },
+  ) {
+    setOrderStatus(String(res?.status || 'draft'))
+    setInvoiceNumber(String(res?.code ?? ''))
+    setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
+    setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
+    let nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+    if (opts?.preserveLocalLines?.length) {
+      nextItems = reconcileOrderLinesWithLocal(
+        nextItems,
+        opts.preserveLocalLines,
+        opts.preserveFields ?? { rate: true, quantity: true, dueDate: true },
+      )
+    }
+    setItems(sortOrderLinesByIndex(nextItems))
+    setMyobImportLines(myobLinesFromApi(res))
+    originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+  }
+
+  /** Persist table edits to job sheets before a fetch would overwrite local qty/rate state. */
+  async function persistManufacturedLineEdits(lines: OrderLine[]) {
+    for (const it of lines) {
+      if (it.line_kind === 'resell' || !it.job_sheet_id) continue
+      await dispatch(
+        updateJobSheet({
+          jobSheetId: it.job_sheet_id,
+          body: buildJobSheetUpdateBodyFromLine(it),
+        }),
+      ).unwrap()
+    }
+  }
+
+  async function persistResellLineEdits(oid: string, lines: OrderLine[]) {
+    for (const it of lines) {
+      if (it.line_kind !== 'resell') continue
+      const rid = it.resell_line_id || it.order_item_id
+      if (!rid) continue
+      await dispatch(
+        patchOrderResellItem({
+          orderId: oid,
+          lineId: rid,
+          body: {
+            quantity_value: Number(it.quantity_value || '0'),
+            quantity_unit: it.quantity_unit,
+            due_date: it.due_date || null,
+            rate: parseOptionalMoney(it.rate),
+            total_price: computedLineTotal(it),
+          },
+        }),
+      ).unwrap()
+    }
+  }
+
+  async function persistUnpersistedResellLines(oid: string, lines: OrderLine[]) {
+    for (const it of lines) {
+      if (!isUnpersistedLocalResellLine(it)) continue
+      await dispatch(
+        addOrderResellItem({
+          orderId: oid,
+          body: buildResellOrderItemBody(it),
+        }),
+      ).unwrap()
+    }
+  }
+
+  async function persistAllOrderLineEdits(oid: string, lines: OrderLine[]) {
+    await persistUnpersistedResellLines(oid, lines)
+    await persistManufacturedLineEdits(lines)
+    await persistResellLineEdits(oid, lines)
+  }
+
+  async function ensureDraftOrderFromLocalLines(): Promise<string | null> {
+    if (orderId) return orderId
+    if (draftOrderId) return draftOrderId
+    const productLines = items.filter((it) => it.line_kind !== 'resell')
+    if (!String(customerId || '').trim() || productLines.length === 0) return null
+    setErr(null)
+    setSaving(true)
+    try {
+      const resellLines = items.filter((it) => it.line_kind === 'resell')
+      const res = await dispatch(
+        createOrder({
+          customer_id: customerId,
+          status: 'draft',
+          ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+          ...(customerPoNumber.trim() ? { customer_purchase_order_number: customerPoNumber.trim() } : {}),
+          ...(orderDate ? { order_date: orderDate } : {}),
+          items: productLines.map((it) => buildProductOrderItemBodyFromLine(it)),
+          ...(resellLines.length ? { resell_items: buildResellItemsPayloadFromLines(resellLines) } : {}),
+        }),
+      ).unwrap()
+      const oid = String(res.order_id)
+      setDraftOrderId(oid)
+      const { order: full } = await dispatch(fetchOrder(oid)).unwrap()
+      applyOrderResponse(full)
+      return oid
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to create order draft')
+      return null
+    } finally {
+      setSaving(false)
+    }
+  }
 
   function openProductVersionModal(p: {
     product_id: string
@@ -448,17 +716,50 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   /** Resolve job sheet id for persisted orders if local line state is missing it (enables quantity + spec modal). */
   async function openProductVersionModalForLine(it: OrderLine) {
-    let js = jobSheetIdFromApi(it.job_sheet_id)
-    if (mode === 'edit' && orderId && !js) {
+    const oid = effectiveOrderId
+    if (oid && it.line_kind !== 'resell' && it.job_sheet_id) {
       try {
-        const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-        const row = (res?.items || []).find((x: { id?: unknown }) => String(x.id) === String(it.order_item_id || it.id))
+        await persistManufacturedLineEdits([it])
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : 'Failed to save line before opening job sheet')
+        return
+      }
+    }
+    let js = jobSheetIdFromApi(it.job_sheet_id)
+    if (!js && oid) {
+      try {
+        const { order: res } = await dispatch(fetchOrder(oid)).unwrap()
+        const row = (res?.items || []).find((x: { id?: unknown; product_id?: unknown }) => {
+          if (it.order_item_id && String(x.id) === String(it.order_item_id)) return true
+          return String(x.product_id) === String(it.product_id)
+        })
         js = jobSheetIdFromApi(row?.job_sheet_id ?? (row as { jobSheetId?: unknown } | undefined)?.jobSheetId)
         if (js) {
-          setItems((prev) => prev.map((l) => (l.id === it.id ? { ...l, job_sheet_id: js } : l)))
+          setItems((prev) => prev.map((l) => (l.id === it.id ? { ...l, job_sheet_id: js, order_item_id: String(row?.id || l.order_item_id || '') } : l)))
         }
       } catch {
         /* keep js empty */
+      }
+    }
+    if (mode === 'new' && !js) {
+      const created = await ensureDraftOrderFromLocalLines()
+      if (created) {
+        try {
+          const { order: res } = await dispatch(fetchOrder(created)).unwrap()
+          const row = (res?.items || []).find((x: { product_id?: unknown }) => String(x.product_id) === String(it.product_id))
+          js = jobSheetIdFromApi(row?.job_sheet_id ?? (row as { jobSheetId?: unknown } | undefined)?.jobSheetId)
+          if (js) {
+            setItems((prev) =>
+              prev.map((l) =>
+                l.product_id === it.product_id
+                  ? { ...l, job_sheet_id: js, order_item_id: String((row as { id?: unknown })?.id || l.order_item_id || '') }
+                  : l,
+              ),
+            )
+          }
+        } catch {
+          /* keep js empty */
+        }
       }
     }
     openProductVersionModal({
@@ -495,7 +796,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     if (pre === customerId && items.length > 0) return
     setCustomerId(pre)
     setItems([])
-    setProductId('')
     setErr(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
@@ -509,13 +809,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
         setOrderStatus(String(res?.status || 'draft'))
         setCustomerId(String(res?.customer_id || ''))
+        setCustomerDisplayName(res?.customer_name ? String(res.customer_name) : null)
         setInvoiceNumber(String(res?.code ?? ''))
         setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
         setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
         setImportSource(res?.import_source != null && String(res.import_source).trim() ? String(res.import_source) : null)
         const irs = res?.import_review_status
         setImportReviewStatus(irs === 'complete' || irs === 'incomplete' ? irs : null)
-        const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+        const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
         setItems(nextItems)
         setMyobImportLines(myobLinesFromApi(res))
         originalRef.current = {
@@ -572,16 +873,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     })
   }, [mode, orderId, items, loc.state, loc.pathname, loc.search, loc.hash, canEditProduct, nav])
 
-  async function loadProductsForCustomer(id: string) {
-    if (!id) return
-    if (loadingProducts) return
-    try {
-      await dispatch(fetchProducts({ customer_id: id })).unwrap()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to load products')
-    }
-  }
-
   useEffect(() => {
     if (!customerId) return
     void dispatch(fetchProducts({ customer_id: customerId }))
@@ -614,35 +905,53 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     // Reset dependent fields when customer changes (user-driven).
     if (prevCustomerId.current === customerId) return
     prevCustomerId.current = customerId
-    setProductId('')
     setItems([])
+    setDraftOrderId(null)
   }, [customerId, mode])
 
-  function addSelectedProductToItems(nextProductId: string) {
-    const p = products.find((x) => x.id === nextProductId)
-    if (!p) return
+  async function addSelectedProductToNewOrder(p: Product) {
+    if (!p?.id) return
     const pv = p.active_version_id || ''
     if (!pv) {
       setErr(`Product ${p.code} has no active version yet`)
       return
     }
-    setItems((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        line_kind: 'product',
-        product_id: p.id,
-        product_code: p.code,
-        product_name: p.description || null,
-        due_date: defaultDueDate(),
-        finish_mode: finishModeForProduct(p),
-        quantity_unit: 'kg',
-        quantity_value: '1',
-        rate: '',
-        total_price: '',
-      },
-    ])
-    setProductId('')
+    const lineDefaults = buildOrderLineDefaultsFromProduct(p)
+    const body = buildProductOrderItemBody(p.id, lineDefaults)
+    try {
+      setErr(null)
+      setSaving(true)
+      const localResellLines = items.filter((it) => it.line_kind === 'resell')
+      let oid = draftOrderId
+      if (!oid) {
+        const res = await dispatch(
+          createOrder({
+            customer_id: customerId,
+            status: 'draft',
+            ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+            ...(customerPoNumber.trim() ? { customer_purchase_order_number: customerPoNumber.trim() } : {}),
+            ...(orderDate ? { order_date: orderDate } : {}),
+            items: [body],
+            ...(localResellLines.length
+              ? { resell_items: buildResellItemsPayloadFromLines(localResellLines) }
+              : {}),
+          }),
+        ).unwrap()
+        oid = String(res.order_id)
+        setDraftOrderId(oid)
+      } else {
+        await persistManufacturedLineEdits(items)
+        await dispatch(addOrderItem({ orderId: oid, body })).unwrap()
+      }
+      const localBeforeFetch = items
+      const { order: full } = await dispatch(fetchOrder(oid)).unwrap()
+      applyOrderResponse(full, { preserveLocalLines: localBeforeFetch })
+      setDirty(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to add product line')
+    } finally {
+      setSaving(false)
+    }
   }
 
   function addResellToItemsLocal(rp: { id: string; description: string; unit_price: number; catalog_kind?: string | null }) {
@@ -666,9 +975,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         quantity_value: '1',
         rate,
         total_price: '',
+        line_index: nextLineIndex(prev),
       },
     ])
-    setProductId('')
   }
 
   async function addResellToOrder(rp: { id: string; description: string; unit_price: number; catalog_kind?: string | null }) {
@@ -692,7 +1001,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         }),
       ).unwrap()
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+      const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
       setItems(nextItems)
       setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
@@ -700,37 +1009,43 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       setErr(e instanceof Error ? e.message : 'Failed to add resell line')
     } finally {
       setSaving(false)
-      setProductId('')
     }
   }
 
-  async function addSelectedProductToOrder(nextProductId: string) {
+  async function addSelectedProductToOrder(p: Product) {
     if (!orderId) return
-    const p = products.find((x) => x.id === nextProductId)
-    if (!p) return
+    if (!p?.id) return
     const pv = p.active_version_id || ''
     if (!pv) {
       setErr(`Product ${p.code} has no active version yet`)
       return
     }
+    const lineDefaults = buildOrderLineDefaultsFromProduct(p)
+    const qv = Number(lineDefaults.quantity_value || '1')
+    const qt = qtyTypeForSavedJobSheet(lineDefaults.quantity_unit)
+    const rate = parseOptionalMoney(lineDefaults.rate)
     const prevLineKeys = new Set(items.map((it) => it.order_item_id || it.id))
     try {
       setErr(null)
       setSaving(true)
+      await persistManufacturedLineEdits(items)
       await dispatch(
         addOrderItem({
           orderId,
           body: {
             product_id: p.id,
             due_date: defaultDueDate(),
-            quantity_unit: 'kg',
-            quantity_value: 1,
+            quantity_unit: lineDefaults.quantity_unit,
+            quantity_value: qv,
+            ...(rate != null ? { rate } : {}),
+            ...(qt ? { qty_type: qt } : {}),
+            ...(lineDefaults.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
           },
         }),
       ).unwrap()
       // reload order to pick up job_sheet_id/order_item_id
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+      const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
       setItems(nextItems)
       setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, l])) }
@@ -753,7 +1068,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       setErr(e instanceof Error ? e.message : 'Failed to add order item')
     } finally {
       setSaving(false)
-      setProductId('')
     }
   }
 
@@ -777,16 +1091,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     return productTotal + myobTotal
   }, [items, myobImportLines])
 
-  const sortedItems = useMemo(
-    () =>
-      [...items].sort((a, b) => {
-        const ra = orderLineRank(a)
-        const rb = orderLineRank(b)
-        if (ra !== rb) return ra - rb
-        return String(a.product_code || a.product_name || '').localeCompare(String(b.product_code || b.product_name || ''))
-      }),
-    [items],
-  )
+  const displayItems = useMemo(() => sortOrderLinesByIndex(items), [items])
   const sortedMyobImportLines = useMemo(
     () => [...myobImportLines].sort((a, b) => (a.line_index || 0) - (b.line_index || 0)),
     [myobImportLines],
@@ -800,6 +1105,24 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setErr(null)
     setSaving(true)
     try {
+      if (draftOrderId) {
+        await persistAllOrderLineEdits(draftOrderId, items)
+        await dispatch(
+          patchOrder({
+            orderId: draftOrderId,
+            body: {
+              invoice_number: invoiceNumber.trim() || null,
+              customer_purchase_order_number: customerPoNumber.trim() || null,
+              order_date: orderDate || null,
+            },
+          }),
+        ).unwrap()
+        const { order: full } = await dispatch(fetchOrder(draftOrderId)).unwrap()
+        applyOrderResponse(full)
+        setDirty(false)
+        nav(`/orders/${encodeURIComponent(draftOrderId)}/edit`, { replace: true })
+        return
+      }
       const productLines = items.filter((it) => it.line_kind !== 'resell')
       const resellLines = items.filter((it) => it.line_kind === 'resell')
       const res = await dispatch(
@@ -812,31 +1135,20 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           items: productLines.map((it) => {
             const rate = parseOptionalMoney(it.rate)
             const totalPrice = computedLineTotal(it)
+            const qv = Number(it.quantity_value || '0')
+            const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
             return {
               product_id: it.product_id,
               due_date: it.due_date || null,
               quantity_unit: it.quantity_unit,
-              quantity_value: Number(it.quantity_value || '0'),
+              quantity_value: qv,
               ...(rate != null ? { rate } : {}),
               ...(totalPrice != null ? { total_price: totalPrice } : {}),
+              ...(qt ? { qty_type: qt } : {}),
+              ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
             }
           }),
-          ...(resellLines.length
-            ? {
-                resell_items: resellLines.map((it) => {
-                  const rate = parseOptionalMoney(it.rate)
-                  const totalPrice = computedLineTotal(it)
-                  return {
-                    resell_product_id: String(it.resell_product_id || ''),
-                    due_date: it.due_date || null,
-                    quantity_unit: it.quantity_unit,
-                    quantity_value: Number(it.quantity_value || '0'),
-                    ...(rate != null ? { rate } : {}),
-                    ...(totalPrice != null ? { total_price: totalPrice } : {}),
-                  }
-                }),
-              }
-            : {}),
+          ...(resellLines.length ? { resell_items: buildResellItemsPayloadFromLines(resellLines) } : {}),
         }),
       ).unwrap()
       setDirty(false)
@@ -884,50 +1196,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         )
       })
 
-      for (const it of updates) {
-        if (it.line_kind === 'resell') {
-          const rid = it.resell_line_id || it.order_item_id
-          if (!rid) continue
-          await dispatch(
-            patchOrderResellItem({
-              orderId,
-              lineId: rid,
-              body: {
-                quantity_value: Number(it.quantity_value || '0'),
-                quantity_unit: it.quantity_unit,
-                due_date: it.due_date || null,
-                rate: parseOptionalMoney(it.rate),
-                total_price: computedLineTotal(it),
-              },
-            }),
-          ).unwrap()
-          continue
-        }
-        if (!it.job_sheet_id) continue
-        const qv = Number(it.quantity_value || '0')
-        const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
-        await dispatch(
-          updateJobSheet({
-            jobSheetId: it.job_sheet_id,
-            body: {
-              due_date: it.due_date || null,
-              quantity_value: qv,
-              quantity_unit: it.quantity_unit,
-              ...(qt ? { qty_type: qt } : {}),
-              ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
-              unit_rate: parseOptionalMoney(it.rate),
-              line_total: computedLineTotal(it),
-            },
-          }),
-        ).unwrap()
-      }
+      const dirtyManufactured = updates.filter((it) => it.line_kind !== 'resell')
+      const dirtyResell = updates.filter((it) => it.line_kind === 'resell')
+      await persistManufacturedLineEdits(dirtyManufactured)
+      await persistResellLineEdits(orderId, dirtyResell)
 
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       setOrderStatus(String(res?.status || orderStatus))
       setInvoiceNumber(String(res?.code ?? ''))
       setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
       setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+      const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
       setItems(nextItems)
       setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
@@ -940,25 +1219,24 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }
 
   async function removeLine(it: OrderLine) {
-    if (mode === 'new') {
+    const oid = effectiveOrderId
+    // Before the first server-backed add, lines exist only in local state.
+    if (mode === 'new' && !oid) {
       setItems((prev) => prev.filter((x) => x.id !== it.id))
       setDirty(true)
       return
     }
-    if (orderLocked) return
-    if (!orderId) return
+    if (orderLocked || !oid) return
     if (it.line_kind === 'resell') {
       const rid = it.resell_line_id || it.order_item_id
       if (!rid) return
       try {
         setErr(null)
         setSaving(true)
-        await dispatch(deleteOrderResellItem({ orderId, lineId: rid })).unwrap()
-        const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-        const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
-        setItems(nextItems)
-        setMyobImportLines(myobLinesFromApi(res))
-        originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+        await dispatch(deleteOrderResellItem({ orderId: oid, lineId: rid })).unwrap()
+        const { order: res } = await dispatch(fetchOrder(oid)).unwrap()
+        applyOrderResponse(res)
+        setDirty(true)
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Failed to remove line')
       } finally {
@@ -970,12 +1248,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     try {
       setErr(null)
       setSaving(true)
-      await dispatch(deleteOrderItem({ orderId, orderItemId: it.order_item_id })).unwrap()
-      const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
-      setItems(nextItems)
-      setMyobImportLines(myobLinesFromApi(res))
-      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+      await dispatch(deleteOrderItem({ orderId: oid, orderItemId: it.order_item_id })).unwrap()
+      const { order: res } = await dispatch(fetchOrder(oid)).unwrap()
+      applyOrderResponse(res)
+      setDirty(true)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to remove order item')
     } finally {
@@ -998,7 +1274,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     try {
       await dispatch(convertResellLineToMyobJobSheet({ orderId, lineId })).unwrap()
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
+      const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
       setItems(nextItems)
       setMyobImportLines(myobLinesFromApi(res))
       originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
@@ -1148,12 +1424,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 size="small"
                 variant="text"
                 onClick={() => void openProductVersionModalForLine(it)}
-                disabled={saving || (mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id))}
-                title={
-                  mode === 'new' && !jobSheetIdFromApi(it.job_sheet_id)
-                    ? 'Save the order draft first to edit job sheet, quantity, and spec together.'
-                    : undefined
-                }
+                disabled={saving}
               >
                 Edit
               </Button>
@@ -1212,25 +1483,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
       <Paper variant="outlined" sx={{ p: 2, width: '100%' }}>
         <Stack spacing={2}>
-          <TextField
-            select
-            label="Customer"
+          <CustomerSearchAutocomplete
             value={customerId}
-            onChange={(e) => {
-              setCustomerId(e.target.value)
+            onChange={(id) => {
+              setCustomerId(id)
               setDirty(true)
             }}
             disabled={mode === 'edit'}
-          >
-            <MenuItem value="" disabled>
-              Select customer
-            </MenuItem>
-            {customers.map((c) => (
-              <MenuItem key={c.id} value={c.id}>
-                {c.name}
-              </MenuItem>
-            ))}
-          </TextField>
+            readOnlyDisplayName={customerDisplayName}
+            required
+            disableClearable
+          />
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
             <Stack spacing={2}>
@@ -1277,7 +1540,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {sortedItems.filter((it) => isImportedManufacturedLine(it)).map((it) => renderOrderLineRow(it))}
+                {displayItems.map((it) => renderOrderLineRow(it))}
                 {mode === 'edit'
                   ? sortedMyobImportLines.map((m) => (
                       <TableRow key={`myob-${m.id}`} hover>
@@ -1343,91 +1606,35 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                       </TableRow>
                     ))
                   : null}
-                {sortedItems.filter((it) => !isImportedManufacturedLine(it)).map((it) => renderOrderLineRow(it))}
                 <TableRow>
                   <TableCell colSpan={7} sx={{ borderBottom: 'none' }}>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} sx={{ py: 0.5 }}>
                       <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
                         Add product
                       </Typography>
-                      <TextField
-                        select
-                        size="small"
-                        label="Product"
-                        value={productId}
-                        onChange={(e) => {
-                          const next = e.target.value
-                          if (next === '__new_job_sheet__') {
-                            setProductId('')
-                            if (!customerId) return
-                            setNewJobSheetOpen(true)
-                            setDirty(true)
-                            return
-                          }
-                          if (next.startsWith('resell:')) {
-                            const rid = next.slice('resell:'.length)
-                            const rp = resellCatalog.find((x) => x.id === rid)
-                            setProductId('')
-                            setDirty(true)
-                            if (!rp) return
-                            if (mode === 'new') addResellToItemsLocal(rp)
-                            else void addResellToOrder(rp)
-                            return
-                          }
-                          setProductId(next)
+                      <ProductSearchAutocomplete
+                        customerId={customerId}
+                        disabled={!customerId || saving || orderLocked}
+                        resellCatalog={resellCatalog}
+                        onSelectProduct={(p) => {
                           setDirty(true)
-                          if (!next) return
-                          if (mode === 'new') addSelectedProductToItems(next)
-                          else void addSelectedProductToOrder(next)
+                          if (mode === 'new') void addSelectedProductToNewOrder(p)
+                          else void addSelectedProductToOrder(p)
                         }}
-                        disabled={!customerId || loadingProducts || saving || orderLocked}
-                        SelectProps={{
-                          onOpen: () => {
-                            if (customerId && products.length === 0) void loadProductsForCustomer(customerId)
-                          },
+                        onSelectResell={(rp) => {
+                          setDirty(true)
+                          const full = resellCatalog.find((x) => x.id === rp.id)
+                          if (!full) return
+                          if (mode === 'new') addResellToItemsLocal(full)
+                          else void addResellToOrder(full)
                         }}
-                        sx={{ minWidth: { xs: '100%', sm: 280 }, maxWidth: 480 }}
-                      >
-                        <MenuItem value="" disabled>
-                          {loadingProducts ? 'Loading…' : products.length || resellCatalog.length ? 'Select…' : 'No products found'}
-                        </MenuItem>
-                        {products.length > 0 ? (
-                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
-                            Manufactured products
-                          </ListSubheader>
-                        ) : null}
-                        {products.map((p) => (
-                          <MenuItem key={p.id} value={p.id}>
-                            {p.code}
-                          </MenuItem>
-                        ))}
-                        <MenuItem value="__new_job_sheet__">New Job Sheet</MenuItem>
-                        <MenuItem divider />
-                        {resellCatalog.some((x) => (x.catalog_kind || 'supply') === 'outsourced_manufacturing') ? (
-                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
-                            Outsourced manufacturing
-                          </ListSubheader>
-                        ) : null}
-                        {resellCatalog
-                          .filter((x) => (x.catalog_kind || 'supply') === 'outsourced_manufacturing')
-                          .map((rp) => (
-                            <MenuItem key={`os-${rp.id}`} value={`resell:${rp.id}`}>
-                              {rp.description}
-                            </MenuItem>
-                          ))}
-                        {resellCatalog.some((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing') ? (
-                          <ListSubheader disableSticky sx={{ lineHeight: 1.5, py: 1 }}>
-                            Resell / supplies
-                          </ListSubheader>
-                        ) : null}
-                        {resellCatalog
-                          .filter((x) => (x.catalog_kind || 'supply') !== 'outsourced_manufacturing')
-                          .map((rp) => (
-                            <MenuItem key={rp.id} value={`resell:${rp.id}`}>
-                              {rp.description}
-                            </MenuItem>
-                          ))}
-                      </TextField>
+                        onNewJobSheet={() => {
+                          if (!customerId) return
+                          setNewJobSheetOpen(true)
+                          setDirty(true)
+                        }}
+                        sx={{ minWidth: { xs: '100%', sm: 320 }, maxWidth: 560, flex: 1 }}
+                      />
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -1448,7 +1655,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
       <OrderFormFooter
         variant={mode === 'new' ? 'new' : 'edit'}
-        orderId={orderId}
+        orderId={effectiveOrderId ?? undefined}
         orderStatus={orderStatus}
         importSource={importSource}
         importReviewStatus={importReviewStatus}
@@ -1474,6 +1681,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           } catch {
             /* ignore */
           }
+        }}
+        onAfterDelete={() => {
+          setDirty(false)
+          nav('/orders', { replace: true })
         }}
       />
 
@@ -1539,22 +1750,25 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               productId={pvProductId}
               jobSheetId={pvJobSheetId || undefined}
               orderLineQtySnapshot={pvOrderLineQty}
+              orderHeaderCustomerPurchaseOrderNumber={customerPoNumber}
               onCancel={closeProductVersionModal}
+              onRepointedToNewProduct={(newProductId) => {
+                setPvProductId(newProductId)
+              }}
               onDone={async () => {
-                if (!orderId) {
+                const oid = effectiveOrderId
+                if (!oid) {
                   closeProductVersionModal()
                   return
                 }
+                const localBeforeFetch = items
                 try {
-                  const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-                  setOrderStatus(String(res?.status || orderStatus))
-                  setInvoiceNumber(String(res?.code ?? ''))
-                  setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
-                  setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-                  const nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
-                  setItems(nextItems)
-                  setMyobImportLines(myobLinesFromApi(res))
-                  originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+                  const { order: res } = await dispatch(fetchOrder(oid)).unwrap()
+                  applyOrderResponse(res, {
+                    preserveLocalLines: localBeforeFetch,
+                    preserveFields: { rate: true },
+                  })
+                  setDirty(true)
                 } catch {
                   // stale table until user refreshes or saves again
                 } finally {

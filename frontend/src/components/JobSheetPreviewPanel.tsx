@@ -46,6 +46,10 @@ function PreviewInlineRow(props: { label: string; value: string; monospace?: boo
 
 export function JobSheetPreviewPanel(props: {
   productCode: string
+  /** Algorithmic code from spec; shown under customer-facing code when set. */
+  generatedProductCode?: string
+  /** `identity.customer_code` when set on the spec. */
+  customerFacingProductCode?: string
   description: string
   /** Original import / MYOB line text (order line). */
   myobImportLineDescription?: string | null
@@ -76,6 +80,8 @@ export function JobSheetPreviewPanel(props: {
 }) {
   const {
     productCode,
+    generatedProductCode = '',
+    customerFacingProductCode = '',
     description,
     myobImportLineDescription = '',
     customerFacingDescription = '',
@@ -128,15 +134,25 @@ export function JobSheetPreviewPanel(props: {
   const customerFacingDescriptionWithPackagingTail = hasUserDesc ? user : undefined
   const descriptionWithPackagingTail = hasUserDesc ? user : effective || '—'
 
+  const codeCustomer = String(customerFacingProductCode || '').trim()
+  const codeGen = String(generatedProductCode || '').trim()
+  const hasCustomerCode = codeCustomer !== ''
+
   const product: JobSheetPrintOrderHeaderModel['product'] = {
-    productCode: productCode || '—',
+    productCode: hasCustomerCode ? codeCustomer : (codeGen || productCode || '—'),
+    ...(hasCustomerCode
+      ? {
+          customerFacingProductCode: codeCustomer,
+          ...(codeGen && codeGen !== codeCustomer ? { generatedProductCode: codeGen } : {}),
+        }
+      : {}),
     generatedDescriptionWithPackagingTail,
     ...(customerFacingDescriptionWithPackagingTail
       ? { customerFacingDescriptionWithPackagingTail }
       : {}),
     descriptionWithPackagingTail,
     orderedQuantityLabel:
-      showJobFields && quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
+      quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
         ? String(quoteSummary.orderQuantityLabel).trim()
         : '—',
     notes: String(notes ?? '').trim(),
@@ -171,7 +187,7 @@ export function JobSheetPreviewPanel(props: {
           </Typography>
         ) : null}
 
-        {showJobFields && quoteSummary ? (
+        {quoteSummary ? (
           <>
             <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1, mt: 0.25 }} />
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.02 }}>
@@ -194,7 +210,7 @@ export function JobSheetPreviewPanel(props: {
           </>
         ) : null}
 
-        {showJobFields && palletLoadPlanning != null ? (
+        {palletLoadPlanning != null ? (
           <>
             <Box sx={{ borderTop: 1, borderColor: 'divider', pt: 1, mt: 0.25 }} />
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: 0.02 }}>

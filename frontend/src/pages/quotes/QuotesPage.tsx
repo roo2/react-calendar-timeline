@@ -14,10 +14,9 @@ import {
   fetchQuotesBootstrap,
   updateSavedQuote,
 } from '../../store/slices/quotesSlice'
-import { fetchCustomer, fetchCustomers, CUSTOMER_PICKER_PAGE_SIZE, type CustomerSummary } from '../../store/slices/customersSlice'
+import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -48,6 +47,7 @@ import { derivedInlineSeal, productTypeCanHaveGusset } from '../../utils/specCom
 import { isJFilmProductType, isLeftRightWidthFilmProductType, isUFilmProductType } from '../../utils/filmProductTypes'
 import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
 import { computeWeightPerRollDisplay, qtyTypeFromPersisted } from '../../utils/quantityRollFields'
+import { SaveOutlinedButton } from '../../components/SaveActionButtons'
 import { getDisplayProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   computeAppliedExtrusionWasteFactors,
@@ -2761,51 +2761,10 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     return () => window.clearTimeout(t)
   }, [canCalculate, ratebook, calcInputs])
 
-  /** Server-backed customer picker: avoid rendering thousands of `<MenuItem>` rows. */
-  const customerPickerItems = useAppSelector((s) => s.customers.list.items)
-  const customerPickerLoading = useAppSelector((s) => s.customers.list.status === 'loading')
-  const [customerSearch, setCustomerSearch] = useState('')
-
-  useEffect(() => {
-    const delayMs = customerSearch ? 300 : 0
-    const t = window.setTimeout(() => {
-      void dispatch(
-        fetchCustomers({
-          q: customerSearch,
-          page: 1,
-          page_size: Math.min(CUSTOMER_PICKER_PAGE_SIZE, 100),
-        }),
-      )
-    }, delayMs)
-    return () => window.clearTimeout(t)
-  }, [dispatch, customerSearch])
-
-  useEffect(() => {
-    if (!customerId.trim()) return
-    if (customerPickerItems.some((c) => c.id === customerId)) return
-    if (selectedCustomerDetail?.id === customerId) return
-    void dispatch(fetchCustomer(customerId))
-  }, [customerId, customerPickerItems, selectedCustomerDetail, dispatch])
-
-  const customerAutocompleteValue: CustomerSummary | null = useMemo(() => {
-    if (!customerId) return null
-    const inList = customerPickerItems.find((c) => c.id === customerId)
-    if (inList) return inList
-    if (selectedCustomerDetail?.id === customerId) {
-      return {
-        id: selectedCustomerDetail.id,
-        name: selectedCustomerDetail.name,
-        status: selectedCustomerDetail.status,
-      }
-    }
-    return { id: customerId, name: 'Loading…', status: 'active' }
-  }, [customerId, customerPickerItems, selectedCustomerDetail])
-
   const customerTierHelperText = useMemo(() => {
     if (!customerId.trim()) return ''
     const nm =
       (selectedCustomerDetail?.name && String(selectedCustomerDetail.name).trim()) ||
-      (customerAutocompleteValue?.name && String(customerAutocompleteValue.name).trim()) ||
       (initialData?.customer_name && String(initialData.customer_name).trim()) ||
       ''
     if (!nm) return ''
@@ -2819,7 +2778,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     customerId,
     selectedCustomerDetail?.name,
     selectedCustomerDetail?.pricing_tier,
-    customerAutocompleteValue?.name,
     initialData?.customer_name,
   ])
 
@@ -3233,13 +3191,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         <Button component={Link} to="/quotes" variant="text" color="primary">
           Cancel
         </Button>
-        <Button
-          variant="outlined"
+        <SaveOutlinedButton
           disabled={saving || !customerId.trim() || !canCalculate}
+          saving={saving}
           onClick={() => void handleSaveQuote()}
-        >
-          {saving ? 'Saving…' : isEditMode ? 'Update quote' : 'Save quote'}
-        </Button>
+          label={isEditMode ? 'Update quote' : 'Save quote'}
+        />
         <Button
           variant="contained"
           disabled={
@@ -3288,31 +3245,16 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               helperText={customerTierHelperText || undefined}
             />
           ) : (
-            <Autocomplete
-              size="small"
+            <CustomerSearchAutocomplete
               sx={{ minWidth: 280, maxWidth: '100%' }}
-              options={customerPickerItems}
-              loading={customerPickerLoading}
-              value={customerAutocompleteValue}
-              onChange={(_e, v) => {
-                setCustomerId(v?.id ? String(v.id) : '')
+              value={customerId}
+              onChange={(id) => {
+                setCustomerId(id)
                 setDirty(true)
               }}
-              onInputChange={(_e, v, reason) => {
-                if (reason === 'input' || reason === 'clear') setCustomerSearch(v)
-              }}
-              isOptionEqualToValue={(a, b) => a.id === b.id}
-              getOptionLabel={(c) => c.name || c.id}
-              filterOptions={(opts) => opts}
-              noOptionsText={customerSearch.trim() ? 'No customers match' : 'Type to search'}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Customer"
-                  placeholder="Search by name…"
-                  helperText={customerTierHelperText || undefined}
-                />
-              )}
+              helperText={customerTierHelperText || undefined}
+              required
+              disableClearable
             />
           )}
           {isEditMode ? (

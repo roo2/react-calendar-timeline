@@ -5,12 +5,13 @@ import copy
 import uuid
 from typing import Optional, Tuple, List, Dict, Any
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import delete, desc, select, func, or_
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import SessionLocal
-from app.db.models.domain import Product, ProductVersion, OperatorSuggestion, Customer
+from app.db.myob_import_placeholders import MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID
+from app.db.models.domain import Product, ProductVersion, OperatorSuggestion, Customer, JobSheet, OrderItem
 from app.exceptions import DomainError
 from app.products.schemas import (
     CreateProductRequest,
@@ -708,6 +709,35 @@ def resolve_suggestion(suggestion_id: str, decision: str, resolver: str) -> Oper
         return sug
 
 
+def _last_order_defaults_by_product_id(db: Session, customer_id: str, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Latest non-import job sheet per product for this customer (repeat-order defaults)."""
+    if not customer_id or not product_ids:
+        return {}
+    rows = list(
+        db.scalars(
+            select(JobSheet)
+            .where(JobSheet.customer_id == str(customer_id))
+            .where(JobSheet.product_id.in_(product_ids))
+            .where(JobSheet.is_import_draft.is_(False))
+            .where(JobSheet.product_id != str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID))
+            .order_by(JobSheet.product_id, desc(JobSheet.created_at))
+        ).all()
+    )
+    out: Dict[str, Dict[str, Any]] = {}
+    for js in rows:
+        pid = str(js.product_id)
+        if pid in out:
+            continue
+        rate = float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None
+        out[pid] = {
+            "quantity_value": float(js.quantity_value),
+            "quantity_unit": str(js.quantity_unit),
+            "qty_type": str(getattr(js, "qty_type", None) or ""),
+            "rate": rate,
+        }
+    return out
+
+
 def search_products(query: Optional[str], *, customer_id: Optional[str] = None) -> List[Product]:
     with SessionLocal() as db:
         stmt = (
@@ -719,7 +749,7 @@ def search_products(query: Optional[str], *, customer_id: Optional[str] = None) 
             stmt = stmt.where(Product.customer_id == str(customer_id))
         if query:
             like = f"%{query}%"
-            stmt = stmt.where(or_(Product.code.ilike(like)))
+            stmt = stmt.where(or_(Product.code.ilike(like), Product.description.ilike(like)))
         stmt = stmt.order_by(Product.created_at.desc())
         products = list(db.scalars(stmt).all())
 
@@ -742,6 +772,9 @@ def search_products(query: Optional[str], *, customer_id: Optional[str] = None) 
             db.commit()
 
         ids = [str(p.id) for p in products]
+        last_defaults: Dict[str, Dict[str, Any]] = {}
+        if customer_id and ids:
+            last_defaults = _last_order_defaults_by_product_id(db, str(customer_id), ids)
         if ids:
             cnt_rows = db.execute(
                 select(ProductVersion.product_id, func.count())
@@ -751,9 +784,11 @@ def search_products(query: Optional[str], *, customer_id: Optional[str] = None) 
             cnt_map = {str(r[0]): int(r[1]) for r in cnt_rows}
             for p in products:
                 setattr(p, "_version_count", cnt_map.get(str(p.id), 0))
+                setattr(p, "_last_order_defaults", last_defaults.get(str(p.id)))
         else:
             for p in products:
                 setattr(p, "_version_count", 0)
+                setattr(p, "_last_order_defaults", None)
 
         return products
 
@@ -868,6 +903,71 @@ def append_printing_artwork_file_to_product_version(
         files.append({"id": fid_s, "filename": str(filename), "byte_size": int(byte_size)})
         v.spec_payload = spec
         db.add(v)
+
+
+def product_usage(product_id: str) -> Dict[str, Any]:
+    """Whether a product may be deleted (no job sheets / order lines referencing it)."""
+    try:
+        pid = str(uuid.UUID(str(product_id)))
+    except Exception:
+        raise DomainError("Invalid product id")
+    if pid == MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID:
+        return {
+            "can_delete": False,
+            "job_sheet_count": 0,
+            "order_count": 0,
+            "block_reason": "system_placeholder",
+        }
+    with SessionLocal() as db:
+        job_sheet_count = int(
+            db.scalar(select(func.count()).select_from(JobSheet).where(JobSheet.product_id == pid)) or 0
+        )
+        order_count = int(
+            db.scalar(
+                select(func.count(func.distinct(OrderItem.order_id)))
+                .select_from(OrderItem)
+                .join(JobSheet, OrderItem.job_sheet_id == JobSheet.id)
+                .where(JobSheet.product_id == pid)
+            )
+            or 0
+        )
+    return {
+        "can_delete": job_sheet_count == 0,
+        "job_sheet_count": job_sheet_count,
+        "order_count": order_count,
+        "block_reason": None,
+    }
+
+
+def delete_product(product_id: str) -> None:
+    """Remove a product and all versions when it is not referenced by any job sheet or order."""
+    usage = product_usage(product_id)
+    if usage.get("block_reason") == "system_placeholder":
+        raise DomainError("This product cannot be deleted.")
+    if not usage.get("can_delete"):
+        jc = int(usage.get("job_sheet_count") or 0)
+        oc = int(usage.get("order_count") or 0)
+        parts: List[str] = []
+        if jc:
+            parts.append(f"{jc} job sheet{'s' if jc != 1 else ''}")
+        if oc:
+            parts.append(f"{oc} order{'s' if oc != 1 else ''}")
+        detail = " and ".join(parts) if parts else "existing references"
+        raise DomainError(f"Cannot delete product: used on {detail}.")
+    try:
+        pid = str(uuid.UUID(str(product_id)))
+    except Exception:
+        raise DomainError("Invalid product id")
+    with SessionLocal.begin() as db:
+        p = db.get(Product, pid)
+        if not p:
+            raise DomainError("Product not found")
+        p.active_version_id = None
+        db.add(p)
+        db.flush()
+        db.execute(delete(OperatorSuggestion).where(OperatorSuggestion.product_id == pid))
+        db.execute(delete(ProductVersion).where(ProductVersion.product_id == pid))
+        db.delete(p)
 
 
 def remove_printing_artwork_file_from_product_version(*, product_id: str, version_id: str, file_id: str) -> None:

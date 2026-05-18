@@ -6,16 +6,11 @@ import {
   type JobSheetListQuery,
   type JobSheetSummary,
 } from '../../store/slices/jobSheetsSlice'
-import {
-  CUSTOMER_PICKER_PAGE_SIZE,
-  fetchCustomer,
-  fetchCustomers,
-  type CustomerSummary,
-} from '../../store/slices/customersSlice'
+
+import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
 import { fmtDollarsLineItem, fmtDollarsPreview } from '../../utils/quoteFormat'
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   FormControl,
@@ -148,12 +143,8 @@ export function JobSheetsPage() {
   const loc = useLocation()
   const returnTo = `${loc.pathname}${loc.search}${loc.hash}`
   const { items, status, error, total } = useAppSelector((s) => s.jobSheets.list)
-  const customers = useAppSelector((s) => s.customers.list.items)
-  const customersStatus = useAppSelector((s) => s.customers.list.status)
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
-  const [customerSearchQ, setCustomerSearchQ] = useState('')
-  const [unlistedFilterCustomer, setUnlistedFilterCustomer] = useState<CustomerSummary | null>(null)
 
   const { filters, setFilter, patchFilters, pageIdx, setPageIdx, clearFilters } = useUrlSyncedFilters({
     defaults: JOB_SHEET_FILTER_DEFAULTS,
@@ -194,58 +185,6 @@ export function JobSheetsPage() {
     q.page_size = LIST_PAGE_SIZE
     return q
   }, [filters, pageIdx])
-
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      void dispatch(
-        fetchCustomers({
-          q: customerSearchQ,
-          page: 1,
-          page_size: Math.min(200, CUSTOMER_PICKER_PAGE_SIZE),
-        }),
-      )
-    }, 300)
-    return () => window.clearTimeout(t)
-  }, [customerSearchQ, dispatch])
-
-  useEffect(() => {
-    const id = (filters.customerId || '').trim()
-    if (!id) {
-      setUnlistedFilterCustomer(null)
-      return
-    }
-    if (customers.some((c) => c.id === id)) {
-      setUnlistedFilterCustomer(null)
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const a = await dispatch(fetchCustomer(id))
-      if (cancelled) return
-      if (fetchCustomer.fulfilled.match(a) && a.payload?.customer) {
-        const c = a.payload.customer
-        setUnlistedFilterCustomer({ id: c.id, name: c.name, status: c.status || 'Active' })
-      } else {
-        setUnlistedFilterCustomer(null)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [filters.customerId, customers, dispatch])
-
-  const customerFilterOptions = useMemo(() => {
-    const m = new Map<string, CustomerSummary>()
-    for (const c of customers) m.set(c.id, c)
-    if (unlistedFilterCustomer) m.set(unlistedFilterCustomer.id, unlistedFilterCustomer)
-    return Array.from(m.values())
-  }, [customers, unlistedFilterCustomer])
-
-  const selectedFilterCustomer: CustomerSummary | null = useMemo(() => {
-    const id = (filters.customerId || '').trim()
-    if (!id) return null
-    return customerFilterOptions.find((c) => c.id === id) || null
-  }, [filters.customerId, customerFilterOptions])
 
   useEffect(() => {
     setDebouncing(true)
@@ -368,34 +307,10 @@ export function JobSheetsPage() {
                   },
                 }}
               >
-                <Autocomplete<CustomerSummary, false, false, false>
-                  size="small"
-                  fullWidth
-                  options={customerFilterOptions}
-                  getOptionLabel={(c) => (c.name || c.id).trim() || c.id}
-                  isOptionEqualToValue={(a, b) => a.id === b.id}
-                  value={selectedFilterCustomer}
-                  onChange={(_e, v) => {
-                    setFilter('customerId', v?.id || '')
-                  }}
-                  onInputChange={(_e, v, reason) => {
-                    if (reason === 'input' || reason === 'clear' || reason === 'reset') {
-                      setCustomerSearchQ(v)
-                    }
-                  }}
-                  onOpen={() => {
-                    void dispatch(
-                      fetchCustomers({
-                        q: customerSearchQ,
-                        page: 1,
-                        page_size: Math.min(200, CUSTOMER_PICKER_PAGE_SIZE),
-                      }),
-                    )
-                  }}
-                  filterOptions={(opts) => opts}
-                  loading={customersStatus === 'loading'}
-                  noOptionsText={customerSearchQ.trim() ? 'No customers' : 'Type to search'}
-                  renderInput={(params) => <TextField {...params} label="Customer" placeholder="Search…" />}
+                <CustomerSearchAutocomplete
+                  value={filters.customerId}
+                  onChange={(id) => setFilter('customerId', id)}
+                  placeholder="Search…"
                 />
                 <FormControl size="small" fullWidth>
                   <InputLabel id="job-sheet-filter-product-type">Product type</InputLabel>
