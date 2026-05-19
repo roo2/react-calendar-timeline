@@ -37,7 +37,7 @@ import {
 import { fetchJobSheet, saveJobSheetAsNewProduct, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
-import { SaveAsNewProductButton, SaveFormButton } from '../../../components/SaveActionButtons'
+import { ProductVersionEditorFormActions } from './ProductVersionEditorFormActions'
 import { ProductVersionEditorLiveAside } from './ProductVersionEditorLiveAside'
 import {
   JobSheetIdentityQuantitySection,
@@ -1134,6 +1134,10 @@ export function ProductVersionEditor(props: {
 
   const busy = saving || savingEmbeddedJob || savingAsNew || createSaving || deletingProduct
 
+  const resolvedSubmitLabel =
+    submitLabel ||
+    (embedded ? 'Create job sheet' : jobSheetId || versionId ? 'Save' : 'Save Changes')
+
   return (
     <Box
       onChange={() => {
@@ -1174,22 +1178,6 @@ export function ProductVersionEditor(props: {
           scrollMarginTop={80}
         />
 
-        {isPm && !jobSheetId && !embedded && productUsage && !productUsage.can_delete ? (
-          <Alert severity="info">
-            This product cannot be deleted because it is used on
-            {Number(productUsage.job_sheet_count || 0) > 0
-              ? ` ${productUsage.job_sheet_count} job sheet${Number(productUsage.job_sheet_count) !== 1 ? 's' : ''}`
-              : ''}
-            {Number(productUsage.job_sheet_count || 0) > 0 && Number(productUsage.order_count || 0) > 0
-              ? ' and'
-              : ''}
-            {Number(productUsage.order_count || 0) > 0
-              ? ` ${productUsage.order_count} order${Number(productUsage.order_count) !== 1 ? 's' : ''}`
-              : ''}
-            .
-          </Alert>
-        ) : null}
-
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
           <form onSubmit={onSubmit} style={{ flex: 1, minWidth: 0 }}>
             <Stack spacing={2}>
@@ -1199,6 +1187,24 @@ export function ProductVersionEditor(props: {
                   jobCode={loadedJobSheet?.job_no ? String(loadedJobSheet.job_no) : null}
                   invoiceNo={invoiceNoFromOrder}
                   purchaseOrderNo={purchaseOrderNoFromOrder}
+                  headerActions={
+                    <ProductVersionEditorFormActions
+                      onCancel={onCancel}
+                      cancelTo={returnTo || `/products/${productId}`}
+                      canDeleteProduct={canDeleteProduct}
+                      deletingProduct={deletingProduct}
+                      onDeleteProduct={onDeleteProduct}
+                      showSaveAsNewProduct={showSaveAsNewProduct}
+                      saveAsNewDisabled={!canSubmit || busy}
+                      savingAsNew={savingAsNew}
+                      onSaveAsNewProduct={() =>
+                        void (jobSheetId ? persistJobSheet(true) : saveAsNewProductStandalone())
+                      }
+                      submitDisabled={!canSubmit || busy}
+                      submitSaving={busy && !savingAsNew}
+                      submitLabel={resolvedSubmitLabel}
+                    />
+                  }
                   customerId={customerId}
                   onCustomerIdChange={(id) => {
                     setCustomerId(id)
@@ -1446,47 +1452,21 @@ export function ProductVersionEditor(props: {
               )}
 
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-                {onCancel ? (
-                  <Button type="button" variant="text" color="primary" onClick={onCancel}>
-                    Cancel
-                  </Button>
-                ) : (
-                  <Button component={Link} to={returnTo || `/products/${productId}`} variant="text" color="primary">
-                    Cancel
-                  </Button>
-                )}
-                {canDeleteProduct ? (
-                  <Button
-                    type="button"
-                    variant="outlined"
-                    color="error"
-                    disabled={busy}
-                    onClick={() => void onDeleteProduct()}
-                  >
-                    {deletingProduct ? 'Deleting…' : 'Delete product'}
-                  </Button>
-                ) : null}
-                {showSaveAsNewProduct ? (
-                  <SaveAsNewProductButton
-                    disabled={!canSubmit || busy}
-                    saving={savingAsNew}
-                    onClick={() =>
-                      void (jobSheetId ? persistJobSheet(true) : saveAsNewProductStandalone())
-                    }
-                  />
-                ) : null}
-                <SaveFormButton
-                  type="submit"
-                  disabled={!canSubmit || busy}
-                  saving={busy && !savingAsNew}
-                  label={
-                    submitLabel ||
-                    (embedded
-                      ? 'Create job sheet'
-                      : jobSheetId || versionId
-                        ? 'Save'
-                        : 'Save Changes')
+                <ProductVersionEditorFormActions
+                  onCancel={onCancel}
+                  cancelTo={returnTo || `/products/${productId}`}
+                  canDeleteProduct={canDeleteProduct}
+                  deletingProduct={deletingProduct}
+                  onDeleteProduct={onDeleteProduct}
+                  showSaveAsNewProduct={showSaveAsNewProduct}
+                  saveAsNewDisabled={!canSubmit || busy}
+                  savingAsNew={savingAsNew}
+                  onSaveAsNewProduct={() =>
+                    void (jobSheetId ? persistJobSheet(true) : saveAsNewProductStandalone())
                   }
+                  submitDisabled={!canSubmit || busy}
+                  submitSaving={busy && !savingAsNew}
+                  submitLabel={resolvedSubmitLabel}
                 />
               </Box>
             </Stack>
