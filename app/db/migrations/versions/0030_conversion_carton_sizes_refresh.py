@@ -1,6 +1,6 @@
 """Refresh conversion carton sizes (sorted by cost).
 
-Revision ID: 0030_conversion_carton_sizes_refresh
+Revision ID: 0030_conversion_cartons
 Revises: 0029_products_default_qty_type
 Create Date: 2026-05-19
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0030_conversion_carton_sizes_refresh"
+revision = "0030_conversion_cartons"
 down_revision = "0029_products_default_qty_type"
 branch_labels = None
 depends_on = None
