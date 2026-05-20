@@ -12,6 +12,7 @@ import {
 } from '../../store/slices/adminRateCardsSlice'
 import { AdminDataTable } from './components/AdminDataTable'
 import { AdminPageHeader } from './components/AdminPageHeader'
+import { confirmDelete } from './components/confirmDelete'
 
 type GaugeRange = { min_gauge_um: number; max_gauge_um: number }
 type LengthRange = { min_length_mm: number; max_length_mm: number }
@@ -114,21 +115,21 @@ export function ConversionAdminPage() {
     void dispatch(fetchAdminConversionTab())
   }, [dispatch])
 
+  async function loadCartonSizes() {
+    const rows = await apiFetch<CartonSizeRow[]>('/api/admin/rate-cards/conversion-carton-sizes')
+    const next = Array.isArray(rows) ? rows : []
+    setCartonSizes(next)
+    const drafts: Record<string, string> = {}
+    for (const r of next) drafts[r.carton_size] = String(r.cost)
+    setCartonDrafts(drafts)
+  }
+
   useEffect(() => {
     let alive = true
-    void apiFetch<CartonSizeRow[]>('/api/admin/rate-cards/conversion-carton-sizes')
-      .then((rows) => {
-        if (!alive) return
-        const next = Array.isArray(rows) ? rows : []
-        setCartonSizes(next)
-        const drafts: Record<string, string> = {}
-        for (const r of next) drafts[r.carton_size] = String(r.cost)
-        setCartonDrafts(drafts)
-      })
-      .catch((e) => {
-        if (!alive) return
-        setErr(e instanceof Error ? e.message : 'Failed to load carton sizes')
-      })
+    void loadCartonSizes().catch((e) => {
+      if (!alive) return
+      setErr(e instanceof Error ? e.message : 'Failed to load carton sizes')
+    })
     return () => {
       alive = false
     }
@@ -166,6 +167,56 @@ export function ConversionAdminPage() {
       setDirty(false)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save conversion factor')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  async function addCartonSize(name: string, costRaw: string) {
+    const label = name.trim()
+    const n = Number(costRaw)
+    if (!label || !Number.isFinite(n) || n < 0) return
+    if (cartonSizes.some((r) => r.carton_size === label)) {
+      setErr(`Carton size "${label}" already exists`)
+      return
+    }
+    const sort_order =
+      cartonSizes.length > 0 ? Math.max(...cartonSizes.map((r) => r.sort_order)) + 1 : 0
+    const key = `carton:new:${label}`
+    try {
+      setErr(null)
+      setSavingKey(key)
+      await apiFetch<CartonSizeRow>(
+        `/api/admin/rate-cards/conversion-carton-sizes/${encodeURIComponent(label)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ sort_order, cost: n }),
+        },
+      )
+      await loadCartonSizes()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to add carton size')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  async function deleteCartonSize(row: CartonSizeRow) {
+    const ok = await confirmDelete(`carton size "${row.carton_size}"`)
+    if (!ok) return
+    const key = `carton:del:${row.carton_size}`
+    try {
+      setErr(null)
+      setSavingKey(key)
+      await apiFetch<void>(
+        `/api/admin/rate-cards/conversion-carton-sizes/${encodeURIComponent(row.carton_size)}`,
+        { method: 'DELETE' },
+      )
+      await loadCartonSizes()
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete carton size')
     } finally {
       setSavingKey(null)
     }
@@ -282,14 +333,14 @@ export function ConversionAdminPage() {
           Carton sizes and cost
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, maxWidth: 720 }}>
-          Carton size options shown on job sheets conversion fields, with per-carton cost.
+          Carton size options shown on job sheet conversion fields, with per-carton cost. Add new sizes below.
         </Typography>
         <AdminDataTable>
           <TableHead>
             <TableRow>
               <TableCell>Carton size</TableCell>
               <TableCell sx={{ width: 180 }}>Cost ($)</TableCell>
-              <TableCell sx={{ width: 220 }} />
+              <TableCell sx={{ width: 280 }} />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -297,6 +348,7 @@ export function ConversionAdminPage() {
               const draft = cartonDrafts[row.carton_size] ?? String(row.cost)
               const dirty = draft !== String(row.cost)
               const saving = savingKey === `carton:${row.carton_size}`
+              const deleting = savingKey === `carton:del:${row.carton_size}`
               return (
                 <TableRow key={row.carton_size} hover>
                   <TableCell>{row.carton_size}</TableCell>
@@ -314,18 +366,33 @@ export function ConversionAdminPage() {
                     />
                   </TableCell>
                   <TableCell align="right">
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      disabled={saving || !dirty || draft.trim() === '' || !Number.isFinite(Number(draft))}
-                      onClick={() => void saveCartonSize(row, draft)}
-                    >
-                      {saving ? 'Saving…' : 'Save'}
-                    </Button>
+                    <Stack direction="row" spacing={1} justifyContent="flex-end">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={saving || deleting || !dirty || draft.trim() === '' || !Number.isFinite(Number(draft))}
+                        onClick={() => void saveCartonSize(row, draft)}
+                      >
+                        {saving ? 'Saving…' : 'Save'}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        variant="outlined"
+                        disabled={saving || deleting}
+                        onClick={() => void deleteCartonSize(row)}
+                      >
+                        {deleting ? 'Deleting…' : 'Delete'}
+                      </Button>
+                    </Stack>
                   </TableCell>
                 </TableRow>
               )
             })}
+            <NewCartonSizeRow
+              disabled={Boolean(savingKey?.startsWith('carton:'))}
+              onAdd={addCartonSize}
+            />
           </TableBody>
         </AdminDataTable>
       </Paper>
@@ -414,6 +481,60 @@ export function ConversionAdminPage() {
         )}
       </Paper>
     </Stack>
+  )
+}
+
+function NewCartonSizeRow(props: {
+  disabled: boolean
+  onAdd: (name: string, cost: string) => Promise<void>
+}) {
+  const { disabled, onAdd } = props
+  const [name, setName] = useState('')
+  const [cost, setCost] = useState('')
+
+  const canAdd = name.trim() !== '' && cost.trim() !== '' && Number.isFinite(Number(cost)) && Number(cost) >= 0
+
+  return (
+    <TableRow>
+      <TableCell>
+        <TextField
+          size="small"
+          placeholder="e.g. 190"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={disabled}
+          fullWidth
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
+          placeholder="0.00"
+          inputProps={{ inputMode: 'decimal' }}
+          value={cost}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '' || /^(\d+(\.\d*)?|\.\d*)$/.test(v)) setCost(v)
+          }}
+          disabled={disabled}
+        />
+      </TableCell>
+      <TableCell align="right">
+        <Button
+          size="small"
+          variant="contained"
+          disabled={disabled || !canAdd}
+          onClick={() => {
+            void onAdd(name, cost).then(() => {
+              setName('')
+              setCost('')
+            })
+          }}
+        >
+          Add carton size
+        </Button>
+      </TableCell>
+    </TableRow>
   )
 }
 

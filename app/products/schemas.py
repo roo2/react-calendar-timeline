@@ -67,8 +67,16 @@ class IdentitySpec(BaseModel):
     product_type: ProductType
     finish_mode: FinishMode
     trim_pct: Optional[float] = Field(None, ge=0, le=100)
-    industry_flags: List[Literal["food_contact", "non_food", "medical", "chemical_industrial"]] = []
+    # Deprecated: use quality_expectations.flags (e.g. food_contact). Kept for legacy JSON only.
+    industry_flags: List[Literal["food_contact", "non_food"]] = []
     notes: Optional[str] = None
+
+    @validator("industry_flags", pre=True)
+    def _filter_industry_flags(cls, v: Any) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        allowed = {"food_contact", "non_food"}
+        return [str(x) for x in v if str(x) in allowed]
     # Customer-facing product code override (UI label); persisted on the version spec.
     customer_code: Optional[str] = Field(None, max_length=64)
     # Roll weight billing for extrusion (job sheet UI); optional for older stored specs.
@@ -162,8 +170,16 @@ class PrintingSpec(BaseModel):
 
 
 class QualityExpectationsSpec(BaseModel):
-    flags: List[Literal["tight_gauge", "seal_integrity", "cosmetic", "colour"]] = []
+    flags: List[Literal["tight_gauge", "seal_integrity", "cosmetic", "colour", "food_contact"]] = []
     known_issues: Optional[str] = None
+
+    @validator("flags", pre=True)
+    def _filter_quality_flags(cls, v: Any) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        allowed = {"tight_gauge", "seal_integrity", "cosmetic", "colour", "food_contact"}
+        retired = {"medical", "chemical_industrial", "non_food"}
+        return [str(x) for x in v if str(x) in allowed and str(x) not in retired]
 
 
 _DEPRECATED_CONVERSION_FLAG_KEYS = frozenset({"send_all_bags", "sendAllBags"})

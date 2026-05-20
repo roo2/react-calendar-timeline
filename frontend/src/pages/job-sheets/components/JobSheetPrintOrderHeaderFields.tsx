@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react'
 import { Box, Typography } from '@mui/material'
+import { formatDateDMYShort } from '../../../utils/dateFormat'
+import { formatQualityFlagLabel } from '../../../utils/qualityFlagLabels'
 import type { JobSheetPrintOrderHeaderModel } from './jobSheetPrintOrderHeaderModel'
 
 export type JobSheetPrintOrderHeaderFieldsProps = {
@@ -8,13 +10,21 @@ export type JobSheetPrintOrderHeaderFieldsProps = {
   printingFooter?: JobSheetPrintOrderHeaderModel['printingFooter'] | null
   /** `print`: class names for {@link JobSheetPrintPage} stylesheet. `preview`: compact MUI for editor sidebar. */
   variant: 'print' | 'preview'
-  /** When true (preview only), skip the 3×2 job grid and show only the product block (e.g. product version editor). */
+  /** When true (preview only), skip the order grid and show only the product block (e.g. product version editor). */
   hideHeaderGrid?: boolean | undefined
 }
 
 function dash(v: unknown): string {
   const t = String(v ?? '').trim()
   return t === '' ? '—' : t
+}
+
+function formatDescWithQty(description: string, orderedQuantityLabel: string): string {
+  const d = String(description ?? '').trim()
+  const q = String(orderedQuantityLabel ?? '').trim()
+  if (!d) return q || '—'
+  if (!q || q === '—') return d
+  return `${d} × ${q}`
 }
 
 /**
@@ -24,12 +34,18 @@ function dash(v: unknown): string {
 export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFieldsProps): ReactElement {
   const { header: h, product: prod, printingFooter, variant, hideHeaderGrid = false } = props
 
-  const codeCustomer = String(prod.customerFacingProductCode ?? '').trim()
-  const codeGen = String(prod.generatedProductCode ?? '').trim()
-  const descCustomer = String(prod.customerFacingDescriptionWithPackagingTail ?? '').trim()
+  const descCustomer = String(prod.customerFacingDescription ?? '').trim()
   const descGen = String(prod.generatedDescriptionWithPackagingTail ?? '').trim()
-  const hasSplitProductCode = codeCustomer !== ''
-  const hasSplitProductDescription = descCustomer !== ''
+  const qty = prod.orderedQuantityLabel
+  const lineCustomer = descCustomer ? formatDescWithQty(descCustomer, qty) : ''
+  const lineGen = descGen ? formatDescWithQty(descGen, qty) : ''
+  const showGenLine = Boolean(lineGen && lineGen !== lineCustomer)
+  const primaryDescLine = lineCustomer || lineGen
+  const secondaryDescLine = lineCustomer && showGenLine ? lineGen : ''
+  const notesText = dash(prod.notes)
+  const qualityLabels = prod.qualityChecks.map((id) => formatQualityFlagLabel(id)).filter(Boolean)
+  const orderDateDisplay = formatDateDMYShort(h.orderDate)
+  const dueDateDisplay = formatDateDMYShort(h.dueDate)
 
   if (variant === 'print') {
     return (
@@ -37,92 +53,59 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
         {!hideHeaderGrid ? (
           <div className="js-compact-grid">
             <div className="js-compact-item">
-              <span className="js-compact-k">Customer:</span>
-              <span className="js-compact-v">{h.customer}</span>
-            </div>
-            <div className="js-compact-item">
-              <span className="js-compact-k">Invoice no.:</span>
+              <span className="js-compact-k">Invoice No:</span>
               <span className="js-compact-v">{h.invoiceNo}</span>
             </div>
             <div className="js-compact-item">
-              <span className="js-compact-k">Job code:</span>
-              <span className="js-compact-v">{h.jobCode}</span>
-            </div>
-            <div className="js-compact-item">
-              <span className="js-compact-k">Order date:</span>
-              <span className="js-compact-v">{h.orderDate}</span>
+              <span className="js-compact-k">Order Date:</span>
+              <span className="js-compact-v">{orderDateDisplay}</span>
             </div>
             <div className="js-compact-item">
               <span className="js-compact-k">Purchase order:</span>
               <span className="js-compact-v">{dash(h.purchaseOrderNo)}</span>
             </div>
             <div className="js-compact-item">
-              <span className="js-compact-k">Due date:</span>
-              <span className="js-compact-v js-compact-v-strong">{h.dueDate}</span>
+              <span className="js-compact-k">Due Date:</span>
+              <span className="js-compact-v">{dueDateDisplay}</span>
             </div>
           </div>
         ) : null}
 
         <div className="js-compact-block">
-          <div className="js-compact-item">
-            <span className="js-compact-k">Product code:</span>
-            <span className="js-compact-v js-order-header-value-stack">
-              {hasSplitProductCode ? (
-                <>
-                  <span className="js-product-code-val js-order-header-primary">{codeCustomer}</span>
-                  {codeGen && codeGen !== codeCustomer ? (
-                    <span className="js-product-code-val js-order-header-secondary">{codeGen}</span>
-                  ) : null}
-                </>
-              ) : (
-                <span className="js-product-code-val">{prod.productCode}</span>
-              )}
+          {primaryDescLine ? (
+            <div className="js-order-header-desc-line">
+              <span className="js-order-header-desc-customer js-print-primary-text" style={{ whiteSpace: 'pre-wrap' }}>
+                {primaryDescLine}
+              </span>
+            </div>
+          ) : null}
+          {secondaryDescLine ? (
+            <div className="js-order-header-desc-line">
+              <span className="js-order-header-desc-generated" style={{ whiteSpace: 'pre-wrap' }}>
+                {secondaryDescLine}
+              </span>
+            </div>
+          ) : null}
+          <div className="js-order-header-padded-block">
+            <span className="js-order-header-notes" style={{ whiteSpace: 'pre-wrap' }}>
+              {notesText}
             </span>
-          </div>
-          <div className="js-compact-item">
-            <span className="js-compact-k">Product description:</span>
-            <span className="js-compact-v js-order-header-value-stack" style={{ whiteSpace: 'pre-wrap' }}>
-              {hasSplitProductDescription ? (
-                <>
-                  <span className="js-compact-v-strong js-order-header-primary">{descCustomer}</span>
-                  {descGen && descGen !== descCustomer ? (
-                    <span className="js-order-header-secondary js-order-header-desc-secondary">{descGen}</span>
-                  ) : null}
-                </>
-              ) : (
-                <span className="js-compact-v-strong">{prod.generatedDescriptionWithPackagingTail}</span>
-              )}
-            </span>
-          </div>
-          <div className="js-compact-item">
-            <span className="js-compact-k">Ordered quantity:</span>
-            <span className="js-compact-v js-compact-v-strong">{prod.orderedQuantityLabel}</span>
-          </div>
-          <div className="js-compact-item">
-            <span className="js-compact-k">Notes:</span>
-            <span className="js-compact-v js-compact-v-strong" style={{ whiteSpace: 'pre-wrap' }}>
-              {dash(prod.notes)}
-            </span>
-          </div>
-          <div className="js-compact-item">
-            <span className="js-compact-k">Quality checks:</span>
-            <span className="js-compact-v">
-              {prod.qualityChecks.length ? (
+            
+            {qualityLabels.length && (
+              <>
                 <ul className="js-quality-list">
-                  {prod.qualityChecks.map((qc, i) => (
+                  {qualityLabels.map((qc, i) => (
                     <li key={`${qc}-${i}`}>{qc}</li>
                   ))}
                 </ul>
-              ) : (
-                '—'
-              )}
-            </span>
+              </>
+            )}
           </div>
           {printingFooter ? (
             <>
               <div className="js-print-uteco-card js-print-description-card">
                 <span className="js-compact-k">Print description:</span>
-                <span className="js-compact-v js-compact-v-strong" style={{ whiteSpace: 'pre-wrap' }}>
+                <span className="js-compact-v" style={{ whiteSpace: 'pre-wrap' }}>
                   {String(printingFooter.printDescription ?? '').trim()}
                 </span>
               </div>
@@ -142,21 +125,35 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
   const kSx = {
     fontSize: '0.7rem',
     color: 'text.secondary',
-    fontWeight: 600,
+    fontWeight: 500,
     flexShrink: 0,
   } as const
-  const vSx = (opts?: { mono?: boolean; strong?: boolean; pre?: boolean }) => ({
+  const descPrimarySx = {
+    fontSize: '0.9375rem',
+    lineHeight: 1.3,
+    fontWeight: 700,
+    color: 'text.primary',
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-word' as const,
+  }
+  const descSecondarySx = {
     fontSize: '0.8125rem',
     lineHeight: 1.35,
-    fontWeight: opts?.strong ? 600 : 400,
-    color: 'text.primary',
-    fontFamily: opts?.mono ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : undefined,
-    whiteSpace: opts?.pre ? ('pre-wrap' as const) : undefined,
+    fontWeight: 500,
+    color: 'text.secondary',
+    whiteSpace: 'pre-wrap' as const,
     wordBreak: 'break-word' as const,
-    minWidth: 0,
-  })
+  }
+  const paddedBlockSx = {
+    mt: 0.75,
+    p: 1,
+    border: 1,
+    borderColor: 'divider',
+    borderRadius: 1,
+    bgcolor: 'action.hover',
+  } as const
 
-  const row = (key: string, value: string, o?: { mono?: boolean; strong?: boolean; pre?: boolean }) => (
+  const row = (key: string, value: string, o?: { mono?: boolean; pre?: boolean }) => (
     <Box
       key={key}
       sx={{
@@ -171,34 +168,40 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
       <Typography component="span" sx={kSx}>
         {key}
       </Typography>
-      <Typography component="span" sx={vSx(o)}>
+      <Typography
+        component="span"
+        sx={{
+          fontSize: '0.8125rem',
+          lineHeight: 1.35,
+          fontWeight: 600,
+          color: 'text.primary',
+          fontFamily: o?.mono ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : undefined,
+          whiteSpace: o?.pre ? ('pre-wrap' as const) : undefined,
+          wordBreak: 'break-word' as const,
+          minWidth: 0,
+        }}
+      >
         {dash(value)}
       </Typography>
     </Box>
   )
 
   return (
-    <Box
-      sx={{
-        bgcolor: 'background.paper',
-      }}
-    >
+    <Box sx={{ bgcolor: 'background.paper' }}>
       {!hideHeaderGrid ? (
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
             columnGap: { xs: 0.75, sm: '10px' },
             rowGap: { xs: 0.5, sm: '6px' },
             mb: 1,
           }}
         >
-          {row('Customer:', h.customer)}
-          {row('Invoice no.:', h.invoiceNo, { mono: true })}
-          {row('Job code:', h.jobCode, { mono: true })}
-          {row('Order date:', h.orderDate)}
+          {row('Invoice No:', h.invoiceNo, { mono: true })}
+          {row('Order Date:', orderDateDisplay)}
           {row('Purchase order:', h.purchaseOrderNo)}
-          {row('Due date:', h.dueDate, { strong: true })}
+          {row('Due Date:', dueDateDisplay)}
         </Box>
       ) : null}
 
@@ -210,101 +213,58 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
-          gap: 0.25,
+          gap: 0.5,
         }}
       >
-        {hasSplitProductCode ? (
-          <Box sx={{ py: 0.125 }}>
-            <Typography component="div" sx={{ ...kSx, mb: 0.25 }}>
-              Product code:
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.125, pl: 0.125 }}>
-              <Typography component="span" sx={{ ...vSx({ mono: true, strong: true }) }}>
-                {codeCustomer}
-              </Typography>
-              {codeGen && codeGen !== codeCustomer ? (
-                <Typography
-                  component="span"
-                  sx={{
-                    ...vSx({ mono: true }),
-                    fontWeight: 500,
-                    color: 'text.secondary',
-                    fontSize: '0.75rem',
-                  }}
-                >
-                  {codeGen}
-                </Typography>
-              ) : null}
-            </Box>
-          </Box>
-        ) : (
-          row('Product code:', prod.productCode, { mono: true, strong: true })
-        )}
-        {hasSplitProductDescription ? (
-          <Box sx={{ py: 0.125 }}>
-            <Typography component="div" sx={{ ...kSx, mb: 0.25 }}>
-              Product description:
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, pl: 0.125 }}>
-              <Typography component="span" sx={{ ...vSx({ strong: true, pre: true }) }}>
-                {descCustomer}
-              </Typography>
-              {descGen && descGen !== descCustomer ? (
-                <Typography
-                  component="span"
-                  sx={{
-                    ...vSx({ pre: true }),
-                    fontWeight: 500,
-                    color: 'text.secondary',
-                    fontSize: '0.75rem',
-                  }}
-                >
-                  {descGen}
-                </Typography>
-              ) : null}
-            </Box>
-          </Box>
-        ) : (
-          row('Product description:', prod.generatedDescriptionWithPackagingTail, { strong: true, pre: true })
-        )}
-        {row('Ordered quantity:', prod.orderedQuantityLabel, { strong: true })}
-        {row('Notes:', prod.notes, { strong: true, pre: true })}
-        <Box sx={{ py: 0.125 }}>
-          <Typography component="div" sx={{ ...kSx, mb: prod.qualityChecks.length ? 0.25 : 0 }}>
+        {primaryDescLine ? (
+          <Typography component="div" sx={{ ...descPrimarySx, py: 0.125 }}>
+            {primaryDescLine}
+          </Typography>
+        ) : null}
+        {secondaryDescLine ? (
+          <Typography component="div" sx={{ ...descSecondarySx, py: 0.125 }}>
+            {secondaryDescLine}
+          </Typography>
+        ) : null}
+        <Box sx={paddedBlockSx}>
+          <Typography component="div" sx={{ ...kSx, mb: 0.25 }}>
+            Notes:
+          </Typography>
+          <Typography component="div" sx={descSecondarySx}>
+            {notesText}
+          </Typography>
+        </Box>
+        <Box sx={paddedBlockSx}>
+          <Typography component="div" sx={{ ...kSx, mb: qualityLabels.length ? 0.5 : 0.25 }}>
             Quality checks:
           </Typography>
-          {prod.qualityChecks.length ? (
+          {qualityLabels.length ? (
             <Box
               component="ul"
               sx={{
                 m: 0,
                 p: 0,
-                pl: 0,
                 listStyle: 'none',
                 display: 'flex',
                 flexWrap: 'wrap',
                 gap: 0.5,
-                alignItems: 'center',
               }}
             >
-              {prod.qualityChecks.map((qc, i) => (
+              {qualityLabels.map((qc, i) => (
                 <Box
                   component="li"
                   key={`${qc}-${i}`}
                   sx={{
                     display: 'inline-flex',
-                    alignItems: 'center',
-                    m: 0,
                     px: 0.75,
                     py: 0.25,
-                    fontSize: '0.6875rem',
+                    fontSize: '0.75rem',
                     fontWeight: 600,
                     lineHeight: 1.35,
                     border: 1,
                     borderColor: 'divider',
                     borderRadius: 1,
-                    bgcolor: 'action.hover',
-                    color: 'text.primary',
+                    bgcolor: 'background.paper',
                   }}
                 >
                   {qc}
@@ -312,14 +272,14 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
               ))}
             </Box>
           ) : (
-            <Typography component="span" sx={vSx()}>
+            <Typography component="div" sx={descSecondarySx}>
               —
             </Typography>
           )}
         </Box>
         {printingFooter ? (
           <Box sx={{ mt: 0.75, pt: 0.75, borderTop: 1, borderColor: 'divider', display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-            {row('Print description:', String(printingFooter.printDescription ?? ''), { strong: true, pre: true })}
+            {row('Print description:', String(printingFooter.printDescription ?? ''), { pre: true })}
             {String(printingFooter.barcode ?? '').trim()
               ? row('Bar code:', String(printingFooter.barcode).trim(), { mono: true })
               : null}

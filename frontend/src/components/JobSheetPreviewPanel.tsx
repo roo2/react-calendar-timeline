@@ -4,13 +4,6 @@ import type { JobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning
 import { JobSheetPrintOrderHeaderFields } from '../pages/job-sheets/components/JobSheetPrintOrderHeaderFields'
 import type { JobSheetPrintOrderHeaderModel } from '../pages/job-sheets/components/jobSheetPrintOrderHeaderModel'
 
-const QUALITY_FLAG_LABEL: Record<string, string> = {
-  tight_gauge: 'Tight gauge tolerance',
-  seal_integrity: 'Seal integrity critical',
-  cosmetic: 'Printing Quality',
-  colour: 'Colour critical',
-}
-
 function PreviewInlineRow(props: { label: string; value: string; monospace?: boolean; preWrap?: boolean }) {
   const { label, value, monospace, preWrap } = props
   const dash = '—'
@@ -79,9 +72,6 @@ export function JobSheetPreviewPanel(props: {
   palletUnitLabel?: 'rolls' | 'cartons'
 }) {
   const {
-    productCode,
-    generatedProductCode = '',
-    customerFacingProductCode = '',
     description,
     myobImportLineDescription = '',
     customerFacingDescription = '',
@@ -103,8 +93,8 @@ export function JobSheetPreviewPanel(props: {
   const specDesc = String(description || '').trim()
   const effective = (user || myob || specDesc).trim()
   const showSpecSecondary = Boolean(specDesc && specDesc !== effective && !user)
-  const qcLabels = (Array.isArray(qualityFlagIds) ? qualityFlagIds : [])
-    .map((id) => QUALITY_FLAG_LABEL[String(id)] || String(id))
+  const qcIds = (Array.isArray(qualityFlagIds) ? qualityFlagIds : [])
+    .map((id) => String(id).trim())
     .filter(Boolean)
 
   const emptyHeader: JobSheetPrintOrderHeaderModel['header'] = {
@@ -131,32 +121,16 @@ export function JobSheetPreviewPanel(props: {
   const generatedDescriptionWithPackagingTail = hasUserDesc
     ? (specDesc || myob || '—').trim() || '—'
     : (effective || '—')
-  const customerFacingDescriptionWithPackagingTail = hasUserDesc ? user : undefined
-  const descriptionWithPackagingTail = hasUserDesc ? user : effective || '—'
-
-  const codeCustomer = String(customerFacingProductCode || '').trim()
-  const codeGen = String(generatedProductCode || '').trim()
-  const hasCustomerCode = codeCustomer !== ''
 
   const product: JobSheetPrintOrderHeaderModel['product'] = {
-    productCode: hasCustomerCode ? codeCustomer : (codeGen || productCode || '—'),
-    ...(hasCustomerCode
-      ? {
-          customerFacingProductCode: codeCustomer,
-          ...(codeGen && codeGen !== codeCustomer ? { generatedProductCode: codeGen } : {}),
-        }
-      : {}),
+    ...(hasUserDesc ? { customerFacingDescription: user } : {}),
     generatedDescriptionWithPackagingTail,
-    ...(customerFacingDescriptionWithPackagingTail
-      ? { customerFacingDescriptionWithPackagingTail }
-      : {}),
-    descriptionWithPackagingTail,
     orderedQuantityLabel:
       quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
         ? String(quoteSummary.orderQuantityLabel).trim()
         : '—',
     notes: String(notes ?? '').trim(),
-    qualityChecks: qcLabels,
+    qualityChecks: qcIds,
   }
 
   return (

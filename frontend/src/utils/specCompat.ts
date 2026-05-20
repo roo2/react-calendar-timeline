@@ -13,3 +13,13 @@ export function derivedInlineSeal(productType: string | undefined | null, finish
   return pt === 'Bag' && fm === 'Rolls'
 }
 
+/** User-facing label for `run_requirements.seal_type` / `printing.seal_type` slug (`end` → Bottom). */
+export function formatSealTypeLabel(slug: unknown, opts?: { full?: boolean }): string {
+  const x = String(slug ?? '').trim().toLowerCase()
+  if (x === '') return ''
+  if (x === 'side') return opts?.full ? 'Side Seal' : 'Side'
+  if (x === 'end') return opts?.full ? 'Bottom Seal' : 'Bottom'
+  if (x === 'none') return 'None'
+  return String(slug ?? '').trim()
+}
+

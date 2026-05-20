@@ -3,7 +3,11 @@ import { Alert, Box, Button, Stack, Typography } from '@mui/material'
 import { ApiError, apiFetch } from '../../api/client'
 import { Link, useParams } from 'react-router-dom'
 import type { SpecPayload } from '../../components/SpecPayloadForm'
-import { JobSheetPrintOrderHeader, type JobSheetPrintOrderHeaderModel } from './components/JobSheetPrintOrderHeader'
+import {
+  formatJobSheetPrintPageTitle,
+  JobSheetPrintOrderHeader,
+  type JobSheetPrintOrderHeaderModel,
+} from './components/JobSheetPrintOrderHeader'
 
 /** Film geometry suffix for Uteco “Film Type Supplied” (e.g. …, Gusseted). */
 function geometryLabelForUtecoFilmSupplied(dimsGeometry: unknown, productTypeRaw: unknown): string {
@@ -71,14 +75,15 @@ import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
 import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../../utils/quoteCalculator'
 import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
 import { buildQuickQuoteInputsFromSpec, type SpecQuantitySlice } from '../../utils/specToQuoteInputs'
-import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   jobSheetDescriptionWithPackagingTail,
   jobSheetOrderQuantityLabel,
 } from '../../utils/quoteQuantityDescriptors'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
-import { derivedInlineSeal } from '../../utils/specCompat'
+import { derivedInlineSeal, formatSealTypeLabel } from '../../utils/specCompat'
 import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
+import { collectQualityFlagIds } from '../../utils/qualityFlagLabels'
 import { palletsRequiredCeil } from '../../utils/palletShippingEstimate'
 
 function s(v: unknown, fallback = ''): string {
@@ -258,15 +263,6 @@ function formatPrintSide(side: unknown): string {
   if (x === 'back') return 'Back'
   if (x === 'both') return 'Both'
   return s(side)
-}
-
-function formatSealType(v: unknown): string {
-  const x = String(v ?? '').trim().toLowerCase()
-  if (x === '') return ''
-  if (x === 'side') return 'Side'
-  if (x === 'end') return 'End'
-  if (x === 'none') return 'None'
-  return s(v)
 }
 
 function yn(v: unknown): string {
@@ -471,22 +467,37 @@ function displayGeometryHeadline(raw: unknown): string {
   return displayGeometryLabel(raw)
 }
 
-function displayGeometryMode(rawGeometry: unknown, rawProductType: unknown): string {
-  const g = String(rawGeometry ?? '')
+function displayProductTypeLabel(raw: unknown): string {
+  const v = String(raw ?? '').trim()
+  if (!v) return ''
+  const norm = v.toLowerCase()
+  if (norm === 'centerfold' || norm === 'centrefold') return 'Centrefold'
+  if (norm === 'u-film' || norm === 'u_film' || norm === 'ufilm') return 'U-Film'
+  if (norm === 'j-film' || norm === 'j_film' || norm === 'jfilm') return 'J-Film'
+  return v
+}
+
+function hasGussetForExtrusionHeadline(geometryRaw: unknown, gussetMm: number | null): boolean {
+  const g = String(geometryRaw ?? '')
     .trim()
     .toLowerCase()
-  const p = String(rawProductType ?? '')
-    .trim()
-    .toLowerCase()
-  if (p === 'u-film' || p === 'u_film' || p === 'ufilm') return 'U-Film'
-  if (p === 'j-film' || p === 'j_film' || p === 'jfilm') return 'J-Film'
-  if (p === 'centerfold' || p === 'centrefold') return 'Centrefold'
-  if (p === 'sheet' || g === 'sheet') return 'SWS'
-  if (p === 'tube') {
-    if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return 'Gusseted Tube'
-    return 'Layflat Tube'
-  }
-  return displayGeometryHeadline(rawGeometry)
+  if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return true
+  return gussetMm != null && gussetMm > 0 && Number.isFinite(gussetMm)
+}
+
+/** Single extrusion headline: product type (+ Gusseted when applicable) + on Roll / in Carton. */
+function formatExtrusionProductFinishHeadline(
+  productTypeRaw: unknown,
+  finishModeRaw: unknown,
+  geometryRaw: unknown,
+  gussetMm: number | null,
+): string {
+  const typeLabel = displayProductTypeLabel(productTypeRaw)
+  if (!typeLabel) return '—'
+  const finishSuffix =
+    String(finishModeRaw ?? '').trim().toLowerCase() === 'cartons' ? 'in Carton' : 'on Roll'
+  const prefix = hasGussetForExtrusionHeadline(geometryRaw, gussetMm) ? 'Gusseted ' : ''
+  return `${prefix}${typeLabel} ${finishSuffix}`
 }
 
 /** Matches {@link SpecPayloadForm} `intOrDash` for film / bag readouts. */
@@ -1001,6 +1012,32 @@ type JobSheetPrintConversionModel = {
   } | null
 }
 
+/**
+ * Extruder output row counts per printed page (A4, ~4mm @page margin).
+ * First page shares space with order header, qty grid, settings, and QC checklist.
+ * Continuation pages are mostly table rows (~40/page). Browser print margin headers
+ * cannot be set to custom job titles from the app (dialog-only); chunking + repeat
+ * title blocks are used instead.
+ */
+const EXTRUDER_OUTPUT_ROWS_FIRST_PAGE = 12
+const EXTRUDER_OUTPUT_ROWS_PER_CONTINUATION_PAGE = 40
+
+function chunkExtruderRollIndices(rollCount: number): number[][] {
+  if (rollCount <= 0) return []
+  const chunks: number[][] = []
+  const pushRange = (from: number, to: number) => {
+    const chunk: number[] = []
+    for (let i = from; i < to; i++) chunk.push(i)
+    chunks.push(chunk)
+  }
+  const firstEnd = Math.min(EXTRUDER_OUTPUT_ROWS_FIRST_PAGE, rollCount)
+  pushRange(0, firstEnd)
+  for (let start = firstEnd; start < rollCount; start += EXTRUDER_OUTPUT_ROWS_PER_CONTINUATION_PAGE) {
+    pushRange(start, Math.min(start + EXTRUDER_OUTPUT_ROWS_PER_CONTINUATION_PAGE, rollCount))
+  }
+  return chunks
+}
+
 function JobSheetPrintExtrusionQcPage(props: {
   perforated: boolean
   header: JobSheetPrintOrderHeaderModel['header']
@@ -1008,10 +1045,12 @@ function JobSheetPrintExtrusionQcPage(props: {
   q: JobSheetPrintOrderQuantitiesModel
 }): ReactNode {
   const { perforated, header, product, q } = props
+  const pageTitle = formatJobSheetPrintPageTitle(header)
+  const extruderRollChunks = chunkExtruderRollIndices(q.extruderOutputRollCount)
+  const extruderTitleClass = `js-title${perforated ? ' js-perf-hl' : ''} js-title--extruder-repeat`
   return (
     <div className="js-print-extrusion-qc-sheet">
       <JobSheetPrintOrderHeader
-        titleLine="EXTRUSION QC"
         perforated={perforated}
         header={header}
         product={product}
@@ -1025,7 +1064,7 @@ function JobSheetPrintExtrusionQcPage(props: {
         <tbody>
           <tr>
             <td className="js-sec" colSpan={12}>
-              EXTRUDER SETTINGS
+              Extruder settings
             </td>
           </tr>
           <tr>
@@ -1125,41 +1164,44 @@ function JobSheetPrintExtrusionQcPage(props: {
           </tr>
           <tr>
             <td colSpan={6} className="js-manual-wrap">
-              <table className="js-extruder-output-table js-extruder-output-table--pageable" role="presentation">
-                <thead>
-                  <tr className="js-print-extruder-output-repeat-hdr">
-                    <th colSpan={12} className="js-print-extruder-output-repeat-hdr-th">
-                      <div className={`js-title${perforated ? ' js-perf-hl' : ''} js-title--extruder-repeat`}>
-                        EXTRUSION QC — {header.jobCode}
-                      </div>
-                    </th>
-                  </tr>
-                  <tr>
-                    <th>Roll No.</th>
-                    <th>Operator</th>
-                    <th>Kgs/Roll</th>
-                    <th>Mts/Roll</th>
-                    <th>Width (mm)</th>
-                    <th>Gauge</th>
-                    <th>QC Check</th>
-                    <th>Remark</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Adjustments</th>
-                    <th>Checked</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: q.extruderOutputRollCount }, (_, rollIdx) => (
-                    <tr key={`extruder-out-qc-${rollIdx}`}>
-                      <td>{rollIdx + 1}</td>
-                      {Array.from({ length: 11 }, (_, c) => (
-                        <td key={`extruder-out-qc-${rollIdx}-c-${c}`}>{'\u00a0'}</td>
+              {extruderRollChunks.map((rollIndices, chunkIdx) => (
+                <div key={`extruder-out-chunk-${chunkIdx}`} className="js-extruder-output-chunk">
+                  {chunkIdx > 0 ? (
+                    <>
+                      <div className="js-print-page-break" />
+                      <div className={extruderTitleClass}>{pageTitle}</div>
+                    </>
+                  ) : null}
+                  <table className="js-extruder-output-table js-extruder-output-table--pageable" role="presentation">
+                    <thead>
+                      <tr>
+                        <th>Roll No.</th>
+                        <th>Operator</th>
+                        <th>Kgs/Roll</th>
+                        <th>Mts/Roll</th>
+                        <th>Width (mm)</th>
+                        <th>Gauge</th>
+                        <th>QC Check</th>
+                        <th>Remark</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Adjustments</th>
+                        <th>Checked</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rollIndices.map((rollIdx) => (
+                        <tr key={`extruder-out-qc-${rollIdx}`}>
+                          <td>{rollIdx + 1}</td>
+                          {Array.from({ length: 11 }, (_, c) => (
+                            <td key={`extruder-out-qc-${rollIdx}-c-${c}`}>{'\u00a0'}</td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </td>
           </tr>
         </tbody>
@@ -1186,7 +1228,6 @@ function JobSheetPrintConversionInstructionsPage(props: {
   return (
     <div className="js-print-conversion-sheet">
       <JobSheetPrintOrderHeader
-        titleLine="CONVERSION DETAILS"
         perforated={orderHeader.perforated}
         header={orderHeader.header}
         product={orderHeader.product}
@@ -1204,8 +1245,8 @@ function JobSheetPrintConversionInstructionsPage(props: {
               <tr>
                 <td colSpan={2} className="js-conv-dimension">
                   <div className="js-conv-dimension-label">Dimensions:</div>
-                  <div className="js-conv-dimension-value" >
-                  {packingDimensionShorthand.trim() !== '' ? packingDimensionShorthand : dash}
+                  <div className="js-conv-dimension-value js-print-primary-text">
+                    {packingDimensionShorthand.trim() !== '' ? packingDimensionShorthand : dash}
                   </div>
                 </td>
               </tr>
@@ -1416,19 +1457,17 @@ export function JobSheetPrintPage() {
     const orderDate = js.order_date ?? ''
     const dueDate = js.due_date ?? ''
     const jobCode = js.job_no ?? ''
-    const productCode = js.product_code ?? ''
     const specTyped = spec as SpecPayload
     const computedSpecDescription = computeProductDescriptionFromSpec(specTyped)
     const customerFacingDescriptionPlain = String(js.customer_facing_description || '').trim()
-    const customerFacingProductCodePlain = String(identity?.customer_code || '').trim()
     const generatedDescriptionBase =
       String(computedSpecDescription || '').trim() || String(js.product_description || '').trim()
     const notes = identity?.notes ?? run?.notes ?? packaging?.notes ?? spec?.notes ?? ''
-    const qualityChecks = Array.isArray(quality?.flags)
-      ? quality.flags
-      : Array.isArray(spec?.quality_checks)
-        ? spec.quality_checks
-        : []
+    const qualityChecks = collectQualityFlagIds({
+      quality_expectations: quality,
+      identity,
+      quality_checks: spec?.quality_checks,
+    })
 
     const productType = identity?.product_type ?? spec?.product_type ?? ''
     const productTypeNorm = String(productType || '').trim().toLowerCase()
@@ -1502,18 +1541,21 @@ export function JobSheetPrintPage() {
       ) {
         return `(${widthMm} + ${gussetMm})`
       }
-      const ru = runUpNumPrint
-      if ((geometryNorm === 'centrefold' || geometryNorm === 'centerfold') && widthMm != null && widthMm > 0) {
-        const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm * 0.5)
-        return `${widthMm}(${layflatMm})`
-      }
-      if (
-        widthMm != null &&
-        widthMm > 0 &&
-        (geometryNorm === 'sheet' || geometryNorm === 'flat' || geometryNorm === 'layflat')
-      ) {
-        const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm)
-        return `${widthMm}(${layflatMm})`
+      // Layflat bracket notation (e.g. 1000(500)) — Sheet / Centerfold only; bags use plain width.
+      if (!runUpNotApplicable) {
+        const ru = runUpNumPrint
+        if ((geometryNorm === 'centrefold' || geometryNorm === 'centerfold') && widthMm != null && widthMm > 0) {
+          const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm * 0.5)
+          return `${widthMm}(${layflatMm})`
+        }
+        if (
+          widthMm != null &&
+          widthMm > 0 &&
+          (geometryNorm === 'sheet' || geometryNorm === 'flat' || geometryNorm === 'layflat')
+        ) {
+          const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm)
+          return `${widthMm}(${layflatMm})`
+        }
       }
       if (widthSplitMm.length >= 2) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
       if (widthMm != null && widthMm > 0) return `${widthMm}`
@@ -1954,19 +1996,6 @@ export function JobSheetPrintPage() {
             geoSnapshotForTail,
           )
         : ''
-    const descriptionWithPackagingTail =
-      customerFacingDescriptionWithPackagingTail.trim() !== ''
-        ? customerFacingDescriptionWithPackagingTail
-        : generatedDescriptionWithPackagingTail
-
-    const generatedProductCode = s(computeProductCodeFromSpec(specTyped))
-    const customerFacingProductCode =
-      customerFacingProductCodePlain !== '' ? customerFacingProductCodePlain : undefined
-    const showGeneratedProductCodeWithCustomer =
-      customerFacingProductCode != null &&
-      generatedProductCode !== '' &&
-      generatedProductCode !== customerFacingProductCode
-
     const totalMNumForUteco =
       derivedTotalM != null && derivedTotalM > 0 && Number.isFinite(derivedTotalM)
         ? derivedTotalM
@@ -2023,7 +2052,7 @@ export function JobSheetPrintPage() {
       utecoFinishedBagSize = `${Math.round(Number(bagWUteco))}mm x ${Math.round(Number(bagLUteco))}mm`
     }
 
-    const sealTypeLabelUteco = formatSealType(run?.seal_type ?? printing?.seal_type) || '—'
+    const sealTypeLabelUteco = formatSealTypeLabel(run?.seal_type ?? printing?.seal_type) || '—'
     const eyeSpotLabelUteco = formatEyeSpot(printing?.eye_spot) || '—'
 
     const deckColoursUteco = buildUtecoDeckColourRows(
@@ -2066,12 +2095,15 @@ export function JobSheetPrintPage() {
       ventRows != null && ventRows > 0 && ventHoles != null && ventHoles > 0
         ? `${Math.round(ventRows)} rows x ${Math.round(ventHoles)} holes`
         : ''
-    const sealTypePrint = formatSealType(run?.seal_type ?? printing?.seal_type ?? 'end') || 'End'
+    const sealTypeSlug = String(run?.seal_type ?? printing?.seal_type ?? 'end')
+      .trim()
+      .toLowerCase()
+    const sealTypePrint = formatSealTypeLabel(sealTypeSlug) || 'Bottom'
     const cartonSizePrint =
       convRaw.carton_size != null && String(convRaw.carton_size).trim() !== '' ? String(convRaw.carton_size) : ''
     const packSizePrint =
       convRaw.pack_size != null && String(convRaw.pack_size).trim() !== '' ? String(convRaw.pack_size) : ''
-    const highlightConversionSeal = sealTypePrint !== 'End'
+    const highlightConversionSeal = sealTypeSlug !== 'end'
     const highlightConversionCartonSize = cartonSizePrint.trim() !== ''
     const highlightConversionPackLayFlat = !!convRaw.pack_lay_flat
     const highlightConversionTagPacks = !!convRaw.tag_packs
@@ -2101,7 +2133,6 @@ export function JobSheetPrintPage() {
     })
 
     return {
-      titleLine: "JOB SHEET",
       perforated,
       header: {
         customer: s(customer),
@@ -2112,18 +2143,10 @@ export function JobSheetPrintPage() {
         jobCode: s(jobCode),
       },
       product: {
-        productCode: s(productCode),
-        ...(customerFacingProductCode != null
-          ? {
-              customerFacingProductCode,
-              ...(showGeneratedProductCodeWithCustomer ? { generatedProductCode } : {}),
-            }
+        ...(customerFacingDescriptionWithPackagingTail.trim() !== ''
+          ? { customerFacingDescription: customerFacingDescriptionWithPackagingTail }
           : {}),
         generatedDescriptionWithPackagingTail,
-        ...(customerFacingDescriptionWithPackagingTail.trim() !== ''
-          ? { customerFacingDescriptionWithPackagingTail }
-          : {}),
-        descriptionWithPackagingTail,
         orderedQuantityLabel,
         notes: s(notes),
         qualityChecks: qualityChecks.map((x: unknown) => s(x, '')).filter(Boolean),
@@ -2131,14 +2154,12 @@ export function JobSheetPrintPage() {
       extrusion: {
         productType: s(productType),
         finishMode: s(finishMode),
-        geometryHeadline: displayGeometryMode(geometryLabelRaw, productType),
-        productFinishHeadline: `${s(productType)} ${
-          String(finishMode || '')
-            .trim()
-            .toLowerCase() === 'cartons'
-            ? 'in Carton'
-            : 'on Roll'
-        }`,
+        productFinishHeadline: formatExtrusionProductFinishHeadline(
+          productType,
+          finishMode,
+          geometryLabelRaw,
+          gussetMm,
+        ),
         geometryLabel: displayGeometryLabel(geometryLabelRaw),
         geometryExtras: [
           gussetMm != null && gussetMm > 0 ? `Gusset ${Math.round(gussetMm)} mm` : '',
@@ -2406,7 +2427,7 @@ export function JobSheetPrintPage() {
         }
         .js-print-root {
           font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-          color: #111;
+          color: #000;
           width: 210mm;
           max-width: calc(100vw - 24px);
           margin: 0 auto 16px;
@@ -2414,7 +2435,7 @@ export function JobSheetPrintPage() {
           padding: var(--js-print-page-padding);
           font-size: 11px;
           line-height: 1.35;
-          font-weight: 600;
+          font-weight: 400;
           background: #fff;
           box-sizing: border-box;
           box-shadow: 0 0 0 1px #d6d6d6;
@@ -2422,14 +2443,13 @@ export function JobSheetPrintPage() {
           --js-print-fs-label: 10px;
           --js-print-fs-title: 15px;
           --js-print-fs-dim-primary: 14px;
-          --js-print-fw-label: 700;
-          --js-print-fw-value: 700;
+          --js-print-fw-label: 500;
+          --js-print-fw-value: 600;
         }
         .js-title {
           text-align: center;
           font-weight: 800;
           font-size: var(--js-print-fs-title);
-          letter-spacing: 0.04em;
           padding: 10px 8px;
           border: 1px solid #000;
           margin-bottom: 8px;
@@ -2443,8 +2463,18 @@ export function JobSheetPrintPage() {
           vertical-align: top;
           word-break: break-word;
         }
-        .js-grid th { font-weight: var(--js-print-fw-label); font-size: var(--js-print-fs-label); text-align: left; color: #333; }
+        .js-grid th { font-weight: var(--js-print-fw-label); font-size: var(--js-print-fs-label); text-align: left;}
         .js-grid td { font-weight: var(--js-print-fw-value); font-size: var(--js-print-fs-body); }
+        .js-print-primary-text {
+          font-size: var(--js-print-fs-dim-primary);
+          font-weight: 700;
+          line-height: 1.2;
+        }
+        .js-grid td.js-print-primary-text,
+        .js-grid th.js-print-primary-text {
+          font-size: var(--js-print-fs-dim-primary);
+          font-weight: 700;
+        }
         /* Keep row height when a value cell is empty (padding alone can collapse in some print engines). */
         .js-grid > tbody > tr > th,
         .js-grid > tbody > tr > td {
@@ -2455,10 +2485,16 @@ export function JobSheetPrintPage() {
         .js-grid > tbody > tr > td:empty::before {
           content: '\\00a0';
         }
-        .js-grid td.js-sec { font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
-        .js-grid td.js-sub { font-weight: 600; }
-        .js-grid td.js-blue { font-weight: 400; }
-        .js-grid td.js-td-mixed { font-weight: 400; }
+        .js-grid td.js-sec {
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+        }
+        .js-grid td.js-sub {
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+        }
+        .js-grid td.js-blue { font-weight: var(--js-print-fw-value); }
+        .js-grid td.js-td-mixed { font-weight: var(--js-print-fw-value); }
         .js-grid td.js-product-outer { padding: 0 !important; }
         .js-product-split {
           width: 100%;
@@ -2478,36 +2514,37 @@ export function JobSheetPrintPage() {
         .js-product-split td.js-product-left {
           width: 75%;
         }
-        .js-product-k { font-weight: 400; }
+        .js-product-k { font-weight: var(--js-print-fw-label); }
         .js-product-code-val {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-weight: 700;
-        }
-        .js-product-code-val.js-order-header-primary {
-          font-weight: 800;
-        }
-        .js-product-code-val.js-order-header-secondary {
-          font-weight: 600;
-          font-size: var(--js-print-fs-label);
-          color: #555;
-        }
-        .js-print-val { font-weight: 700; font-size: var(--js-print-fs-body); }
-        .js-sec {
-          background: #d9d9d9;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
-          font-weight: 800;
-          letter-spacing: 0.04em;
         }
-        .js-sub { background: #F0F0F0; font-size: var(--js-print-fs-body); font-weight: 700 !important;}
+        .js-print-val {
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+        }
+        .js-sec {
+          background: #f1f1f1;
+          font-size: var(--js-print-fs-body);
+          font-weight: var(--js-print-fw-value);
+        }
+        .js-sub {
+          background: #f1f1f1;
+          font-size: var(--js-print-fs-body);
+          font-weight: var(--js-print-fw-value) !important;
+        }
         .js-tol { background: #fff566; font-size: var(--js-print-fs-body) !important;}
         .js-pink { background: #ffc8d8 !important;}
         .js-blue { background: #b4d7ff !important;}
         .js-perf-bg { background: #dff1ff !important;}
-        .js-muted { color: #444; font-size: var(--js-print-fs-label); font-weight: 600; }
+        .js-muted {
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-label);
+        }
         .js-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px; }
         .js-dim-wrap { padding: 0 !important; }
         .js-extrusion-dim-run-cell .js-dim-grid { margin-bottom: 0; }
-        .js-order-qty-grid { margin-top: 14px; }
         .js-order-qty-grid td.js-oq-head-row-spacer {
           padding: 0 !important;
           height: 0 !important;
@@ -2523,19 +2560,17 @@ export function JobSheetPrintPage() {
           text-transform: none;
         }
         .js-order-qty-grid th.js-sec {
-          background: #d9d9d9;
-          font-weight: 800;
+          background: #f1f1f1;
+          font-weight: var(--js-print-fw-value);
           text-align: left;
           font-size: var(--js-print-fs-body);
-          letter-spacing: 0.04em;
-          text-transform: none;
-          color: #111;
           border: 1px solid #000;
           padding: 4px 6px;
         }
         .js-order-qty-grid .js-oq-row-label {
           background: #e8e8e8;
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           border: 1px solid #000;
           padding: 4px 6px;
           vertical-align: top;
@@ -2558,12 +2593,11 @@ export function JobSheetPrintPage() {
         .js-dim-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0 0 8px; }
         .js-dim-grid th.js-dim-h {
           border-top: 2px solid #000;
-          background: #d9d9d9;
+          background: #f1f1f1;
           font-weight: 700;
           text-align: center;
           padding: 3px 6px;
-          font-size: 10px;
-          letter-spacing: 0.02em;
+          font-size: var(--js-print-fs-label);
         }
         .js-dim-grid th.js-dim-h:first-child {
           border-left: 2px solid #000;
@@ -2598,9 +2632,9 @@ export function JobSheetPrintPage() {
         .js-dim-primary {
           background: #e8e8e8;
           padding: 8px 10px;
-          font-weight: 700;
           text-align: center;
           font-size: var(--js-print-fs-dim-primary);
+          font-weight: 700;
           line-height: 1.2;
         }
         .js-dim-primary.js-dim-primary-hl {
@@ -2609,12 +2643,10 @@ export function JobSheetPrintPage() {
         .js-dim-primary-unit {
           font-size: var(--js-print-fs-body);
           font-weight: 400;
-          color: #444;
         }
         .js-dim-primary-unit-m {
           font-weight: 700;
           font-size: var(--js-print-fs-dim-primary);
-          color: #000;
         }
         .js-dim-primary.js-dim-primary-left { text-align: left; }
         .js-dim-secondary {
@@ -2634,13 +2666,13 @@ export function JobSheetPrintPage() {
           border: 1px solid #000;
           padding: 6px 8px;
           font-size: var(--js-print-fs-label);
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
           vertical-align: middle;
           background: #fff;
         }
         .js-print-flag-grid td b {
           font-size: var(--js-print-fs-body);
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
           display: block;
         }
         .js-print-flag-grid td.js-print-flag--treat-outside { background: #fff59d; }
@@ -2651,7 +2683,8 @@ export function JobSheetPrintPage() {
         .js-dim-secondary.js-dim-secondary-hl { background: #fff59d; }
         .js-run-triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
         .js-run-triple td {
-          font-weight: 400;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           border: 1px solid #000;
           padding: 6px 8px;
           width: 25%;
@@ -2666,20 +2699,22 @@ export function JobSheetPrintPage() {
           border: none;
           text-align: center;
           font-size: var(--js-print-fs-body);
-          font-weight: 600;
+          font-weight: var(--js-print-fw-value);
           width: 50%;
         }
         .js-headline-split .js-headline-value {
           font-size: var(--js-print-fs-dim-primary);
-          font-weight: 800;
+          font-weight: 700;
           line-height: 1.2;
         }
         .js-headline-split .js-headline-label {
-          font-size: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: #444;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-label);
           padding-bottom: 2px;
+        }
+        .js-extrusion-product-headline {
+          text-align: center;
+          padding: 4px 8px;
         }
         .js-run-triple > tbody > tr > td {
           min-height: 2.5em;
@@ -2694,12 +2729,10 @@ export function JobSheetPrintPage() {
           vertical-align: top;
         }
         .js-resin-mix-blend-caption {
-          font-size: 12px;
-          font-weight: 600;
-          color: #333;
+          font-size: var(--js-print-fs-body);
+          font-weight: var(--js-print-fw-value);
           padding: 5px 7px 3px;
-          letter-spacing: 0.02em;
-          background: #d9d9d9;
+          background: #f1f1f1;
         }
         .js-resin-mix-blend-bar {
           width: 100%;
@@ -2715,11 +2748,11 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
         }
         .js-resin-mix-blend-bar td.js-resin-mix-blend-resin {
-          font-weight: 600;
+          font-weight: var(--js-print-fw-value);
         }
         .js-resin-mix-blend-bar td.js-resin-mix-blend-pct {
           width: 5.5em;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
           text-align: right;
           white-space: nowrap;
         }
@@ -2738,9 +2771,9 @@ export function JobSheetPrintPage() {
           background: #ffe8ec;
         }
 
-        .js-grid .js-qty-billing {    
+        .js-grid .js-qty-billing {
           font-size: var(--js-print-fs-label);
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
         }
           
         .js-qty-billing span{
@@ -2761,11 +2794,9 @@ export function JobSheetPrintPage() {
           font-size: 12px;
         }
         .js-printing-nested > tbody > tr > th {
-          background: #ededed;
-          font-weight: 600;
-          font-size: 10px;
-          letter-spacing: 0.02em;
-          text-transform: uppercase;
+          background: #f1f1f1;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           text-align: left;
           border: 1px solid #000;
           padding: 4px 6px;
@@ -2774,7 +2805,8 @@ export function JobSheetPrintPage() {
         .js-printing-nested > tbody > tr > td {
           border: 1px solid #000;
           padding: 4px 6px;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           vertical-align: top;
           word-break: break-word;
         }
@@ -2790,26 +2822,27 @@ export function JobSheetPrintPage() {
         .js-printing-nested .js-print-block { padding: 5px 7px; }
         .js-print-k {
           display: block;
-          font-weight: 600;
-          font-size: 10px;
-          color: #333;
-          letter-spacing: 0.03em;
-          text-transform: uppercase;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           margin-bottom: 3px;
         }
-        .js-print-v { font-weight: 700; font-size: 12px; }
+        .js-print-v {
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+        }
         .js-print-pre { white-space: pre-wrap; }
         .js-print-ink {
           width: 100%;
           border-collapse: collapse;
           margin-top: 4px;
-          font-size: 11px;
+          font-size: var(--js-print-fs-body);
         }
         .js-print-ink th,
         .js-print-ink td {
           border: 1px solid #000;
           padding: 3px 6px;
-          font-weight: 600;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           min-height: 2.2em;
           box-sizing: border-box;
         }
@@ -2819,12 +2852,12 @@ export function JobSheetPrintPage() {
         }
         .js-print-ink thead th {
           background: #f2f2f2;
-          font-size: 10px;
-          font-weight: 600;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-label);
         }
         .js-print-ink-mono {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
         }
         .js-compact {
           border: 1px solid #000;
@@ -2833,7 +2866,7 @@ export function JobSheetPrintPage() {
         }
         .js-compact-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 6px 10px;
         }
         .js-compact-item {
@@ -2843,49 +2876,48 @@ export function JobSheetPrintPage() {
           min-width: 0;
         }
         .js-compact-k {
-          font-weight: 600;
-          color: #444;
-          white-space: nowrap;
+          font-weight: var(--js-print-fw-label);
           font-size: var(--js-print-fs-label);
+          white-space: nowrap;
         }
         .js-compact-v {
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
           min-width: 0;
           word-break: break-word;
-        }
-        .js-compact-v-strong {
-          font-weight: 800;
-          font-size: 12px;
-          line-height: 1.25;
-        }
-        .js-order-header-value-stack {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 2px;
-          min-width: 0;
-        }
-        .js-order-header-primary {
-          font-weight: 800;
-        }
-        .js-order-header-secondary {
-          font-weight: 600;
-          font-size: var(--js-print-fs-label);
-          color: #555;
-          line-height: 1.25;
-        }
-        .js-order-header-desc-secondary {
-          font-weight: 600;
-          font-size: var(--js-print-fs-label);
-          color: #444;
-          line-height: 1.3;
         }
         .js-compact-block {
           margin-top: 6px;
           gap: 6px;
           display: flex;
           flex-direction: column;
+        }
+        .js-order-header-desc-line {
+          display: block;
+          margin-top: 4px;
+        }
+        .js-order-header-desc-line .js-compact-v {
+          display: block;
+          width: 100%;
+        }
+        .js-order-header-desc-customer {
+          display: block;
+          width: 100%;
+        }
+        .js-order-header-desc-generated,
+        .js-order-header-notes {
+          display: block;
+          width: 100%;
+          font-size: var(--js-print-fs-body);
+          font-weight: var(--js-print-fw-value);
+          line-height: 1.35;
+        }
+        .js-order-header-padded-block {
+          padding: 6px 8px;
+        }
+        .js-order-header-padded-block .js-compact-k {
+          display: block;
+          margin-bottom: 3px;
         }
         .js-quality-list {
           list-style: none;
@@ -2902,23 +2934,22 @@ export function JobSheetPrintPage() {
           margin: 0;
           padding: 2px 7px;
           font-size: var(--js-print-fs-label);
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
           line-height: 1.25;
           border: 1px solid #000;
           border-radius: 3px;
-          background: #f0f0f0;
-          color: #111;
+          background: #f1f1f1;
         }
         .js-print-ink-num { width: 2rem; text-align: center; }
         .js-print-barcode-block { padding-top: 4px !important; padding-bottom: 5px !important; }
         .js-print-barcode-k {
-          font-size: 9px !important;
-          letter-spacing: 0.04em;
+          font-size: var(--js-print-fs-label) !important;
+          font-weight: var(--js-print-fw-label) !important;
           margin-bottom: 2px !important;
         }
         .js-print-barcode-v {
-          font-size: 11px !important;
-          font-weight: 600;
+          font-size: var(--js-print-fs-body) !important;
+          font-weight: var(--js-print-fw-value) !important;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
         .js-manual-wrap {
@@ -2929,7 +2960,7 @@ export function JobSheetPrintPage() {
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
-          font-size: 10px;
+          font-size: var(--js-print-fs-body);
         }
         .js-extruder-output-table th,
         .js-extruder-output-table td {
@@ -2937,17 +2968,19 @@ export function JobSheetPrintPage() {
           padding: 4px 2px;
           vertical-align: middle;
           text-align: center;
-          font-weight: 600;
           word-break: break-word;
           min-height: 1.85em;
           box-sizing: border-box;
         }
+        .js-extruder-output-table td {
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+        }
         .js-extruder-output-table th {
-          background: #ededed;
-          font-size: 9px;
-          letter-spacing: 0.01em;
+          background: #f1f1f1;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-label);
           line-height: 1.15;
-          font-weight: 700;
         }
         .js-extruder-output-table td:first-child,
         .js-extruder-output-table th:first-child {
@@ -2956,19 +2989,11 @@ export function JobSheetPrintPage() {
         .js-extruder-output-table--pageable thead {
           display: table-header-group;
         }
-        .js-print-extruder-output-repeat-hdr-th {
-          padding: 0 !important;
-          vertical-align: middle;
-          text-align: center;
-          background: #fff !important;
+        .js-extruder-output-chunk + .js-extruder-output-chunk {
+          margin-top: 0;
         }
         .js-title.js-title--extruder-repeat {
-          font-size: 10px;
-          line-height: 1.25;
-          padding: 5px 6px;
-          margin: 0;
-          border: 1px solid #000;
-          letter-spacing: 0.04em;
+          margin-bottom: 8px;
         }
         .js-qc-checklist {
           width: 100%;
@@ -2983,28 +3008,29 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
         }
         .js-qc-checklist td.js-qc-title {
-          font-weight: 800;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
-          letter-spacing: 0.03em;
-          text-transform: uppercase;
-          background: #d9d9d9;
+          background: #f1f1f1;
         }
         .js-qc-checklist .js-qc-check-for {
           text-align: left;
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           width: 35%;
         }
         .js-qc-checklist .js-qc-wi {
           width: 12%;
           text-align: center;
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
         }
         .js-qc-checklist .js-qc-narrow {
           width: 10.66%;
           text-align: center;
         }
         .js-qc-checklist .js-qc-details-label {
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           text-align: left;
           height: 46px;
           vertical-align: top
@@ -3014,7 +3040,7 @@ export function JobSheetPrintPage() {
           break-before: page;
         }
         .js-print-uteco-sheet {
-          font-size: 12px;
+          font-size: var(--js-print-fs-body);
           line-height: 1.4;
           margin-bottom: 6px;
           padding: 0;
@@ -3037,11 +3063,8 @@ export function JobSheetPrintPage() {
         }
         .js-print-uteco-field:last-child { margin-bottom: 0; }
         .js-print-uteco-label {
-          font-weight: 700;
-          color: #444;
-          font-size: 10px;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           margin-bottom: 4px;
         }
         .js-print-uteco-label--table {
@@ -3051,9 +3074,8 @@ export function JobSheetPrintPage() {
           display: block;
           width: 100%;
           box-sizing: border-box;
-          font-weight: 600;
-          font-size: 13px;
-          color: #111;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           min-height: 1.25em;
           padding: 2px 2px 2px;
           border-bottom: 1px solid #111;
@@ -3112,16 +3134,13 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
         }
         .js-print-uteco-deck-table th {
-          background: #ededed;
-          font-size: 10px;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
-          font-weight: 700;
-          color: #444;
+          background: #f1f1f1;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-label);
         }
         .js-print-uteco-deck-table td {
-          font-weight: 600;
-          font-size: 13px;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           padding: 6px 8px;
         }
         .js-print-uteco-deck-table td:first-child {
@@ -3134,24 +3153,21 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
           min-height: 1.25em;
           padding: 1px 0 5px;
-          font-weight: 600;
-          font-size: 13px;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           text-align: inherit;
         }
         .js-print-deck-colour-freetext {
-          font-weight: 600;
-          color: #111;
+          font-weight: var(--js-print-fw-value);
         }
         .js-print-deck-ink-code {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-weight: 700;
-          font-size: 13px;
-          color: #111;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
         }
         .js-print-deck-ink-code--paired {
-          font-size: 11px;
-          font-weight: 700;
-          color: #555;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-value);
         }
         .js-print-uteco-deck-table td:first-child .js-print-uteco-table-value {
           text-align: center;
@@ -3168,10 +3184,9 @@ export function JobSheetPrintPage() {
           margin-bottom: 10px;
         }
         .js-conv-section-label {
-          font-size: 13px;
-          font-weight: 800;
+          font-size: var(--js-print-fs-body);
+          font-weight: var(--js-print-fw-value);
           margin: 0 0 8px;
-          letter-spacing: 0.02em;
         }
         .js-print-extrusion-qc-sheet {
           padding: 0;
@@ -3192,7 +3207,8 @@ export function JobSheetPrintPage() {
           word-break: break-word;
         }
         .js-extruder-settings-table td.js-sec {
-          font-weight: 800;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
         }
         .js-extrusion-cert-side-note {
           min-height: 92px;
@@ -3219,26 +3235,28 @@ export function JobSheetPrintPage() {
           box-sizing: border-box;
         }
         .js-conv-head .js-conv-title {
-          font-weight: 800;
-          letter-spacing: 0.03em;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
         }
         .js-conv-main {
           display: grid;
           grid-template-columns: 58% 42%;
         }
         .js-conv-subtitle {
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           background: #f1f1f1;
         }
         .js-conv-box th {
           width: 45%;
           text-align: left;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
         }
         .js-conv-ops th {
           text-align: center;
-          font-weight: 700;
-          font-size: 10px;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
         }
         .js-conv-ops td {
           min-height: 1.9em;
@@ -3250,7 +3268,8 @@ export function JobSheetPrintPage() {
         .js-conv-comment { height: 70px; }
         .js-conv-qc th {
           text-align: left;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
         }
         .js-conv-dimension {
           text-align: center;
@@ -3258,16 +3277,14 @@ export function JobSheetPrintPage() {
           vertical-align: middle;
         }
         .js-conv-dimension-label {
-          font-weight: 700;
+          font-weight: var(--js-print-fw-label);
           text-align: center;
           padding: 3px 6px;
-          font-size: 10px;
+          font-size: var(--js-print-fs-label);
         }
         .js-conv-dimension-value {
           padding: 8px 10px;
-          font-weight: 700;
           text-align: center;
-          font-size: var(--js-print-fs-dim-primary);
         }
         .js-conv-qc th.js-conv-qc-corner {
           width: 34%;
@@ -3278,8 +3295,8 @@ export function JobSheetPrintPage() {
         .js-conv-qc th.js-conv-qc-phase-h {
           width: 13.2%;
           text-align: center;
-          font-size: 9px;
-          letter-spacing: 0.02em;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-label);
           vertical-align: middle;
         }
         .js-conv-qc tbody > tr:not(:first-child) > th:first-child {
@@ -3291,7 +3308,7 @@ export function JobSheetPrintPage() {
           min-height: 1.8em;
         }
         .js-print-uteco-sheet .js-print-barcode-v {
-          font-size: 12px !important;
+          font-size: var(--js-print-fs-body) !important;
         }
         @media screen {
           .js-print-page-break {
@@ -3320,10 +3337,9 @@ export function JobSheetPrintPage() {
           word-break: break-word;
         }
         .js-print-inline-ink-table th {
-          background: #ededed;
-          font-weight: 700;
-          font-size: var(--js-print-fs-body);
-          color: #333;
+          background: #f1f1f1;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
         }
         .js-print-inline-ink-th-deck {
           width: 15%;
@@ -3334,24 +3350,23 @@ export function JobSheetPrintPage() {
         }
         .js-print-inline-ink-td-deck {
           text-align: center;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           font-size: var(--js-print-fs-body);
         }
         .js-print-inline-ink-td-colour {
-          font-weight: 600;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
         }
         .js-print-inline-ink-td-plate {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
         }
         .js-print-inline-ink-code {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-weight: 700;
-          font-size:  var(--js-print-fs-body);
-          color: #333;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
         }
         .js-print-printing-form {
           border: 1px solid #000;
@@ -3361,24 +3376,21 @@ export function JobSheetPrintPage() {
           margin: -10px -12px 10px -12px;
           padding: 5px 12px;
           border-bottom: 2px solid #000;
-          background: #d9d9d9;
-          font-weight: 800;
+          background: #f1f1f1;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
         }
         .js-print-form-field { margin-bottom: 10px; }
         .js-print-form-field:last-child { margin-bottom: 0; }
         .js-print-form-k {
           display: block;
-          font-weight: 600;
+          font-weight: var(--js-print-fw-label);
           font-size: var(--js-print-fs-label);
-          color: #333;
           margin-bottom: 2px;
         }
         .js-print-form-v {
-          font-weight: 700;
-          font-size: 12px;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
           word-break: break-word;
           min-height: 1.25em;
           padding: 2px 0 4px 0;
@@ -3412,7 +3424,8 @@ export function JobSheetPrintPage() {
           vertical-align: top;
         }
         .js-ship-pallet-checklist-label {
-          font-weight: 700;
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
           margin-bottom: 6px;
         }
         .js-ship-pallet-checklist {
@@ -3428,15 +3441,15 @@ export function JobSheetPrintPage() {
           min-width: 2.1rem;
           text-align: center;
           padding: 3px 5px 4px;
-          font-size: 10px;
-          font-weight: 800;
+          font-size: var(--js-print-fs-label);
+          font-weight: var(--js-print-fw-value);
           line-height: 1.2;
           box-sizing: border-box;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
         tr.js-print-qty-stock-hl > th,
         tr.js-print-qty-stock-hl > td {
-          font-weight: 800;
+          font-weight: var(--js-print-fw-value);
           background: #fff59d;
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
@@ -3449,7 +3462,7 @@ export function JobSheetPrintPage() {
           margin: 0;
           padding-left: 1.1em;
           font-size: var(--js-print-fs-body);
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
         }
         .js-print-artwork-file-list li { margin: 0.15em 0; }
       `}</style>
@@ -3475,29 +3488,22 @@ export function JobSheetPrintPage() {
         ) : null}
 
         <JobSheetPrintOrderHeader
-          titleLine={model.titleLine}
           perforated={model.perforated}
           header={model.header}
           product={model.product}
         />
+
+        <table className="js-grid js-order-qty-grid">
+          <tbody>{orderQuantitiesRows}</tbody>
+        </table>
+
         <div className="js-print-extrusion-specs">
           <table className="js-grid js-extrusion-grid">
             <tbody>
               <tr><td className="js-sec" colSpan={6}>Extrusion specifications</td></tr>
               <tr>
-                <td colSpan={6}>
-                  <table className="js-headline-split" role="presentation">
-                    <tbody>
-                      <tr>
-                        <td className="js-headline-label">Product Type & Finish</td>
-                        <td className="js-headline-label">Geometry</td>
-                      </tr>
-                      <tr>
-                        <td className="js-headline-value">{e.productFinishHeadline}</td>
-                        <td className="js-headline-value">{e.geometryHeadline}</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <td colSpan={6} className="js-extrusion-product-headline js-print-primary-text">
+                  {e.productFinishHeadline}
                 </td>
               </tr>
               <tr>
@@ -3677,8 +3683,8 @@ export function JobSheetPrintPage() {
                 )
               })}
               <tr>
-                <th>Extruder</th>
-                <td colSpan={5}>
+                <th colSpan={2}>Extruder</th>
+                <td colSpan={4}>
                   {extrusionSetup.extruderLabel || extrusionSetup.dieSizeMm != null ? (
                     <>
                       {extrusionSetup.extruderLabel ? (
@@ -3699,9 +3705,6 @@ export function JobSheetPrintPage() {
 
           {isInlinePrinted ? <JobSheetPrintInlinePrintingBlock p={p} /> : null}
         </div>
-        <table className="js-grid js-order-qty-grid">
-          <tbody>{orderQuantitiesRows}</tbody>
-        </table>
 
         {shippingOnFirstPage ? <JobSheetPrintShippingDetailsTable ship={ship} /> : null}
 
@@ -3717,7 +3720,6 @@ export function JobSheetPrintPage() {
         {isUtecoPrinted ? (
           <div className="js-print-page-break">
              <JobSheetPrintOrderHeader
-              titleLine="PRINTING DETAILS"
               perforated={model.perforated}
               header={model.header}
               product={model.product}
@@ -3735,7 +3737,6 @@ export function JobSheetPrintPage() {
             <JobSheetPrintConversionInstructionsPage
               conv={conv}
               orderHeader={{
-                titleLine: model.titleLine,
                 perforated: model.perforated,
                 header: model.header,
                 product: model.product,

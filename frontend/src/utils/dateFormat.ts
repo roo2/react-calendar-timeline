@@ -15,29 +15,29 @@ export function parseApiDateTime(raw: string | Date | null | undefined): Date | 
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** Calendar date in local style: DD/MM/YY (e.g. 13/06/26). */
 export function formatDateDMYShort(raw: string | Date | null | undefined, fallback = '—'): string {
   if (raw == null) return fallback
   if (raw instanceof Date) {
     if (Number.isNaN(raw.getTime())) return fallback
-    const d = raw.getDate()
-    const m = raw.getMonth() + 1
-    const yy = raw.getFullYear() % 100
-    return `${d}/${m}/${yy}`
+    return `${pad2(raw.getDate())}/${pad2(raw.getMonth() + 1)}/${pad2(raw.getFullYear() % 100)}`
   }
 
   const s = String(raw).trim()
   if (!s) return fallback
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (m) {
-    const yy = Number(m[1]) % 100
-    const mm = Number(m[2])
-    const dd = Number(m[3])
-    return `${dd}/${mm}/${yy}`
+  const dateOnly = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (dateOnly && !/T\d{2}:\d{2}/.test(s)) {
+    const yy = Number(dateOnly[1]) % 100
+    return `${dateOnly[3]}/${dateOnly[2]}/${pad2(yy)}`
   }
 
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return fallback
-  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear() % 100}`
+  const d = parseApiDateTime(raw)
+  if (!d) return fallback
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${pad2(d.getFullYear() % 100)}`
 }
 
 export function formatDateTimeDMYShort(raw: string | Date | null | undefined, fallback = '—'): string {

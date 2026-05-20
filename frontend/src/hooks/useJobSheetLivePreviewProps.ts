@@ -22,6 +22,7 @@ import {
   type FinishMode,
 } from '../utils/quantityRollFields'
 import { hideMyobProductPlaceholderText } from '../utils/jobSheetPreviewText'
+import { collectQualityFlagIds } from '../utils/qualityFlagLabels'
 import type { SpecLinkedQuantityBind } from './useSpecLinkedQuantityFields'
 
 export type JobSheetLivePreviewPanelProps = ComponentProps<typeof JobSheetPreviewPanel>
@@ -283,10 +284,9 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
   }, [spec?.identity?.notes, spec?.run_requirements?.notes])
 
   const previewQualityFlagIds = useMemo(() => {
-    const f = spec?.quality_expectations?.flags
-    if (!Array.isArray(f) || f.length === 0) return null
-    return f.map((x: unknown) => String(x))
-  }, [spec?.quality_expectations?.flags])
+    const ids = collectQualityFlagIds(spec)
+    return ids.length > 0 ? ids : null
+  }, [spec])
 
   const jobCode =
     loadedJobSheet?.job_no != null && String(loadedJobSheet.job_no).trim()

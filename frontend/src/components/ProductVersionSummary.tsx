@@ -1,6 +1,7 @@
 import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
 import { derivedInlineSeal } from '../utils/specCompat'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
+import { collectQualityFlagIds } from '../utils/qualityFlagLabels'
 
 function fmtMm(v: unknown): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
@@ -39,15 +40,10 @@ function computeLayflatMm(spec: any): number {
 
 const QUALITY_FLAG_LABELS: Record<string, string> = {
   tight_gauge: 'Tight gauge tolerance',
-  seal_integrity: 'Seal integrity critical',
+  seal_integrity: 'Watertight Seals Critical',
   cosmetic: 'Printing Quality',
   colour: 'Colour critical',
-}
-
-const INDUSTRY_FLAG_LABELS: Record<string, string> = {
   food_contact: 'Food Contact',
-  medical: 'Medical',
-  chemical_industrial: 'Chemical / Industrial',
 }
 
 function SectionCard(props: { title: string; children: React.ReactNode }) {
@@ -176,11 +172,7 @@ export function ProductVersionSummary(props: { spec: any }) {
   const isJFilm = productType === 'J-Film'
   const finishMode = spec?.identity?.finish_mode || '-'
 
-  const qualityFlags = Array.isArray(spec?.quality_expectations?.flags) ? spec.quality_expectations.flags : []
-  const qualityLabels = qualityFlags.map((id: string) => QUALITY_FLAG_LABELS[id] || id)
-
-  const industryFlags = Array.isArray(spec?.identity?.industry_flags) ? spec.identity.industry_flags : []
-  const industryLabels = industryFlags.map((id: string) => INDUSTRY_FLAG_LABELS[id] || id)
+  const qualityLabels = collectQualityFlagIds(spec).map((id) => QUALITY_FLAG_LABELS[id] || id)
 
   return (
     <Stack spacing={2}>
@@ -355,7 +347,6 @@ export function ProductVersionSummary(props: { spec: any }) {
         <KVTable
           rows={[
             { k: 'Quality flags', v: qualityLabels.length ? qualityLabels.join(', ') : '-' },
-            { k: 'Industry / compliance intent', v: industryLabels.length ? industryLabels.join(', ') : '-' },
             { k: 'Known issues', v: spec?.quality_expectations?.known_issues || '-' },
           ]}
         />

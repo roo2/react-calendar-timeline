@@ -42,6 +42,7 @@ import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type Printin
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
 import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
+import { formatSealTypeLabel } from '../utils/specCompat'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -313,9 +314,14 @@ export function SpecPayloadForm(props: {
   const spec = useMemo(() => value || makeDefaultSpec(), [value])
 
   function normalizeSpec(d: SpecPayload) {
-    const flags = Array.isArray(d?.identity?.industry_flags) ? d.identity.industry_flags : []
-    // "non_food" is redundant (inverse of food_contact) and should not be persisted.
-    d.identity.industry_flags = Array.from(new Set(flags)).filter((x) => x !== 'non_food')
+    const industryFlags = Array.isArray(d?.identity?.industry_flags) ? d.identity.industry_flags : []
+    const qualityFlagSet = new Set<string>(Array.isArray(d?.quality_expectations?.flags) ? d.quality_expectations.flags : [])
+    if (industryFlags.includes('food_contact')) qualityFlagSet.add('food_contact')
+    d.quality_expectations.flags = Array.from(qualityFlagSet).filter(
+      (x) => x !== 'medical' && x !== 'chemical_industrial' && x !== 'non_food',
+    )
+    // Retired industry flags (food_contact now lives on quality_expectations.flags).
+    d.identity.industry_flags = []
     // Retired conversion flags (replaced by qty_to_stock / ship quantity); strip if still present in loaded JSON.
     const rr = (d as any).run_requirements
     const conv = rr?.conversion
@@ -376,7 +382,6 @@ export function SpecPayloadForm(props: {
     }
   }, [spec, customerFacingDescriptionPlaceholderProp])
 
-  const industryFlags = new Set<string>(Array.isArray(identity.industry_flags) ? identity.industry_flags : [])
   const qualityFlags = new Set<string>(Array.isArray(quality.flags) ? quality.flags : [])
 
   const blend = Array.isArray(formulation.blend) ? formulation.blend : []
@@ -863,9 +868,9 @@ export function SpecPayloadForm(props: {
       })
     }
   >
-    <MenuItem value="end">End Seal</MenuItem>
-    <MenuItem value="side">Side Seal</MenuItem>
-    <MenuItem value="none">None</MenuItem>
+    <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
+    <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+    <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
   </DefaultSelectField>
   )
 
@@ -2188,14 +2193,7 @@ export function SpecPayloadForm(props: {
                     : run.treat_inside_outside === 'none' || !run.treat_inside_outside
                       ? '—'
                       : String(run.treat_inside_outside)
-              const sealText =
-                sealTypeUiValue === 'end'
-                  ? 'End'
-                  : sealTypeUiValue === 'side'
-                    ? 'Side'
-                    : sealTypeUiValue === 'none'
-                      ? 'None'
-                      : sealTypeUiValue
+              const sealText = formatSealTypeLabel(sealTypeUiValue) || sealTypeUiValue
               const rowFilter = (pairs: unknown) =>
                 (Array.isArray(pairs) ? pairs : [])
                   .map((r: { ink_code?: unknown; plate_code?: unknown; ink_text?: unknown }) => ({
@@ -2708,9 +2706,10 @@ export function SpecPayloadForm(props: {
         <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
           {[
             { id: 'tight_gauge', label: 'Tight gauge tolerance' },
-            { id: 'seal_integrity', label: 'Seal integrity critical' },
+            { id: 'seal_integrity', label: 'Watertight Seals Critical' },
             { id: 'cosmetic', label: 'Printing Quality' },
             { id: 'colour', label: 'Colour critical' },
+            { id: 'food_contact', label: 'Food Contact' },
           ].map((f) => (
             <FormControlLabel
               key={f.id}
@@ -2731,37 +2730,6 @@ export function SpecPayloadForm(props: {
             />
           ))}
         </FormGroup>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
-            Industry / Compliance Intent
-          </Typography>
-          <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-            {[
-              { id: 'food_contact', label: 'Food Contact' },
-              { id: 'medical', label: 'Medical' },
-              { id: 'chemical_industrial', label: 'Chemical / Industrial' },
-            ].map((f) => (
-              <FormControlLabel
-                key={f.id}
-                control={
-                  <Checkbox
-                    checked={industryFlags.has(f.id)}
-                    onChange={(e) =>
-                      update((d) => {
-                        const cur = new Set<string>(d.identity.industry_flags || [])
-                        if (e.target.checked) cur.add(f.id)
-                        else cur.delete(f.id)
-                        d.identity.industry_flags = Array.from(cur)
-                      })
-                    }
-                  />
-                }
-                label={f.label}
-              />
-            ))}
-          </FormGroup>
-        </Box>
 
         <Box sx={{ mt: 2 }}>
           <TextField
@@ -2965,9 +2933,9 @@ export function SpecPayloadForm(props: {
                 })
               }
             >
-              <MenuItem value="end">End Seal</MenuItem>
-              <MenuItem value="side">Side Seal</MenuItem>
-              <MenuItem value="none">None</MenuItem>
+              <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
+              <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+              <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
             </DefaultSelectField>
 
             <TextField
