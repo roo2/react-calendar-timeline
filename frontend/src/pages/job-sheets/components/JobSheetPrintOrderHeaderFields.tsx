@@ -34,15 +34,17 @@ function formatDescWithQty(description: string, orderedQuantityLabel: string): s
 export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFieldsProps): ReactElement {
   const { header: h, product: prod, printingFooter, variant, hideHeaderGrid = false } = props
 
+  const generatedCode = String(prod.generatedProductCode ?? '').trim()
   const descCustomer = String(prod.customerFacingDescription ?? '').trim()
-  const descGen = String(prod.generatedDescriptionWithPackagingTail ?? '').trim()
+  const descGenerated = String(prod.generatedDescriptionWithPackagingTail ?? '').trim()
   const qty = prod.orderedQuantityLabel
   const lineCustomer = descCustomer ? formatDescWithQty(descCustomer, qty) : ''
-  const lineGen = descGen ? formatDescWithQty(descGen, qty) : ''
-  const showGenLine = Boolean(lineGen && lineGen !== lineCustomer)
-  const primaryDescLine = lineCustomer || lineGen
-  const secondaryDescLine = lineCustomer && showGenLine ? lineGen : ''
-  const notesText = dash(prod.notes)
+  const lineGenerated = descGenerated ? formatDescWithQty(descGenerated, qty) : ''
+  const lineCode = generatedCode
+  const primaryDescLine = lineCode || lineCustomer || lineGenerated
+  const secondaryDescLine =
+    lineCode && lineCustomer ? lineCustomer : lineCode && !lineCustomer && lineGenerated ? lineGenerated : ''
+  const notesText = String(prod.notes ?? '').trim()
   const qualityLabels = prod.qualityChecks.map((id) => formatQualityFlagLabel(id)).filter(Boolean)
   const orderDateDisplay = formatDateDMYShort(h.orderDate)
   const dueDateDisplay = formatDateDMYShort(h.dueDate)
@@ -74,32 +76,30 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
         <div className="js-compact-block">
           {primaryDescLine ? (
             <div className="js-order-header-desc-line">
-              <span className="js-order-header-desc-customer js-print-primary-text" style={{ whiteSpace: 'pre-wrap' }}>
+              <span className="js-order-header-desc-primary js-print-primary-text" style={{ whiteSpace: 'pre-wrap' }}>
                 {primaryDescLine}
               </span>
             </div>
           ) : null}
           {secondaryDescLine ? (
             <div className="js-order-header-desc-line">
-              <span className="js-order-header-desc-generated" style={{ whiteSpace: 'pre-wrap' }}>
+              <span className="js-order-header-desc-secondary" style={{ whiteSpace: 'pre-wrap' }}>
                 {secondaryDescLine}
               </span>
             </div>
           ) : null}
           <div className="js-order-header-padded-block">
             <span className="js-order-header-notes" style={{ whiteSpace: 'pre-wrap' }}>
-              {notesText}
+              {notesText || '\u00A0'}
             </span>
             
-            {qualityLabels.length && (
-              <>
-                <ul className="js-quality-list">
-                  {qualityLabels.map((qc, i) => (
-                    <li key={`${qc}-${i}`}>{qc}</li>
-                  ))}
-                </ul>
-              </>
-            )}
+            {qualityLabels.length > 0 ? (
+              <ul className="js-quality-list">
+                {qualityLabels.map((qc, i) => (
+                  <li key={`${qc}-${i}`}>{qc}</li>
+                ))}
+              </ul>
+            ) : null}
           </div>
           {printingFooter ? (
             <>
@@ -231,14 +231,14 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
             Notes:
           </Typography>
           <Typography component="div" sx={descSecondarySx}>
-            {notesText}
+            {notesText || '\u00A0'}
           </Typography>
         </Box>
         <Box sx={paddedBlockSx}>
-          <Typography component="div" sx={{ ...kSx, mb: qualityLabels.length ? 0.5 : 0.25 }}>
+          <Typography component="div" sx={{ ...kSx, mb: qualityLabels.length > 0 ? 0.5 : 0.25 }}>
             Quality checks:
           </Typography>
-          {qualityLabels.length ? (
+          {qualityLabels.length > 0 ? (
             <Box
               component="ul"
               sx={{
@@ -273,7 +273,7 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
             </Box>
           ) : (
             <Typography component="div" sx={descSecondarySx}>
-              —
+              {'\u00A0'}
             </Typography>
           )}
         </Box>

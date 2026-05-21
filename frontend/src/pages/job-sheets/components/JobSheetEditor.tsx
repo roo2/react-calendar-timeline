@@ -55,6 +55,7 @@ import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantit
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
 import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
+import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
 
 type Mode = 'new' | 'edit'
 
@@ -855,6 +856,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   /** Quantity is always edited in the Product Spec area (embedded paper), not in the header card. */
   const includeQuantityInHeader = false
 
+  const canSaveAsNewProduct = canEnableSaveAsNewProduct({
+    jobSheetVersionNumber:
+      loadedJobSheet?.version_number != null ? Number(loadedJobSheet.version_number) : null,
+  })
+
   const bagsPerCartonStr = spec.packaging?.bags_per_carton != null ? String(spec.packaging.bags_per_carton) : ''
 
   /** Header card omits quantity (`includeQuantityInHeader` is false); keep shape for typing only. */
@@ -896,7 +902,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         {mode === 'edit' && jobSheetId ? (
           <SaveAsNewProductButton
             onClick={() => void onSaveAsNewProduct()}
-            disabled={savingJobSheet || savingAsNew}
+            disabled={savingJobSheet || savingAsNew || !canSaveAsNewProduct}
             saving={savingAsNew}
           />
         ) : null}

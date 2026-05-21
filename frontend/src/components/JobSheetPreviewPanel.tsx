@@ -38,11 +38,9 @@ function PreviewInlineRow(props: { label: string; value: string; monospace?: boo
 }
 
 export function JobSheetPreviewPanel(props: {
-  productCode: string
-  /** Algorithmic code from spec; shown under customer-facing code when set. */
-  generatedProductCode?: string
-  /** `identity.customer_code` when set on the spec. */
-  customerFacingProductCode?: string
+  /** Algorithmic product code from spec (primary header line). */
+  generatedProductCode: string
+  /** Generated description with packaging tail (sidebar “From product spec” hint only). */
   description: string
   /** Original import / MYOB line text (order line). */
   myobImportLineDescription?: string | null
@@ -72,6 +70,7 @@ export function JobSheetPreviewPanel(props: {
   palletUnitLabel?: 'rolls' | 'cartons'
 }) {
   const {
+    generatedProductCode,
     description,
     myobImportLineDescription = '',
     customerFacingDescription = '',
@@ -117,14 +116,10 @@ export function JobSheetPreviewPanel(props: {
       }
     : emptyHeader
 
-  const hasUserDesc = user !== ''
-  const generatedDescriptionWithPackagingTail = hasUserDesc
-    ? (specDesc || myob || '—').trim() || '—'
-    : (effective || '—')
-
   const product: JobSheetPrintOrderHeaderModel['product'] = {
-    ...(hasUserDesc ? { customerFacingDescription: user } : {}),
-    generatedDescriptionWithPackagingTail,
+    generatedProductCode: String(generatedProductCode ?? '').trim(),
+    ...(user !== '' ? { customerFacingDescription: user } : {}),
+    ...(specDesc !== '' ? { generatedDescriptionWithPackagingTail: specDesc } : {}),
     orderedQuantityLabel:
       quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
         ? String(quoteSummary.orderQuantityLabel).trim()

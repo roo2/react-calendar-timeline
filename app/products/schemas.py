@@ -182,7 +182,7 @@ class QualityExpectationsSpec(BaseModel):
         return [str(x) for x in v if str(x) in allowed and str(x) not in retired]
 
 
-_DEPRECATED_CONVERSION_FLAG_KEYS = frozenset({"send_all_bags", "sendAllBags"})
+_DEPRECATED_CONVERSION_FLAG_KEYS = frozenset({"send_all_bags", "sendAllBags", "inner_pack"})
 
 
 class ConversionSpec(BaseModel):
@@ -191,17 +191,25 @@ class ConversionSpec(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     carton_size: Optional[str] = None
+    packing_mode: Optional[Literal["loose_lay_flat", "loose_folded", "in_pack"]] = None
     pack_lay_flat: Optional[bool] = False
     tag_packs: Optional[bool] = False
     tag_ctn: Optional[bool] = False
+    vent_hole_size_mm: Optional[int] = Field(6, ge=0)
+    vent_holes_across: Optional[int] = Field(None, ge=0)
+    vent_holes_along: Optional[int] = Field(None, ge=0)
+    vent_hole_position_description: Optional[str] = None
+    # Legacy (read/migrate only; UI uses fields above).
     vent_rows: Optional[int] = Field(None, ge=0)
     vent_holes_per_row: Optional[int] = Field(None, ge=0)
+    vent_description: Optional[str] = None
     pack_size: Optional[int] = Field(None, ge=0)
-    inner_pack: Optional[bool] = False
+    qty_per_fold: Optional[int] = Field(None, ge=0)
     loose: Optional[bool] = False
     qty_to_stock: Optional[int] = Field(None, ge=0)
     handle: Optional[bool] = False
     lined_cartons: Optional[bool] = False
+    notes: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -209,7 +217,60 @@ class ConversionSpec(BaseModel):
         """Remove retired UI flags so they are not persisted on the product version spec."""
         if not isinstance(data, dict):
             return data
-        return {k: v for k, v in data.items() if k not in _DEPRECATED_CONVERSION_FLAG_KEYS}
+        out = {k: v for k, v in data.items() if k not in _DEPRECATED_CONVERSION_FLAG_KEYS}
+        if out.get("vent_holes_across") is None and out.get("vent_holes_per_row") is not None:
+            out["vent_holes_across"] = out["vent_holes_per_row"]
+        if out.get("vent_holes_along") is None and out.get("vent_rows") is not None:
+            out["vent_holes_along"] = out["vent_rows"]
+        if out.get("vent_hole_position_description") is None and out.get("vent_description"):
+            out["vent_hole_position_description"] = out["vent_description"]
+        if out.get("vent_hole_size_mm") is None:
+            out["vent_hole_size_mm"] = 6
+        return out
+
+    @model_validator(mode="after")
+    def _normalize_vent_fields(self) -> "ConversionSpec":
+        if self.vent_hole_size_mm is None or int(self.vent_hole_size_mm) not in (6, 8, 10):
+            self.vent_hole_size_mm = 6
+        return self
+
+    @model_validator(mode="after")
+    def _packing_mode_rules(self) -> "ConversionSpec":
+        mode = self.packing_mode
+        if mode is None:
+            if self.pack_size is not None and int(self.pack_size) > 0:
+                mode = "in_pack"
+            elif self.qty_per_fold is not None and int(self.qty_per_fold) > 0:
+                mode = "loose_folded"
+        if mode == "loose_lay_flat":
+            self.packing_mode = "loose_lay_flat"
+            self.pack_lay_flat = True
+            self.loose = True
+            self.pack_size = None
+            self.qty_per_fold = None
+            self.tag_packs = False
+        elif mode == "loose_folded":
+            self.packing_mode = "loose_folded"
+            self.pack_lay_flat = False
+            self.loose = True
+            self.pack_size = None
+            self.tag_packs = False
+        elif mode == "in_pack":
+            self.packing_mode = "in_pack"
+            self.pack_lay_flat = False
+            self.loose = False
+            self.qty_per_fold = None
+            if not (self.pack_size is not None and int(self.pack_size) > 0):
+                self.tag_packs = False
+        else:
+            self.packing_mode = None
+            self.pack_lay_flat = False
+            self.loose = False
+            if self.pack_size is not None and int(self.pack_size) > 0:
+                self.loose = False
+            if not (self.pack_size is not None and int(self.pack_size) > 0):
+                self.tag_packs = False
+        return self
 
 
 class RunRequirementsSpec(BaseModel):

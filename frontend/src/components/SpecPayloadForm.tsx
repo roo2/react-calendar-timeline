@@ -8,9 +8,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   FormControlLabel,
   FormGroup,
+  FormLabel,
   MenuItem,
+  Radio,
+  RadioGroup,
   Paper,
   Stack,
   Table,
@@ -43,6 +47,18 @@ import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '.
 import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 import { formatSealTypeLabel } from '../utils/specCompat'
+import {
+  conversionFieldsForPackingMode,
+  deriveConversionPackingMode,
+  type ConversionPackingMode,
+} from '../utils/conversionPacking'
+import {
+  normalizeVentHoleSizeMm,
+  ventHolesAcrossFromConv,
+  ventHolesAlongFromConv,
+  ventTotalHoles,
+  VENT_HOLE_SIZE_MM_OPTIONS,
+} from '../utils/conversionVent'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -218,17 +234,21 @@ export function makeDefaultSpec(): SpecPayload {
       seal_type: null,
       conversion: {
         carton_size: null,
+        packing_mode: null,
         pack_lay_flat: false,
         tag_packs: false,
         tag_ctn: false,
-        vent_rows: null,
-        vent_holes_per_row: null,
+        vent_hole_size_mm: 6,
+        vent_holes_across: null,
+        vent_holes_along: null,
+        vent_hole_position_description: null,
         pack_size: null,
-        inner_pack: false,
+        qty_per_fold: null,
         loose: false,
         qty_to_stock: null,
         handle: false,
         lined_cartons: false,
+        notes: null,
       },
     },
     packaging: {
@@ -357,6 +377,24 @@ export function SpecPayloadForm(props: {
   const run = spec.run_requirements || {}
   const packaging = spec.packaging || {}
   const conversion = (run as { conversion?: Record<string, unknown> }).conversion || {}
+  const packingMode = deriveConversionPackingMode(conversion)
+
+  function patchConversion(patch: Record<string, unknown>) {
+    update((d) => {
+      if (!d.run_requirements) (d as any).run_requirements = {}
+      ;(d.run_requirements as any).conversion = {
+        ...((d.run_requirements as any).conversion || {}),
+        ...patch,
+      }
+    })
+  }
+
+  function setPackingMode(mode: ConversionPackingMode | '') {
+    patchConversion(
+      conversionFieldsForPackingMode(mode, (run as { conversion?: Record<string, unknown> }).conversion || {}),
+    )
+  }
+
   /** Prefer `run_requirements.seal_type`; fall back to legacy `printing.seal_type` until re-saved. */
   const sealTypeUiValue = String((run as { seal_type?: string | null }).seal_type ?? (printing as { seal_type?: string | null }).seal_type ?? '')
 
@@ -2857,7 +2895,7 @@ export function SpecPayloadForm(props: {
             Conversion
           </Typography>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
             <TextField
               label="Bags per Carton"
               type="number"
@@ -2900,112 +2938,231 @@ export function SpecPayloadForm(props: {
                 </MenuItem>
               ))}
             </DefaultSelectField>
+          </Box>
 
-            <TextField
-              label="Qty per pack"
-              type="number"
-              inputProps={{ min: 0, step: 1 }}
-              value={conversion.pack_size ?? ''}
-              onChange={(e) =>
-                update((d) => {
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  ;(d.run_requirements as any).conversion = {
-                    ...((d.run_requirements as any).conversion || {}),
-                    pack_size: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
+          <Box
+            sx={{
+              mt: 2,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              alignItems: 'flex-end',
+            }}
+          >
+            <Box sx={{ width: { xs: '100%', md: '25%' } }}>
+              <DefaultSelectField
+                label="Seal"
+                defaultValue="end"
+                value={sealTypeUiValue || 'end'}
+                onChange={(e) =>
+                  update((d) => {
+                    const v = e.target.value
+                    if (!d.run_requirements) (d as any).run_requirements = {}
+                    d.run_requirements.seal_type = v ? (v as any) : null
+                    if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+                  })
+                }
+                fullWidth
+              >
+                <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
+                <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+                <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
+              </DefaultSelectField>
+            </Box>
+            <FormControlLabel
+              sx={{ m: 0, mb: 0.5 }}
+              control={
+                <Checkbox
+                  checked={qualityFlags.has('seal_integrity')}
+                  onChange={(e) =>
+                    update((d) => {
+                      const cur = new Set<string>(d.quality_expectations.flags || [])
+                      if (e.target.checked) cur.add('seal_integrity')
+                      else cur.delete('seal_integrity')
+                      d.quality_expectations.flags = Array.from(cur)
+                    })
                   }
-                })
+                />
               }
+              label="Watertight Seals Critical"
             />
           </Box>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2, mt: 2 }}>
-
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: '1fr',
+                md: 'repeat(3, minmax(0, 1fr))',
+              },
+              gap: 2,
+              mt: 2,
+              alignItems: 'start',
+            }}
+          >
             <DefaultSelectField
-              label="Seal"
-              defaultValue="end"
-              value={sealTypeUiValue || 'end'}
+              label="Hole size"
+              defaultValue={6}
+              value={String(normalizeVentHoleSizeMm(conversion.vent_hole_size_mm))}
               onChange={(e) =>
-                update((d) => {
-                  const v = e.target.value
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  d.run_requirements.seal_type = v ? (v as any) : null
-                  if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+                patchConversion({
+                  vent_hole_size_mm: normalizeVentHoleSizeMm(e.target.value),
                 })
               }
+              fullWidth
             >
-              <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
-              <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
-              <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
+              {VENT_HOLE_SIZE_MM_OPTIONS.map((mm) => (
+                <MenuItem key={mm} value={String(mm)}>
+                  {mm}mm
+                </MenuItem>
+              ))}
             </DefaultSelectField>
-
             <TextField
-              label="Vent rows"
+              label="Holes across"
               type="number"
               inputProps={{ min: 0, step: 1 }}
-              value={conversion.vent_rows ?? ''}
+              value={ventHolesAcrossFromConv(conversion) > 0 ? String(ventHolesAcrossFromConv(conversion)) : ''}
               onChange={(e) =>
-                update((d) => {
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  ;(d.run_requirements as any).conversion = {
-                    ...((d.run_requirements as any).conversion || {}),
-                    vent_rows: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
-                  }
+                patchConversion({
+                  vent_holes_across:
+                    e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
                 })
               }
+              fullWidth
             />
             <TextField
-              label="Vent holes / row"
+              label="Hole rows"
               type="number"
               inputProps={{ min: 0, step: 1 }}
-              value={conversion.vent_holes_per_row ?? ''}
+              value={ventHolesAlongFromConv(conversion) > 0 ? String(ventHolesAlongFromConv(conversion)) : ''}
               onChange={(e) =>
-                update((d) => {
-                  if (!d.run_requirements) (d as any).run_requirements = {}
-                  ;(d.run_requirements as any).conversion = {
-                    ...((d.run_requirements as any).conversion || {}),
-                    vent_holes_per_row: e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
-                  }
+                patchConversion({
+                  vent_holes_along:
+                    e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
                 })
               }
-              helperText={`Total holes: ${Math.max(0, Number(conversion.vent_rows || 0)) * Math.max(0, Number(conversion.vent_holes_per_row || 0))}`}
+              fullWidth
+              helperText={
+                ventTotalHoles(conversion) > 0 ? `Total holes: ${ventTotalHoles(conversion)}` : ' '
+              }
             />
           </Box>
+          <TextField
+            label="Hole position description"
+            value={
+              conversion.vent_hole_position_description != null
+                ? String(conversion.vent_hole_position_description)
+                : ''
+            }
+            onChange={(e) =>
+              patchConversion({
+                vent_hole_position_description: e.target.value === '' ? null : e.target.value,
+              })
+            }
+            fullWidth
+            multiline
+            minRows={2}
+            sx={{ mt: 2 }}
+            placeholder="e.g. 50mm from bottom, then 80mm between rows"
+          />
+
+          <FormControl component="fieldset" sx={{ mt: 2, width: '100%' }}>
+            <FormLabel component="legend" sx={{ typography: 'subtitle2', color: 'text.primary', mb: 1 }}>
+              Packing
+            </FormLabel>
+            <RadioGroup
+              row
+              value={packingMode}
+              onChange={(e) => {
+                const v = e.target.value
+                setPackingMode(v === '' ? '' : (v as ConversionPackingMode))
+              }}
+              sx={{ flexWrap: 'wrap', gap: { xs: 0, sm: 2 } }}
+            >
+              <FormControlLabel value="" control={<Radio size="small" />} label="Not set" />
+              <FormControlLabel value="loose_lay_flat" control={<Radio size="small" />} label="Loose (Lay flat)" />
+              <FormControlLabel value="loose_folded" control={<Radio size="small" />} label="Loose (Folded)" />
+              <FormControlLabel value="in_pack" control={<Radio size="small" />} label="In Packs" />
+            </RadioGroup>
+          </FormControl>
+
+          {packingMode === 'loose_folded' ? (
+            <Box sx={{ mt: 2, width: { xs: '100%', md: '25%' } }}>
+              <TextField
+                label="Qty per fold"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={conversion.qty_per_fold ?? ''}
+                onChange={(e) =>
+                  patchConversion({
+                    packing_mode: 'loose_folded',
+                    qty_per_fold:
+                      e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value))),
+                    pack_lay_flat: false,
+                    loose: true,
+                    pack_size: null,
+                    tag_packs: false,
+                  })
+                }
+                fullWidth
+              />
+            </Box>
+          ) : null}
+
+          {packingMode === 'in_pack' ? (
+            <Box
+              sx={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 2,
+                mt: 2,
+                alignItems: 'center',
+              }}
+            >
+              <Box sx={{ width: { xs: '100%', md: '25%' } }}>
+                <TextField
+                  label="Qty per pack"
+                  type="number"
+                  inputProps={{ min: 1, step: 1 }}
+                  value={conversion.pack_size ?? ''}
+                  onChange={(e) =>
+                    patchConversion({
+                      packing_mode: 'in_pack',
+                      pack_size:
+                        e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value))),
+                      pack_lay_flat: false,
+                      loose: false,
+                      qty_per_fold: null,
+                      ...(e.target.value === '' ? { tag_packs: false } : {}),
+                    })
+                  }
+                  fullWidth
+                />
+              </Box>
+              <FormControlLabel
+                sx={{ m: 0 }}
+                control={
+                  <Checkbox
+                    checked={!!conversion.tag_packs}
+                    disabled={
+                      conversion.pack_size == null ||
+                      conversion.pack_size === '' ||
+                      !(Number(conversion.pack_size) > 0)
+                    }
+                    onChange={(e) =>
+                      patchConversion({
+                        packing_mode: 'in_pack',
+                        tag_packs: e.target.checked,
+                      })
+                    }
+                  />
+                }
+                label="Tag Packs"
+              />
+            </Box>
+          ) : null}
 
           <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mt: 2 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!conversion.pack_lay_flat}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (!d.run_requirements) (d as any).run_requirements = {}
-                      ;(d.run_requirements as any).conversion = {
-                        ...((d.run_requirements as any).conversion || {}),
-                        pack_lay_flat: e.target.checked,
-                      }
-                    })
-                  }
-                />
-              }
-              label="Pack Lay Flat"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!conversion.tag_packs}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (!d.run_requirements) (d as any).run_requirements = {}
-                      ;(d.run_requirements as any).conversion = {
-                        ...((d.run_requirements as any).conversion || {}),
-                        tag_packs: e.target.checked,
-                      }
-                    })
-                  }
-                />
-              }
-              label="Tag Packs"
-            />
             <FormControlLabel
               control={
                 <Checkbox
@@ -3022,40 +3179,6 @@ export function SpecPayloadForm(props: {
                 />
               }
               label="Tag Ctn"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!conversion.inner_pack}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (!d.run_requirements) (d as any).run_requirements = {}
-                      ;(d.run_requirements as any).conversion = {
-                        ...((d.run_requirements as any).conversion || {}),
-                        inner_pack: e.target.checked,
-                      }
-                    })
-                  }
-                />
-              }
-              label="Inner Pack"
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!conversion.loose}
-                  onChange={(e) =>
-                    update((d) => {
-                      if (!d.run_requirements) (d as any).run_requirements = {}
-                      ;(d.run_requirements as any).conversion = {
-                        ...((d.run_requirements as any).conversion || {}),
-                        loose: e.target.checked,
-                      }
-                    })
-                  }
-                />
-              }
-              label="Loose"
             />
             <FormControlLabel
               control={
@@ -3092,6 +3215,21 @@ export function SpecPayloadForm(props: {
               label="Lined Cartons"
             />
           </FormGroup>
+
+          <TextField
+            label="Conversion notes"
+            value={conversion.notes != null ? String(conversion.notes) : ''}
+            onChange={(e) =>
+              patchConversion({
+                notes: e.target.value === '' ? null : e.target.value,
+              })
+            }
+            fullWidth
+            multiline
+            minRows={2}
+            sx={{ mt: 2 }}
+            placeholder="Special comments for setup of bagging machine"
+          />
         </Paper>
       ) : null}
 

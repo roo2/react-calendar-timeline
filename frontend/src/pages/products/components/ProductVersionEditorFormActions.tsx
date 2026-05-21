@@ -1,3 +1,4 @@
+import PrintIcon from '@mui/icons-material/Print'
 import { Link } from 'react-router-dom'
 import { Button } from '@mui/material'
 import { SaveAsNewProductButton, SaveFormButton } from '../../../components/SaveActionButtons'
@@ -16,6 +17,9 @@ export type ProductVersionEditorFormActionsProps = {
   submitDisabled?: boolean
   submitSaving?: boolean
   submitLabel?: string
+  showPrint?: boolean
+  printDisabled?: boolean
+  onPrint?: () => void | Promise<void>
 }
 
 /**
@@ -36,6 +40,9 @@ export function ProductVersionEditorFormActions(props: ProductVersionEditorFormA
     submitDisabled = false,
     submitSaving = false,
     submitLabel = 'Save',
+    showPrint = false,
+    printDisabled = false,
+    onPrint,
   } = props
 
   return (
@@ -73,6 +80,18 @@ export function ProductVersionEditorFormActions(props: ProductVersionEditorFormA
         saving={submitSaving}
         label={submitLabel}
       />
+      {showPrint ? (
+        <Button
+          type="button"
+          variant="contained"
+          color="primary"
+          disabled={printDisabled}
+          startIcon={<PrintIcon />}
+          onClick={() => void onPrint?.()}
+        >
+          Print
+        </Button>
+      ) : null}
     </>
   )
 }

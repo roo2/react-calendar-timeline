@@ -220,7 +220,7 @@ export function LinkedQuantityFields(props: {
               ? cartonWeightKgForDisplay != null
                 ? formatKgDisplay(cartonWeightKgForDisplay)
                 : ''
-              : weightPerRollEditable
+              : weightPerRollEditable || qtyMode === 'roll'
                 ? weightPerRoll
                 : effectiveQtyType === 'rolls_units' && finishMode === 'Rolls'
                   ? weightPerRollDisplay != null

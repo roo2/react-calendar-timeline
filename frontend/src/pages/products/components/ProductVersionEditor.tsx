@@ -61,6 +61,7 @@ import {
   type QtyType,
 } from '../../../utils/quantityRollFields'
 import { addOrderItem, fetchOrder } from '../../../store/slices/ordersSlice'
+import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
 import { ApiError } from '../../../api/client'
 import { parseFastApiValidationDetail } from '../../../api/validation'
 import { isRejectedWithValue } from '@reduxjs/toolkit'
@@ -762,6 +763,40 @@ export function ProductVersionEditor(props: {
     }
   }
 
+  /** Save job sheet edits without closing the parent order modal (e.g. before print). */
+  async function persistJobSheetWithoutClose(): Promise<boolean> {
+    if (!jobSheetId) return false
+    setJobSaveErr(null)
+    const body = buildJobSheetUpdateBody()
+    if (!body) return false
+    setSavingEmbeddedJob(true)
+    try {
+      await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
+      setDirty(false)
+      return true
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setJobSaveErr(p.message || 'Failed to save job sheet')
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { messages } = parseFastApiValidationDetail(e.body.detail)
+        setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+      } else {
+        setJobSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
+      }
+      return false
+    } finally {
+      setSavingEmbeddedJob(false)
+    }
+  }
+
+  async function onPrintJobSheetFromModal(): Promise<void> {
+    if (!jobSheetId || busy) return
+    const ok = await persistJobSheetWithoutClose()
+    if (!ok) return
+    window.open(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`, '_blank', 'noopener,noreferrer')
+  }
+
   async function persistJobSheet(asNewProduct: boolean) {
     if (!jobSheetId) return
     setJobSaveErr(null)
@@ -1134,6 +1169,17 @@ export function ProductVersionEditor(props: {
 
   const busy = saving || savingEmbeddedJob || savingAsNew || createSaving || deletingProduct
 
+  const canSaveAsNewProduct = canEnableSaveAsNewProduct({
+    productVersionCount: (data?.versions || []).length,
+    editingVersionNumber,
+    jobSheetVersionNumber:
+      loadedJobSheet?.version_number != null ? Number(loadedJobSheet.version_number) : null,
+    isAddingProductVersion: Boolean(!versionId && !jobSheetId && !embedded && productId),
+  })
+  const saveAsNewDisabled = !canSubmit || busy || !canSaveAsNewProduct
+  const showPrintInModal = Boolean(jobSheetId && !embedded)
+  const printDisabled = !canSubmit || busy
+
   const resolvedSubmitLabel =
     submitLabel ||
     (embedded ? 'Create job sheet' : jobSheetId || versionId ? 'Save' : 'Save Changes')
@@ -1195,7 +1241,7 @@ export function ProductVersionEditor(props: {
                       deletingProduct={deletingProduct}
                       onDeleteProduct={onDeleteProduct}
                       showSaveAsNewProduct={showSaveAsNewProduct}
-                      saveAsNewDisabled={!canSubmit || busy}
+                      saveAsNewDisabled={saveAsNewDisabled}
                       savingAsNew={savingAsNew}
                       onSaveAsNewProduct={() =>
                         void (jobSheetId ? persistJobSheet(true) : saveAsNewProductStandalone())
@@ -1203,6 +1249,9 @@ export function ProductVersionEditor(props: {
                       submitDisabled={!canSubmit || busy}
                       submitSaving={busy && !savingAsNew}
                       submitLabel={resolvedSubmitLabel}
+                      showPrint={showPrintInModal}
+                      printDisabled={printDisabled}
+                      onPrint={onPrintJobSheetFromModal}
                     />
                   }
                   customerId={customerId}
@@ -1459,7 +1508,7 @@ export function ProductVersionEditor(props: {
                   deletingProduct={deletingProduct}
                   onDeleteProduct={onDeleteProduct}
                   showSaveAsNewProduct={showSaveAsNewProduct}
-                  saveAsNewDisabled={!canSubmit || busy}
+                  saveAsNewDisabled={saveAsNewDisabled}
                   savingAsNew={savingAsNew}
                   onSaveAsNewProduct={() =>
                     void (jobSheetId ? persistJobSheet(true) : saveAsNewProductStandalone())
@@ -1467,6 +1516,9 @@ export function ProductVersionEditor(props: {
                   submitDisabled={!canSubmit || busy}
                   submitSaving={busy && !savingAsNew}
                   submitLabel={resolvedSubmitLabel}
+                  showPrint={showPrintInModal}
+                  printDisabled={printDisabled}
+                  onPrint={onPrintJobSheetFromModal}
                 />
               </Box>
             </Stack>

@@ -8,6 +8,8 @@ import {
   JobSheetPrintOrderHeader,
   type JobSheetPrintOrderHeaderModel,
 } from './components/JobSheetPrintOrderHeader'
+import { conversionPackingModeLabel, deriveConversionPackingMode } from '../../utils/conversionPacking'
+import { formatVentPrintLines, ventHasAnyData } from '../../utils/conversionVent'
 
 /** Film geometry suffix for Uteco “Film Type Supplied” (e.g. …, Gusseted). */
 function geometryLabelForUtecoFilmSupplied(dimsGeometry: unknown, productTypeRaw: unknown): string {
@@ -75,7 +77,7 @@ import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
 import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../../utils/quoteCalculator'
 import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
 import { buildQuickQuoteInputsFromSpec, type SpecQuantitySlice } from '../../utils/specToQuoteInputs'
-import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
   jobSheetDescriptionWithPackagingTail,
   jobSheetOrderQuantityLabel,
@@ -983,16 +985,20 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
 
 type JobSheetPrintConversionModel = {
   carton: { bagsPerCarton: string; totalCartons: string } | null
+  conversionNotes: string
   conversion: {
     sealType: string
+    sealLabel: string
     cartonSize: string
-    packLayFlat: string
+    packing: string
+    qtyPerFold: string
+    qtyPerPack: string
     tagPacks: string
     tagCtn: string
-    vent: string
-    pack: string
-    innerPack: string
-    loose: string
+    ventSummary: string
+    ventPosition: string
+    ventHoleSizeMm: number
+    highlightVentHoleSize: boolean
     qtyToStockDisplay: string
     qtyToDeliverDisplay: string
     highlightQtyToStock: boolean
@@ -1000,13 +1006,12 @@ type JobSheetPrintConversionModel = {
     linedCartons: string
     highlightSeal?: boolean
     highlightCartonSize?: boolean
-    highlightPackLayFlat?: boolean
+    highlightPacking?: boolean
+    highlightQtyPerFold?: boolean
+    highlightQtyPerPack?: boolean
     highlightTagPacks?: boolean
     highlightTagCtn?: boolean
     highlightVent?: boolean
-    highlightPack?: boolean
-    highlightInnerPack?: boolean
-    highlightLoose?: boolean
     highlightHandle?: boolean
     highlightLinedCartons?: boolean
   } | null
@@ -1210,6 +1215,20 @@ function JobSheetPrintExtrusionQcPage(props: {
   )
 }
 
+function VentSummaryPrintLine(props: { summary: string; holeSizeMm: number; highlightHoleSize: boolean }) {
+  const summary = String(props.summary ?? '').trim()
+  if (!summary) return null
+  if (!props.highlightHoleSize) return <div>{summary}</div>
+  const prefix = `${props.holeSizeMm}mm`
+  const rest = summary.startsWith(prefix) ? summary.slice(prefix.length) : summary
+  return (
+    <div>
+      <span className="js-pink">{prefix}</span>
+      {rest}
+    </div>
+  )
+}
+
 function JobSheetPrintConversionInstructionsPage(props: {
   conv: JobSheetPrintConversionModel
   orderHeader: JobSheetPrintOrderHeaderModel
@@ -1259,7 +1278,7 @@ function JobSheetPrintConversionInstructionsPage(props: {
                 <td>{v(conv.carton?.bagsPerCarton)}</td>
               </tr>
               <tr className={convHl(c?.highlightSeal)}>
-                <th>Seal</th>
+                <th>{c?.sealLabel?.trim() ? c.sealLabel : 'Seal'}</th>
                 <td>{v(c?.sealType)}</td>
               </tr>
               <tr className={convHl(c?.highlightCartonSize)}>
@@ -1276,9 +1295,17 @@ function JobSheetPrintConversionInstructionsPage(props: {
                   Conversion details
                 </td>
               </tr>
-              <tr className={convHl(c?.highlightPackLayFlat)}>
-                <th>Pack Lay Flat</th>
-                <td>{v(c?.packLayFlat)}</td>
+              <tr className={convHl(c?.highlightPacking)}>
+                <th>Packing</th>
+                <td>{v(c?.packing)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightQtyPerFold)}>
+                <th>Qty per fold</th>
+                <td>{v(c?.qtyPerFold)}</td>
+              </tr>
+              <tr className={convHl(c?.highlightQtyPerPack)}>
+                <th>Qty per pack</th>
+                <td>{v(c?.qtyPerPack)}</td>
               </tr>
               <tr className={convHl(c?.highlightTagPacks)}>
                 <th>Tag Packs</th>
@@ -1290,19 +1317,19 @@ function JobSheetPrintConversionInstructionsPage(props: {
               </tr>
               <tr className={convHl(c?.highlightVent)}>
                 <th>Vent</th>
-                <td>{v(c?.vent)}</td>
-              </tr>
-              <tr className={convHl(c?.highlightPack)}>
-                <th>Pack</th>
-                <td>{v(c?.pack)}</td>
-              </tr>
-              <tr className={convHl(c?.highlightInnerPack)}>
-                <th>Inner Pack</th>
-                <td>{v(c?.innerPack)}</td>
-              </tr>
-              <tr className={convHl(c?.highlightLoose)}>
-                <th>Loose</th>
-                <td>{v(c?.loose)}</td>
+                <td className="js-conv-vent-cell">
+                  {c?.ventSummary?.trim() ? (
+                    <VentSummaryPrintLine
+                      summary={c.ventSummary}
+                      holeSizeMm={c.ventHoleSizeMm}
+                      highlightHoleSize={!!c.highlightVentHoleSize}
+                    />
+                  ) : null}
+                  {c?.ventPosition?.trim() ? (
+                    <div className={c?.ventSummary?.trim() ? 'js-conv-vent-position' : undefined}>{v(c?.ventPosition)}</div>
+                  ) : null}
+                  {!c?.ventSummary?.trim() && !c?.ventPosition?.trim() ? dash : null}
+                </td>
               </tr>
               <tr className={c?.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>
                 <th>Cartons to stock</th>
@@ -1353,7 +1380,11 @@ function JobSheetPrintConversionInstructionsPage(props: {
                 <td className="js-conv-subtitle">Special comments for setup of bagging machine</td>
               </tr>
               <tr>
-                <td className="js-conv-comment">{'\u00a0'}</td>
+                <td className="js-conv-comment" style={{ whiteSpace: 'pre-wrap' }}>
+                  {String(props.conv.conversionNotes ?? '').trim() !== ''
+                    ? props.conv.conversionNotes
+                    : '\u00a0'}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1987,6 +2018,7 @@ export function JobSheetPrintPage() {
       spec as Record<string, unknown>,
       geoSnapshotForTail,
     )
+    const generatedProductCode = computeProductCodeFromSpec(specTyped)
     const customerFacingDescriptionWithPackagingTail =
       customerFacingDescriptionPlain !== ''
         ? jobSheetDescriptionWithPackagingTail(
@@ -2089,29 +2121,37 @@ export function JobSheetPrintPage() {
     }
 
     const convRaw = (run?.conversion || {}) as Record<string, unknown>
-    const ventRows = n(convRaw.vent_rows)
-    const ventHoles = n(convRaw.vent_holes_per_row)
-    const ventLinePrint =
-      ventRows != null && ventRows > 0 && ventHoles != null && ventHoles > 0
-        ? `${Math.round(ventRows)} rows x ${Math.round(ventHoles)} holes`
-        : ''
+    const ventPrint = formatVentPrintLines(convRaw)
+    const ventSummaryPrint = ventPrint.summary
+    const ventPositionPrint = ventPrint.position
+    const ventHoleSizeMmPrint = ventPrint.holeSizeMm
+    const highlightVentHoleSizePrint = ventPrint.highlightHoleSize
     const sealTypeSlug = String(run?.seal_type ?? printing?.seal_type ?? 'end')
       .trim()
       .toLowerCase()
     const sealTypePrint = formatSealTypeLabel(sealTypeSlug) || 'Bottom'
+    const watertightSealsCritical = collectQualityFlagIds(spec as Parameters<typeof collectQualityFlagIds>[0]).includes(
+      'seal_integrity',
+    )
+    const sealLabelPrint = watertightSealsCritical ? 'Seal (Watertight seals critical)' : 'Seal'
     const cartonSizePrint =
       convRaw.carton_size != null && String(convRaw.carton_size).trim() !== '' ? String(convRaw.carton_size) : ''
+    const packingModePrint = deriveConversionPackingMode(convRaw as Record<string, unknown>)
+    const packingLabelPrint = conversionPackingModeLabel(packingModePrint)
+    const qtyPerFoldPrint =
+      convRaw.qty_per_fold != null && String(convRaw.qty_per_fold).trim() !== ''
+        ? String(convRaw.qty_per_fold)
+        : ''
     const packSizePrint =
       convRaw.pack_size != null && String(convRaw.pack_size).trim() !== '' ? String(convRaw.pack_size) : ''
-    const highlightConversionSeal = sealTypeSlug !== 'end'
+    const highlightConversionSeal = sealTypeSlug !== 'end' || watertightSealsCritical
     const highlightConversionCartonSize = cartonSizePrint.trim() !== ''
-    const highlightConversionPackLayFlat = !!convRaw.pack_lay_flat
+    const highlightConversionPacking = packingLabelPrint.trim() !== ''
+    const highlightConversionQtyPerFold = qtyPerFoldPrint.trim() !== ''
+    const highlightConversionQtyPerPack = packSizePrint.trim() !== ''
     const highlightConversionTagPacks = !!convRaw.tag_packs
     const highlightConversionTagCtn = !!convRaw.tag_ctn
-    const highlightConversionVent = ventLinePrint.trim() !== ''
-    const highlightConversionPack = packSizePrint.trim() !== ''
-    const highlightConversionInnerPack = !!convRaw.inner_pack
-    const highlightConversionLoose = !!convRaw.loose
+    const highlightConversionVent = ventHasAnyData(convRaw)
     const highlightConversionHandle = !!convRaw.handle
     const highlightConversionLinedCartons = !!convRaw.lined_cartons
 
@@ -2143,10 +2183,13 @@ export function JobSheetPrintPage() {
         jobCode: s(jobCode),
       },
       product: {
+        generatedProductCode,
         ...(customerFacingDescriptionWithPackagingTail.trim() !== ''
           ? { customerFacingDescription: customerFacingDescriptionWithPackagingTail }
           : {}),
-        generatedDescriptionWithPackagingTail,
+        ...(generatedDescriptionWithPackagingTail.trim() !== ''
+          ? { generatedDescriptionWithPackagingTail }
+          : {}),
         orderedQuantityLabel,
         notes: s(notes),
         qualityChecks: qualityChecks.map((x: unknown) => s(x, '')).filter(Boolean),
@@ -2319,18 +2362,23 @@ export function JobSheetPrintPage() {
       },
       conversionInstructions: {
         carton: cartonConversion,
+        conversionNotes:
+          convRaw.notes != null && String(convRaw.notes).trim() !== '' ? String(convRaw.notes).trim() : '',
         conversion:
           finishNorm === 'cartons'
             ? {
                 sealType: sealTypePrint,
+                sealLabel: sealLabelPrint,
                 cartonSize: cartonSizePrint,
-                packLayFlat: yn(convRaw.pack_lay_flat),
+                packing: packingLabelPrint,
+                qtyPerFold: qtyPerFoldPrint,
+                qtyPerPack: packSizePrint,
                 tagPacks: yn(convRaw.tag_packs),
                 tagCtn: yn(convRaw.tag_ctn),
-                vent: ventLinePrint,
-                pack: packSizePrint,
-                innerPack: yn(convRaw.inner_pack),
-                loose: yn(convRaw.loose),
+                ventSummary: ventSummaryPrint,
+                ventPosition: ventPositionPrint,
+                ventHoleSizeMm: ventHoleSizeMmPrint,
+                highlightVentHoleSize: highlightVentHoleSizePrint,
                 qtyToStockDisplay: qtyStockDeliverPrint.stockText,
                 qtyToDeliverDisplay: qtyStockDeliverPrint.deliverText,
                 highlightQtyToStock: qtyStockDeliverPrint.highlightStock,
@@ -2338,13 +2386,12 @@ export function JobSheetPrintPage() {
                 linedCartons: yn(convRaw.lined_cartons),
                 highlightSeal: highlightConversionSeal,
                 highlightCartonSize: highlightConversionCartonSize,
-                highlightPackLayFlat: highlightConversionPackLayFlat,
+                highlightPacking: highlightConversionPacking,
+                highlightQtyPerFold: highlightConversionQtyPerFold,
+                highlightQtyPerPack: highlightConversionQtyPerPack,
                 highlightTagPacks: highlightConversionTagPacks,
                 highlightTagCtn: highlightConversionTagCtn,
                 highlightVent: highlightConversionVent,
-                highlightPack: highlightConversionPack,
-                highlightInnerPack: highlightConversionInnerPack,
-                highlightLoose: highlightConversionLoose,
                 highlightHandle: highlightConversionHandle,
                 highlightLinedCartons: highlightConversionLinedCartons,
               }
@@ -2900,11 +2947,11 @@ export function JobSheetPrintPage() {
           display: block;
           width: 100%;
         }
-        .js-order-header-desc-customer {
+        .js-order-header-desc-primary {
           display: block;
           width: 100%;
         }
-        .js-order-header-desc-generated,
+        .js-order-header-desc-secondary,
         .js-order-header-notes {
           display: block;
           width: 100%;
@@ -3248,10 +3295,13 @@ export function JobSheetPrintPage() {
           background: #f1f1f1;
         }
         .js-conv-box th {
-          width: 45%;
+          width: 35%;
           text-align: left;
           font-weight: var(--js-print-fw-label);
           font-size: var(--js-print-fs-label);
+        }
+        .js-conv-vent-cell .js-conv-vent-position {
+          margin-top: 0.35em;
         }
         .js-conv-ops th {
           text-align: center;

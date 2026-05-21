@@ -9,6 +9,7 @@ export type JobSheetSummary = {
   customer_id?: string
   product_id?: string
   product_version_id?: string
+  version_number?: number
   customer_name?: string | null
   product_code: string
   product_description?: string | null

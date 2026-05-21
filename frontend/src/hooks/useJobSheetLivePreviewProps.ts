@@ -3,11 +3,7 @@ import type { ComponentProps } from 'react'
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import type { JobSheetPreviewPanel } from '../components/JobSheetPreviewPanel'
 import { useAppSelector } from '../store/hooks'
-import {
-  computeProductCodeFromSpec,
-  computeProductDescriptionFromSpec,
-  getDisplayProductCodeFromSpec,
-} from '../utils/productDescription'
+import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
 import {
   joinQuoteDescriptionWithPackagingTail,
   quotePackagingPerUnitTail,
@@ -88,12 +84,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
   const totalKgDisplay = qty.totalKgDisplay
 
   const previewDescription = useMemo(() => computeProductDescriptionFromSpec(spec), [spec])
-  const previewProductCode = useMemo(() => getDisplayProductCodeFromSpec(spec), [spec])
   const previewGeneratedProductCode = useMemo(() => computeProductCodeFromSpec(spec), [spec])
-  const previewCustomerFacingProductCode = useMemo(
-    () => String(spec?.identity?.customer_code ?? '').trim(),
-    [spec?.identity?.customer_code],
-  )
 
   const previewPackagingTail = useMemo(() => {
     const bagsPerCarton =
@@ -149,6 +140,12 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     () => hideMyobProductPlaceholderText(joinQuoteDescriptionWithPackagingTail(previewDescription, previewPackagingTail)),
     [previewDescription, previewPackagingTail],
   )
+
+  const previewCustomerFacingDescriptionWithPackagingTail = useMemo(() => {
+    const plain = String(customerFacingDescription || '').trim()
+    if (!plain) return ''
+    return hideMyobProductPlaceholderText(joinQuoteDescriptionWithPackagingTail(plain, previewPackagingTail))
+  }, [customerFacingDescription, previewPackagingTail])
 
   const previewJobSheetQuantityRow = useMemo(() => {
     if (!includeProductionEstimates) return null
@@ -303,12 +300,10 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     purchaseOrderNo,
     orderDate,
     dueDate,
-    productCode: previewProductCode,
     generatedProductCode: previewGeneratedProductCode,
-    customerFacingProductCode: previewCustomerFacingProductCode,
     description: previewDescriptionWithPackagingTail,
     myobImportLineDescription,
-    customerFacingDescription,
+    customerFacingDescription: previewCustomerFacingDescriptionWithPackagingTail || customerFacingDescription,
     notes: previewNotesLine,
     qualityFlagIds: previewQualityFlagIds,
     quoteSummary,

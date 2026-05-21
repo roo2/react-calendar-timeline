@@ -10,9 +10,12 @@ export type JobSheetPrintOrderHeaderModel = {
     dueDate: string
   }
   product: {
-    /** Customer-facing description (with packaging tail when applicable). */
+    /** Algorithmic product code from spec (primary header line on print). */
+    generatedProductCode: string
+    /** Customer-facing description (with packaging tail when applicable; secondary line). */
     customerFacingDescription?: string
-    generatedDescriptionWithPackagingTail: string
+    /** Generated description with packaging tail; shown on secondary line when customer description is unset. */
+    generatedDescriptionWithPackagingTail?: string
     orderedQuantityLabel: string
     notes: string
     /** Quality flag ids from spec (`quality.flags`). */

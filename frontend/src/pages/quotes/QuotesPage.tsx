@@ -3665,7 +3665,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                     type="number"
                     inputProps={{ min: 0, step: 'any' }}
                     value={
-                      weightPerRollEditable
+                      weightPerRollEditable || qtyMode === 'roll'
                         ? weightPerRoll
                         : qtyType === 'rolls_units' && finishMode === 'Rolls'
                           ? weightPerRollDisplay != null
