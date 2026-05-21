@@ -85,7 +85,7 @@ import {
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { derivedInlineSeal, formatSealTypeLabel } from '../../utils/specCompat'
 import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
-import { collectQualityFlagIds } from '../../utils/qualityFlagLabels'
+import { buildJobSheetPrintQualityCheckLabels, collectQualityFlagIds } from '../../utils/qualityFlagLabels'
 import { palletsRequiredCeil } from '../../utils/palletShippingEstimate'
 
 function s(v: unknown, fallback = ''): string {
@@ -1494,7 +1494,7 @@ export function JobSheetPrintPage() {
     const generatedDescriptionBase =
       String(computedSpecDescription || '').trim() || String(js.product_description || '').trim()
     const notes = identity?.notes ?? run?.notes ?? packaging?.notes ?? spec?.notes ?? ''
-    const qualityChecks = collectQualityFlagIds({
+    const qualityCheckLabels = buildJobSheetPrintQualityCheckLabels({
       quality_expectations: quality,
       identity,
       quality_checks: spec?.quality_checks,
@@ -2192,7 +2192,7 @@ export function JobSheetPrintPage() {
           : {}),
         orderedQuantityLabel,
         notes: s(notes),
-        qualityChecks: qualityChecks.map((x: unknown) => s(x, '')).filter(Boolean),
+        qualityChecks: qualityCheckLabels,
       },
       extrusion: {
         productType: s(productType),

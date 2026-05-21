@@ -60,8 +60,8 @@ export function JobSheetPreviewPanel(props: {
   dueDate?: string
   /** Optional notes line (identity / run notes), same basis as the printed job sheet. */
   notes?: string | null
-  /** Quality expectation flag ids from spec; shown with friendly labels when known. */
-  qualityFlagIds?: string[] | null
+  /** Quality check tag labels (flags + other QC notes). */
+  qualityCheckLabels?: string[] | null
   /** Live order qty + quote-calculator estimates (same basis as Quotes page). */
   quoteSummary?: JobSheetPreviewQuoteSummary | null
   /** Pallet count for ship quantity (job sheet packaging / volume estimate). */
@@ -82,7 +82,7 @@ export function JobSheetPreviewPanel(props: {
     orderDate = '',
     dueDate = '',
     notes = null,
-    qualityFlagIds = null,
+    qualityCheckLabels = null,
     quoteSummary = null,
     palletLoadPlanning = null,
     palletUnitLabel = 'rolls',
@@ -92,8 +92,8 @@ export function JobSheetPreviewPanel(props: {
   const specDesc = String(description || '').trim()
   const effective = (user || myob || specDesc).trim()
   const showSpecSecondary = Boolean(specDesc && specDesc !== effective && !user)
-  const qcIds = (Array.isArray(qualityFlagIds) ? qualityFlagIds : [])
-    .map((id) => String(id).trim())
+  const qcLabels = (Array.isArray(qualityCheckLabels) ? qualityCheckLabels : [])
+    .map((x) => String(x).trim())
     .filter(Boolean)
 
   const emptyHeader: JobSheetPrintOrderHeaderModel['header'] = {
@@ -125,7 +125,7 @@ export function JobSheetPreviewPanel(props: {
         ? String(quoteSummary.orderQuantityLabel).trim()
         : '—',
     notes: String(notes ?? '').trim(),
-    qualityChecks: qcIds,
+    qualityChecks: qcLabels,
   }
 
   return (

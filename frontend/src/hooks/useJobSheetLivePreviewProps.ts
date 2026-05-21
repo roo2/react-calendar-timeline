@@ -18,7 +18,7 @@ import {
   type FinishMode,
 } from '../utils/quantityRollFields'
 import { hideMyobProductPlaceholderText } from '../utils/jobSheetPreviewText'
-import { collectQualityFlagIds } from '../utils/qualityFlagLabels'
+import { buildJobSheetPrintQualityCheckLabels } from '../utils/qualityFlagLabels'
 import type { SpecLinkedQuantityBind } from './useSpecLinkedQuantityFields'
 
 export type JobSheetLivePreviewPanelProps = ComponentProps<typeof JobSheetPreviewPanel>
@@ -280,9 +280,9 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     return (a || b || '').trim() || null
   }, [spec?.identity?.notes, spec?.run_requirements?.notes])
 
-  const previewQualityFlagIds = useMemo(() => {
-    const ids = collectQualityFlagIds(spec)
-    return ids.length > 0 ? ids : null
+  const previewQualityCheckLabels = useMemo(() => {
+    const labels = buildJobSheetPrintQualityCheckLabels(spec)
+    return labels.length > 0 ? labels : null
   }, [spec])
 
   const jobCode =
@@ -305,7 +305,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     myobImportLineDescription,
     customerFacingDescription: previewCustomerFacingDescriptionWithPackagingTail || customerFacingDescription,
     notes: previewNotesLine,
-    qualityFlagIds: previewQualityFlagIds,
+    qualityCheckLabels: previewQualityCheckLabels,
     quoteSummary,
     palletLoadPlanning,
     palletUnitLabel: finishModeKey === 'Cartons' ? 'cartons' : 'rolls',

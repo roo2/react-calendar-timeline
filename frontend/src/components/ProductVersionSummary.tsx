@@ -347,7 +347,7 @@ export function ProductVersionSummary(props: { spec: any }) {
         <KVTable
           rows={[
             { k: 'Quality flags', v: qualityLabels.length ? qualityLabels.join(', ') : '-' },
-            { k: 'Known issues', v: spec?.quality_expectations?.known_issues || '-' },
+            { k: 'Other QC notes', v: spec?.quality_expectations?.known_issues || '-' },
           ]}
         />
       </SectionCard>

@@ -18,7 +18,7 @@ export type JobSheetPrintOrderHeaderModel = {
     generatedDescriptionWithPackagingTail?: string
     orderedQuantityLabel: string
     notes: string
-    /** Quality flag ids from spec (`quality.flags`). */
+    /** Display labels for quality tags (flags + other QC notes). */
     qualityChecks: string[]
   }
   /** Printing-details sheet: description + optional barcode. */

@@ -1,7 +1,6 @@
 import type { ReactElement } from 'react'
 import { Box, Typography } from '@mui/material'
 import { formatDateDMYShort } from '../../../utils/dateFormat'
-import { formatQualityFlagLabel } from '../../../utils/qualityFlagLabels'
 import type { JobSheetPrintOrderHeaderModel } from './jobSheetPrintOrderHeaderModel'
 
 export type JobSheetPrintOrderHeaderFieldsProps = {
@@ -45,7 +44,7 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
   const secondaryDescLine =
     lineCode && lineCustomer ? lineCustomer : lineCode && !lineCustomer && lineGenerated ? lineGenerated : ''
   const notesText = String(prod.notes ?? '').trim()
-  const qualityLabels = prod.qualityChecks.map((id) => formatQualityFlagLabel(id)).filter(Boolean)
+  const qualityLabels = prod.qualityChecks.map((x) => String(x ?? '').trim()).filter(Boolean)
   const orderDateDisplay = formatDateDMYShort(h.orderDate)
   const dueDateDisplay = formatDateDMYShort(h.dueDate)
 

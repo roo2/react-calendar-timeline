@@ -47,3 +47,13 @@ export function formatQualityFlagLabel(idOrLabel: string): string {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ')
 }
+
+/** Flag labels plus free-text `quality_expectations.known_issues` for job sheet print / preview tags. */
+export function buildJobSheetPrintQualityCheckLabels(
+  spec: Parameters<typeof collectQualityFlagIds>[0],
+): string[] {
+  const labels = collectQualityFlagIds(spec).map(formatQualityFlagLabel).filter(Boolean)
+  const other = String(spec?.quality_expectations?.known_issues ?? '').trim()
+  if (other) labels.push(other)
+  return labels
+}

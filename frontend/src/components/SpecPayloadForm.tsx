@@ -2771,7 +2771,7 @@ export function SpecPayloadForm(props: {
 
         <Box sx={{ mt: 2 }}>
           <TextField
-            label="Known Issues"
+            label="Other QC notes"
             value={quality.known_issues || ''}
             onChange={(e) => update((d) => (d.quality_expectations.known_issues = e.target.value || null))}
             multiline
