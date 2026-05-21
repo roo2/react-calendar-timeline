@@ -10,7 +10,6 @@ import {
   resolveWeightPerRollForPersistence,
   validateJobSheetQuantityInputs,
   cartonsWeightPerRollKg,
-  qtyTypeFromPersisted,
   type FinishMode,
   type QtyType,
 } from '../../../utils/quantityRollFields'
@@ -89,15 +88,6 @@ function datetimeLocalToIsoUtc(s: string): string | null {
   const d = new Date(t)
   if (Number.isNaN(d.getTime())) return null
   return d.toISOString()
-}
-
-function inferQtyTypeFromUnit(u: string | undefined): QtyType {
-  const x = (u || '').toLowerCase()
-  if (x === 'rolls') return 'total_rolls'
-  if (x === 'kg') return 'kg'
-  if (x === '1000') return 'units'
-  if (x === 'cartons' || x === 'bags' || x === 'meters') return 'units'
-  return 'units'
 }
 
 /** Placeholder select value while composing a new product (not a real product id until save). */
@@ -386,14 +376,13 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const previewProductCode = useMemo(() => getDisplayProductCodeFromSpec(spec), [spec])
 
   const finishMode = qty.finishMode
-  const productType = spec.identity?.product_type
 
   useEffect(() => {
     const cur = getSpecOrderDefaults(spec).customer_overproduction_handling
     if (cur == null) return
     const next = normalizeCustomerOverproductionHandling(cur, finishMode)
     if (cur === next) return
-    setSpec((prev) => mergeOrderDefaultsIntoSpec(prev, { customer_overproduction_handling: next }))
+    setSpec((prev: SpecPayload) => mergeOrderDefaultsIntoSpec(prev, { customer_overproduction_handling: next }))
     if (mode === 'edit') setSpecDirty(true)
     setDirty(true)
   }, [finishMode])
@@ -763,7 +752,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (savingJobSheet || savingAsNew) return false
 
     const sendProdDates = productionStatusShowsDatetimeFields(productionStatus)
-    const specForSave = sanitizeSpecFormulationMixes(JSON.parse(JSON.stringify(spec)) as SpecPayload)
+    let specForSave = sanitizeSpecFormulationMixes(JSON.parse(JSON.stringify(spec)) as SpecPayload)
 
     try {
       setSavingAsNew(true)
@@ -1067,7 +1056,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               stockPlanningTotalUnits={stockPlanningTotalUnits}
               customerFacingDescription={customerFacingDescriptionFromSpec(spec)}
               onCustomerFacingDescriptionChange={(raw) => {
-                setSpec((prev) =>
+                setSpec((prev: SpecPayload) =>
                   mergeOrderDefaultsIntoSpec(prev, {
                     customer_facing_description: raw.trim() === '' ? null : raw,
                   }),

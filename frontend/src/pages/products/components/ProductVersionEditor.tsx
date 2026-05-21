@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { can } from '../../../auth/permissions'
@@ -17,7 +17,6 @@ import {
   Paper,
   Select,
   Stack,
-  TextField,
   Typography,
   useMediaQuery,
   useTheme,
@@ -70,7 +69,6 @@ import {
   customerFacingDescriptionFromSpec,
   getSpecOrderDefaults,
   mergeOrderDefaultsIntoSpec,
-  orderDefaultsEqual,
   orderQtyPrefsFromJobSheetAndSpec,
   persistedQtyTypeFromPrefs,
 } from '../../../utils/specOrderDefaults'
@@ -423,8 +421,6 @@ export function ProductVersionEditor(props: {
     setDueDate('')
     setOrderDate('')
     setProductionExtruderCode('')
-    setDieSize('')
-    setCustomerFacingDescription('')
     extruderUserTouchedRef.current = false
     setJobSaveErr(null)
     const emb = embeddedNewJobSheetFlow
@@ -515,9 +511,13 @@ export function ProductVersionEditor(props: {
     setSpec(srcSpec)
     loadedOrderDefaultsRef.current = getSpecOrderDefaults(srcSpec)
     if (!jobSheetId) {
-      const fm: FinishMode = srcSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
       const od = getSpecOrderDefaults(srcSpec)
-      const qt = od.qty_type ? persistedQtyTypeFromPrefs({ qty_type: od.qty_type, quantity_unit: od.quantity_unit }) : 'kg'
+      const qt = od.qty_type
+        ? persistedQtyTypeFromPrefs({
+            qty_type: od.qty_type ?? null,
+            quantity_unit: od.quantity_unit ?? null,
+          })
+        : 'kg'
       const cartonQtyMode: '1000' | 'ctn' = od.quantity_unit === 'cartons' ? 'ctn' : '1000'
       qty.hydrate({
         qtyType: qt,
@@ -625,7 +625,7 @@ export function ProductVersionEditor(props: {
     if (cur == null) return
     const next = normalizeCustomerOverproductionHandling(cur, finishMode)
     if (cur === next) return
-    setSpec((prev) => mergeOrderDefaultsIntoSpec(prev, { customer_overproduction_handling: next }))
+    setSpec((prev: SpecPayload) => mergeOrderDefaultsIntoSpec(prev, { customer_overproduction_handling: next }))
     setDirty(true)
     setJobSaveErr(null)
   }, [finishMode])
@@ -1420,7 +1420,7 @@ export function ProductVersionEditor(props: {
                     printingArtworkScope={printingArtworkScope}
                     customerFacingDescription={customerFacingDescriptionFromSpec(spec)}
                     onCustomerFacingDescriptionChange={(raw) => {
-                      setSpec((prev) =>
+                      setSpec((prev: SpecPayload) =>
                         mergeOrderDefaultsIntoSpec(prev, {
                           customer_facing_description: raw.trim() === '' ? null : raw,
                         }),

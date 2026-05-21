@@ -77,8 +77,8 @@ type DerivedDimensions = {
 
 export type SpecPayload = any
 
-export { PRODUCT_TYPE, PRODUCT_TYPES, productTypeLabel, type ProductType } from '../utils/productTypes'
-import { PRODUCT_TYPE, PRODUCT_TYPES, productTypeLabel, type ProductType } from '../utils/productTypes'
+export { PRODUCT_TYPE, type ProductType } from '../utils/productTypes'
+import { PRODUCT_TYPE, type ProductType } from '../utils/productTypes'
 
 function clone<T>(v: T): T {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

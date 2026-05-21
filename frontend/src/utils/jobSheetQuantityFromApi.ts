@@ -7,21 +7,11 @@ import type { SpecPayload } from '../components/SpecPayloadForm'
 import {
   coerceQtyTypeForFinishMode,
   getOrderQuantityFromJobSheetFields,
-  qtyTypeFromPersisted,
   type FinishMode,
   type QtyType,
 } from './quantityRollFields'
 import type { SpecQuantitySlice } from './specToQuoteInputs'
 import { orderQtyPrefsFromJobSheetAndSpec, persistedQtyTypeFromPrefs } from './specOrderDefaults'
-
-function inferQtyTypeFromUnit(u: string | undefined): QtyType {
-  const x = (u || '').toLowerCase()
-  if (x === 'rolls') return 'total_rolls'
-  if (x === 'kg') return 'kg'
-  if (x === '1000') return 'units'
-  if (x === 'cartons' || x === 'bags' || x === 'meters') return 'units'
-  return 'units'
-}
 
 function parseQtyStrings(js: Record<string, unknown> | null | undefined, spec: SpecPayload): SpecQuantitySlice {
   const isImportDraft = Boolean(js?.is_import_draft)

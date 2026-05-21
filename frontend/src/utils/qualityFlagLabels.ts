@@ -11,7 +11,7 @@ const RETIRED_QUALITY_FLAG_IDS = new Set(['medical', 'chemical_industrial', 'non
 
 /** Quality flag ids for print/preview, including legacy `identity.industry_flags` food_contact. */
 export function collectQualityFlagIds(spec: {
-  quality_expectations?: { flags?: unknown } | null
+  quality_expectations?: { flags?: unknown; known_issues?: unknown } | null
   identity?: { industry_flags?: unknown } | null
   quality_checks?: unknown
 } | null | undefined): string[] {
