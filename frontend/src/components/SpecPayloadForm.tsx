@@ -301,11 +301,8 @@ export function SpecPayloadForm(props: {
   customerFacingDescriptionPlaceholder?: string
   /** Job sheet editor only: volume heuristic for units per pallet (on-screen guide; not printed). */
   estimatedUnitsPerPalletVolume?: number | null
-  /** When set (job sheet), total order cartons/rolls used to compute quantity to deliver. */
+  /** When set (job sheet), total order cartons/rolls for pallet planning. */
   stockPlanningTotalUnits?: number | null
-  /** Job sheet only: rolls/cartons to stock (stored on job sheet, not product spec). */
-  qtyToStock?: number | null
-  onQtyToStockChange?: (value: number | null) => void
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -326,8 +323,6 @@ export function SpecPayloadForm(props: {
     customerFacingDescriptionPlaceholder: customerFacingDescriptionPlaceholderProp,
     estimatedUnitsPerPalletVolume,
     stockPlanningTotalUnits = null,
-    qtyToStock = null,
-    onQtyToStockChange,
   } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
@@ -342,7 +337,7 @@ export function SpecPayloadForm(props: {
     )
     // Retired industry flags (food_contact now lives on quality_expectations.flags).
     d.identity.industry_flags = []
-    // Retired conversion flags (replaced by qty_to_stock / ship quantity); strip if still present in loaded JSON.
+    // Retired conversion flags; strip if still present in loaded JSON.
     const rr = (d as any).run_requirements
     const conv = rr?.conversion
     if (conv && typeof conv === 'object') {
@@ -442,28 +437,18 @@ export function SpecPayloadForm(props: {
   const finishMode = identity.finish_mode || 'Rolls'
   const allowSideSeal = finishMode !== 'Rolls'
   const stockPlanningDerived = useMemo(() => {
-    const unitPlural = finishMode === 'Cartons' ? 'Cartons' : 'Rolls'
     const unitLower = finishMode === 'Cartons' ? 'cartons' : 'rolls'
-    const raw = String(qtyToStock ?? '').trim()
-    const stockN = raw === '' || !Number.isFinite(Number(raw)) ? 0 : Math.max(0, Math.round(Number(raw)))
     const total =
       stockPlanningTotalUnits != null &&
       Number.isFinite(Number(stockPlanningTotalUnits)) &&
       Number(stockPlanningTotalUnits) > 0
         ? Math.round(Number(stockPlanningTotalUnits))
         : null
-    const capped = total != null ? Math.min(stockN, total) : stockN
-    const deliverN = total != null ? Math.max(0, total - capped) : null
     return {
-      unitPlural,
       unitLower,
       orderTotalText: total != null ? `${total} ${unitLower}` : '—',
-      shipQuantityText: deliverN != null ? String(deliverN) : '—',
-      stockFieldLabel: finishMode === 'Cartons' ? 'Cartons to Stock' : 'Rolls to Stock',
-      shipFieldLabel: finishMode === 'Cartons' ? 'Cartons to Ship' : 'Rolls to Ship',
-      overTotal: total != null && stockN > total,
     }
-  }, [finishMode, qtyToStock, stockPlanningTotalUnits])
+  }, [finishMode, stockPlanningTotalUnits])
 
   const palletLoadPlanning = useMemo(
     () =>
@@ -472,7 +457,6 @@ export function SpecPayloadForm(props: {
         rollsPerPallet: packaging.rolls_per_pallet,
         cartonsPerPallet: packaging.cartons_per_pallet,
         estimatedUnitsPerPalletVolume,
-        qtyToStockRaw: qtyToStock,
         orderTotalUnits: stockPlanningTotalUnits,
       }),
     [
@@ -480,7 +464,6 @@ export function SpecPayloadForm(props: {
       packaging.rolls_per_pallet,
       packaging.cartons_per_pallet,
       estimatedUnitsPerPalletVolume,
-      qtyToStock,
       stockPlanningTotalUnits,
     ],
   )
@@ -3316,7 +3299,7 @@ export function SpecPayloadForm(props: {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' },
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
             gap: 2,
             mb: 2,
             pb: 2,
@@ -3333,11 +3316,6 @@ export function SpecPayloadForm(props: {
                 ? `Set order quantity in the Quantity section to show order total (${stockPlanningDerived.unitLower}).`
                 : undefined
             }
-          />
-          <TextField
-            label={stockPlanningDerived.shipFieldLabel}
-            value={stockPlanningDerived.shipQuantityText}
-            disabled
           />
           <TextField
             label="Pallets (shipment)"

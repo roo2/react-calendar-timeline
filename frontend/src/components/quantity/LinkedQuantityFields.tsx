@@ -14,22 +14,24 @@ import type { SpecLinkedQuantityBind } from '../../hooks/useSpecLinkedQuantityFi
 
 type LinkedQty = SpecLinkedQuantityBind
 
-/** Extrusion roll weight for Cartons finish — shown under Conversion instructions in job sheet quantity UI. */
+/** Extrusion roll weight for Cartons finish — job sheet / product order defaults quantity UI. */
 export function CartonRollWeightField({ qty, sx }: { qty: LinkedQty; sx?: SxProps<Theme> }) {
   const { finishMode, weightPerRoll, setWeightPerRoll } = qty
   if (finishMode !== 'Cartons') return null
   return (
-    <TextField
-      label="Roll weight (kg)"
-      type="number"
-      inputProps={{ min: 0, step: 'any' }}
-      value={weightPerRoll}
-      onChange={(e) => setWeightPerRoll(e.target.value)}
-      fullWidth
-      sx={sx}
-      required
-      helperText="Weight per extruded roll of film (extruder QC rows and scheduling)."
-    />
+    <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+      <TextField
+        label="Roll weight (kg)"
+        type="number"
+        inputProps={{ min: 0, step: 'any' }}
+        value={weightPerRoll}
+        onChange={(e) => setWeightPerRoll(e.target.value)}
+        fullWidth
+        sx={sx}
+        required
+        helperText="Choose maximum safe roll weight for uteco and conversion"
+      />
+    </Box>
   )
 }
 
@@ -38,7 +40,7 @@ export function LinkedQuantityFields(props: {
   /** Used when finish mode is Cartons and qty mode isn't KG — bound to product spec `bags_per_carton`. */
   bagsPerCartonStr: string
   onBagsPerCartonChange: (raw: string) => void
-  /** When true, omit carton roll weight here (parent renders {@link CartonRollWeightField} under Conversion instructions). */
+  /** When true, omit carton roll weight here (parent renders {@link CartonRollWeightField} separately). */
   hideCartonRollWeight?: boolean
 }) {
   const { qty, bagsPerCartonStr, onBagsPerCartonChange, hideCartonRollWeight = false } = props
@@ -460,7 +462,7 @@ export function LinkedQuantityFields(props: {
         ) : null}
       </Box>
 
-      {finishMode === 'Cartons' && !hideCartonRollWeight ? <CartonRollWeightField qty={qty} sx={{ mt: 2 }} /> : null}
+      {finishMode === 'Cartons' && !hideCartonRollWeight ? <CartonRollWeightField qty={qty} /> : null}
     </>
   )
 }

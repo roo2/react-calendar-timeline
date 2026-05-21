@@ -51,7 +51,6 @@ import {
 } from '../../../components/SpecPayloadForm'
 import { sanitizeSpecFormulationMixes } from '../../../utils/specFormulationSanitize'
 import { CustomerOverproductionHandlingField } from '../../../components/quantity/CustomerOverproductionHandlingField'
-import { QtyToStockField } from '../../../components/quantity/QtyToStockField'
 import { CartonRollWeightField, LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
@@ -59,7 +58,6 @@ import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtrud
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
 import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
 import { normalizeCustomerOverproductionHandling } from '../../../utils/customerOverproductionHandling'
-import { qtyToStockExceedsOrderTotal, qtyToStockFromJobSheetAndSpec } from '../../../utils/jobSheetQtyToStock'
 import {
   buildOrderDefaultsFromEditor,
   customerFacingDescriptionFromSpec,
@@ -161,8 +159,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [productionExtruderCode, setProductionExtruderCode] = useState('')
   /** After the user changes the extruder dropdown, do not auto-fill over an explicit empty selection. */
   const extruderUserTouchedRef = useRef(false)
-  const [qtyToStock, setQtyToStock] = useState<number | null>(null)
-
   const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
   const ratebook = quoteRatebookState.data
 
@@ -265,7 +261,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       }
     }
     setSpec(loadedSpec0)
-    setQtyToStock(qtyToStockFromJobSheetAndSpec(js as Record<string, unknown>, loadedSpec0))
     const extLegacy =
       loadedSpec0.identity?.production_extruder_code != null &&
       String(loadedSpec0.identity.production_extruder_code).trim() !== ''
@@ -384,7 +379,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionStartedLocal('')
     setProductionFinishedLocal('')
     loadedOrderDefaultsRef.current = getSpecOrderDefaults(makeDefaultSpec())
-    setQtyToStock(null)
   }, [customerId, mode, qty.resetNewDraft])
 
   const theme = useTheme()
@@ -443,8 +437,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     return nr > 0 ? nr : null
   }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
 
-  const qtyToStockOverTotal = qtyToStockExceedsOrderTotal(qtyToStock, stockPlanningTotalUnits)
-
   useEffect(() => {
     if (extruderUserTouchedRef.current) return
     if (productionExtruderCode.trim() !== '') return
@@ -479,7 +471,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     jobSheetDetailData: jobSheetDetail?.data ?? null,
     productionExtruderCode,
     includeProductionEstimates: true,
-    qtyToStock,
   })
 
   const jobSheetPrintingContext: JobSheetPrintingContext = useMemo(() => {
@@ -666,7 +657,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                   : null,
             weight_per_roll_kg: persistedWpr,
             num_rolls: persistedRolls,
-            qty_to_stock: qtyToStock,
             spec: specForSave,
             production_status: productionStatus,
             production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
@@ -697,7 +687,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 : null,
           weight_per_roll_kg: persistedWpr,
           num_rolls: persistedRolls,
-          qty_to_stock: qtyToStock,
           production_status: productionStatus,
           production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
           production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
@@ -834,7 +823,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               : null,
         weight_per_roll_kg: persistedWpr,
         num_rolls: persistedRolls,
-        qty_to_stock: qtyToStock,
         spec: specForSave,
         production_status: productionStatus,
         production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
@@ -1077,11 +1065,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               jobSheetPrintingContext={jobSheetPrintingContext}
               estimatedUnitsPerPalletVolume={estimatedUnitsPerPalletVolume}
               stockPlanningTotalUnits={stockPlanningTotalUnits}
-              qtyToStock={qtyToStock}
-              onQtyToStockChange={(v) => {
-                setQtyToStock(v)
-                setDirty(true)
-              }}
               customerFacingDescription={customerFacingDescriptionFromSpec(spec)}
               onCustomerFacingDescriptionChange={(raw) => {
                 setSpec((prev) =>
@@ -1193,23 +1176,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                         setDirty(true)
                       }}
                     />
-                    {finishMode === 'Cartons' ? (
-                      <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-                          Conversion instructions
-                        </Typography>
-                        <CartonRollWeightField qty={qty} />
-                      </Box>
-                    ) : null}
-                    <QtyToStockField
-                      finishMode={finishMode}
-                      value={qtyToStock}
-                      onChange={(v) => {
-                        setQtyToStock(v)
-                        setDirty(true)
-                      }}
-                      overTotal={qtyToStockOverTotal}
-                    />
+                    {finishMode === 'Cartons' ? <CartonRollWeightField qty={qty} /> : null}
                     <CustomerOverproductionHandlingField
                       spec={spec}
                       finishMode={finishMode}

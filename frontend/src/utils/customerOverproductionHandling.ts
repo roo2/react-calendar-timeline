@@ -29,11 +29,11 @@ export function overproductionOptionLabel(
   const products = productDisplayUnitPlural(productType).toLowerCase()
   switch (value) {
     case 'send_exact_quantity':
-      return 'Send exact quantity only.'
+      return 'Send exact quantity only'
     case 'send_all_products':
-      return `Send all ${products} to customer.`
+      return `Send all ${products}`
     case 'send_full_cartons':
-      return 'Send all full cartons to customer.'
+      return 'Send all full cartons'
     default:
       return ''
   }
@@ -44,4 +44,20 @@ export function overproductionOptionsForFinishMode(finishMode: FinishMode): Cust
     return ['send_all_products', 'send_full_cartons', 'send_exact_quantity']
   }
   return ['send_exact_quantity', 'send_all_products']
+}
+
+export type OverproductionPrintHighlight = 'none' | 'yellow' | 'pink'
+
+/** Job sheet print: highlight when customer overproduction choice is not the default. */
+export function overproductionPrintHighlight(value: CustomerOverproductionHandling): OverproductionPrintHighlight {
+  if (value === DEFAULT_OVERPRODUCTION_HANDLING) return 'none'
+  if (value === 'send_full_cartons') return 'yellow'
+  if (value === 'send_exact_quantity') return 'pink'
+  return 'none'
+}
+
+export function overproductionPrintHighlightClass(kind: OverproductionPrintHighlight): string | undefined {
+  if (kind === 'pink') return 'js-pink'
+  if (kind === 'yellow') return 'js-yellow'
+  return undefined
 }

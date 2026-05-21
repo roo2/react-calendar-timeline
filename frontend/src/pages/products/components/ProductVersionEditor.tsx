@@ -44,7 +44,6 @@ import {
   type JobSheetQuantityFieldsProps,
 } from '../../job-sheets/components/JobSheetIdentityQuantitySection'
 import { CustomerOverproductionHandlingField } from '../../../components/quantity/CustomerOverproductionHandlingField'
-import { QtyToStockField } from '../../../components/quantity/QtyToStockField'
 import { CartonRollWeightField, LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import {
   useSpecLinkedQuantityFields,
@@ -65,7 +64,6 @@ import {
 import { addOrderItem, fetchOrder } from '../../../store/slices/ordersSlice'
 import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
 import { normalizeCustomerOverproductionHandling } from '../../../utils/customerOverproductionHandling'
-import { qtyToStockExceedsOrderTotal, qtyToStockFromJobSheetAndSpec } from '../../../utils/jobSheetQtyToStock'
 import {
   buildOrderDefaultsFromEditor,
   customerOverproductionFromSpec,
@@ -335,8 +333,6 @@ export function ProductVersionEditor(props: {
   const [productionExtruderCode, setProductionExtruderCode] = useState('')
   const loadedOrderDefaultsRef = useRef(getSpecOrderDefaults(makeDefaultSpec()))
   const extruderUserTouchedRef = useRef(false)
-  const [qtyToStock, setQtyToStock] = useState<number | null>(null)
-
   const productDetail = useAppSelector((s) => s.products.detail.byId[productId])
   const data = productDetail?.data
   const versionDetailKey =
@@ -614,7 +610,6 @@ export function ProductVersionEditor(props: {
       customer_facing_description: prefsEarly.customer_facing_description || (importLineDesc || null),
     })
     setSpec(loadedSpec0)
-    setQtyToStock(qtyToStockFromJobSheetAndSpec(jsQty as Record<string, unknown>, loadedSpec0))
     loadedOrderDefaultsRef.current = getSpecOrderDefaults(loadedSpec0)
     qty.hydrate(buildSpecLinkedHydrateFromJobSheetJs(loadedSpec0, jsQty, isImportDraft))
     specHydratedRef.current = true
@@ -643,8 +638,6 @@ export function ProductVersionEditor(props: {
     const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
     return nr > 0 ? nr : null
   }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
-
-  const qtyToStockOverTotal = qtyToStockExceedsOrderTotal(qtyToStock, stockPlanningTotalUnits)
 
   const totalKgNum = Number(qty.totalKg || 0)
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
@@ -826,7 +819,6 @@ export function ProductVersionEditor(props: {
             : null,
       weight_per_roll_kg: persistedWpr,
       num_rolls: persistedRolls,
-      qty_to_stock: qtyToStock,
       spec: specWithOd,
       production_extruder_code: productionExtruderCode.trim() || null,
       ...(keepUnitRate != null ? { unit_rate: keepUnitRate } : {}),
@@ -1384,7 +1376,6 @@ export function ProductVersionEditor(props: {
                   jobSheetDetailData={jobSheetDetail?.data ?? null}
                   productionExtruderCode={productionExtruderCode}
                   includeProductionEstimates={showFullJobSheetPreview}
-                  qtyToStock={qtyToStock}
                 />
               ) : null}
 
@@ -1439,16 +1430,6 @@ export function ProductVersionEditor(props: {
                     }}
                     customerFacingDescriptionPlaceholder={previewDescription}
                     stockPlanningTotalUnits={jobSheetId || embedded ? stockPlanningTotalUnits : null}
-                    qtyToStock={jobSheetId || embedded ? qtyToStock : null}
-                    onQtyToStockChange={
-                      jobSheetId || embedded
-                        ? (v) => {
-                            setQtyToStock(v)
-                            setDirty(true)
-                            setJobSaveErr(null)
-                          }
-                        : undefined
-                    }
                     afterDimensionsSlot={
                       <>
                         <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1538,24 +1519,7 @@ export function ProductVersionEditor(props: {
                               setJobSaveErr(null)
                             }}
                           />
-                          {qty.finishMode === 'Cartons' ? (
-                            <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                              <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-                                Conversion instructions
-                              </Typography>
-                              <CartonRollWeightField qty={qty} />
-                            </Box>
-                          ) : null}
-                          <QtyToStockField
-                            finishMode={qty.finishMode}
-                            value={qtyToStock}
-                            onChange={(v) => {
-                              setQtyToStock(v)
-                              setDirty(true)
-                              setJobSaveErr(null)
-                            }}
-                            overTotal={qtyToStockOverTotal}
-                          />
+                          {qty.finishMode === 'Cartons' ? <CartonRollWeightField qty={qty} /> : null}
                           <CustomerOverproductionHandlingField
                             spec={spec}
                             finishMode={qty.finishMode}
@@ -1623,14 +1587,7 @@ export function ProductVersionEditor(props: {
                         setDirty(true)
                       }}
                     />
-                    {qty.finishMode === 'Cartons' ? (
-                      <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-                          Conversion instructions
-                        </Typography>
-                        <CartonRollWeightField qty={qty} />
-                      </Box>
-                    ) : null}
+                    {qty.finishMode === 'Cartons' ? <CartonRollWeightField qty={qty} /> : null}
                     <CustomerOverproductionHandlingField
                       spec={spec}
                       finishMode={qty.finishMode}
@@ -1682,7 +1639,6 @@ export function ProductVersionEditor(props: {
               jobSheetDetailData={jobSheetDetail?.data ?? null}
               productionExtruderCode={productionExtruderCode}
               includeProductionEstimates={showFullJobSheetPreview}
-              qtyToStock={qtyToStock}
             />
           ) : null}
         </Box>

@@ -104,25 +104,6 @@ def _norm_job_sheet_extruder(v: Optional[str]) -> Optional[str]:
     return t[:64]
 
 
-def _qty_to_stock_from_spec_payload(spec_payload: Any) -> Optional[int]:
-    if not isinstance(spec_payload, dict):
-        return None
-    rr = spec_payload.get("run_requirements")
-    if not isinstance(rr, dict):
-        return None
-    conv = rr.get("conversion")
-    if not isinstance(conv, dict):
-        return None
-    raw = conv.get("qty_to_stock")
-    if raw is None:
-        return None
-    try:
-        n = int(raw)
-        return n if n >= 0 else None
-    except (TypeError, ValueError):
-        return None
-
-
 def _strip_qty_to_stock_from_spec_payload(spec_payload: Any) -> Any:
     if not isinstance(spec_payload, dict):
         return spec_payload
@@ -137,18 +118,6 @@ def _strip_qty_to_stock_from_spec_payload(spec_payload: Any) -> Any:
         rr_out["conversion"] = conv_out
     out["run_requirements"] = rr_out
     return out
-
-
-def _resolve_qty_to_stock_for_create(
-    payload_qty: Optional[int], spec_payload: Any
-) -> Optional[int]:
-    if payload_qty is not None:
-        try:
-            n = int(payload_qty)
-            return n if n >= 0 else None
-        except (TypeError, ValueError):
-            return None
-    return _qty_to_stock_from_spec_payload(spec_payload)
 
 
 def _order_defaults_dict(spec_payload: Any) -> Dict[str, Any]:
@@ -348,9 +317,6 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
                         num_product_units=payload.num_product_units,
                         weight_per_roll_kg=payload.weight_per_roll_kg,
                         num_rolls=int(payload.num_rolls),
-                        qty_to_stock=_resolve_qty_to_stock_for_create(
-                            payload.qty_to_stock, getattr(version, "spec_payload", None)
-                        ),
                         created_by=created_by or "system",
                         customer_facing_description=cfd,
                     )
@@ -442,11 +408,6 @@ def create_job_sheet_from_product_latest_version(
             npu0 = float(quantity_value) * float(bpc)
     npu = float(num_product_units) if num_product_units is not None else npu0
     wpr = float(weight_per_roll_kg) if weight_per_roll_kg is not None else wpr0
-    pv_active = db.get(ProductVersion, str(product.active_version_id))
-    qty_stock = _qty_to_stock_from_spec_payload(
-        getattr(pv_active, "spec_payload", None) if pv_active else None
-    )
-
     js: Optional[JobSheet] = None
     last_err: Optional[Exception] = None
     for _ in range(5):
@@ -467,7 +428,6 @@ def create_job_sheet_from_product_latest_version(
                     num_product_units=npu,
                     weight_per_roll_kg=wpr,
                     num_rolls=int(nr0),
-                    qty_to_stock=qty_stock,
                     unit_rate=float(unit_rate) if unit_rate is not None else None,
                     line_total=float(line_total) if line_total is not None else None,
                     created_by=created_by or "system",
@@ -978,12 +938,6 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
             if payload.num_rolls is None:
                 raise DomainError("num_rolls cannot be null")
             js.num_rolls = int(payload.num_rolls)
-        if "qty_to_stock" in upd:
-            if payload.qty_to_stock is None:
-                js.qty_to_stock = None
-            else:
-                js.qty_to_stock = max(0, int(payload.qty_to_stock))
-
         if "due_date" in upd:
             js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
 
@@ -1125,12 +1079,6 @@ def save_job_sheet_as_new_product(job_sheet_id: str, payload: JobSheetUpdateRequ
             if payload.num_rolls is None:
                 raise DomainError("num_rolls cannot be null")
             js.num_rolls = int(payload.num_rolls)
-        if "qty_to_stock" in upd:
-            if payload.qty_to_stock is None:
-                js.qty_to_stock = None
-            else:
-                js.qty_to_stock = max(0, int(payload.qty_to_stock))
-
         if "due_date" in upd:
             js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
 

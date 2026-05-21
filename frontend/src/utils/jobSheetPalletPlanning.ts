@@ -9,25 +9,16 @@ export type JobSheetPalletLoadPlanning = {
   perPalletSource: PalletPerPalletSource
 }
 
-/**
- * Rolls/cartons to ship to the customer from order total minus stock-to-warehouse.
- * Job sheet `qty_to_stock` (rolls/cartons held in stock, not shipped).
- */
-export function deriveShipToCustomerUnitsFromConversion(opts: {
-  qtyToStockRaw: unknown
-  orderTotalUnits: number | null | undefined
-}): number | null {
-  const raw = String(opts.qtyToStockRaw ?? '').trim()
-  const stockN = raw === '' || !Number.isFinite(Number(raw)) ? 0 : Math.max(0, Math.round(Number(raw)))
-  const total =
-    opts.orderTotalUnits != null &&
-    Number.isFinite(Number(opts.orderTotalUnits)) &&
-    Number(opts.orderTotalUnits) > 0
-      ? Math.round(Number(opts.orderTotalUnits))
-      : null
-  if (total == null) return null
-  const capped = Math.min(stockN, total)
-  return Math.max(0, total - capped)
+/** Order cartons/rolls used for pallet planning (stock/ship are filled in on the printed sheet only). */
+export function orderTotalUnitsForPlanning(orderTotalUnits: number | null | undefined): number | null {
+  if (
+    orderTotalUnits != null &&
+    Number.isFinite(Number(orderTotalUnits)) &&
+    Number(orderTotalUnits) > 0
+  ) {
+    return Math.round(Number(orderTotalUnits))
+  }
+  return null
 }
 
 export function resolveUnitsPerPalletForPlanning(opts: {
@@ -52,19 +43,15 @@ export function resolveUnitsPerPalletForPlanning(opts: {
   return null
 }
 
-/** Pallets needed for the ship quantity, using specified per-pallet counts or the volume heuristic. */
+/** Pallets needed for the order total, using specified per-pallet counts or the volume heuristic. */
 export function computeJobSheetPalletLoadPlanning(opts: {
   finishMode: 'Rolls' | 'Cartons'
   rollsPerPallet: number | null | undefined
   cartonsPerPallet: number | null | undefined
   estimatedUnitsPerPalletVolume: number | null | undefined
-  qtyToStockRaw: unknown
   orderTotalUnits: number | null | undefined
 }): JobSheetPalletLoadPlanning | null {
-  const ship = deriveShipToCustomerUnitsFromConversion({
-    qtyToStockRaw: opts.qtyToStockRaw,
-    orderTotalUnits: opts.orderTotalUnits,
-  })
+  const ship = orderTotalUnitsForPlanning(opts.orderTotalUnits)
   if (ship == null) return null
   const per = resolveUnitsPerPalletForPlanning({
     finishMode: opts.finishMode,

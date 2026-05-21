@@ -25,7 +25,6 @@ class JobSheetCreateRequest(BaseModel):
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
     num_rolls: int = Field(..., ge=1, description="Roll count for scheduling (required for production Gantt).")
-    qty_to_stock: Optional[int] = Field(None, ge=0, description="Rolls/cartons held in stock (not shipped to customer).")
     spec: SpecPayload
     production_status: Optional[JobStatus] = None
     """Initial linked production `Job.status` after create (job row is ensured server-side)."""
@@ -54,7 +53,6 @@ class JobSheetSummary(BaseModel):
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
     num_rolls: int = 1
-    qty_to_stock: Optional[int] = None
     created_by: str
     created_at: Optional[str] = None
     # Product summary fields (denormalized for listing UI)
@@ -108,7 +106,6 @@ class JobSheetUpdateRequest(BaseModel):
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
     num_rolls: Optional[int] = Field(default=None, ge=1)
-    qty_to_stock: Optional[int] = Field(default=None, ge=0)
     # If provided, a new ProductVersion is created and the job sheet is updated
     # to reference it (and the product's active version is advanced).
     spec: Optional[SpecPayload] = None

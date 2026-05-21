@@ -42,8 +42,6 @@ export type UseJobSheetLivePreviewParams = {
   productionExtruderCode: string
   /** When false, omit live order qty, quote estimates, and pallet planning. */
   includeProductionEstimates?: boolean
-  /** Rolls/cartons to stock (job sheet field). */
-  qtyToStock?: number | null
 }
 
 /**
@@ -64,7 +62,6 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     jobSheetDetailData = null,
     productionExtruderCode,
     includeProductionEstimates = true,
-    qtyToStock = null,
   } = params
 
   const ratebook = useAppSelector((s) => s.quotes.quoteRatebook.data)
@@ -244,7 +241,6 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
       rollsPerPallet: spec.packaging?.rolls_per_pallet,
       cartonsPerPallet: spec.packaging?.cartons_per_pallet,
       estimatedUnitsPerPalletVolume,
-      qtyToStockRaw: qtyToStock,
       orderTotalUnits: stockPlanningTotalUnits,
     })
   }, [
@@ -253,7 +249,6 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     spec.packaging?.rolls_per_pallet,
     spec.packaging?.cartons_per_pallet,
     estimatedUnitsPerPalletVolume,
-    qtyToStock,
     stockPlanningTotalUnits,
   ])
 

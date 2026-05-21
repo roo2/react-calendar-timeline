@@ -96,9 +96,15 @@ import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
 import { buildJobSheetPrintQualityCheckLabels, collectQualityFlagIds } from '../../utils/qualityFlagLabels'
 import {
   customerFacingDescriptionFromSpec,
+  customerOverproductionFromSpec,
   extrusionRollCountForPrint,
   orderQtyPrefsFromJobSheetAndSpec,
 } from '../../utils/specOrderDefaults'
+import {
+  overproductionOptionLabel,
+  overproductionPrintHighlight,
+  overproductionPrintHighlightClass,
+} from '../../utils/customerOverproductionHandling'
 import { palletsRequiredCeil } from '../../utils/palletShippingEstimate'
 
 function s(v: unknown, fallback = ''): string {
@@ -138,28 +144,6 @@ function formatConversionPackingDimensionShorthand(opts: {
     }
   }
   return [widthPart, lengthPart, gaugePart].filter(Boolean).join(' x ')
-}
-
-/** Quantity to stock / deliver lines for print (matches job spec wording). */
-function computeQtyStockDeliverForPrint(opts: {
-  finishNorm: string
-  totalUnits: number | null
-  qtyToStockRaw: unknown
-}): { stockText: string; deliverText: string; highlightStock: boolean } {
-  const unit = opts.finishNorm === 'cartons' ? 'Cartons' : 'Rolls'
-  const raw = String(opts.qtyToStockRaw ?? '').trim()
-  const stockN = raw === '' || !Number.isFinite(Number(raw)) ? 0 : Math.max(0, Math.round(Number(raw)))
-  const total =
-    opts.totalUnits != null && Number.isFinite(opts.totalUnits) && opts.totalUnits > 0
-      ? Math.round(Number(opts.totalUnits))
-      : null
-  const capped = total != null ? Math.min(stockN, total) : stockN
-  const deliverN = total != null ? Math.max(0, total - capped) : null
-  return {
-    stockText: capped > 0 ? `${capped} ${unit}` : '—',
-    deliverText: deliverN != null ? `${deliverN} ${unit}` : '—',
-    highlightStock: capped > 0,
-  }
 }
 
 function n(v: unknown): number | null {
@@ -951,9 +935,8 @@ type JobSheetPrintShippingModel = {
   orderUnitsLabel: string
   palletsRequired: string
   palletChecklistCount: number
-  qtyToStockDisplay: string
-  qtyToDeliverDisplay: string
-  highlightQtyToStock: boolean
+  overproductionAcceptLabel: string
+  overproductionHighlightClass: string | undefined
 }
 
 function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingModel }): ReactNode {
@@ -971,19 +954,32 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
           <th className={highlightPalletType ? 'js-pink' : undefined} style={{ width: '20%' }}>Pallet type</th>
           <td className={highlightPalletType ? 'js-pink' : undefined} style={{ width: '30%' }}>{ship.palletType || '—'}</td>
           <th style={{ width: '20%' }}>{ship.finishModeKey === 'cartons' ? 'Cartons to ship' : 'Rolls to ship'}</th>
-          <td style={{ width: '30%' }}>{ship.qtyToDeliverDisplay || '—'}</td>
+          <td style={{ width: '30%' }}>{'\u00a0'}</td>
         </tr>
         <tr>
           <th>{ship.orderUnitsLabel}</th>
-          <td>{ship.orderUnitsForPallets || '—'}</td>
+          <td>
+            <div>{ship.orderUnitsForPallets || '—'}</div>
+            {ship.overproductionAcceptLabel.trim() ? (
+              <div
+                className={
+                  ship.overproductionHighlightClass
+                    ? `js-ship-overproduction ${ship.overproductionHighlightClass}`
+                    : 'js-ship-overproduction'
+                }
+              >
+                {ship.overproductionAcceptLabel}
+              </div>
+            ) : null}
+          </td>
           <th>{ship.finishModeKey === 'cartons' ? 'Cartons per pallet' : 'Rolls per pallet'}</th>
           <td>
             {ship.finishModeKey === 'cartons' ? ship.cartonsPerPallet || '—' : ship.rollsPerPallet || '—'}
           </td>
         </tr>
         <tr>
-          <th className={ship.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>{ship.finishModeKey === 'cartons' ? 'Cartons to stock' : 'Rolls to stock'}</th>
-          <td className={ship.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>{ship.qtyToStockDisplay || '—'}</td>
+          <th>{ship.finishModeKey === 'cartons' ? 'Cartons to stock' : 'Rolls to stock'}</th>
+          <td>{'\u00a0'}</td>
           <th>Pallets required</th>
           <td>{ship.palletsRequired || '—'}</td>
         </tr>
@@ -1022,9 +1018,6 @@ type JobSheetPrintConversionModel = {
     ventPosition: string
     ventHoleSizeMm: number
     highlightVentHoleSize: boolean
-    qtyToStockDisplay: string
-    qtyToDeliverDisplay: string
-    highlightQtyToStock: boolean
     handle: string
     linedCartons: string
     highlightSeal?: boolean
@@ -1123,68 +1116,58 @@ function JobSheetPrintExtrusionQcPage(props: {
           </tr>
         </tbody>
       </table>
-
-      <table className="js-grid">
+      <table className="js-grid js-qc-checklist" role="presentation">
         <tbody>
           <tr>
-            <td colSpan={6} className="js-manual-wrap">
-              <table className="js-qc-checklist" role="presentation">
-                <tbody>
-                  <tr>
-                    <td colSpan={6} className="js-qc-title">
-                      Quality control checklist
-                    </td>
-                  </tr>
-                  <tr>
-                    <th className="js-qc-check-for" scope="col" colSpan={2}>
-                      Check for:
-                    </th>
-                    <th className="js-qc-wi" scope="col">
-                      WI
-                    </th>
-                    <th className="js-qc-narrow" scope="col">
-                      Pass / Fail ?
-                    </th>
-                    <th className="js-qc-narrow" scope="col">
-                      Sign
-                    </th>
-                    <th className="js-qc-narrow" scope="col">
-                      Date
-                    </th>
-                  </tr>
-                  <tr>
-                    <td className="js-qc-check-for" colSpan={2}>1. Check correct raw material spec</td>
-                    <td className="js-qc-wi">WI-01</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                  </tr>
-                  <tr>
-                    <td className="js-qc-check-for" colSpan={2}>{`2. Check spec's of Width/Length/um & Film Quality`}</td>
-                    <td className="js-qc-wi">WI-01/10</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                  </tr>
-                  <tr>
-                    <td className="js-qc-check-for" colSpan={2}>3. Check colour of film</td>
-                    <td className="js-qc-wi">WI-01</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                    <td className="js-qc-narrow">{'\u00a0'}</td>
-                  </tr>
-                  <tr>
-                    <td colSpan={6} className="js-qc-details-label">
-                      Details of changes/Variations/Concessions:
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <td colSpan={6} className="js-qc-title">
+              Quality control checklist
+            </td>
+          </tr>
+          <tr>
+            <th className="js-qc-check-for" scope="col" colSpan={2}>
+              Check for:
+            </th>
+            <th className="js-qc-wi" scope="col">
+              WI
+            </th>
+            <th className="js-qc-narrow" scope="col">
+              Pass / Fail ?
+            </th>
+            <th className="js-qc-narrow" scope="col">
+              Sign
+            </th>
+            <th className="js-qc-narrow" scope="col">
+              Date
+            </th>
+          </tr>
+          <tr>
+            <td className="js-qc-check-for" colSpan={2}>1. Check correct raw material spec</td>
+            <td className="js-qc-wi">WI-01</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+          </tr>
+          <tr>
+            <td className="js-qc-check-for" colSpan={2}>{`2. Check spec's of Width/Length/um & Film Quality`}</td>
+            <td className="js-qc-wi">WI-01/10</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+          </tr>
+          <tr>
+            <td className="js-qc-check-for" colSpan={2}>3. Check colour of film</td>
+            <td className="js-qc-wi">WI-01</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+            <td className="js-qc-narrow">{'\u00a0'}</td>
+          </tr>
+          <tr>
+            <td colSpan={6} className="js-qc-details-label">
+              Details of changes/Variations/Concessions:
             </td>
           </tr>
         </tbody>
       </table>
-
       <table className="js-grid">
         <tbody>
           <tr>
@@ -1375,14 +1358,6 @@ function JobSheetPrintConversionInstructionsPage(props: {
                   ) : null}
                   {!c?.ventSummary?.trim() && !c?.ventPosition?.trim() ? dash : null}
                 </td>
-              </tr>
-              <tr className={c?.highlightQtyToStock ? 'js-print-qty-stock-hl' : undefined}>
-                <th>Cartons to stock</th>
-                <td>{v(c?.qtyToStockDisplay)}</td>
-              </tr>
-              <tr>
-                <th>Cartons to ship</th>
-                <td>{v(c?.qtyToDeliverDisplay)}</td>
               </tr>
               <tr className={convHl(c?.highlightHandle)}>
                 <th>Handle</th>
@@ -2229,12 +2204,6 @@ export function JobSheetPrintPage() {
       gaugeLineFallback: gaugeLine,
     })
 
-    const qtyStockDeliverPrint = computeQtyStockDeliverForPrint({
-      finishNorm,
-      totalUnits: orderUnitsForPallets,
-      qtyToStockRaw: (js as Record<string, unknown> | undefined)?.qty_to_stock ?? convRaw.qty_to_stock,
-    })
-
     return {
       perforated,
       header: {
@@ -2434,9 +2403,18 @@ export function JobSheetPrintPage() {
         orderUnitsLabel: finishNorm === 'cartons' ? 'Order cartons' : 'Order rolls',
         palletsRequired: palletsRequiredForOrder != null ? String(palletsRequiredForOrder) : '',
         palletChecklistCount: palletsRequiredForOrder != null ? palletsRequiredForOrder : 0,
-        qtyToStockDisplay: qtyStockDeliverPrint.stockText,
-        qtyToDeliverDisplay: qtyStockDeliverPrint.deliverText,
-        highlightQtyToStock: qtyStockDeliverPrint.highlightStock,
+        ...(() => {
+          const overproductionHandling = customerOverproductionFromSpec(
+            specTyped,
+            finishNorm === 'cartons' ? 'Cartons' : 'Rolls',
+          )
+          return {
+            overproductionAcceptLabel: overproductionOptionLabel(overproductionHandling, productType),
+            overproductionHighlightClass: overproductionPrintHighlightClass(
+              overproductionPrintHighlight(overproductionHandling),
+            ),
+          }
+        })(),
       },
       conversionInstructions: {
         carton: cartonConversion,
@@ -2457,9 +2435,6 @@ export function JobSheetPrintPage() {
                 ventPosition: ventPositionPrint,
                 ventHoleSizeMm: ventHoleSizeMmPrint,
                 highlightVentHoleSize: highlightVentHoleSizePrint,
-                qtyToStockDisplay: qtyStockDeliverPrint.stockText,
-                qtyToDeliverDisplay: qtyStockDeliverPrint.deliverText,
-                highlightQtyToStock: qtyStockDeliverPrint.highlightStock,
                 handle: yn(convRaw.handle),
                 linedCartons: yn(convRaw.lined_cartons),
                 highlightSeal: highlightConversionSeal,
@@ -3131,6 +3106,7 @@ export function JobSheetPrintPage() {
           width: 100%;
           border-collapse: collapse;
           font-size: var(--js-print-fs-body);
+          table-layout: auto;
         }
         .js-qc-checklist th,
         .js-qc-checklist td {
@@ -3148,7 +3124,7 @@ export function JobSheetPrintPage() {
           text-align: left;
           font-weight: var(--js-print-fw-label);
           font-size: var(--js-print-fs-label);
-          width: 35%;
+          width: 40%;
         }
         .js-qc-checklist .js-qc-wi {
           width: 12%;
@@ -3510,7 +3486,7 @@ export function JobSheetPrintPage() {
         .js-print-printing-form-title {
           margin: -10px -12px 10px -12px;
           padding: 5px 12px;
-          border-bottom: 2px solid #000;
+          border-bottom: 1px solid #000;
           background: #f1f1f1;
           font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
@@ -3592,6 +3568,18 @@ export function JobSheetPrintPage() {
         .js-print-table-shipping {
           margin-top: 14px;
           table-layout:auto;
+        }
+        .js-ship-overproduction {
+          margin-top: 0.35em;
+          font-size: 0.92em;
+          font-weight: var(--js-print-fw-value);
+        }
+        .js-ship-overproduction.js-pink,
+        .js-ship-overproduction.js-yellow {
+          display: inline-block;
+          padding: 0.15em 0.35em;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
         .js-print-artwork-file-list {
           margin: 0;
