@@ -20,6 +20,7 @@ export type JobSheetSummary = {
   num_product_units?: number | null
   weight_per_roll_kg?: number | null
   num_rolls?: number
+  qty_to_stock?: number | null
   created_at?: string | null
   order_id?: string | null
   invoice_no?: string | null

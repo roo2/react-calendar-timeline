@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../components/SpecPayloadForm'
-import { Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Paper, Stack, Typography } from '@mui/material'
 import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
 import { FormErrorAlert } from '../../components/FormErrorAlert'
 import { checkProductCodeExists, clearCreateErrors, clearCreateFieldError, createProduct } from '../../store/slices/productsSlice'
@@ -29,12 +29,19 @@ export function ProductNewPage() {
   const { setDirty } = useUnsavedChanges()
 
   const [customerId, setCustomerId] = useState('')
-  const [code, setCode] = useState('')
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   const [codeExists, setCodeExists] = useState(false)
   const codeExistsReq = useRef(0)
 
-  const canSubmit = useMemo(() => customerId && code && !saving, [customerId, code, saving])
+  const customerFacingCode = useMemo(
+    () => String(spec.identity?.customer_code ?? '').trim(),
+    [spec.identity?.customer_code],
+  )
+
+  const canSubmit = useMemo(
+    () => Boolean(customerId && customerFacingCode && !saving),
+    [customerId, customerFacingCode, saving],
+  )
 
   useEffect(() => {
     // Allow preselecting a customer when navigating from "New Order" via query string.
@@ -43,7 +50,7 @@ export function ProductNewPage() {
   }, [customerId, preCustomerId])
 
   useEffect(() => {
-    const v = (code || '').trim()
+    const v = customerFacingCode
     const cid = (customerId || '').trim()
     if (!v || !cid) {
       setCodeExists(false)
@@ -65,7 +72,7 @@ export function ProductNewPage() {
     return () => {
       window.clearTimeout(t)
     }
-  }, [code, customerId, dispatch])
+  }, [customerFacingCode, customerId, dispatch])
 
   useEffect(() => {
     // Reset product create errors when entering the page.
@@ -86,7 +93,7 @@ export function ProductNewPage() {
         createProduct({
           data: {
             customer_id: customerId,
-            code,
+            code: customerFacingCode,
             spec,
           },
         }),
@@ -135,49 +142,33 @@ export function ProductNewPage() {
               Basic Information
             </Typography>
 
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-              <CustomerSearchAutocomplete
-                value={customerId}
-                onChange={(id) => {
-                  setCustomerId(id)
-                  dispatch(clearCreateFieldError('customer_id'))
-                }}
-                required
-                error={!!fieldErrors['customer_id']}
-                helperText={fieldErrors['customer_id'] || ''}
-                disabled={customerLocked}
-                disableClearable
-              />
-
-              <TextField
-                label="Customer-facing product code"
-                value={code}
-                onChange={(e) => {
-                  setCode(e.currentTarget.value)
-                  setCodeExists(false)
-                  dispatch(clearCreateFieldError('code'))
-                }}
-                required
-                helperText={
-                  fieldErrors['code'] ||
-                  (codeExists
-                    ? 'Customer-facing product code already exists'
-                    : 'Unique customer-facing code for this product (spec-derived codes do not include customer prefix).')
-                }
-                error={!!fieldErrors['code'] || codeExists}
-              />
-
-            </Box>
+            <CustomerSearchAutocomplete
+              value={customerId}
+              onChange={(id) => {
+                setCustomerId(id)
+                dispatch(clearCreateFieldError('customer_id'))
+              }}
+              required
+              error={!!fieldErrors['customer_id']}
+              helperText={fieldErrors['customer_id'] || ''}
+              disabled={customerLocked}
+              disableClearable
+              sx={{ maxWidth: 480 }}
+            />
           </Paper>
 
           <SpecPayloadForm
             value={spec}
             onChange={(next) => {
               setSpec(next)
-              // Any spec edit clears spec-related validation to reduce stale highlights.
+              setCodeExists(false)
+              dispatch(clearCreateFieldError('code'))
               clearLocalFieldErrorsByPrefix('spec')
             }}
-            fieldErrors={fieldErrors}
+            fieldErrors={{
+              ...fieldErrors,
+              ...(codeExists ? { 'spec.identity.customer_code': 'Customer-facing product code already exists' } : {}),
+            }}
             customerId={customerId || undefined}
           />
 

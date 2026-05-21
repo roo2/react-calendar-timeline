@@ -104,11 +104,84 @@ def _norm_job_sheet_extruder(v: Optional[str]) -> Optional[str]:
     return t[:64]
 
 
-def _norm_job_sheet_die_size(v: Optional[str]) -> Optional[str]:
-    if v is None:
+def _qty_to_stock_from_spec_payload(spec_payload: Any) -> Optional[int]:
+    if not isinstance(spec_payload, dict):
         return None
-    t = str(v).strip()
-    return t if t else None
+    rr = spec_payload.get("run_requirements")
+    if not isinstance(rr, dict):
+        return None
+    conv = rr.get("conversion")
+    if not isinstance(conv, dict):
+        return None
+    raw = conv.get("qty_to_stock")
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+        return n if n >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _strip_qty_to_stock_from_spec_payload(spec_payload: Any) -> Any:
+    if not isinstance(spec_payload, dict):
+        return spec_payload
+    out = dict(spec_payload)
+    rr = out.get("run_requirements")
+    if not isinstance(rr, dict):
+        return out
+    rr_out = dict(rr)
+    conv = rr_out.get("conversion")
+    if isinstance(conv, dict):
+        conv_out = {k: v for k, v in conv.items() if k != "qty_to_stock"}
+        rr_out["conversion"] = conv_out
+    out["run_requirements"] = rr_out
+    return out
+
+
+def _resolve_qty_to_stock_for_create(
+    payload_qty: Optional[int], spec_payload: Any
+) -> Optional[int]:
+    if payload_qty is not None:
+        try:
+            n = int(payload_qty)
+            return n if n >= 0 else None
+        except (TypeError, ValueError):
+            return None
+    return _qty_to_stock_from_spec_payload(spec_payload)
+
+
+def _order_defaults_dict(spec_payload: Any) -> Dict[str, Any]:
+    if not isinstance(spec_payload, dict):
+        return {}
+    od = spec_payload.get("order_defaults")
+    return od if isinstance(od, dict) else {}
+
+
+def _sync_job_sheet_from_spec_order_defaults(js: JobSheet, spec_payload: Any) -> None:
+    """Mirror product-level order defaults onto the job sheet row for legacy readers."""
+    od = _order_defaults_dict(spec_payload)
+    if not od:
+        return
+    qt = od.get("qty_type")
+    if qt is not None and str(qt).strip():
+        js.qty_type = str(qt).strip()
+    qu = od.get("quantity_unit")
+    if qu is not None and str(qu).strip():
+        js.quantity_unit = str(qu).strip()
+    if od.get("weight_per_roll_kg") is not None:
+        try:
+            w = float(od["weight_per_roll_kg"])
+            js.weight_per_roll_kg = w if w > 0 else None
+        except (TypeError, ValueError):
+            pass
+    if "customer_facing_description" in od:
+        raw = od.get("customer_facing_description")
+        if raw is None:
+            js.customer_facing_description = None
+        else:
+            t = str(raw).strip()
+            js.customer_facing_description = t if t else None
 
 
 def _next_order_line_index(db, order_id: str) -> int:
@@ -217,11 +290,15 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
             raise DomainError("Product does not belong to selected customer")
 
         vnum = _next_version_number(db, pid)
+        spec_payload = (
+            payload.spec.model_dump() if hasattr(payload.spec, "model_dump") else payload.spec.dict()
+        )
+        spec_payload = _strip_qty_to_stock_from_spec_payload(spec_payload)
         version = ProductVersion(
             product_id=pid,
             version_number=vnum,
             created_by=created_by or "system",
-            spec_payload=payload.spec.dict(),
+            spec_payload=spec_payload,
         )
         db.add(version)
         db.flush()
@@ -237,11 +314,8 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
                 db.add(product)
 
         create_fields = payload.model_dump(exclude_unset=True)
-        if "production_extruder_code" in create_fields or "die_size" in create_fields:
-            if "production_extruder_code" in create_fields:
-                product.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
-            if "die_size" in create_fields:
-                product.die_size = _norm_job_sheet_die_size(payload.die_size)
+        if "production_extruder_code" in create_fields:
+            product.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
             db.add(product)
 
         due_dt: Optional[datetime] = None
@@ -274,11 +348,18 @@ def create_job_sheet_with_new_version(payload: JobSheetCreateRequest, created_by
                         num_product_units=payload.num_product_units,
                         weight_per_roll_kg=payload.weight_per_roll_kg,
                         num_rolls=int(payload.num_rolls),
+                        qty_to_stock=_resolve_qty_to_stock_for_create(
+                            payload.qty_to_stock, getattr(version, "spec_payload", None)
+                        ),
                         created_by=created_by or "system",
                         customer_facing_description=cfd,
                     )
                     db.add(js)
                     db.flush()
+                    if isinstance(getattr(version, "spec_payload", None), dict):
+                        _sync_job_sheet_from_spec_order_defaults(js, version.spec_payload)
+                        db.add(js)
+                        db.flush()
                 last_err = None
                 break
             except IntegrityError as e:
@@ -361,6 +442,10 @@ def create_job_sheet_from_product_latest_version(
             npu0 = float(quantity_value) * float(bpc)
     npu = float(num_product_units) if num_product_units is not None else npu0
     wpr = float(weight_per_roll_kg) if weight_per_roll_kg is not None else wpr0
+    pv_active = db.get(ProductVersion, str(product.active_version_id))
+    qty_stock = _qty_to_stock_from_spec_payload(
+        getattr(pv_active, "spec_payload", None) if pv_active else None
+    )
 
     js: Optional[JobSheet] = None
     last_err: Optional[Exception] = None
@@ -382,6 +467,7 @@ def create_job_sheet_from_product_latest_version(
                     num_product_units=npu,
                     weight_per_roll_kg=wpr,
                     num_rolls=int(nr0),
+                    qty_to_stock=qty_stock,
                     unit_rate=float(unit_rate) if unit_rate is not None else None,
                     line_total=float(line_total) if line_total is not None else None,
                     created_by=created_by or "system",
@@ -892,6 +978,11 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
             if payload.num_rolls is None:
                 raise DomainError("num_rolls cannot be null")
             js.num_rolls = int(payload.num_rolls)
+        if "qty_to_stock" in upd:
+            if payload.qty_to_stock is None:
+                js.qty_to_stock = None
+            else:
+                js.qty_to_stock = max(0, int(payload.qty_to_stock))
 
         if "due_date" in upd:
             js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
@@ -924,6 +1015,7 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
                 spec_payload = (
                     payload.spec.model_dump() if hasattr(payload.spec, "model_dump") else payload.spec.dict()
                 )
+                spec_payload = _strip_qty_to_stock_from_spec_payload(spec_payload)
                 version = ProductVersion(
                     product_id=pid,
                     version_number=vnum,
@@ -943,6 +1035,7 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
                     db.add(product)
 
                 js.product_version_id = str(version.id)
+                _sync_job_sheet_from_spec_order_defaults(js, spec_payload)
 
         db.add(js)
         db.flush()
@@ -950,15 +1043,10 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         if payload.spec is not None and import_draft_before:
             finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
 
-        if ("production_extruder_code" in upd or "die_size" in upd) and str(js.product_id) != str(
-            MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID
-        ):
+        if "production_extruder_code" in upd and str(js.product_id) != str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID):
             prod = db.get(Product, str(js.product_id))
             if prod:
-                if "production_extruder_code" in upd:
-                    prod.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
-                if "die_size" in upd:
-                    prod.die_size = _norm_job_sheet_die_size(payload.die_size)
+                prod.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
                 db.add(prod)
 
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
@@ -1037,6 +1125,11 @@ def save_job_sheet_as_new_product(job_sheet_id: str, payload: JobSheetUpdateRequ
             if payload.num_rolls is None:
                 raise DomainError("num_rolls cannot be null")
             js.num_rolls = int(payload.num_rolls)
+        if "qty_to_stock" in upd:
+            if payload.qty_to_stock is None:
+                js.qty_to_stock = None
+            else:
+                js.qty_to_stock = max(0, int(payload.qty_to_stock))
 
         if "due_date" in upd:
             js.due_date = datetime.combine(payload.due_date, time.min) if payload.due_date is not None else None
@@ -1056,9 +1149,10 @@ def save_job_sheet_as_new_product(job_sheet_id: str, payload: JobSheetUpdateRequ
 
         if "production_extruder_code" in upd:
             new_product.production_extruder_code = _norm_job_sheet_extruder(payload.production_extruder_code)
-        if "die_size" in upd:
-            new_product.die_size = _norm_job_sheet_die_size(payload.die_size)
         db.add(new_product)
+
+        if isinstance(getattr(version, "spec_payload", None), dict):
+            _sync_job_sheet_from_spec_order_defaults(js, version.spec_payload)
 
         db.add(js)
         db.flush()

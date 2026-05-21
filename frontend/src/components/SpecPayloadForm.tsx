@@ -43,10 +43,21 @@ import type { AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
 import { PlateSelect, type PlateOption } from './PlateSelect'
 import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type PrintingArtworkScope } from './PrintingArtworkUploadSection'
+import { ProductTypeIdentitySection } from './product/ProductTypeIdentitySection'
+import { getSpecOrderDefaults, mergeOrderDefaultsIntoSpec } from '../utils/specOrderDefaults'
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
 import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 import { formatSealTypeLabel } from '../utils/specCompat'
+import {
+  isRegisteredPrint,
+  normalizePrintRegistration,
+  PRINT_REGISTRATION_DEFAULT,
+  showConversionPrintPositionDetailsField,
+  formatPrintPositionForPrint,
+  printPositionHighlight,
+  printPositionHighlightSx,
+} from '../utils/printRegistration'
 import {
   conversionFieldsForPackingMode,
   deriveConversionPackingMode,
@@ -66,31 +77,8 @@ type DerivedDimensions = {
 
 export type SpecPayload = any
 
-export const PRODUCT_TYPE = {
-  Bag: 'Bag',
-  Tube: 'Tube',
-  Sleeve: 'Sleeve',
-  Sheet: 'Sheet',
-  Centerfold: 'Centerfold',
-  UFilm: 'U-Film',
-  JFilm: 'J-Film',
-} as const
-
-type ProductType = (typeof PRODUCT_TYPE)[keyof typeof PRODUCT_TYPE]
-
-const PRODUCT_TYPES: ProductType[] = [
-  PRODUCT_TYPE.Bag,
-  PRODUCT_TYPE.Tube,
-  PRODUCT_TYPE.Sleeve,
-  PRODUCT_TYPE.Sheet,
-  PRODUCT_TYPE.Centerfold,
-  PRODUCT_TYPE.UFilm,
-  PRODUCT_TYPE.JFilm,
-]
-
-function productTypeLabel(v: ProductType): string {
-  return v === PRODUCT_TYPE.Centerfold ? 'Centrefold' : v
-}
+export { PRODUCT_TYPE, PRODUCT_TYPES, productTypeLabel, type ProductType } from '../utils/productTypes'
+import { PRODUCT_TYPE, PRODUCT_TYPES, productTypeLabel, type ProductType } from '../utils/productTypes'
 
 function clone<T>(v: T): T {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,6 +167,13 @@ export function makeDefaultSpec(): SpecPayload {
       notes: null,
       customer_code: null,
     },
+    order_defaults: {
+      qty_type: null,
+      quantity_unit: null,
+      weight_per_roll_kg: null,
+      customer_facing_description: null,
+      customer_overproduction_handling: 'send_all_products',
+    },
     dimensions: {
       base_width_mm: null,
       width_tolerance_mm: 5,
@@ -210,6 +205,7 @@ export function makeDefaultSpec(): SpecPayload {
       back_ink_plate: [],
       cylinder_size_mm: null,
       barcode: null,
+      print_registration: PRINT_REGISTRATION_DEFAULT,
       print_position_notes: null,
       plates_around: null,
       plates_across: null,
@@ -245,7 +241,6 @@ export function makeDefaultSpec(): SpecPayload {
         pack_size: null,
         qty_per_fold: null,
         loose: false,
-        qty_to_stock: null,
         handle: false,
         lined_cartons: false,
         notes: null,
@@ -308,6 +303,9 @@ export function SpecPayloadForm(props: {
   estimatedUnitsPerPalletVolume?: number | null
   /** When set (job sheet), total order cartons/rolls used to compute quantity to deliver. */
   stockPlanningTotalUnits?: number | null
+  /** Job sheet only: rolls/cartons to stock (stored on job sheet, not product spec). */
+  qtyToStock?: number | null
+  onQtyToStockChange?: (value: number | null) => void
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -328,6 +326,8 @@ export function SpecPayloadForm(props: {
     customerFacingDescriptionPlaceholder: customerFacingDescriptionPlaceholderProp,
     estimatedUnitsPerPalletVolume,
     stockPlanningTotalUnits = null,
+    qtyToStock = null,
+    onQtyToStockChange,
   } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
@@ -346,7 +346,7 @@ export function SpecPayloadForm(props: {
     const rr = (d as any).run_requirements
     const conv = rr?.conversion
     if (conv && typeof conv === 'object') {
-      for (const k of ['send_all_bags', 'sendAllBags']) {
+      for (const k of ['send_all_bags', 'sendAllBags', 'qty_to_stock']) {
         if (Object.prototype.hasOwnProperty.call(conv, k)) delete conv[k]
       }
     }
@@ -432,11 +432,19 @@ export function SpecPayloadForm(props: {
     Array.isArray(formulation.colour_components) && formulation.colour_components.length > 0 ? formulation.colour_components : legacyColourRow
 
   const printingEnabled = printing.method && printing.method !== 'None'
+  const printRegistration = normalizePrintRegistration(printing.print_registration)
+  const printRegistered = isRegisteredPrint(printRegistration)
+  const showConvPrintPositionDetails = showConversionPrintPositionDetailsField({
+    finishMode: identity.finish_mode || 'Rolls',
+    sealType: sealTypeUiValue,
+    printingEnabled: !!printingEnabled,
+  })
   const finishMode = identity.finish_mode || 'Rolls'
+  const allowSideSeal = finishMode !== 'Rolls'
   const stockPlanningDerived = useMemo(() => {
     const unitPlural = finishMode === 'Cartons' ? 'Cartons' : 'Rolls'
     const unitLower = finishMode === 'Cartons' ? 'cartons' : 'rolls'
-    const raw = String(conversion.qty_to_stock ?? '').trim()
+    const raw = String(qtyToStock ?? '').trim()
     const stockN = raw === '' || !Number.isFinite(Number(raw)) ? 0 : Math.max(0, Math.round(Number(raw)))
     const total =
       stockPlanningTotalUnits != null &&
@@ -455,7 +463,7 @@ export function SpecPayloadForm(props: {
       shipFieldLabel: finishMode === 'Cartons' ? 'Cartons to Ship' : 'Rolls to Ship',
       overTotal: total != null && stockN > total,
     }
-  }, [finishMode, conversion.qty_to_stock, stockPlanningTotalUnits])
+  }, [finishMode, qtyToStock, stockPlanningTotalUnits])
 
   const palletLoadPlanning = useMemo(
     () =>
@@ -464,7 +472,7 @@ export function SpecPayloadForm(props: {
         rollsPerPallet: packaging.rolls_per_pallet,
         cartonsPerPallet: packaging.cartons_per_pallet,
         estimatedUnitsPerPalletVolume,
-        qtyToStockRaw: conversion.qty_to_stock,
+        qtyToStockRaw: qtyToStock,
         orderTotalUnits: stockPlanningTotalUnits,
       }),
     [
@@ -472,7 +480,7 @@ export function SpecPayloadForm(props: {
       packaging.rolls_per_pallet,
       packaging.cartons_per_pallet,
       estimatedUnitsPerPalletVolume,
-      conversion.qty_to_stock,
+      qtyToStock,
       stockPlanningTotalUnits,
     ],
   )
@@ -581,6 +589,9 @@ export function SpecPayloadForm(props: {
     update((d) => {
       d.printing.method = next
       if ((next === 'Inline' || next === 'Uteco') && !d.printing.side) d.printing.side = 'front'
+      if (next === 'Inline' || next === 'Uteco') {
+        if (!d.printing.print_registration) d.printing.print_registration = PRINT_REGISTRATION_DEFAULT
+      }
       if (next === 'None') {
         d.printing.cylinder_size_mm = null
       }
@@ -819,6 +830,18 @@ export function SpecPayloadForm(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-way defaulting for carton mode
   }, [finishMode, sealTypeUiValue])
 
+  // Rolls finish: bottom seal only (no side seal).
+  useEffect(() => {
+    if (finishMode !== 'Rolls') return
+    if (String(sealTypeUiValue || '').trim().toLowerCase() !== 'side') return
+    update((d) => {
+      if (!d.run_requirements) (d as any).run_requirements = {}
+      d.run_requirements.seal_type = 'end'
+      if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- coerce invalid side seal on rolls
+  }, [finishMode, sealTypeUiValue])
+
   // Bag-on-roll defaults: switch perforation + seal on when entering this mode.
   const prevBagOnRollRef = useRef(false)
   useEffect(() => {
@@ -907,9 +930,50 @@ export function SpecPayloadForm(props: {
     }
   >
     <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
-    <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+    {allowSideSeal ? (
+      <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+    ) : null}
     <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
   </DefaultSelectField>
+  )
+
+  const printPositionEditorRow = (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '1fr', sm: 'minmax(0, 1fr) minmax(0, 2fr)' },
+        gap: 2,
+      }}
+    >
+      <DefaultSelectField
+        label="Print position"
+        defaultValue={PRINT_REGISTRATION_DEFAULT}
+        value={printRegistration}
+        onChange={(e) =>
+          update((d) => {
+            d.printing.print_registration = e.target.value || PRINT_REGISTRATION_DEFAULT
+          })
+        }
+        fullWidth
+      >
+        <MenuItem value="random">Random</MenuItem>
+        <MenuItem value="registered">Registered</MenuItem>
+      </DefaultSelectField>
+      <TextField
+        label="Print position details"
+        value={printing.print_position_notes || ''}
+        onChange={(e) => update((d) => (d.printing.print_position_notes = e.target.value || null))}
+        fullWidth
+        multiline
+        minRows={1}
+        placeholder="e.g. 50 mm from bottom seal"
+        helperText={
+          printRegistered && String(printing.print_position_notes || '').trim() === ''
+            ? 'Add distance or position when print is registered.'
+            : ' '
+        }
+      />
+    </Box>
   )
 
   const showPlateColumn = printing.method === 'Inline'
@@ -1464,98 +1528,48 @@ export function SpecPayloadForm(props: {
   return (
     <Stack spacing={2}>
       <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Product Type
-        </Typography>
-
-        <Box
-          sx={{
-            mb: 2,
-            display: 'grid',
-            gridTemplateColumns:
-              typeof onCustomerFacingDescriptionChange === 'function'
-                ? { xs: '1fr', md: 'minmax(0, 1fr) minmax(0, 2fr)' }
-                : '1fr',
-            gap: 2,
-            alignItems: 'flex-start',
-            maxWidth: typeof onCustomerFacingDescriptionChange === 'function' ? '100%' : { xs: '100%', sm: '50%' },
-          }}
-        >
-          <TextField
-            label="Customer-facing product code"
-            placeholder={generatedProductCodePlaceholder}
-            value={identity.customer_code ?? ''}
-            onChange={(e) =>
-              update((d) => {
-                const raw = e.target.value
-                d.identity.customer_code = raw.trim() === '' ? null : raw
-              })
+        <ProductTypeIdentitySection
+          customerCode={identity.customer_code ?? ''}
+          onCustomerCodeChange={(raw) =>
+            update((d) => {
+              d.identity.customer_code = raw.trim() === '' ? null : raw
+            })
+          }
+          customerFacingDescription={
+            typeof onCustomerFacingDescriptionChange === 'function'
+              ? customerFacingDescription
+              : String(getSpecOrderDefaults(spec).customer_facing_description ?? '')
+          }
+          onCustomerFacingDescriptionChange={(raw) => {
+            if (typeof onCustomerFacingDescriptionChange === 'function') {
+              onCustomerFacingDescriptionChange(raw)
+              return
             }
-            fullWidth
-            multiline
-            inputProps={{ maxLength: 64 }}
-            error={!!errorFor('spec.identity.customer_code')}
-          />
-          {typeof onCustomerFacingDescriptionChange === 'function' ? (
-            <TextField
-              label="Customer-facing description"
-              placeholder={customerFacingDescriptionPlaceholder}
-              value={customerFacingDescription}
-              onChange={(e) => onCustomerFacingDescriptionChange(e.target.value)}
-              fullWidth
-              multiline
-              minRows={1}
-              InputLabelProps={{ shrink: true }}
-            />
-          ) : null}
-        </Box>
-
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
-          <DefaultSelectField
-            label="Product Type"
-            defaultValue={PRODUCT_TYPE.Bag}
-            value={identity.product_type || PRODUCT_TYPE.Bag}
-            onChange={(e) => onProductTypeChange(e.target.value)}
-          >
-            {PRODUCT_TYPES.map((v) => (
-              <MenuItem key={v} value={v}>
-                {productTypeLabel(v)}
-              </MenuItem>
-            ))}
-          </DefaultSelectField>
-
-          <DefaultSelectField
-            label="Finish Mode"
-            defaultValue="Rolls"
-            value={identity.finish_mode || 'Rolls'}
-            onChange={(e) => {
-              const v = e.target.value
-              update((d) => {
-                d.identity.finish_mode = v
-                d.packaging.pack_mode = v
+            update((d) => {
+              const next = mergeOrderDefaultsIntoSpec(d, {
+                customer_facing_description: raw.trim() === '' ? null : raw,
               })
-            }}
-          >
-            <MenuItem value="Rolls">Rolls</MenuItem>
-            <MenuItem value="Cartons" disabled={isTubeProduct}>
-              Cartons
-            </MenuItem>
-          </DefaultSelectField>
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <TextField
-            label="Notes"
-            value={run.notes || ''}
-            onChange={(e) => update((d) => (d.run_requirements.notes = e.target.value || null))}
-            multiline
-            minRows={3}
-            fullWidth
-            error={!!errorFor('spec.run_requirements.notes')}
-            helperText={errorFor('spec.run_requirements.notes') || ''}
-          />
-        </Box>
-
+              Object.assign(d, next)
+            })
+          }}
+          generatedProductCodePlaceholder={generatedProductCodePlaceholder}
+          customerFacingDescriptionPlaceholder={customerFacingDescriptionPlaceholder}
+          customerCodeError={!!errorFor('spec.identity.customer_code')}
+          customerCodeHelperText={errorFor('spec.identity.customer_code')}
+          productType={identity.product_type || PRODUCT_TYPE.Bag}
+          onProductTypeChange={onProductTypeChange}
+          finishMode={identity.finish_mode || 'Rolls'}
+          onFinishModeChange={(v) =>
+            update((d) => {
+              d.identity.finish_mode = v
+              d.packaging.pack_mode = v
+            })
+          }
+          isTubeProduct={isTubeProduct}
+          notes={run.notes || ''}
+          onNotesChange={(raw) => update((d) => (d.run_requirements.notes = raw.trim() === '' ? null : raw))}
+          notesError={errorFor('spec.run_requirements.notes')}
+        />
       </Paper>
 
       <Paper
@@ -2243,10 +2257,15 @@ export function SpecPayloadForm(props: {
               const frontInks = rowFilter(printing.front_ink_plate)
               const backInks = rowFilter(printing.back_ink_plate)
               const showPlate = printing.method === 'Inline'
+              const platesAcrossDisplay =
+                printing.plates_across != null && String(printing.plates_across).trim() !== ''
+                  ? String(printing.plates_across)
+                  : '1'
               const plateAroundAcross =
                 (printing.plates_around != null && String(printing.plates_around).trim() !== '') ||
-                (printing.plates_across != null && String(printing.plates_across).trim() !== '')
-                  ? `${String(printing.plates_around ?? '—')} × ${String(printing.plates_across ?? '—')}`
+                (printing.plates_across != null && String(printing.plates_across).trim() !== '') ||
+                printingEnabled
+                  ? `${String(printing.plates_around ?? '—')} × ${platesAcrossDisplay}`
                   : ''
               const mono = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' as const
 
@@ -2256,7 +2275,13 @@ export function SpecPayloadForm(props: {
               const previewField = (
                 label: string,
                 value: ReactNode,
-                opts?: { span?: boolean; strong?: boolean; preWrap?: boolean; monospace?: boolean },
+                opts?: {
+                  span?: boolean
+                  strong?: boolean
+                  preWrap?: boolean
+                  monospace?: boolean
+                  positionHighlight?: ReturnType<typeof printPositionHighlight>
+                },
               ) => (
                 <Box
                   sx={{
@@ -2280,6 +2305,10 @@ export function SpecPayloadForm(props: {
                       whiteSpace: opts?.preWrap ? 'pre-wrap' : undefined,
                       wordBreak: 'break-word',
                       fontFamily: opts?.monospace ? mono : undefined,
+                      px: opts?.positionHighlight && opts.positionHighlight !== 'none' ? 0.5 : 0,
+                      py: opts?.positionHighlight && opts.positionHighlight !== 'none' ? 0.25 : 0,
+                      borderRadius: opts?.positionHighlight && opts.positionHighlight !== 'none' ? 0.5 : 0,
+                      ...printPositionHighlightSx(opts?.positionHighlight ?? 'none'),
                     }}
                   >
                     {value === '' || value == null ? '—' : value}
@@ -2336,9 +2365,18 @@ export function SpecPayloadForm(props: {
 
                   <Box sx={cols3}>
                     {previewField(
-                      'Print position details',
-                      printing.print_position_notes ? String(printing.print_position_notes) : '—',
-                      { span: true, strong: !!printing.print_position_notes, preWrap: true },
+                      'Print position',
+                      formatPrintPositionForPrint(printRegistration, printing.print_position_notes),
+                      {
+                        span: true,
+                        strong:
+                          printPositionHighlight(printRegistration, printing.print_position_notes) !== 'none',
+                        preWrap: true,
+                        positionHighlight: printPositionHighlight(
+                          printRegistration,
+                          printing.print_position_notes,
+                        ),
+                      },
                     )}
                   </Box>
 
@@ -2377,12 +2415,18 @@ export function SpecPayloadForm(props: {
                     </Box>
                   ) : null}
 
-                  {(printing.barcode != null && String(printing.barcode).trim() !== '') ||
+                  {(printing.method !== 'Inline' &&
+                    printing.barcode != null &&
+                    String(printing.barcode).trim() !== '') ||
                   printingArtworkFiles.length > 0 ? (
                     <Box sx={cols3}>
-                      {printing.barcode != null && String(printing.barcode).trim() !== ''
-                        ? previewField('Bar code', String(printing.barcode), { strong: true, monospace: true })
-                        : emptyGridSlot}
+                      {printing.method !== 'Inline' &&
+                      printing.barcode != null &&
+                      String(printing.barcode).trim() !== '' ? (
+                        previewField('Bar code', String(printing.barcode), { strong: true, monospace: true })
+                      ) : (
+                        emptyGridSlot
+                      )}
                       {printingArtworkFiles.length > 0
                         ? previewField(
                             'Artwork files',
@@ -2467,6 +2511,7 @@ export function SpecPayloadForm(props: {
           <>
             <Box sx={{ mt: 2 }}>{printingTablesInner}</Box>
             {printingDescriptionField}
+            <Box sx={{ mt: 2 }}>{printPositionEditorRow}</Box>
           </>
         ) : null}
 
@@ -2644,35 +2689,44 @@ export function SpecPayloadForm(props: {
                         helperText="Copies side by side (1–3)."
                       />
                     </Box>
-                    <Box sx={{ display: 'grid', marginBottom: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        marginBottom: 2,
+                        gridTemplateColumns: {
+                          xs: '1fr',
+                          sm: printing.method === 'Inline' ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                        },
+                        gap: 2,
+                      }}
+                    >
                       <TextField
-                        sx={{ gridColumn: { xs: 'span 3', sm: 'span 2' } }}
+                        sx={{
+                          gridColumn: {
+                            xs: 'span 1',
+                            sm: printing.method === 'Inline' ? 'span 1' : 'span 2',
+                          },
+                        }}
                         label="Print description"
                         value={printing.print_description || ''}
                         onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
                         multiline
                         minRows={2}
                       />
-                      <TextField
-                        label="Bar code"
-                        value={printing.barcode || ''}
-                        onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
-                      />
+                      {printing.method !== 'Inline' ? (
+                        <TextField
+                          label="Bar code"
+                          value={printing.barcode || ''}
+                          onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
+                        />
+                      ) : null}
                     </Box>
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
                       {printingNumColoursField}
                       {printingPrintSideField}
                     </Box>
 
-                    <TextField
-                      label="Print position details"
-                      value={printing.print_position_notes || ''}
-                      onChange={(e) => update((d) => (d.printing.print_position_notes = e.target.value || null))}
-                      fullWidth
-                      multiline
-                      minRows={2}
-                      placeholder='e.g. 35 mm from bottom of bag'
-                    />
+                    {printPositionEditorRow}
 
                     <Box
                       sx={{
@@ -2965,7 +3019,9 @@ export function SpecPayloadForm(props: {
                 fullWidth
               >
                 <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
-                <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+                {allowSideSeal ? (
+                  <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
+                ) : null}
                 <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
               </DefaultSelectField>
             </Box>
@@ -2987,6 +3043,19 @@ export function SpecPayloadForm(props: {
               label="Watertight Seals Critical"
             />
           </Box>
+
+          {showConvPrintPositionDetails ? (
+            <TextField
+              sx={{ mt: 2 }}
+              label="Print position details"
+              value={printing.print_position_notes || ''}
+              onChange={(e) => update((d) => (d.printing.print_position_notes = e.target.value || null))}
+              fullWidth
+              multiline
+              minRows={1}
+              placeholder="e.g. 50 mm from bottom seal"
+            />
+          ) : null}
 
           <Box
             sx={{
@@ -3269,27 +3338,6 @@ export function SpecPayloadForm(props: {
             label={stockPlanningDerived.shipFieldLabel}
             value={stockPlanningDerived.shipQuantityText}
             disabled
-          />
-          <TextField
-            label={stockPlanningDerived.stockFieldLabel}
-            type="number"
-            inputProps={{ min: 0, step: 1 }}
-            value={
-              conversion.qty_to_stock === null || conversion.qty_to_stock === undefined || conversion.qty_to_stock === ''
-                ? ''
-                : String(conversion.qty_to_stock)
-            }
-            onChange={(e) =>
-              update((d) => {
-                if (!d.run_requirements) (d as any).run_requirements = {}
-                const raw = e.target.value.trim()
-                ;(d.run_requirements as any).conversion = {
-                  ...((d.run_requirements as any).conversion || {}),
-                  qty_to_stock: raw === '' ? null : Math.max(0, Math.round(Number(raw))),
-                }
-              })
-            }
-            error={stockPlanningDerived.overTotal}
           />
           <TextField
             label="Pallets (shipment)"

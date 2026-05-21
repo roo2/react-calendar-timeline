@@ -80,7 +80,7 @@ export function useSpecLinkedQuantityFields(opts: {
   const [metersPerRoll, setMetersPerRoll] = useState('')
 
   const totalKgStrRef = useRef('')
-  const prevCartonKgMassDriversRef = useRef<{ tk: number; wpr: number } | null>(null)
+  const prevCartonKgMassDriversRef = useRef<{ tk: number; cartonKg: number } | null>(null)
   const prevRollsKgMassDriversRef = useRef<{ tk: number; wpr: number } | null>(null)
   const prevDiscreteUnitsRollsKpuRef = useRef<number | undefined>(undefined)
 
@@ -252,7 +252,6 @@ export function useSpecLinkedQuantityFields(opts: {
     if (finishMode !== 'Cartons') return null
     if (cartonQtyMode === 'ctn' && numCartonsNum > 0) return numCartonsNum
     if (effectiveQtyType === 'kg' && totalKgNum > 0) {
-      if (weightPerRollNum > 0) return Math.max(1, Math.round(totalKgNum / weightPerRollNum))
       const ku = derivedForDisplay?.kgPerUnit
       if (bagsPerCartonNum > 0 && ku != null && Number(ku) > 0) {
         const cartonKg = bagsPerCartonNum * Number(ku)
@@ -284,7 +283,6 @@ export function useSpecLinkedQuantityFields(opts: {
       const c = cartonCountForDisplay
       if (dkg != null && c != null && c > 0 && Number.isFinite(Number(dkg)) && Number(dkg) > 0) return Number(dkg) / c
     }
-    if (weightPerRollNum > 0) return weightPerRollNum
     const dkg = derivedForDisplay?.derivedTotalKg
     const c = cartonCountForDisplay
     if (dkg != null && c != null && c > 0 && Number.isFinite(Number(dkg)) && Number(dkg) > 0) return Number(dkg) / c
@@ -296,7 +294,6 @@ export function useSpecLinkedQuantityFields(opts: {
     bagsPerCartonNum,
     derivedForDisplay?.kgPerUnit,
     derivedForDisplay?.derivedTotalKg,
-    weightPerRollNum,
     cartonCountForDisplay,
   ])
 
@@ -416,25 +413,39 @@ export function useSpecLinkedQuantityFields(opts: {
       prevCartonKgMassDriversRef.current = null
       return
     }
-    if (!(totalKgNum > 0 && weightPerRollNum > 0)) {
+    const ku = derivedForDisplay?.kgPerUnit
+    if (
+      !(totalKgNum > 0) ||
+      !(bagsPerCartonNum > 0) ||
+      ku == null ||
+      !Number.isFinite(Number(ku)) ||
+      Number(ku) <= 0
+    ) {
       prevCartonKgMassDriversRef.current = null
       return
     }
-    const cur = { tk: totalKgNum, wpr: weightPerRollNum }
+    const cartonKg = bagsPerCartonNum * Number(ku)
+    const cur = { tk: totalKgNum, cartonKg }
     const prev = prevCartonKgMassDriversRef.current
     prevCartonKgMassDriversRef.current = cur
     if (prev == null) return
-    if (prev.tk === cur.tk && prev.wpr === cur.wpr) return
-    const n = Math.max(1, Math.round(cur.tk / cur.wpr))
+    if (prev.tk === cur.tk && prev.cartonKg === cur.cartonKg) return
+    const n = Math.max(1, Math.round(cur.tk / cur.cartonKg))
     const next = String(n)
     if (numCartons !== next) setNumCartons(next)
-    const ku = derivedForDisplay?.kgPerUnit
-    if (ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) {
-      const nu = Math.max(0, Math.round(cur.tk / Number(ku)))
-      const nextU = String(nu)
-      if (numUnits !== nextU) setNumUnits(nextU)
-    }
-  }, [syncDerivedQuantity, finishMode, effectiveQtyType, totalKgNum, weightPerRollNum, numCartons, numUnits, derivedForDisplay?.kgPerUnit])
+    const nu = Math.max(0, Math.round(cur.tk / Number(ku)))
+    const nextU = String(nu)
+    if (numUnits !== nextU) setNumUnits(nextU)
+  }, [
+    syncDerivedQuantity,
+    finishMode,
+    effectiveQtyType,
+    totalKgNum,
+    bagsPerCartonNum,
+    numCartons,
+    numUnits,
+    derivedForDisplay?.kgPerUnit,
+  ])
 
   useEffect(() => {
     if (!syncDerivedQuantity) return
@@ -459,17 +470,6 @@ export function useSpecLinkedQuantityFields(opts: {
       if (numUnits !== String(nu)) setNumUnits(String(nu))
     }
   }, [syncDerivedQuantity, finishMode, effectiveQtyType, isContinuousLength, totalKgNum, weightPerRollNum, numRolls, numUnits, derivedForDisplay?.kgPerUnit])
-
-  useEffect(() => {
-    if (!syncDerivedQuantity) return
-    if (!(finishMode === 'Cartons' && effectiveQtyType === 'units' && cartonQtyMode === 'ctn')) return
-    const ku = derivedForDisplay?.kgPerUnit
-    if (!(bagsPerCartonNum > 0 && ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0)) return
-    const next = bagsPerCartonNum * Number(ku)
-    if (!(next > 0) || !Number.isFinite(next)) return
-    const formatted = formatKgDisplay(next)
-    if (weightPerRoll !== formatted) setWeightPerRoll(formatted)
-  }, [syncDerivedQuantity, finishMode, effectiveQtyType, cartonQtyMode, bagsPerCartonNum, derivedForDisplay?.kgPerUnit, weightPerRoll])
 
   const qtyCascadeCtxRef = useRef({
     finishMode,
@@ -572,9 +572,6 @@ export function useSpecLinkedQuantityFields(opts: {
     const bpc = raw.trim() !== '' ? Math.max(1, Math.round(Number(raw))) : 0
     const ku = s.derivedKpu
     if (s.finishMode === 'Cartons' && s.qtyType === 'units' && s.cartonQtyMode === '1000' && s.ratebook) {
-      if (bpc > 0 && ku != null && ku > 0) {
-        setWeightPerRoll(formatKgDisplay(bpc * ku))
-      }
       if (bpc > 0 && numUnitsForCascadeRef.current > 0) {
         setNumCartons(String(Math.max(1, Math.ceil(numUnitsForCascadeRef.current / bpc))))
       }
@@ -589,7 +586,6 @@ export function useSpecLinkedQuantityFields(opts: {
       ku > 0
     ) {
       const wKg = bpc * ku
-      setWeightPerRoll(formatKgDisplay(wKg))
       if (s.numCartonsNum > 0) {
         setTotalKg(formatKgDisplay(s.numCartonsNum * wKg))
         setNumUnits(String(s.numCartonsNum * bpc))
@@ -613,19 +609,11 @@ export function useSpecLinkedQuantityFields(opts: {
     }
 
     let weightPerRollFromUi: number | null = null
-    if (
-      finishMode === 'Cartons' &&
-      effectiveQtyType === 'units' &&
-      (cartonQtyMode === 'ctn' || cartonQtyMode === '1000')
-    ) {
-      const ku = derivedForDisplay?.kgPerUnit
-      if (bagsPerCartonNum > 0 && ku != null && Number.isFinite(Number(ku)) && Number(ku) > 0) {
-        weightPerRollFromUi = bagsPerCartonNum * Number(ku)
-      }
-    }
-    if (weightPerRollEditable) {
-      if (weightPerRollFromUi == null && weightPerRollNum > 0) weightPerRollFromUi = weightPerRollNum
-    } else if (weightPerRollFromUi == null) {
+    if (finishMode === 'Cartons') {
+      if (weightPerRollNum > 0) weightPerRollFromUi = weightPerRollNum
+    } else if (weightPerRollEditable) {
+      if (weightPerRollNum > 0) weightPerRollFromUi = weightPerRollNum
+    } else {
       if (
         weightPerRollDisplay != null &&
         Number.isFinite(Number(weightPerRollDisplay)) &&

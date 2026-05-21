@@ -11,7 +11,7 @@ export type JobSheetPalletLoadPlanning = {
 
 /**
  * Rolls/cartons to ship to the customer from order total minus stock-to-warehouse.
- * Mirrors {@link SpecPayloadForm} stock planning (conversion `qty_to_stock`).
+ * Job sheet `qty_to_stock` (rolls/cartons held in stock, not shipped).
  */
 export function deriveShipToCustomerUnitsFromConversion(opts: {
   qtyToStockRaw: unknown

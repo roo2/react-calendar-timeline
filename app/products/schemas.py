@@ -63,6 +63,18 @@ class TreatIO(str, Enum):
     NONE = "none"
 
 
+class OrderDefaultsSpec(BaseModel):
+    """Per-product order defaults (re-used on re-order); totals stay on each job sheet."""
+
+    qty_type: Optional[Literal["kg", "units", "total_rolls", "rolls_units"]] = None
+    quantity_unit: Optional[Literal["kg", "rolls", "bags", "meters", "cartons", "1000"]] = None
+    weight_per_roll_kg: Optional[float] = Field(None, ge=0)
+    customer_facing_description: Optional[str] = None
+    customer_overproduction_handling: Optional[
+        Literal["send_exact_quantity", "send_all_products", "send_full_cartons"]
+    ] = None
+
+
 class IdentitySpec(BaseModel):
     product_type: ProductType
     finish_mode: FinishMode
@@ -161,6 +173,7 @@ class PrintingSpec(BaseModel):
     cylinder_size_mm: Optional[float] = None
     # Job sheet / printing production notes (optional).
     barcode: Optional[str] = None
+    print_registration: Literal["random", "registered"] = "random"
     print_position_notes: Optional[str] = None
     # Plate layout on cylinder (1–3 around × 1–3 across).
     plates_around: Optional[int] = Field(None, ge=1, le=3)
@@ -182,7 +195,7 @@ class QualityExpectationsSpec(BaseModel):
         return [str(x) for x in v if str(x) in allowed and str(x) not in retired]
 
 
-_DEPRECATED_CONVERSION_FLAG_KEYS = frozenset({"send_all_bags", "sendAllBags", "inner_pack"})
+_DEPRECATED_CONVERSION_FLAG_KEYS = frozenset({"send_all_bags", "sendAllBags", "inner_pack", "qty_to_stock"})
 
 
 class ConversionSpec(BaseModel):
@@ -206,7 +219,6 @@ class ConversionSpec(BaseModel):
     pack_size: Optional[int] = Field(None, ge=0)
     qty_per_fold: Optional[int] = Field(None, ge=0)
     loose: Optional[bool] = False
-    qty_to_stock: Optional[int] = Field(None, ge=0)
     handle: Optional[bool] = False
     lined_cartons: Optional[bool] = False
     notes: Optional[str] = None
@@ -335,6 +347,7 @@ class ToolRequirementSpec(BaseModel):
 
 class SpecPayload(BaseModel):
     identity: IdentitySpec
+    order_defaults: Optional[OrderDefaultsSpec] = None
     dimensions: DimensionsSpec
     formulation: FormulationSpec
     printing: PrintingSpec

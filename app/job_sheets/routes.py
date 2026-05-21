@@ -198,6 +198,11 @@ def _to_summary(
         num_product_units=float(js.num_product_units) if getattr(js, "num_product_units", None) is not None else None,
         weight_per_roll_kg=float(js.weight_per_roll_kg) if getattr(js, "weight_per_roll_kg", None) is not None else None,
         num_rolls=int(getattr(js, "num_rolls", None) or 1),
+        qty_to_stock=(
+            int(getattr(js, "qty_to_stock"))
+            if getattr(js, "qty_to_stock", None) is not None
+            else None
+        ),
         created_by=js.created_by,
         created_at=str(getattr(js, "created_at", "")) if getattr(js, "created_at", None) else None,
         product_code=getattr(product, "code", ""),
@@ -219,7 +224,6 @@ def _to_summary(
         production_extruder_code=_job_sheet_extruder_for_summary(
             getattr(product, "production_extruder_code", None) if product else None
         ),
-        die_size=_job_sheet_die_for_summary(getattr(product, "die_size", None) if product else None),
     )
 
 

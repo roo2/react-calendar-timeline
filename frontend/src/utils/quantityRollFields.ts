@@ -348,8 +348,8 @@ export function resolveWeightPerRollForPersistence(
   derived: DerivedDisplay,
 ): number | null {
   if (finishMode === 'Cartons') {
-    /** Carton jobs: extrusion uses max practical roll size; do not persist a nominal kg/roll. */
-    return null
+    /** Extrusion roll weight (kg per roll of film), not carton mass. */
+    return weightPerRollNum > 0 && Number.isFinite(weightPerRollNum) ? weightPerRollNum : null
   }
   if (qtyType === 'total_rolls') {
     const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll
@@ -373,6 +373,7 @@ export function validateJobSheetQuantityInputs(
   if (!(numRollsNum >= 1)) return 'Number of rolls must be at least 1 (required for scheduling).'
   if (finishMode === 'Cartons') {
     if (!(totalKgNum > 0)) return 'Total KG is required to derive weight per roll for scheduling.'
+    if (!(weightPerRollNum > 0)) return 'Roll weight (kg) is required for carton products (extrusion scheduling).'
     return null
   }
   if (qtyType === 'units' && !(numUnitsNum > 0))

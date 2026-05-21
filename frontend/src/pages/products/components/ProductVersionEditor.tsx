@@ -43,7 +43,9 @@ import {
   JobSheetIdentityQuantitySection,
   type JobSheetQuantityFieldsProps,
 } from '../../job-sheets/components/JobSheetIdentityQuantitySection'
-import { LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
+import { CustomerOverproductionHandlingField } from '../../../components/quantity/CustomerOverproductionHandlingField'
+import { QtyToStockField } from '../../../components/quantity/QtyToStockField'
+import { CartonRollWeightField, LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import {
   useSpecLinkedQuantityFields,
   type SpecLinkedQuantityHydrate,
@@ -62,6 +64,18 @@ import {
 } from '../../../utils/quantityRollFields'
 import { addOrderItem, fetchOrder } from '../../../store/slices/ordersSlice'
 import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
+import { normalizeCustomerOverproductionHandling } from '../../../utils/customerOverproductionHandling'
+import { qtyToStockExceedsOrderTotal, qtyToStockFromJobSheetAndSpec } from '../../../utils/jobSheetQtyToStock'
+import {
+  buildOrderDefaultsFromEditor,
+  customerOverproductionFromSpec,
+  customerFacingDescriptionFromSpec,
+  getSpecOrderDefaults,
+  mergeOrderDefaultsIntoSpec,
+  orderDefaultsEqual,
+  orderQtyPrefsFromJobSheetAndSpec,
+  persistedQtyTypeFromPrefs,
+} from '../../../utils/specOrderDefaults'
 import { ApiError } from '../../../api/client'
 import { parseFastApiValidationDetail } from '../../../api/validation'
 import { isRejectedWithValue } from '@reduxjs/toolkit'
@@ -74,6 +88,7 @@ function ensureSpec(s: any): SpecPayload {
     ...d,
     ...src,
     identity: { ...d.identity, ...(src.identity || {}) },
+    order_defaults: { ...(d as { order_defaults?: object }).order_defaults, ...((src as { order_defaults?: object }).order_defaults || {}) },
     dimensions: { ...d.dimensions, ...(src.dimensions || {}) },
     formulation: { ...d.formulation, ...(src.formulation || {}) },
     printing: { ...d.printing, ...(src.printing || {}) },
@@ -240,10 +255,6 @@ function buildSpecLinkedHydrateFromJobSheetJs(
     numUnitsH = ''
   }
 
-  if (fm === 'Cartons') {
-    weightPerRollH = ''
-  }
-
   return {
     qtyType: qtResolved,
     cartonQtyMode,
@@ -322,9 +333,9 @@ export function ProductVersionEditor(props: {
   const orderDateInputRef = useRef<HTMLInputElement | null>(null)
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
   const [productionExtruderCode, setProductionExtruderCode] = useState('')
-  const [dieSize, setDieSize] = useState('')
-  const [customerFacingDescription, setCustomerFacingDescription] = useState('')
+  const loadedOrderDefaultsRef = useRef(getSpecOrderDefaults(makeDefaultSpec()))
   const extruderUserTouchedRef = useRef(false)
+  const [qtyToStock, setQtyToStock] = useState<number | null>(null)
 
   const productDetail = useAppSelector((s) => s.products.detail.byId[productId])
   const data = productDetail?.data
@@ -504,8 +515,26 @@ export function ProductVersionEditor(props: {
     if (lastHydratedVersionKeyRef.current === hydrateKey) return
     lastHydratedVersionKeyRef.current = hydrateKey
     specHydratedRef.current = true
-    const srcSpec = versionDetailData?.version?.spec_payload ?? null
-    setSpec(ensureSpec(srcSpec))
+    const srcSpec = ensureSpec(versionDetailData?.version?.spec_payload ?? null)
+    setSpec(srcSpec)
+    loadedOrderDefaultsRef.current = getSpecOrderDefaults(srcSpec)
+    if (!jobSheetId) {
+      const fm: FinishMode = srcSpec.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
+      const od = getSpecOrderDefaults(srcSpec)
+      const qt = od.qty_type ? persistedQtyTypeFromPrefs({ qty_type: od.qty_type, quantity_unit: od.quantity_unit }) : 'kg'
+      const cartonQtyMode: '1000' | 'ctn' = od.quantity_unit === 'cartons' ? 'ctn' : '1000'
+      qty.hydrate({
+        qtyType: qt,
+        cartonQtyMode,
+        weightPerRoll: od.weight_per_roll_kg != null ? String(od.weight_per_roll_kg) : '',
+        totalKg: '',
+        numRolls: '1',
+        numUnits: '',
+        unitsPerRoll: '',
+        metersPerRoll: '',
+        numCartons: '',
+      })
+    }
     setSpecReady(true)
   }, [
     jobSheetId,
@@ -570,15 +599,23 @@ export function ProductVersionEditor(props: {
         ? String(loadedSpec0.identity.production_extruder_code).trim()
         : ''
     setProductionExtruderCode(extFromRow || extLegacy)
-    setDieSize(js?.die_size != null && String(js.die_size).trim() !== '' ? String(js.die_size) : '')
     setCustomerId(js?.customer_id || '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setDueDate(orderLineQtySnapshot ? orderLineQtySnapshot.due_date || '' : js?.due_date || '')
-    setCustomerFacingDescription(
-      js?.customer_facing_description != null && String(js.customer_facing_description).trim()
-        ? String(js.customer_facing_description).trim()
-        : '',
-    )
+    const prefsEarly = orderQtyPrefsFromJobSheetAndSpec(jsQty as Record<string, unknown>, loadedSpec0)
+    const importLineDesc =
+      res && typeof (res as { myob_import_line_description?: string }).myob_import_line_description === 'string'
+        ? String((res as { myob_import_line_description?: string }).myob_import_line_description).trim()
+        : ''
+    loadedSpec0 = mergeOrderDefaultsIntoSpec(loadedSpec0, {
+      qty_type: prefsEarly.qty_type,
+      quantity_unit: prefsEarly.quantity_unit,
+      weight_per_roll_kg: prefsEarly.weight_per_roll_kg,
+      customer_facing_description: prefsEarly.customer_facing_description || (importLineDesc || null),
+    })
+    setSpec(loadedSpec0)
+    setQtyToStock(qtyToStockFromJobSheetAndSpec(jsQty as Record<string, unknown>, loadedSpec0))
+    loadedOrderDefaultsRef.current = getSpecOrderDefaults(loadedSpec0)
     qty.hydrate(buildSpecLinkedHydrateFromJobSheetJs(loadedSpec0, jsQty, isImportDraft))
     specHydratedRef.current = true
     setSpecReady(true)
@@ -586,7 +623,29 @@ export function ProductVersionEditor(props: {
   }, [jobSheetId, jobSheetDetail, orderLineQtySnapshot])
 
   const finishMode = qty.finishMode
+  const productType = spec.identity?.product_type
+
+  useEffect(() => {
+    const cur = getSpecOrderDefaults(spec).customer_overproduction_handling
+    if (cur == null) return
+    const next = normalizeCustomerOverproductionHandling(cur, finishMode)
+    if (cur === next) return
+    setSpec((prev) => mergeOrderDefaultsIntoSpec(prev, { customer_overproduction_handling: next }))
+    setDirty(true)
+    setJobSaveErr(null)
+  }, [finishMode])
+
   const effectiveQtyType = qty.effectiveQtyType
+  const stockPlanningTotalUnits = useMemo(() => {
+    if (finishMode === 'Cartons') {
+      return qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0 ? qty.cartonCountForDisplay : null
+    }
+    const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
+    return nr > 0 ? nr : null
+  }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
+
+  const qtyToStockOverTotal = qtyToStockExceedsOrderTotal(qtyToStock, stockPlanningTotalUnits)
+
   const totalKgNum = Number(qty.totalKg || 0)
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
   const weightPerRollNum = Number(qty.weightPerRoll || 0)
@@ -740,6 +799,19 @@ export function ProductVersionEditor(props: {
       loadedJobSheet?.line_total != null && Number.isFinite(Number(loadedJobSheet.line_total))
         ? Number(loadedJobSheet.line_total)
         : null
+    const orderDefaultsPatch = buildOrderDefaultsFromEditor({
+      effectiveQtyType,
+      finishMode,
+      weightPerRollNum: persistedWpr ?? weightPerRollNum,
+      customerFacingDescription: String(
+        (spec as { order_defaults?: { customer_facing_description?: string | null } }).order_defaults
+          ?.customer_facing_description ?? '',
+      ).trim(),
+      bagsPerCarton: bpc != null ? Number(bpc) : null,
+      cartonQtyMode: qty.cartonQtyMode,
+      customerOverproductionHandling: customerOverproductionFromSpec(spec, finishMode),
+    })
+    const specWithOd = mergeOrderDefaultsIntoSpec(spec, orderDefaultsPatch)
     return {
       due_date: dueDate || null,
       order_date: orderDate || null,
@@ -754,10 +826,9 @@ export function ProductVersionEditor(props: {
             : null,
       weight_per_roll_kg: persistedWpr,
       num_rolls: persistedRolls,
-      spec,
+      qty_to_stock: qtyToStock,
+      spec: specWithOd,
       production_extruder_code: productionExtruderCode.trim() || null,
-      die_size: dieSize.trim() || null,
-      customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
       ...(keepUnitRate != null ? { unit_rate: keepUnitRate } : {}),
       ...(keepLineTotal != null ? { line_total: keepLineTotal } : {}),
     }
@@ -1033,7 +1104,6 @@ export function ProductVersionEditor(props: {
                 num_rolls: persistedRolls,
                 spec,
                 production_extruder_code: productionExtruderCode.trim() || null,
-                die_size: dieSize.trim() || null,
               },
             }),
           ).unwrap()
@@ -1073,7 +1143,21 @@ export function ProductVersionEditor(props: {
     }
 
     try {
-      const res = await dispatch(createProductVersion({ productId, spec })).unwrap()
+      const orderDefaultsPatch = buildOrderDefaultsFromEditor({
+        effectiveQtyType,
+        finishMode,
+        weightPerRollNum: Number(qty.weightPerRoll || 0),
+        customerFacingDescription: String(
+          (spec as { order_defaults?: { customer_facing_description?: string | null } }).order_defaults
+            ?.customer_facing_description ?? '',
+        ).trim(),
+        bagsPerCarton:
+          spec.packaging?.bags_per_carton != null ? Number(spec.packaging.bags_per_carton) : null,
+        cartonQtyMode: qty.cartonQtyMode,
+        customerOverproductionHandling: customerOverproductionFromSpec(spec, finishMode),
+      })
+      const specToSave = mergeOrderDefaultsIntoSpec(spec, orderDefaultsPatch)
+      const res = await dispatch(createProductVersion({ productId, spec: specToSave })).unwrap()
       const vid = res?.versionId as string | undefined
       setDirty(false)
       if (onDone) {
@@ -1292,7 +1376,6 @@ export function ProductVersionEditor(props: {
                   spec={spec}
                   qty={qty}
                   customerId={customerId}
-                  customerFacingDescription={customerFacingDescription}
                   orderDate={orderDate}
                   dueDate={dueDate}
                   showJobFields={showFullJobSheetPreview}
@@ -1301,6 +1384,7 @@ export function ProductVersionEditor(props: {
                   jobSheetDetailData={jobSheetDetail?.data ?? null}
                   productionExtruderCode={productionExtruderCode}
                   includeProductionEstimates={showFullJobSheetPreview}
+                  qtyToStock={qtyToStock}
                 />
               ) : null}
 
@@ -1343,12 +1427,28 @@ export function ProductVersionEditor(props: {
                     customerId={product?.customer_id || customerId || undefined}
                     printingSurface="job_sheet_summary"
                     printingArtworkScope={printingArtworkScope}
-                    customerFacingDescription={customerFacingDescription}
-                    onCustomerFacingDescriptionChange={(v) => {
-                      setCustomerFacingDescription(v)
+                    customerFacingDescription={customerFacingDescriptionFromSpec(spec)}
+                    onCustomerFacingDescriptionChange={(raw) => {
+                      setSpec((prev) =>
+                        mergeOrderDefaultsIntoSpec(prev, {
+                          customer_facing_description: raw.trim() === '' ? null : raw,
+                        }),
+                      )
                       setDirty(true)
+                      setJobSaveErr(null)
                     }}
                     customerFacingDescriptionPlaceholder={previewDescription}
+                    stockPlanningTotalUnits={jobSheetId || embedded ? stockPlanningTotalUnits : null}
+                    qtyToStock={jobSheetId || embedded ? qtyToStock : null}
+                    onQtyToStockChange={
+                      jobSheetId || embedded
+                        ? (v) => {
+                            setQtyToStock(v)
+                            setDirty(true)
+                            setJobSaveErr(null)
+                          }
+                        : undefined
+                    }
                     afterDimensionsSlot={
                       <>
                         <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1391,18 +1491,6 @@ export function ProductVersionEditor(props: {
                                   })}
                               </Select>
                             </FormControl>
-                            <TextField
-                              label="Die size"
-                              value={dieSize}
-                              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                                setDieSize(e.target.value)
-                                setDirty(true)
-                              }}
-                              size="small"
-                              sx={{ maxWidth: 220 }}
-                              placeholder="120"
-                              inputProps={{ maxLength: 32 }}
-                            />
                             {extruderSuggestion.hintLine ? (
                               <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                                 {extruderSuggestion.hintLine}
@@ -1436,6 +1524,7 @@ export function ProductVersionEditor(props: {
                           </Box>
                           <LinkedQuantityFields
                             qty={qty}
+                            hideCartonRollWeight={qty.finishMode === 'Cartons'}
                             bagsPerCartonStr={bagsPerCartonStr}
                             onBagsPerCartonChange={(raw) => {
                               setSpec((prev: SpecPayload) => ({
@@ -1451,19 +1540,32 @@ export function ProductVersionEditor(props: {
                           />
                           {qty.finishMode === 'Cartons' ? (
                             <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                              <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
                                 Conversion instructions
                               </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                Total cartons:{' '}
-                                <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
-                                  {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
-                                    ? String(qty.cartonCountForDisplay)
-                                    : '—'}
-                                </Box>
-                              </Typography>
+                              <CartonRollWeightField qty={qty} />
                             </Box>
                           ) : null}
+                          <QtyToStockField
+                            finishMode={qty.finishMode}
+                            value={qtyToStock}
+                            onChange={(v) => {
+                              setQtyToStock(v)
+                              setDirty(true)
+                              setJobSaveErr(null)
+                            }}
+                            overTotal={qtyToStockOverTotal}
+                          />
+                          <CustomerOverproductionHandlingField
+                            spec={spec}
+                            finishMode={qty.finishMode}
+                            productType={productType}
+                            onSpecChange={(next) => {
+                              setSpec(next)
+                              setDirty(true)
+                              setJobSaveErr(null)
+                            }}
+                          />
                         </Paper>
                       </>
                     }
@@ -1496,7 +1598,50 @@ export function ProductVersionEditor(props: {
                     customerId={product?.customer_id || customerId || undefined}
                     printingSurface="full"
                     printingArtworkScope={printingArtworkScope}
+                    customerFacingDescriptionPlaceholder={previewDescription}
                   />
+                  <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+                    <Typography variant="h6" sx={{ mb: 2 }}>
+                      Order defaults
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                      Qty type, roll weight, and customer description are stored on the product spec and reused when
+                      re-ordering. Order totals are set per job sheet.
+                    </Typography>
+                    <LinkedQuantityFields
+                      qty={qty}
+                      hideCartonRollWeight={qty.finishMode === 'Cartons'}
+                      bagsPerCartonStr={bagsPerCartonStr}
+                      onBagsPerCartonChange={(raw) => {
+                        setSpec((prev: SpecPayload) => ({
+                          ...prev,
+                          packaging: {
+                            ...prev.packaging,
+                            bags_per_carton: raw.trim() === '' ? null : Math.max(1, Math.round(Number(raw))),
+                          },
+                        }))
+                        setDirty(true)
+                      }}
+                    />
+                    {qty.finishMode === 'Cartons' ? (
+                      <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
+                          Conversion instructions
+                        </Typography>
+                        <CartonRollWeightField qty={qty} />
+                      </Box>
+                    ) : null}
+                    <CustomerOverproductionHandlingField
+                      spec={spec}
+                      finishMode={qty.finishMode}
+                      productType={productType}
+                      onSpecChange={(next) => {
+                        setSpec(next)
+                        setDirty(true)
+                        setJobSaveErr(null)
+                      }}
+                    />
+                  </Paper>
                 </>
               )}
 
@@ -1529,7 +1674,6 @@ export function ProductVersionEditor(props: {
               spec={spec}
               qty={qty}
               customerId={customerId}
-              customerFacingDescription={customerFacingDescription}
               orderDate={orderDate}
               dueDate={dueDate}
               showJobFields={showFullJobSheetPreview}
@@ -1538,6 +1682,7 @@ export function ProductVersionEditor(props: {
               jobSheetDetailData={jobSheetDetail?.data ?? null}
               productionExtruderCode={productionExtruderCode}
               includeProductionEstimates={showFullJobSheetPreview}
+              qtyToStock={qtyToStock}
             />
           ) : null}
         </Box>

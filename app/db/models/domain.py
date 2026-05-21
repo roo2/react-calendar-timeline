@@ -177,6 +177,7 @@ class JobSheet(Base):
     num_product_units: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     weight_per_roll_kg: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     num_rolls: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    qty_to_stock: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     unit_rate: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     line_total: Mapped[Optional[float]] = mapped_column(Numeric(18, 6), nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)

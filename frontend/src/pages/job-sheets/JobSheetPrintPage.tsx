@@ -84,8 +84,21 @@ import {
 } from '../../utils/quoteQuantityDescriptors'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { derivedInlineSeal, formatSealTypeLabel } from '../../utils/specCompat'
+import {
+  formatPrintPositionForPrint,
+  isBottomSealType,
+  normalizePrintRegistration,
+  printPositionHighlight,
+  printPositionHighlightClass,
+  type PrintPositionHighlight,
+} from '../../utils/printRegistration'
 import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
 import { buildJobSheetPrintQualityCheckLabels, collectQualityFlagIds } from '../../utils/qualityFlagLabels'
+import {
+  customerFacingDescriptionFromSpec,
+  extrusionRollCountForPrint,
+  orderQtyPrefsFromJobSheetAndSpec,
+} from '../../utils/specOrderDefaults'
 import { palletsRequiredCeil } from '../../utils/palletShippingEstimate'
 
 function s(v: unknown, fallback = ''): string {
@@ -589,11 +602,16 @@ function JobSheetPrintPrintingFormShell(props: { title: string; children: ReactN
   )
 }
 
-function JobSheetPrintPrintingFormField(props: { label: string; children: ReactNode }): ReactNode {
+function JobSheetPrintPrintingFormField(props: {
+  label: string
+  children: ReactNode
+  positionHighlight?: PrintPositionHighlight
+}): ReactNode {
+  const hl = printPositionHighlightClass(props.positionHighlight ?? 'none')
   return (
     <div className="js-print-form-field">
       <span className="js-print-form-k">{props.label}</span>
-      <div className="js-print-form-v">{props.children}</div>
+      <div className={`js-print-form-v${hl ? ` ${hl}` : ''}`}>{props.children}</div>
     </div>
   )
 }
@@ -733,6 +751,7 @@ function JobSheetPrintInlinePrintingBlock(props: {
     numColours: string
     printSide: string
     printPosition: string
+    printPositionHighlight: PrintPositionHighlight
     artworkPdfNames: string[]
     frontRows: Array<{ ink: string; plate: string; colourText: string }>
     backRows: Array<{ ink: string; plate: string; colourText: string }>
@@ -761,7 +780,7 @@ function JobSheetPrintInlinePrintingBlock(props: {
           <JobSheetPrintPrintingFormField label="No. colours">{valueOrDash(p.numColours)}</JobSheetPrintPrintingFormField>
           <JobSheetPrintPrintingFormField label="Print side">{valueOrDash(p.printSide)}</JobSheetPrintPrintingFormField>
         </div>
-        <JobSheetPrintPrintingFormField label="Print position details">
+        <JobSheetPrintPrintingFormField label="Print position" positionHighlight={p.printPositionHighlight}>
           {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
         </JobSheetPrintPrintingFormField>
         {p.artworkPdfNames.length > 0 ? (
@@ -822,6 +841,7 @@ function JobSheetPrintUtecoPage(props: {
     printSide: string
     totalMeters: string
     printPosition: string
+    printPositionHighlight: PrintPositionHighlight
     filmTypeSupplied: string
     finishedBagSize: string
     sealTypeLabel: string
@@ -848,8 +868,11 @@ function JobSheetPrintUtecoPage(props: {
           <JobSheetPrintUtecoField label="Side(s)">{u.printSide.trim() ? u.printSide : blankLine}</JobSheetPrintUtecoField>
         </div>
         <JobSheetPrintUtecoField label="Total meters">{u.totalMeters || blankLine}</JobSheetPrintUtecoField>
-        <JobSheetPrintUtecoField label="Print position details">
-          <span className="js-print-pre">{u.printPosition || blankLine}</span>
+        <JobSheetPrintUtecoField
+          label="Print position"
+          valueClass={printPositionHighlightClass(u.printPositionHighlight)}
+        >
+          <span className="js-print-pre">{u.printPosition.trim() ? u.printPosition : blankLine}</span>
         </JobSheetPrintUtecoField>
         {u.artworkPdfNames.length > 0 ? (
           <JobSheetPrintUtecoField label="Artwork files">
@@ -988,7 +1011,7 @@ type JobSheetPrintConversionModel = {
   conversionNotes: string
   conversion: {
     sealType: string
-    sealLabel: string
+    sealWatertightCritical: boolean
     cartonSize: string
     packing: string
     qtyPerFold: string
@@ -1014,6 +1037,8 @@ type JobSheetPrintConversionModel = {
     highlightVent?: boolean
     highlightHandle?: boolean
     highlightLinedCartons?: boolean
+    printPositionDetails?: string
+    printPositionDetailsHighlight?: PrintPositionHighlight
   } | null
 }
 
@@ -1278,9 +1303,29 @@ function JobSheetPrintConversionInstructionsPage(props: {
                 <td>{v(conv.carton?.bagsPerCarton)}</td>
               </tr>
               <tr className={convHl(c?.highlightSeal)}>
-                <th>{c?.sealLabel?.trim() ? c.sealLabel : 'Seal'}</th>
+                <th>
+                  Seal
+                  {c?.sealWatertightCritical ? (
+                    <>
+                      {' '}
+                      (<span className="js-pink">Watertight seals critical</span>)
+                    </>
+                  ) : null}
+                </th>
                 <td>{v(c?.sealType)}</td>
               </tr>
+              {c?.printPositionDetails != null ? (
+                <tr>
+                  <th className={printPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none')}>
+                    Print position details
+                  </th>
+                  <td
+                    className={`js-print-pre-wrap${printPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none') ? ` ${printPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none')}` : ''}`}
+                  >
+                    {v(c.printPositionDetails)}
+                  </td>
+                </tr>
+              ) : null}
               <tr className={convHl(c?.highlightCartonSize)}>
                 <th>Carton size</th>
                 <td>{v(c?.cartonSize)}</td>
@@ -1377,7 +1422,7 @@ function JobSheetPrintConversionInstructionsPage(props: {
           <table className="js-conv-box" role="presentation">
             <tbody>
               <tr>
-                <td className="js-conv-subtitle">Special comments for setup of bagging machine</td>
+                <td className="js-conv-subtitle">Conversion Notes</td>
               </tr>
               <tr>
                 <td className="js-conv-comment" style={{ whiteSpace: 'pre-wrap' }}>
@@ -1490,7 +1535,9 @@ export function JobSheetPrintPage() {
     const jobCode = js.job_no ?? ''
     const specTyped = spec as SpecPayload
     const computedSpecDescription = computeProductDescriptionFromSpec(specTyped)
-    const customerFacingDescriptionPlain = String(js.customer_facing_description || '').trim()
+    const customerFacingDescriptionPlain =
+      customerFacingDescriptionFromSpec(specTyped).trim() ||
+      String(js.customer_facing_description || '').trim()
     const generatedDescriptionBase =
       String(computedSpecDescription || '').trim() || String(js.product_description || '').trim()
     const notes = identity?.notes ?? run?.notes ?? packaging?.notes ?? spec?.notes ?? ''
@@ -1973,7 +2020,11 @@ export function JobSheetPrintPage() {
     const platesAroundDisp =
       printing?.plates_around != null && String(printing.plates_around).trim() !== '' ? s(printing.plates_around) : ''
     const platesAcrossDisp =
-      printing?.plates_across != null && String(printing.plates_across).trim() !== '' ? s(printing.plates_across) : ''
+      printing?.plates_across != null && String(printing.plates_across).trim() !== ''
+        ? s(printing.plates_across)
+        : printed
+          ? '1'
+          : ''
 
     const legacyInkPlate =
       frontInkPlateSimple.length === 0 && backInkPlateSimple.length === 0 && (inkCodesLegacy.length > 0 || plateCodesLegacy.length > 0)
@@ -1985,6 +2036,10 @@ export function JobSheetPrintPage() {
             .join('\n')
         : null
 
+    const printRegNorm = normalizePrintRegistration(printing?.print_registration)
+    const printPositionCombined = formatPrintPositionForPrint(printRegNorm, printing?.print_position_notes)
+    const printPositionHighlightKind = printPositionHighlight(printRegNorm, printing?.print_position_notes)
+
     const printingLayout = {
       printed,
       method: printMethodDisplay,
@@ -1993,7 +2048,8 @@ export function JobSheetPrintPage() {
       numColours: s(printing?.num_colours ?? spec?.num_colours),
       printSide: formatPrintSide(printing?.side),
       treatLine: treat,
-      printPosition: s(printing?.print_position_notes),
+      printPosition: printPositionCombined,
+      printPositionHighlight: printPositionHighlightKind,
       filmSupplied: formatJobSheetFilmSuppliedFromSpec(specTyped),
       finishedBagSize: formatJobSheetFinishedBagSizeFromSpec(specTyped),
       artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '',
@@ -2112,6 +2168,7 @@ export function JobSheetPrintPage() {
       printSide: printingLayout.printSide,
       totalMeters: utecoTotalMeters,
       printPosition: printingLayout.printPosition,
+      printPositionHighlight: printingLayout.printPositionHighlight,
       filmTypeSupplied: utecoFilmTypeSupplied,
       finishedBagSize: utecoFinishedBagSize,
       sealTypeLabel: sealTypeLabelUteco,
@@ -2133,7 +2190,6 @@ export function JobSheetPrintPage() {
     const watertightSealsCritical = collectQualityFlagIds(spec as Parameters<typeof collectQualityFlagIds>[0]).includes(
       'seal_integrity',
     )
-    const sealLabelPrint = watertightSealsCritical ? 'Seal (Watertight seals critical)' : 'Seal'
     const cartonSizePrint =
       convRaw.carton_size != null && String(convRaw.carton_size).trim() !== '' ? String(convRaw.carton_size) : ''
     const packingModePrint = deriveConversionPackingMode(convRaw as Record<string, unknown>)
@@ -2144,7 +2200,7 @@ export function JobSheetPrintPage() {
         : ''
     const packSizePrint =
       convRaw.pack_size != null && String(convRaw.pack_size).trim() !== '' ? String(convRaw.pack_size) : ''
-    const highlightConversionSeal = sealTypeSlug !== 'end' || watertightSealsCritical
+    const highlightConversionSeal = sealTypeSlug !== 'end'
     const highlightConversionCartonSize = cartonSizePrint.trim() !== ''
     const highlightConversionPacking = packingLabelPrint.trim() !== ''
     const highlightConversionQtyPerFold = qtyPerFoldPrint.trim() !== ''
@@ -2154,6 +2210,13 @@ export function JobSheetPrintPage() {
     const highlightConversionVent = ventHasAnyData(convRaw)
     const highlightConversionHandle = !!convRaw.handle
     const highlightConversionLinedCartons = !!convRaw.lined_cartons
+    const showPrintPositionDetailsOnConv =
+      finishNorm === 'cartons' && printed && isBottomSealType(sealTypeSlug)
+    const printPositionDetailsOnConv = s(printing?.print_position_notes)
+    const printPositionDetailsHighlightOnConv = printPositionHighlight(
+      printRegNorm,
+      printing?.print_position_notes,
+    )
 
     const thicknessUmForConv = n(dimensions?.thickness_um ?? spec?.thickness_um)
     const baseLenMmForConv = n(dimensions?.base_length_mm ?? spec?.base_length_mm)
@@ -2169,7 +2232,7 @@ export function JobSheetPrintPage() {
     const qtyStockDeliverPrint = computeQtyStockDeliverForPrint({
       finishNorm,
       totalUnits: orderUnitsForPallets,
-      qtyToStockRaw: convRaw.qty_to_stock,
+      qtyToStockRaw: (js as Record<string, unknown> | undefined)?.qty_to_stock ?? convRaw.qty_to_stock,
     })
 
     return {
@@ -2322,8 +2385,23 @@ export function JobSheetPrintPage() {
           const totalRecommendedPrint =
             totalRecNum > 0 && Number.isFinite(totalRecNum) ? `${fmtQtyNumber(totalRecNum, 2)}kg inc waste` : ''
 
-          const extruderOutputRollCount =
-            rollsCount != null && rollsCount > 0 ? rollsCount : 5
+          const qtyPrefsForExtrusion = orderQtyPrefsFromJobSheetAndSpec(
+            js as Record<string, unknown>,
+            specTyped,
+          )
+          const extrusionRollWeightKg =
+            qtyPrefsForExtrusion.weight_per_roll_kg != null &&
+            Number(qtyPrefsForExtrusion.weight_per_roll_kg) > 0
+              ? Number(qtyPrefsForExtrusion.weight_per_roll_kg)
+              : js.weight_per_roll_kg != null && Number(js.weight_per_roll_kg) > 0
+                ? Number(js.weight_per_roll_kg)
+                : null
+          const extruderOutputRollCount = extrusionRollCountForPrint({
+            finishMode: finishNorm === 'cartons' ? 'Cartons' : 'Rolls',
+            totalKg: orderedKgNum,
+            weightPerRollKg: extrusionRollWeightKg,
+            schedulingRollCount: numRolls,
+          })
 
           return {
             orderedM: totalMPrint,
@@ -2368,7 +2446,7 @@ export function JobSheetPrintPage() {
           finishNorm === 'cartons'
             ? {
                 sealType: sealTypePrint,
-                sealLabel: sealLabelPrint,
+                sealWatertightCritical: watertightSealsCritical,
                 cartonSize: cartonSizePrint,
                 packing: packingLabelPrint,
                 qtyPerFold: qtyPerFoldPrint,
@@ -2394,6 +2472,12 @@ export function JobSheetPrintPage() {
                 highlightVent: highlightConversionVent,
                 highlightHandle: highlightConversionHandle,
                 highlightLinedCartons: highlightConversionLinedCartons,
+                ...(showPrintPositionDetailsOnConv
+                  ? {
+                      printPositionDetails: printPositionDetailsOnConv,
+                      printPositionDetailsHighlight: printPositionDetailsHighlightOnConv,
+                    }
+                  : {}),
               }
             : null,
       },
@@ -2449,7 +2533,7 @@ export function JobSheetPrintPage() {
   return (
     <>
       <style>{`
-        .js-print-root, .js-print-root .js-sec, .js-print-root .js-sub, .js-print-root .js-tol, .js-print-root .js-pink, .js-print-root .js-blue, .js-print-root .js-resin-mix-hl, .js-print-root .js-qc-title, .js-print-root .js-print-printing-form-title, .js-print-root tr.js-print-qty-stock-hl {
+        .js-print-root, .js-print-root .js-sec, .js-print-root .js-sub, .js-print-root .js-tol, .js-print-root .js-pink, .js-print-root .js-yellow, .js-print-root .js-blue, .js-print-root .js-resin-mix-hl, .js-print-root .js-qc-title, .js-print-root .js-print-printing-form-title, .js-print-root tr.js-print-qty-stock-hl {
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
           color-adjust: exact;
@@ -2583,6 +2667,7 @@ export function JobSheetPrintPage() {
         }
         .js-tol { background: #fff566; font-size: var(--js-print-fs-body) !important;}
         .js-pink { background: #ffc8d8 !important;}
+        .js-yellow { background: #fff566 !important;}
         .js-blue { background: #b4d7ff !important;}
         .js-perf-bg { background: #dff1ff !important;}
         .js-muted {

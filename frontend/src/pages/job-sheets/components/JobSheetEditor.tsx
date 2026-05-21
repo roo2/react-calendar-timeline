@@ -50,12 +50,26 @@ import {
   type SpecPayload,
 } from '../../../components/SpecPayloadForm'
 import { sanitizeSpecFormulationMixes } from '../../../utils/specFormulationSanitize'
-import { LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
+import { CustomerOverproductionHandlingField } from '../../../components/quantity/CustomerOverproductionHandlingField'
+import { QtyToStockField } from '../../../components/quantity/QtyToStockField'
+import { CartonRollWeightField, LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
 import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
 import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
+import { normalizeCustomerOverproductionHandling } from '../../../utils/customerOverproductionHandling'
+import { qtyToStockExceedsOrderTotal, qtyToStockFromJobSheetAndSpec } from '../../../utils/jobSheetQtyToStock'
+import {
+  buildOrderDefaultsFromEditor,
+  customerFacingDescriptionFromSpec,
+  customerOverproductionFromSpec,
+  getSpecOrderDefaults,
+  mergeOrderDefaultsIntoSpec,
+  orderDefaultsEqual,
+  orderQtyPrefsFromJobSheetAndSpec,
+  persistedQtyTypeFromPrefs,
+} from '../../../utils/specOrderDefaults'
 
 type Mode = 'new' | 'edit'
 
@@ -98,6 +112,7 @@ function ensureSpec(s: any): SpecPayload {
     ...d,
     ...src,
     identity: { ...d.identity, ...(src.identity || {}) },
+    order_defaults: { ...(d as { order_defaults?: object }).order_defaults, ...((src as { order_defaults?: object }).order_defaults || {}) },
     dimensions: { ...d.dimensions, ...(src.dimensions || {}) },
     formulation: { ...d.formulation, ...(src.formulation || {}) },
     printing: { ...d.printing, ...(src.printing || {}) },
@@ -141,11 +156,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const [specFieldErrors, setSpecFieldErrors] = useState<Record<string, string>>({})
-  const [customerFacingDescription, setCustomerFacingDescription] = useState('')
+  const loadedOrderDefaultsRef = useRef(getSpecOrderDefaults(makeDefaultSpec()))
   /** Stored on the linked product (shared across job sheets). */
   const [productionExtruderCode, setProductionExtruderCode] = useState('')
   /** After the user changes the extruder dropdown, do not auto-fill over an explicit empty selection. */
   const extruderUserTouchedRef = useRef(false)
+  const [qtyToStock, setQtyToStock] = useState<number | null>(null)
 
   const quoteRatebookState = useAppSelector((s) => s.quotes.quoteRatebook)
   const ratebook = quoteRatebookState.data
@@ -210,11 +226,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       res && typeof (res as { myob_import_line_description?: string }).myob_import_line_description === 'string'
         ? String((res as { myob_import_line_description?: string }).myob_import_line_description).trim()
         : ''
-    const dbCustFacingDesc =
-      js?.customer_facing_description != null && String(js.customer_facing_description).trim()
-        ? String(js.customer_facing_description).trim()
-        : ''
-    setCustomerFacingDescription(dbCustFacingDesc || importLineDesc)
     const rawPs =
       js?.production_status != null && String(js.production_status).trim() !== ''
         ? String(js.production_status).trim().toLowerCase()
@@ -229,11 +240,24 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         : ''
     const isImportDraft = Boolean(js?.is_import_draft)
     let loadedSpec0 = ensureSpec(res?.spec_payload)
-    const rawQu = String(js?.quantity_unit || '').toLowerCase()
-    const rawQt =
-      js?.qty_type != null && String(js.qty_type).trim()
-        ? qtyTypeFromPersisted(String(js.qty_type))
-        : inferQtyTypeFromUnit(js?.quantity_unit)
+    const prefsEarly = orderQtyPrefsFromJobSheetAndSpec(js as Record<string, unknown>, loadedSpec0)
+    const backfillOd = {
+      qty_type: prefsEarly.qty_type,
+      quantity_unit: prefsEarly.quantity_unit,
+      weight_per_roll_kg: prefsEarly.weight_per_roll_kg,
+      customer_facing_description: prefsEarly.customer_facing_description || (importLineDesc || null),
+    }
+    if (
+      backfillOd.qty_type ||
+      backfillOd.quantity_unit ||
+      backfillOd.weight_per_roll_kg ||
+      backfillOd.customer_facing_description
+    ) {
+      loadedSpec0 = mergeOrderDefaultsIntoSpec(loadedSpec0, backfillOd)
+    }
+    loadedOrderDefaultsRef.current = getSpecOrderDefaults(loadedSpec0)
+    const rawQu = String(prefsEarly.quantity_unit || js?.quantity_unit || '').toLowerCase()
+    const rawQt = persistedQtyTypeFromPrefs(prefsEarly, String(js?.quantity_unit || ''))
     if (isImportDraft && (rawQu === 'rolls' || String(rawQt || '') === 'total_rolls')) {
       loadedSpec0 = {
         ...loadedSpec0,
@@ -241,6 +265,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       }
     }
     setSpec(loadedSpec0)
+    setQtyToStock(qtyToStockFromJobSheetAndSpec(js as Record<string, unknown>, loadedSpec0))
     const extLegacy =
       loadedSpec0.identity?.production_extruder_code != null &&
       String(loadedSpec0.identity.production_extruder_code).trim() !== ''
@@ -268,9 +293,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     }
     const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
     const wpr =
-      js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
-        ? String(js.weight_per_roll_kg)
-        : ''
+      prefsEarly.weight_per_roll_kg != null && Number.isFinite(Number(prefsEarly.weight_per_roll_kg))
+        ? String(prefsEarly.weight_per_roll_kg)
+        : js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
+          ? String(js.weight_per_roll_kg)
+          : ''
     const quRawLower = String(js?.quantity_unit || '').toLowerCase()
 
     let cartonQtyMode: '1000' | 'ctn' = '1000'
@@ -328,10 +355,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       numUnitsH = ''
     }
 
-    if (fm === 'Cartons') {
-      weightPerRollH = ''
-    }
-
     qty.hydrate({
       qtyType: qtResolved,
       cartonQtyMode,
@@ -360,7 +383,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     setProductionStatus('planned')
     setProductionStartedLocal('')
     setProductionFinishedLocal('')
-    setCustomerFacingDescription('')
+    loadedOrderDefaultsRef.current = getSpecOrderDefaults(makeDefaultSpec())
+    setQtyToStock(null)
   }, [customerId, mode, qty.resetNewDraft])
 
   const theme = useTheme()
@@ -368,6 +392,18 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const previewProductCode = useMemo(() => getDisplayProductCodeFromSpec(spec), [spec])
 
   const finishMode = qty.finishMode
+  const productType = spec.identity?.product_type
+
+  useEffect(() => {
+    const cur = getSpecOrderDefaults(spec).customer_overproduction_handling
+    if (cur == null) return
+    const next = normalizeCustomerOverproductionHandling(cur, finishMode)
+    if (cur === next) return
+    setSpec((prev) => mergeOrderDefaultsIntoSpec(prev, { customer_overproduction_handling: next }))
+    if (mode === 'edit') setSpecDirty(true)
+    setDirty(true)
+  }, [finishMode])
+
   const effectiveQtyType = qty.effectiveQtyType
   const derivedForDisplay = qty.derivedForDisplay
 
@@ -407,6 +443,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     return nr > 0 ? nr : null
   }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
 
+  const qtyToStockOverTotal = qtyToStockExceedsOrderTotal(qtyToStock, stockPlanningTotalUnits)
+
   useEffect(() => {
     if (extruderUserTouchedRef.current) return
     if (productionExtruderCode.trim() !== '') return
@@ -433,7 +471,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     spec,
     qty,
     customerId,
-    customerFacingDescription,
     orderDate,
     dueDate,
     showJobFields: true,
@@ -442,6 +479,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     jobSheetDetailData: jobSheetDetail?.data ?? null,
     productionExtruderCode,
     includeProductionEstimates: true,
+    qtyToStock,
   })
 
   const jobSheetPrintingContext: JobSheetPrintingContext = useMemo(() => {
@@ -451,7 +489,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     const fromImport = typeof importLine === 'string' && importLine.trim() ? importLine.trim() : ''
     const fromSpec = livePreviewProps.description
     const fromInfo = mode === 'edit' ? hideMyobProductPlaceholderText((productInfo?.description as string | null | undefined) || '') : ''
-    const fromUser = (customerFacingDescription || '').trim()
+    const fromUser = customerFacingDescriptionFromSpec(spec).trim()
     const productDescription = fromUser || fromImport || (fromSpec || fromInfo) || '—'
     const jobNo =
       mode === 'edit' && loadedJobSheet?.job_no != null && String(loadedJobSheet.job_no).trim()
@@ -472,7 +510,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     livePreviewProps.customerName,
     livePreviewProps.description,
     livePreviewProps.invoiceNo,
-    customerFacingDescription,
+    spec,
     jobSheetDetail?.data,
     mode,
     productInfo,
@@ -515,7 +553,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (savingJobSheet) return false
 
     const sendProdDates = productionStatusShowsDatetimeFields(productionStatus)
-    const specForSave = sanitizeSpecFormulationMixes(JSON.parse(JSON.stringify(spec)) as SpecPayload)
+    let specForSave = sanitizeSpecFormulationMixes(JSON.parse(JSON.stringify(spec)) as SpecPayload)
 
     try {
       setSavingJobSheet(true)
@@ -548,6 +586,18 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         bpc != null ? Number(bpc) : null,
         qty.cartonQtyMode,
       )
+
+      const orderDefaultsPatch = buildOrderDefaultsFromEditor({
+        effectiveQtyType,
+        finishMode,
+        weightPerRollNum: persistedWpr ?? weightPerRollNum,
+        customerFacingDescription: customerFacingDescriptionFromSpec(spec),
+        bagsPerCarton: bpc != null ? Number(bpc) : null,
+        cartonQtyMode: qty.cartonQtyMode,
+        customerOverproductionHandling: customerOverproductionFromSpec(spec, finishMode),
+      })
+      specForSave = mergeOrderDefaultsIntoSpec(specForSave, orderDefaultsPatch)
+      const orderDefaultsDirty = !orderDefaultsEqual(loadedOrderDefaultsRef.current, orderDefaultsPatch)
 
       let effectiveProductId = productId
       if (mode === 'new' && productId === NEW_PRODUCT_DRAFT_VALUE) {
@@ -616,13 +666,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                   : null,
             weight_per_roll_kg: persistedWpr,
             num_rolls: persistedRolls,
+            qty_to_stock: qtyToStock,
             spec: specForSave,
             production_status: productionStatus,
             production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
             production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
-            ...(customerFacingDescription.trim()
-              ? { customer_facing_description: customerFacingDescription.trim() }
-              : {}),
             production_extruder_code: productionExtruderCode.trim() || null,
           }),
         ).unwrap()
@@ -649,20 +697,23 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                 : null,
           weight_per_roll_kg: persistedWpr,
           num_rolls: persistedRolls,
+          qty_to_stock: qtyToStock,
           production_status: productionStatus,
           production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
           production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
-          customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
           production_extruder_code: productionExtruderCode.trim() || null,
         }
-        if (specDirty) body.spec = specForSave
+        if (specDirty || orderDefaultsDirty) body.spec = specForSave
         const res = await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
         if (res?.job_sheet?.order_id) setOrderId(String(res.job_sheet.order_id))
         if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
         setSaveMsg('Saved job sheet.')
         setSpecDirty(false)
         setDirty(false)
-        if (specDirty) setSpec(ensureSpec(specForSave))
+        if (specDirty || orderDefaultsDirty) {
+          setSpec(ensureSpec(specForSave))
+          loadedOrderDefaultsRef.current = getSpecOrderDefaults(specForSave)
+        }
         void dispatch(fetchJobSheet(jobSheetId))
         return true
       }
@@ -758,6 +809,17 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         qty.cartonQtyMode,
       )
 
+      const orderDefaultsPatch = buildOrderDefaultsFromEditor({
+        effectiveQtyType: qty.effectiveQtyType,
+        finishMode: qty.finishMode,
+        weightPerRollNum: persistedWpr ?? weightPerRollNum,
+        customerFacingDescription: customerFacingDescriptionFromSpec(spec),
+        bagsPerCarton: bpc != null ? Number(bpc) : null,
+        cartonQtyMode: qty.cartonQtyMode,
+        customerOverproductionHandling: customerOverproductionFromSpec(spec, qty.finishMode),
+      })
+      specForSave = mergeOrderDefaultsIntoSpec(specForSave, orderDefaultsPatch)
+
       const body: Record<string, unknown> = {
         due_date: dueDate.trim() ? dueDate : null,
         order_date: orderDate || null,
@@ -772,11 +834,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               : null,
         weight_per_roll_kg: persistedWpr,
         num_rolls: persistedRolls,
+        qty_to_stock: qtyToStock,
         spec: specForSave,
         production_status: productionStatus,
         production_started_at: sendProdDates ? datetimeLocalToIsoUtc(productionStartedLocal) : null,
         production_finished_at: sendProdDates ? datetimeLocalToIsoUtc(productionFinishedLocal) : null,
-        customer_facing_description: customerFacingDescription.trim() ? customerFacingDescription.trim() : null,
         production_extruder_code: productionExtruderCode.trim() || null,
       }
 
@@ -1013,11 +1075,22 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
               printingSurface="job_sheet_summary"
               printingArtworkScope={mode === 'edit' && jobSheetId ? { kind: 'job_sheet', jobSheetId } : null}
               jobSheetPrintingContext={jobSheetPrintingContext}
-              customerFacingDescription={customerFacingDescription}
               estimatedUnitsPerPalletVolume={estimatedUnitsPerPalletVolume}
               stockPlanningTotalUnits={stockPlanningTotalUnits}
-              onCustomerFacingDescriptionChange={(v) => {
-                setCustomerFacingDescription(v)
+              qtyToStock={qtyToStock}
+              onQtyToStockChange={(v) => {
+                setQtyToStock(v)
+                setDirty(true)
+              }}
+              customerFacingDescription={customerFacingDescriptionFromSpec(spec)}
+              onCustomerFacingDescriptionChange={(raw) => {
+                setSpec((prev) =>
+                  mergeOrderDefaultsIntoSpec(prev, {
+                    customer_facing_description: raw.trim() === '' ? null : raw,
+                  }),
+                )
+                setSpecDirty(true)
+                setSpecFieldErrors({})
                 setDirty(true)
               }}
               customerFacingDescriptionPlaceholder={livePreviewProps.description}
@@ -1106,6 +1179,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                     </Box>
                     <LinkedQuantityFields
                       qty={qty}
+                      hideCartonRollWeight={finishMode === 'Cartons'}
                       bagsPerCartonStr={bagsPerCartonStr}
                       onBagsPerCartonChange={(raw) => {
                         setSpec((prev: SpecPayload) => ({
@@ -1121,19 +1195,31 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                     />
                     {finishMode === 'Cartons' ? (
                       <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
                           Conversion instructions
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Total cartons:{' '}
-                          <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>
-                            {qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0
-                              ? String(qty.cartonCountForDisplay)
-                              : '—'}
-                          </Box>
-                        </Typography>
+                        <CartonRollWeightField qty={qty} />
                       </Box>
                     ) : null}
+                    <QtyToStockField
+                      finishMode={finishMode}
+                      value={qtyToStock}
+                      onChange={(v) => {
+                        setQtyToStock(v)
+                        setDirty(true)
+                      }}
+                      overTotal={qtyToStockOverTotal}
+                    />
+                    <CustomerOverproductionHandlingField
+                      spec={spec}
+                      finishMode={finishMode}
+                      productType={spec.identity?.product_type}
+                      onSpecChange={(next) => {
+                        setSpec(next)
+                        if (mode === 'edit') setSpecDirty(true)
+                        setDirty(true)
+                      }}
+                    />
                   </Paper>
                 </>
               }

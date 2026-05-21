@@ -12,6 +12,7 @@ import {
   type QtyType,
 } from './quantityRollFields'
 import type { SpecQuantitySlice } from './specToQuoteInputs'
+import { orderQtyPrefsFromJobSheetAndSpec, persistedQtyTypeFromPrefs } from './specOrderDefaults'
 
 function inferQtyTypeFromUnit(u: string | undefined): QtyType {
   const x = (u || '').toLowerCase()
@@ -24,11 +25,9 @@ function inferQtyTypeFromUnit(u: string | undefined): QtyType {
 
 function parseQtyStrings(js: Record<string, unknown> | null | undefined, spec: SpecPayload): SpecQuantitySlice {
   const isImportDraft = Boolean(js?.is_import_draft)
-  const rawQu = String(js?.quantity_unit || '').toLowerCase()
-  const rawQt =
-    js?.qty_type != null && String(js.qty_type).trim()
-      ? qtyTypeFromPersisted(String(js.qty_type))
-      : inferQtyTypeFromUnit(String(js?.quantity_unit || ''))
+  const prefs = orderQtyPrefsFromJobSheetAndSpec(js, spec)
+  const rawQu = String(prefs.quantity_unit || js?.quantity_unit || '').toLowerCase()
+  const rawQt = persistedQtyTypeFromPrefs(prefs, String(js?.quantity_unit || ''))
 
   let workingSpec = spec
   if (isImportDraft && (rawQu === 'rolls' || String(rawQt || '') === 'total_rolls')) {
@@ -57,9 +56,11 @@ function parseQtyStrings(js: Record<string, unknown> | null | undefined, spec: S
 
   const nrStored = js?.num_rolls != null ? Math.max(1, Number(js.num_rolls)) : 1
   const wpr =
-    js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
-      ? String(js.weight_per_roll_kg)
-      : ''
+    prefs.weight_per_roll_kg != null && Number.isFinite(Number(prefs.weight_per_roll_kg))
+      ? String(prefs.weight_per_roll_kg)
+      : js?.weight_per_roll_kg != null && Number.isFinite(Number(js.weight_per_roll_kg))
+        ? String(js.weight_per_roll_kg)
+        : ''
   const quRawLower = String(js?.quantity_unit || '').toLowerCase()
 
   let totalKgH = ''

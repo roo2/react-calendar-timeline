@@ -25,6 +25,7 @@ class JobSheetCreateRequest(BaseModel):
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
     num_rolls: int = Field(..., ge=1, description="Roll count for scheduling (required for production Gantt).")
+    qty_to_stock: Optional[int] = Field(None, ge=0, description="Rolls/cartons held in stock (not shipped to customer).")
     spec: SpecPayload
     production_status: Optional[JobStatus] = None
     """Initial linked production `Job.status` after create (job row is ensured server-side)."""
@@ -34,8 +35,6 @@ class JobSheetCreateRequest(BaseModel):
     """Short description shown to the customer; optional on create."""
     production_extruder_code: Optional[str] = Field(default=None, max_length=64)
     """Ratebook extruder code; stored on the linked ``Product`` (shared across job sheets)."""
-    die_size: Optional[str] = None
-    """Extrusion die on the extruder; stored on the linked ``Product``."""
 
 
 class JobSheetSummary(BaseModel):
@@ -55,6 +54,7 @@ class JobSheetSummary(BaseModel):
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
     num_rolls: int = 1
+    qty_to_stock: Optional[int] = None
     created_by: str
     created_at: Optional[str] = None
     # Product summary fields (denormalized for listing UI)
@@ -84,8 +84,6 @@ class JobSheetSummary(BaseModel):
     """Optional text override; when unset, UIs use import line (MYOB) / product spec."""
     production_extruder_code: Optional[str] = None
     """From linked product (same for all job sheets on that product)."""
-    die_size: Optional[str] = None
-    """From linked product."""
 
 
 class JobSheetDetail(BaseModel):
@@ -110,6 +108,7 @@ class JobSheetUpdateRequest(BaseModel):
     num_product_units: Optional[float] = None
     weight_per_roll_kg: Optional[float] = None
     num_rolls: Optional[int] = Field(default=None, ge=1)
+    qty_to_stock: Optional[int] = Field(default=None, ge=0)
     # If provided, a new ProductVersion is created and the job sheet is updated
     # to reference it (and the product's active version is advanced).
     spec: Optional[SpecPayload] = None
@@ -125,6 +124,4 @@ class JobSheetUpdateRequest(BaseModel):
     """Set or clear (send null / empty) the customer-facing description for this job sheet."""
     production_extruder_code: Optional[str] = Field(default=None, max_length=64)
     """Updates the linked ``Product`` (not the job sheet row)."""
-    die_size: Optional[str] = None
-    """Updates the linked ``Product``."""
 

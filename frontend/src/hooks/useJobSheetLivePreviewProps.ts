@@ -19,6 +19,7 @@ import {
 } from '../utils/quantityRollFields'
 import { hideMyobProductPlaceholderText } from '../utils/jobSheetPreviewText'
 import { buildJobSheetPrintQualityCheckLabels } from '../utils/qualityFlagLabels'
+import { customerFacingDescriptionFromSpec } from '../utils/specOrderDefaults'
 import type { SpecLinkedQuantityBind } from './useSpecLinkedQuantityFields'
 
 export type JobSheetLivePreviewPanelProps = ComponentProps<typeof JobSheetPreviewPanel>
@@ -27,7 +28,8 @@ export type UseJobSheetLivePreviewParams = {
   spec: SpecPayload
   qty: SpecLinkedQuantityBind
   customerId: string
-  customerFacingDescription: string
+  /** @deprecated Use `spec.order_defaults.customer_facing_description`. */
+  customerFacingDescription?: string
   orderDate: string
   dueDate: string
   showJobFields: boolean
@@ -40,6 +42,8 @@ export type UseJobSheetLivePreviewParams = {
   productionExtruderCode: string
   /** When false, omit live order qty, quote estimates, and pallet planning. */
   includeProductionEstimates?: boolean
+  /** Rolls/cartons to stock (job sheet field). */
+  qtyToStock?: number | null
 }
 
 /**
@@ -51,7 +55,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     spec,
     qty,
     customerId,
-    customerFacingDescription,
+    customerFacingDescription: customerFacingDescriptionParam,
     orderDate,
     dueDate,
     showJobFields,
@@ -60,6 +64,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     jobSheetDetailData = null,
     productionExtruderCode,
     includeProductionEstimates = true,
+    qtyToStock = null,
   } = params
 
   const ratebook = useAppSelector((s) => s.quotes.quoteRatebook.data)
@@ -140,6 +145,10 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     () => hideMyobProductPlaceholderText(joinQuoteDescriptionWithPackagingTail(previewDescription, previewPackagingTail)),
     [previewDescription, previewPackagingTail],
   )
+
+  const customerFacingDescription =
+    String(customerFacingDescriptionParam ?? '').trim() ||
+    customerFacingDescriptionFromSpec(spec).trim()
 
   const previewCustomerFacingDescriptionWithPackagingTail = useMemo(() => {
     const plain = String(customerFacingDescription || '').trim()
@@ -230,13 +239,12 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
 
   const palletLoadPlanning = useMemo(() => {
     if (!includeProductionEstimates) return null
-    const conv = (spec.run_requirements as { conversion?: { qty_to_stock?: unknown } } | undefined)?.conversion
     return computeJobSheetPalletLoadPlanning({
       finishMode: finishMode === 'Cartons' ? 'Cartons' : 'Rolls',
       rollsPerPallet: spec.packaging?.rolls_per_pallet,
       cartonsPerPallet: spec.packaging?.cartons_per_pallet,
       estimatedUnitsPerPalletVolume,
-      qtyToStockRaw: conv?.qty_to_stock,
+      qtyToStockRaw: qtyToStock,
       orderTotalUnits: stockPlanningTotalUnits,
     })
   }, [
@@ -245,7 +253,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     spec.packaging?.rolls_per_pallet,
     spec.packaging?.cartons_per_pallet,
     estimatedUnitsPerPalletVolume,
-    spec.run_requirements,
+    qtyToStock,
     stockPlanningTotalUnits,
   ])
 

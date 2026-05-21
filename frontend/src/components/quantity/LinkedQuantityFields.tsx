@@ -1,15 +1,47 @@
-import { Box, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup, TextField, Typography } from '@mui/material'
+import {
+  Box,
+  FormControl,
+  FormControlLabel,
+  FormLabel,
+  Radio,
+  RadioGroup,
+  TextField,
+  Typography,
+  type SxProps,
+  type Theme,
+} from '@mui/material'
 import type { SpecLinkedQuantityBind } from '../../hooks/useSpecLinkedQuantityFields'
 
 type LinkedQty = SpecLinkedQuantityBind
+
+/** Extrusion roll weight for Cartons finish — shown under Conversion instructions in job sheet quantity UI. */
+export function CartonRollWeightField({ qty, sx }: { qty: LinkedQty; sx?: SxProps<Theme> }) {
+  const { finishMode, weightPerRoll, setWeightPerRoll } = qty
+  if (finishMode !== 'Cartons') return null
+  return (
+    <TextField
+      label="Roll weight (kg)"
+      type="number"
+      inputProps={{ min: 0, step: 'any' }}
+      value={weightPerRoll}
+      onChange={(e) => setWeightPerRoll(e.target.value)}
+      fullWidth
+      sx={sx}
+      required
+      helperText="Weight per extruded roll of film (extruder QC rows and scheduling)."
+    />
+  )
+}
 
 export function LinkedQuantityFields(props: {
   qty: LinkedQty
   /** Used when finish mode is Cartons and qty mode isn't KG — bound to product spec `bags_per_carton`. */
   bagsPerCartonStr: string
   onBagsPerCartonChange: (raw: string) => void
+  /** When true, omit carton roll weight here (parent renders {@link CartonRollWeightField} under Conversion instructions). */
+  hideCartonRollWeight?: boolean
 }) {
-  const { qty, bagsPerCartonStr, onBagsPerCartonChange } = props
+  const { qty, bagsPerCartonStr, onBagsPerCartonChange, hideCartonRollWeight = false } = props
 
   const {
     finishMode,
@@ -427,6 +459,8 @@ export function LinkedQuantityFields(props: {
           />
         ) : null}
       </Box>
+
+      {finishMode === 'Cartons' && !hideCartonRollWeight ? <CartonRollWeightField qty={qty} sx={{ mt: 2 }} /> : null}
     </>
   )
 }
