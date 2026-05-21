@@ -2256,7 +2256,7 @@ export function JobSheetPrintPage() {
         shrink,
         inlineSeal,
         inlinePerforated: perforated,
-        inlinePunched: holePunched,
+        inlinePunched: holePunched && finishNorm === 'rolls',
         runUpLine: runUpNotApplicable ? '-' : runUpLine,
         coresLine,
         orderQuantities: (() => {
