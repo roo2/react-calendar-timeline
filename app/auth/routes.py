@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -8,6 +7,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from app.auth.cookies import apply_session_cookie, clear_session_cookie
 from app.auth.deps import current_identity, csrf_protect
 from app.auth.service import AuthService, AuthError
 from app.config import settings
@@ -45,7 +45,6 @@ async def login(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"ok": False, "detail": "invalid_credentials"},
             )
-        max_age = int(timedelta(hours=settings.SESSION_TTL_HOURS).total_seconds())
         user, roles, csrf = svc.get_current_user(str(sess.id))
         resp = JSONResponse(
             status_code=200,
@@ -54,15 +53,7 @@ async def login(
                 "identity": {"user": (user or {}).get("username") if isinstance(user, dict) else None, "roles": roles, "csrf": csrf},
             },
         )
-        resp.set_cookie(
-            key=settings.COOKIE_NAME,
-            value=str(sess.id),  # Ensure it's a string
-            httponly=True,
-            samesite="lax",
-            secure=(settings.ENV == "prod"),
-            max_age=max_age,
-            path="/",  # Explicitly set path to root
-        )
+        apply_session_cookie(resp, request, str(sess.id))
         return resp
 
 
@@ -76,7 +67,7 @@ async def logout(request: Request, response: Response, identity=Depends(current_
                 svc.logout(sid)
         except Exception:
             pass
-    response.delete_cookie(settings.COOKIE_NAME, path="/")
+    clear_session_cookie(response, request)
     return JSONResponse(status_code=200, content={"ok": True})
 
  

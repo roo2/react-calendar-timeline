@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
-import { apiFetch } from '../../api/client'
+import { ApiError, apiFetch } from '../../api/client'
 
 export type Identity = {
   user: string | null
@@ -42,7 +42,22 @@ export const fetchCsrf = createAsyncThunk('auth/csrf', async () => {
 })
 
 export const fetchMe = createAsyncThunk('auth/me', async () => {
-  return await apiFetch<{ identity: Identity }>('/api/auth/me')
+  // Brief retries after dyno wake / deploy when Postgres or the app is still starting.
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await apiFetch<{ identity: Identity }>('/api/auth/me')
+    } catch (e) {
+      lastErr = e
+      const status = e instanceof ApiError ? e.status : 0
+      if (status >= 400 && status < 500) throw e
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)))
+        continue
+      }
+    }
+  }
+  throw lastErr
 })
 
 const slice = createSlice({

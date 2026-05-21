@@ -208,6 +208,7 @@ class ConversionSpec(BaseModel):
     pack_lay_flat: Optional[bool] = False
     tag_packs: Optional[bool] = False
     tag_ctn: Optional[bool] = False
+    vent_enabled: Optional[bool] = False
     vent_hole_size_mm: Optional[int] = Field(6, ge=0)
     vent_holes_across: Optional[int] = Field(None, ge=0)
     vent_holes_along: Optional[int] = Field(None, ge=0)

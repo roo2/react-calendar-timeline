@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.auth.cookies import apply_session_cookie
 from app.auth.service import AuthService
 from app.config import settings
 from app.db.session import SessionLocal
+
+_logger = logging.getLogger("auth")
 
 
 class IdentityMiddleware(BaseHTTPMiddleware):
@@ -20,17 +25,17 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         user = None
         roles: list[str] = []
         csrf = None
+        refresh_session_cookie = False
 
         if sid:
             try:
                 with SessionLocal() as db:
-                    svc = AuthService(db)
+                    svc = AuthService(db, session_ttl_hours=settings.SESSION_TTL_HOURS)
                     user, roles, csrf = svc.get_current_user(sid)
-
-                # Debug logging (can be removed in production)
-                import logging
-                logger = logging.getLogger("auth")
-                logger.debug(
+                    if user:
+                        svc.touch_session_if_needed(sid)
+                        refresh_session_cookie = True
+                _logger.debug(
                     "identity_mw sid=%s user=%s roles=%s found=%s",
                     sid[:8] + "..." if len(sid) > 8 else sid,
                     (user or {}).get("username") if isinstance(user, dict) else None,
@@ -39,16 +44,14 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                 )
             except Exception as e:
                 # Log error but don't fail the request - treat as anonymous
-                import logging
-                logging.getLogger("auth").warning(
+                _logger.warning(
                     "identity_mw_error sid=%s err=%s",
                     sid[:8] + "..." if len(sid) > 8 else sid if sid else "None",
                     str(e),
                 )
                 user, roles, csrf = None, [], None
         else:
-            import logging
-            logging.getLogger("auth").debug("identity_mw no_session_cookie")
+            _logger.debug("identity_mw no_session_cookie")
 
         # Set individual attributes for current_identity dependency
         request.state.user = user
@@ -63,4 +66,9 @@ class IdentityMiddleware(BaseHTTPMiddleware):
             "csrf": csrf,  # CSRF token string (or None)
         }
 
-        return await call_next(request)
+        response = await call_next(request)
+        # Rolling browser cookie max-age keeps users signed in across dyno/worker restarts
+        # when the DB session is still valid (Heroku Postgres).
+        if refresh_session_cookie and sid:
+            apply_session_cookie(response, request, sid)
+        return response

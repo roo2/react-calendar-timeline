@@ -9,7 +9,7 @@ import {
   type JobSheetPrintOrderHeaderModel,
 } from './components/JobSheetPrintOrderHeader'
 import { conversionPackingModeLabel, deriveConversionPackingMode } from '../../utils/conversionPacking'
-import { formatVentPrintLines, ventHasAnyData } from '../../utils/conversionVent'
+import { formatVentPrintLines, ventEnabledFromConv } from '../../utils/conversionVent'
 
 /** Film geometry suffix for Uteco “Film Type Supplied” (e.g. …, Gusseted). */
 function geometryLabelForUtecoFilmSupplied(dimsGeometry: unknown, productTypeRaw: unknown): string {
@@ -2153,7 +2153,10 @@ export function JobSheetPrintPage() {
     }
 
     const convRaw = (run?.conversion || {}) as Record<string, unknown>
-    const ventPrint = formatVentPrintLines(convRaw)
+    const ventEnabledPrint = ventEnabledFromConv(convRaw)
+    const ventPrint = ventEnabledPrint
+      ? formatVentPrintLines(convRaw)
+      : { summary: '', position: '', holeSizeMm: 6 as const, highlightHoleSize: false }
     const ventSummaryPrint = ventPrint.summary
     const ventPositionPrint = ventPrint.position
     const ventHoleSizeMmPrint = ventPrint.holeSizeMm
@@ -2182,7 +2185,7 @@ export function JobSheetPrintPage() {
     const highlightConversionQtyPerPack = packSizePrint.trim() !== ''
     const highlightConversionTagPacks = !!convRaw.tag_packs
     const highlightConversionTagCtn = !!convRaw.tag_ctn
-    const highlightConversionVent = ventHasAnyData(convRaw)
+    const highlightConversionVent = ventEnabledPrint
     const highlightConversionHandle = !!convRaw.handle
     const highlightConversionLinedCartons = !!convRaw.lined_cartons
     const showPrintPositionDetailsOnConv =

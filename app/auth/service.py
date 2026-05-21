@@ -69,8 +69,7 @@ class AuthService:
             # Log failed auth event (could be to DB or standard logging)
             self._logger.info("login_failed username=%s", username)
             return self._fail_login(username)
-        # Invalidate existing session(s) if any (single session policy for simplicity)
-        self._db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+        # Allow concurrent sessions (e.g. shared admin login from multiple browsers).
         sess = UserSession(
             user_id=user.id,
             created_at=datetime.now(timezone.utc),
@@ -113,6 +112,36 @@ class AuthService:
             return _load()
         with self._db.begin():
             return _load()
+
+    def touch_session_if_needed(self, sid: Optional[str]) -> bool:
+        """
+        Sliding server-side expiry: extend ``expires_at`` when less than half the TTL remains.
+        Survives worker restarts because sessions live in the database (not worker memory).
+        """
+        if not sid:
+            return False
+        now = datetime.now(timezone.utc)
+        refresh_before = self._ttl / 2
+
+        def _touch() -> bool:
+            sess: Optional[UserSession] = self._db.get(UserSession, str(sid))
+            if not sess:
+                return False
+            exp = sess.expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= now:
+                return False
+            if (exp - now) > refresh_before:
+                return False
+            sess.expires_at = now + self._ttl
+            self._db.flush()
+            return True
+
+        if self._db.in_transaction():
+            return _touch()
+        with self._db.begin():
+            return _touch()
 
     # --- Authorization helpers ---
     def require_roles(self, have: List[str], needed: Tuple[str, ...]) -> None:

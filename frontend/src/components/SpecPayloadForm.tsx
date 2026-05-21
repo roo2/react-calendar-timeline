@@ -65,6 +65,7 @@ import {
 } from '../utils/conversionPacking'
 import {
   normalizeVentHoleSizeMm,
+  ventEnabledFromConv,
   ventHolesAcrossFromConv,
   ventHolesAlongFromConv,
   ventTotalHoles,
@@ -234,6 +235,7 @@ export function makeDefaultSpec(): SpecPayload {
         pack_lay_flat: false,
         tag_packs: false,
         tag_ctn: false,
+        vent_enabled: false,
         vent_hole_size_mm: 6,
         vent_holes_across: null,
         vent_holes_along: null,
@@ -373,6 +375,7 @@ export function SpecPayloadForm(props: {
   const packaging = spec.packaging || {}
   const conversion = (run as { conversion?: Record<string, unknown> }).conversion || {}
   const packingMode = deriveConversionPackingMode(conversion)
+  const ventEnabled = ventEnabledFromConv(conversion)
 
   function patchConversion(patch: Record<string, unknown>) {
     update((d) => {
@@ -3045,13 +3048,27 @@ export function SpecPayloadForm(props: {
               display: 'grid',
               gridTemplateColumns: {
                 xs: '1fr',
-                md: 'repeat(3, minmax(0, 1fr))',
+                md: 'auto repeat(4, minmax(0, 1fr))',
               },
               gap: 2,
               mt: 2,
-              alignItems: 'start',
+              alignItems: 'end',
             }}
           >
+            <FormControlLabel
+              sx={{ m: 0, alignSelf: 'end', pb: 1 }}
+              control={
+                <Checkbox
+                  checked={ventEnabled}
+                  onChange={(e) =>
+                    patchConversion({
+                      vent_enabled: e.target.checked,
+                    })
+                  }
+                />
+              }
+              label="Vent"
+            />
             <DefaultSelectField
               label="Hole size"
               defaultValue={6}
@@ -3062,6 +3079,7 @@ export function SpecPayloadForm(props: {
                 })
               }
               fullWidth
+              disabled={!ventEnabled}
             >
               {VENT_HOLE_SIZE_MM_OPTIONS.map((mm) => (
                 <MenuItem key={mm} value={String(mm)}>
@@ -3081,6 +3099,7 @@ export function SpecPayloadForm(props: {
                 })
               }
               fullWidth
+              disabled={!ventEnabled}
             />
             <TextField
               label="Hole rows"
@@ -3094,9 +3113,15 @@ export function SpecPayloadForm(props: {
                 })
               }
               fullWidth
-              helperText={
-                ventTotalHoles(conversion) > 0 ? `Total holes: ${ventTotalHoles(conversion)}` : ' '
+              disabled={!ventEnabled}
+            />
+            <TextField
+              label="Total holes"
+              value={
+                ventEnabled && ventTotalHoles(conversion) > 0 ? String(ventTotalHoles(conversion)) : ''
               }
+              fullWidth
+              disabled
             />
           </Box>
           <TextField
@@ -3115,6 +3140,7 @@ export function SpecPayloadForm(props: {
             multiline
             minRows={2}
             sx={{ mt: 2 }}
+            disabled={!ventEnabled}
             placeholder="e.g. 50mm from bottom, then 80mm between rows"
           />
 

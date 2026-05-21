@@ -59,3 +59,10 @@ export function ventHasAnyData(conv: Record<string, unknown>): boolean {
   const { summary, position } = formatVentPrintLines(conv)
   return summary !== '' || position !== ''
 }
+
+/** Conversion UI / print: vent is on when explicitly enabled, or when legacy specs have vent data. */
+export function ventEnabledFromConv(conv: Record<string, unknown>): boolean {
+  if (conv.vent_enabled === true) return true
+  if (conv.vent_enabled === false) return false
+  return ventHasAnyData(conv)
+}
