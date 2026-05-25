@@ -2272,6 +2272,33 @@ export function JobSheetPrintPage() {
           const totalMPrint =
             totalMNum != null && totalMNum > 0 ? `${fmtQtyNumber(totalMNum, 2)}m` : ''
 
+          const orderedKgNum =
+            n(quotePreviewForWaste?.totals_kg) ??
+            (qtyUnitRaw === 'kg' ? qv : null) ??
+            (totalKg != null && totalKg > 0 ? totalKg : null)
+          const orderedKgPrint =
+            orderedKgNum != null && orderedKgNum > 0 && Number.isFinite(orderedKgNum)
+              ? `${fmtQtyNumber(orderedKgNum, 2)}kg`
+              : ''
+
+          const qtyPrefsForExtrusion = orderQtyPrefsFromJobSheetAndSpec(
+            js as Record<string, unknown>,
+            specTyped,
+          )
+          const extrusionRollWeightKg =
+            qtyPrefsForExtrusion.weight_per_roll_kg != null &&
+            Number(qtyPrefsForExtrusion.weight_per_roll_kg) > 0
+              ? Number(qtyPrefsForExtrusion.weight_per_roll_kg)
+              : js.weight_per_roll_kg != null && Number(js.weight_per_roll_kg) > 0
+                ? Number(js.weight_per_roll_kg)
+                : null
+          const extruderOutputRollCount = extrusionRollCountForPrint({
+            finishMode: finishNorm === 'cartons' ? 'Cartons' : 'Rolls',
+            totalKg: orderedKgNum,
+            weightPerRollKg: extrusionRollWeightKg,
+            schedulingRollCount: numRolls,
+          })
+
           const kprFromPreview =
             quotePreviewForWaste?.kg_per_roll != null &&
             Number(quotePreviewForWaste.kg_per_roll) > 0 &&
@@ -2280,17 +2307,42 @@ export function JobSheetPrintPage() {
               : null
           const kprNum =
             finishNorm === 'cartons'
-              ? null
+              ? kprFromPreview != null
+                ? kprFromPreview
+                : extrusionRollWeightKg != null
+                  ? extrusionRollWeightKg
+                  : weightPerRoll != null && weightPerRoll > 0
+                    ? weightPerRoll
+                    : orderedKgNum != null &&
+                        orderedKgNum > 0 &&
+                        extruderOutputRollCount > 0 &&
+                        Number.isFinite(orderedKgNum / extruderOutputRollCount)
+                      ? orderedKgNum / extruderOutputRollCount
+                      : null
               : kprFromPreview != null
                 ? kprFromPreview
                 : weightPerRoll != null && weightPerRoll > 0
                   ? weightPerRoll
                   : null
 
+          const mprFromPreview =
+            quotePreviewForWaste?.m_per_roll != null &&
+            Number(quotePreviewForWaste.m_per_roll) > 0 &&
+            Number.isFinite(Number(quotePreviewForWaste.m_per_roll))
+              ? Number(quotePreviewForWaste.m_per_roll)
+              : null
           const mprNum =
             derivedMPerRoll != null && derivedMPerRoll > 0 && Number.isFinite(derivedMPerRoll)
               ? derivedMPerRoll
-              : null
+              : mprFromPreview != null
+                ? mprFromPreview
+                : finishNorm === 'cartons' &&
+                    totalMNum != null &&
+                    totalMNum > 0 &&
+                    extruderOutputRollCount > 0 &&
+                    Number.isFinite(totalMNum / extruderOutputRollCount)
+                  ? totalMNum / extruderOutputRollCount
+                  : null
           const mPerRollPrint =
             mprNum != null && mprNum > 0 ? `${fmtQtyNumber(mprNum, 2)}m` : ''
           const mPerRollFormatted = mPerRollPrint ? `${mPerRollPrint}/roll` : ''
@@ -2302,29 +2354,25 @@ export function JobSheetPrintPage() {
           )
 
           const rollsLabel = finishNorm === 'cartons' ? 'Ctns' : 'Rolls'
-          const rollsCount =
+          const ctnsCount =
             finishNorm === 'cartons' &&
             cartonConversion != null &&
             cartonConversion.totalCartons !== '' &&
             Number(cartonConversion.totalCartons) > 0
               ? Math.round(Number(cartonConversion.totalCartons))
-              : numRolls
-
-          const rollsDisplay =`${fmtCount(rollsCount)} ${rollsLabel}`
-
-          const orderedKgNum =
-            n(quotePreviewForWaste?.totals_kg) ??
-            (qtyUnitRaw === 'kg' ? qv : null) ??
-            (totalKg != null && totalKg > 0 ? totalKg : null)
-          const orderedKgPrint =
-            orderedKgNum != null && orderedKgNum > 0 && Number.isFinite(orderedKgNum)
-              ? `${fmtQtyNumber(orderedKgNum, 2)}kg`
-              : ''
+              : null
+          const rollsCount = finishNorm === 'cartons' && ctnsCount != null ? ctnsCount : numRolls
+          const rollsDisplay =
+            finishNorm === 'cartons' && ctnsCount != null
+              ? `${fmtCount(ctnsCount)} Ctns (${fmtCount(extruderOutputRollCount)} Rolls)`
+              : `${fmtCount(rollsCount)} ${rollsLabel}`
 
           const coreTypeStr = String(packaging?.core_type ?? spec?.core_type ?? '').trim()
           let coreKgNum: number | null = null
           let suggestedRollWeight: string | null = null
           let suggestedRollWeightExplanation: string | null = null
+          const rollsForCoreWeight =
+            finishNorm === 'cartons' ? extruderOutputRollCount : numRolls
           if (rb?.cores && coreTypeStr) {
             const crow = (rb.cores as Record<string, { kg_per_meter?: number } | undefined>)[coreTypeStr]
             const kpm = crow?.kg_per_meter != null ? Number(crow.kg_per_meter) : NaN
@@ -2332,7 +2380,7 @@ export function JobSheetPrintPage() {
               quotePreviewForWaste?.core_length_m != null ? Number(quotePreviewForWaste.core_length_m) : NaN
             if (Number.isFinite(kpm) && kpm > 0 && Number.isFinite(cl) && cl > 0) {
               coreKgNum = cl * kpm
-              const coreWeightPerRoll = coreKgNum / numRolls
+              const coreWeightPerRoll = coreKgNum / rollsForCoreWeight
               // if we are including core or half core, add core weight to the roll weight.
               if (rollWeightBilling === 'core_included') {
                 suggestedRollWeight = formatKgPerRoll(kprNum ?? 0)
@@ -2356,24 +2404,6 @@ export function JobSheetPrintPage() {
           const totalRecNum = totalBaseNum != null && Number.isFinite(totalBaseNum) ? totalBaseNum : 0
           const totalRecommendedPrint =
             totalRecNum > 0 && Number.isFinite(totalRecNum) ? `${fmtQtyNumber(totalRecNum, 2)}kg inc waste` : ''
-
-          const qtyPrefsForExtrusion = orderQtyPrefsFromJobSheetAndSpec(
-            js as Record<string, unknown>,
-            specTyped,
-          )
-          const extrusionRollWeightKg =
-            qtyPrefsForExtrusion.weight_per_roll_kg != null &&
-            Number(qtyPrefsForExtrusion.weight_per_roll_kg) > 0
-              ? Number(qtyPrefsForExtrusion.weight_per_roll_kg)
-              : js.weight_per_roll_kg != null && Number(js.weight_per_roll_kg) > 0
-                ? Number(js.weight_per_roll_kg)
-                : null
-          const extruderOutputRollCount = extrusionRollCountForPrint({
-            finishMode: finishNorm === 'cartons' ? 'Cartons' : 'Rolls',
-            totalKg: orderedKgNum,
-            weightPerRollKg: extrusionRollWeightKg,
-            schedulingRollCount: numRolls,
-          })
 
           return {
             orderedM: totalMPrint,

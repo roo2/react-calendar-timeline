@@ -250,6 +250,20 @@ export function computeWeightPerRollDisplay(
   return null
 }
 
+/** Product count for carton order lines when only carton count was entered. */
+export function resolvedProductUnitsForOrder(
+  numUnitsNum: number,
+  numCartonsNum: number,
+  bagsPerCarton: number | null | undefined,
+): number {
+  const units = Math.max(0, Math.round(Number(numUnitsNum) || 0))
+  if (units > 0) return units
+  const cartons = Math.max(0, Math.round(Number(numCartonsNum) || 0))
+  const bpc = Math.max(0, Math.round(Number(bagsPerCarton) || 0))
+  if (cartons > 0 && bpc > 0) return cartons * bpc
+  return 0
+}
+
 /** Map job sheet persisted fields → order line quantity_value / quantity_unit. */
 export function getOrderQuantityFromJobSheetFields(
   qtyType: QtyType,
@@ -260,13 +274,34 @@ export function getOrderQuantityFromJobSheetFields(
   finishMode: FinishMode = 'Rolls',
   bagsPerCarton: number | null | undefined = null,
   /**
-   * Cartons + ``units`` only: ``'1000'`` bills order lines in MYOB ``1000`` units (total product count ÷ 1000);
-   * ``'ctn'`` bills in physical cartons when bags-per-carton is known. When omitted, defaults to ``'ctn'`` for
-   * backward compatibility with callers that pre-date explicit carton mode.
+   * Cartons finish: ``'1000'`` bills order lines in MYOB ``1000`` units (total product count ÷ 1000);
+   * ``'ctn'`` bills in physical cartons. Defaults to ``'ctn'`` when omitted.
    */
   cartonQtyMode?: '1000' | 'ctn',
+  numCartonsNum = 0,
 ): { quantity_value: number; quantity_unit: 'kg' | 'rolls' | 'cartons' | '1000' } {
   const fb = quantityValueFallback > 0 ? quantityValueFallback : 1
+  const bpc = Math.max(0, Math.round(Number(bagsPerCarton) || 0))
+  const cartons = Math.max(0, Math.round(Number(numCartonsNum) || 0))
+  const units = resolvedProductUnitsForOrder(numUnitsNum, cartons, bpc)
+
+  if (finishMode === 'Cartons') {
+    const ctnMode = cartonQtyMode ?? 'ctn'
+    // Carton products are sold in 1000 or cartons — never kg on the order line.
+    if (ctnMode === '1000') {
+      if (units > 0) return { quantity_value: units / 1000, quantity_unit: '1000' }
+      return { quantity_value: fb, quantity_unit: '1000' }
+    }
+    if (cartons > 0) return { quantity_value: cartons, quantity_unit: 'cartons' }
+    if (bpc > 0 && units > 0) {
+      return {
+        quantity_value: Math.max(1, Math.ceil(units / bpc)),
+        quantity_unit: 'cartons',
+      }
+    }
+    return { quantity_value: fb, quantity_unit: 'cartons' }
+  }
+
   if (qtyType === 'kg') {
     return { quantity_value: totalKgNum > 0 ? totalKgNum : fb, quantity_unit: 'kg' }
   }
@@ -276,28 +311,12 @@ export function getOrderQuantityFromJobSheetFields(
   if (qtyType === 'rolls_units') {
     return { quantity_value: numRollsNum > 0 ? numRollsNum : fb, quantity_unit: 'rolls' }
   }
-  // units (product count): cartons finish → carton count when BPC known; rolls finish → bill in kg
-  if (finishMode === 'Cartons') {
-    const ctnMode = cartonQtyMode ?? 'ctn'
-    if (qtyType === 'units' && ctnMode === '1000' && numUnitsNum > 0) {
-      return { quantity_value: numUnitsNum / 1000, quantity_unit: '1000' }
-    }
-    const bpc = Math.max(0, Math.round(Number(bagsPerCarton) || 0))
-    if (qtyType === 'units' && ctnMode === 'ctn' && bpc > 0 && numUnitsNum > 0) {
-      return {
-        quantity_value: Math.max(1, Math.ceil(numUnitsNum / bpc)),
-        quantity_unit: 'cartons',
-      }
-    }
-    if (totalKgNum > 0) return { quantity_value: totalKgNum, quantity_unit: 'kg' }
-    return { quantity_value: numUnitsNum > 0 ? numUnitsNum : fb, quantity_unit: 'kg' }
-  }
   // Rolls + total units (product count): order line bills in thousands (MYOB unit `1000`).
-  if (qtyType === 'units' && numUnitsNum > 0) {
-    return { quantity_value: numUnitsNum / 1000, quantity_unit: '1000' }
+  if (qtyType === 'units' && units > 0) {
+    return { quantity_value: units / 1000, quantity_unit: '1000' }
   }
   if (totalKgNum > 0) return { quantity_value: totalKgNum, quantity_unit: 'kg' }
-  return { quantity_value: numUnitsNum > 0 ? numUnitsNum : fb, quantity_unit: 'kg' }
+  return { quantity_value: units > 0 ? units : fb, quantity_unit: 'kg' }
 }
 
 /** Enforce qtyType when finish mode is Cartons (cannot use roll-based modes — those are for Rolls finish). */
@@ -307,7 +326,10 @@ export function coerceQtyTypeForFinishMode(
   /** When true, rolls × units-per-roll is undefined (no fixed product length). */
   continuousLength = false,
 ): QtyType {
-  if (finishMode !== 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')) return 'kg'
+  if (finishMode === 'Cartons') {
+    if (qtyType === 'kg' || qtyType === 'total_rolls' || qtyType === 'rolls_units') return 'units'
+    return qtyType
+  }
   /** Align with Quotes page: continuous web uses roll-count modes, not rolls × discrete units per roll. */
   if (continuousLength && qtyType === 'rolls_units') return 'total_rolls'
   return qtyType

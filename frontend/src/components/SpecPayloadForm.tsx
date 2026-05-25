@@ -53,7 +53,7 @@ import {
   isRegisteredPrint,
   normalizePrintRegistration,
   PRINT_REGISTRATION_DEFAULT,
-  showConversionPrintPositionDetailsField,
+  isBottomSealType,
   formatPrintPositionForPrint,
   printPositionHighlight,
   printPositionHighlightSx,
@@ -274,7 +274,7 @@ function getEstimatedUnitsPerPalletHelperText(
     return (
       <span>
         Est. Maximum {finishModeForLabel === 'Rolls' ? 'rolls' : 'cartons'}/pallet:{' '}
-        <b>{Math.round(estimatedUnitsPerPalletVolume)}</b> (rough estimate only)
+        <b>{Math.round(estimatedUnitsPerPalletVolume)}</b> (Rough estimate based on weight)
       </span>
     )
   }
@@ -432,12 +432,10 @@ export function SpecPayloadForm(props: {
   const printingEnabled = printing.method && printing.method !== 'None'
   const printRegistration = normalizePrintRegistration(printing.print_registration)
   const printRegistered = isRegisteredPrint(printRegistration)
-  const showConvPrintPositionDetails = showConversionPrintPositionDetailsField({
-    finishMode: identity.finish_mode || 'Rolls',
-    sealType: sealTypeUiValue,
-    printingEnabled: !!printingEnabled,
-  })
   const finishMode = identity.finish_mode || 'Rolls'
+  const convPrintPositionDetailsVisible = finishMode === 'Cartons' && !!printingEnabled
+  const convPrintPositionDetailsEnabled =
+    convPrintPositionDetailsVisible && isBottomSealType(sealTypeUiValue)
   const allowSideSeal = finishMode !== 'Rolls'
   const stockPlanningDerived = useMemo(() => {
     const unitLower = finishMode === 'Cartons' ? 'cartons' : 'rolls'
@@ -3030,7 +3028,7 @@ export function SpecPayloadForm(props: {
             />
           </Box>
 
-          {showConvPrintPositionDetails ? (
+          {convPrintPositionDetailsVisible ? (
             <TextField
               sx={{ mt: 2 }}
               label="Print position details"
@@ -3039,6 +3037,7 @@ export function SpecPayloadForm(props: {
               fullWidth
               multiline
               minRows={1}
+              disabled={!convPrintPositionDetailsEnabled}
               placeholder="e.g. 50 mm from bottom seal"
             />
           ) : null}
@@ -3164,8 +3163,16 @@ export function SpecPayloadForm(props: {
             </RadioGroup>
           </FormControl>
 
-          {packingMode === 'loose_folded' ? (
-            <Box sx={{ mt: 2, width: { xs: '100%', md: '25%' } }}>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              mt: 2,
+              alignItems: 'flex-end',
+            }}
+          >
+            <Box sx={{ width: { xs: '100%', md: '25%' } }}>
               <TextField
                 label="Qty per fold"
                 type="number"
@@ -3183,62 +3190,52 @@ export function SpecPayloadForm(props: {
                   })
                 }
                 fullWidth
+                disabled={packingMode !== 'loose_folded'}
               />
             </Box>
-          ) : null}
-
-          {packingMode === 'in_pack' ? (
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 2,
-                mt: 2,
-                alignItems: 'center',
-              }}
-            >
-              <Box sx={{ width: { xs: '100%', md: '25%' } }}>
-                <TextField
-                  label="Qty per pack"
-                  type="number"
-                  inputProps={{ min: 1, step: 1 }}
-                  value={conversion.pack_size ?? ''}
+            <Box sx={{ width: { xs: '100%', md: '25%' } }}>
+              <TextField
+                label="Qty per pack"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={conversion.pack_size ?? ''}
+                onChange={(e) =>
+                  patchConversion({
+                    packing_mode: 'in_pack',
+                    pack_size:
+                      e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value))),
+                    pack_lay_flat: false,
+                    loose: false,
+                    qty_per_fold: null,
+                    ...(e.target.value === '' ? { tag_packs: false } : {}),
+                  })
+                }
+                fullWidth
+                disabled={packingMode !== 'in_pack'}
+              />
+            </Box>
+            <FormControlLabel
+              sx={{ m: 0, mb: 0.5 }}
+              control={
+                <Checkbox
+                  checked={!!conversion.tag_packs}
+                  disabled={
+                    packingMode !== 'in_pack' ||
+                    conversion.pack_size == null ||
+                    conversion.pack_size === '' ||
+                    !(Number(conversion.pack_size) > 0)
+                  }
                   onChange={(e) =>
                     patchConversion({
                       packing_mode: 'in_pack',
-                      pack_size:
-                        e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value))),
-                      pack_lay_flat: false,
-                      loose: false,
-                      qty_per_fold: null,
-                      ...(e.target.value === '' ? { tag_packs: false } : {}),
+                      tag_packs: e.target.checked,
                     })
                   }
-                  fullWidth
                 />
-              </Box>
-              <FormControlLabel
-                sx={{ m: 0 }}
-                control={
-                  <Checkbox
-                    checked={!!conversion.tag_packs}
-                    disabled={
-                      conversion.pack_size == null ||
-                      conversion.pack_size === '' ||
-                      !(Number(conversion.pack_size) > 0)
-                    }
-                    onChange={(e) =>
-                      patchConversion({
-                        packing_mode: 'in_pack',
-                        tag_packs: e.target.checked,
-                      })
-                    }
-                  />
-                }
-                label="Tag Packs"
-              />
-            </Box>
-          ) : null}
+              }
+              label="Tag Packs"
+            />
+          </Box>
 
           <FormGroup row sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mt: 2 }}>
             <FormControlLabel

@@ -6,6 +6,7 @@ import {
   coerceQtyTypeForFinishMode,
   computeTotalKgDisplay,
   getOrderQuantityFromJobSheetFields,
+  resolvedProductUnitsForOrder,
   resolveNumRollsForPersistence,
   resolveWeightPerRollForPersistence,
   validateJobSheetQuantityInputs,
@@ -394,6 +395,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
   const weightPerRollNum = Number(qty.weightPerRoll || 0)
   const numUnitsNum = Math.max(0, Math.round(Number(qty.numUnits || 0)))
+  const numCartonsNum = Math.max(0, Math.round(Number(qty.numCartons || 0)))
   const unitsPerRollNum = Math.max(0, Math.round(Number(qty.unitsPerRoll || 0)))
 
   const derivedDisplay = derivedForDisplay
@@ -556,6 +558,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       )
       const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
       const bpc = spec.packaging?.bags_per_carton
+      const bpcNum = bpc != null ? Number(bpc) : null
+      const resolvedProductUnits = resolvedProductUnitsForOrder(numUnitsNum, numCartonsNum, bpcNum)
       const oq = getOrderQuantityFromJobSheetFields(
         effectiveQtyType,
         fallbackLegacy,
@@ -563,8 +567,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         numUnitsNum,
         persistedRolls,
         finishMode,
-        bpc != null ? Number(bpc) : null,
-        qty.cartonQtyMode,
+        bpcNum,
+        finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+        numCartonsNum,
       )
 
       const orderDefaultsPatch = buildOrderDefaultsFromEditor({
@@ -639,8 +644,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             quantity_unit: oq.quantity_unit,
             qty_type: effectiveQtyType,
             num_product_units:
-              effectiveQtyType === 'units'
-                ? numUnitsNum
+              effectiveQtyType === 'units' || finishMode === 'Cartons'
+                ? resolvedProductUnits > 0
+                  ? resolvedProductUnits
+                  : derivedForDisplay?.units != null
+                    ? Math.round(Number(derivedForDisplay.units))
+                    : null
                 : derivedForDisplay?.units != null
                   ? Math.round(Number(derivedForDisplay.units))
                   : null,
@@ -669,8 +678,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           quantity_unit: oq.quantity_unit,
           qty_type: effectiveQtyType,
           num_product_units:
-            effectiveQtyType === 'units'
-              ? numUnitsNum
+            effectiveQtyType === 'units' || finishMode === 'Cartons'
+              ? resolvedProductUnits > 0
+                ? resolvedProductUnits
+                : derivedForDisplay?.units != null
+                  ? Math.round(Number(derivedForDisplay.units))
+                  : null
               : derivedForDisplay?.units != null
                 ? Math.round(Number(derivedForDisplay.units))
                 : null,
@@ -776,6 +789,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       )
       const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
       const bpc = spec.packaging?.bags_per_carton
+      const bpcNum = bpc != null ? Number(bpc) : null
+      const resolvedProductUnitsSaveAsNew = resolvedProductUnitsForOrder(numUnitsNum, numCartonsNum, bpcNum)
       const oq = getOrderQuantityFromJobSheetFields(
         qty.effectiveQtyType,
         fallbackLegacy,
@@ -783,8 +798,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         numUnitsNum,
         persistedRolls,
         qty.finishMode,
-        bpc != null ? Number(bpc) : null,
-        qty.cartonQtyMode,
+        bpcNum,
+        qty.finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+        numCartonsNum,
       )
 
       const orderDefaultsPatch = buildOrderDefaultsFromEditor({
@@ -805,8 +821,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         quantity_unit: oq.quantity_unit,
         qty_type: qty.effectiveQtyType,
         num_product_units:
-          qty.effectiveQtyType === 'units'
-            ? numUnitsNum
+          qty.effectiveQtyType === 'units' || qty.finishMode === 'Cartons'
+            ? resolvedProductUnitsSaveAsNew > 0
+              ? resolvedProductUnitsSaveAsNew
+              : derivedForDisplay?.units != null
+                ? Math.round(Number(derivedForDisplay.units))
+                : null
             : derivedForDisplay?.units != null
               ? Math.round(Number(derivedForDisplay.units))
               : null,

@@ -7,6 +7,7 @@ import type { SpecPayload } from '../components/SpecPayloadForm'
 import {
   coerceQtyTypeForFinishMode,
   getOrderQuantityFromJobSheetFields,
+  resolvedProductUnitsForOrder,
   type FinishMode,
   type QtyType,
 } from './quantityRollFields'
@@ -133,8 +134,9 @@ export function buildLiveJobSheetRowForOrderQuantityLabel(opts: {
   derivedProductUnits: number | null | undefined
   quantityValueFallback: number
   bagsPerCarton: number | null | undefined
-  /** When set, matches job sheet editor carton ``1000`` vs ``CTN`` radio for Cartons + ``units`` qty type. */
+  /** When set, matches job sheet editor carton ``1000`` vs ``CTN`` radio for Cartons finish. */
   cartonQtyMode?: '1000' | 'ctn'
+  numCartonsNum?: number
   isImportDraft?: boolean
 }): Record<string, unknown> {
   const oq = getOrderQuantityFromJobSheetFields(
@@ -145,11 +147,21 @@ export function buildLiveJobSheetRowForOrderQuantityLabel(opts: {
     opts.numRollsPersisted,
     opts.finishMode,
     opts.bagsPerCarton,
-    opts.cartonQtyMode,
+    opts.finishMode === 'Cartons' ? opts.cartonQtyMode : undefined,
+    opts.numCartonsNum ?? 0,
+  )
+  const numPuResolved = resolvedProductUnitsForOrder(
+    opts.numUnitsNum,
+    opts.numCartonsNum ?? 0,
+    opts.bagsPerCarton,
   )
   const numPu =
-    opts.effectiveQtyType === 'units'
-      ? opts.numUnitsNum
+    opts.effectiveQtyType === 'units' || opts.finishMode === 'Cartons'
+      ? numPuResolved > 0
+        ? numPuResolved
+        : opts.derivedProductUnits != null && Number.isFinite(Number(opts.derivedProductUnits))
+          ? Math.round(Number(opts.derivedProductUnits))
+          : null
       : opts.derivedProductUnits != null && Number.isFinite(Number(opts.derivedProductUnits))
         ? Math.round(Number(opts.derivedProductUnits))
         : null

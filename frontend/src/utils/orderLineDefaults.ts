@@ -18,7 +18,7 @@ function finishModeForProduct(p: ProductListItem): 'Rolls' | 'Cartons' | null {
 
 function unitChoices(finish: 'Rolls' | 'Cartons' | null | undefined): OrderQuantityUnit[] {
   const f = finish === 'Cartons' ? 'Cartons' : 'Rolls'
-  if (f === 'Cartons') return ['kg', 'cartons', '1000']
+  if (f === 'Cartons') return ['cartons', '1000']
   return ['kg', 'rolls', '1000']
 }
 

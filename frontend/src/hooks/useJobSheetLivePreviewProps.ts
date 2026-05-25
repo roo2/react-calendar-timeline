@@ -74,6 +74,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
   const weightPerRollNum = Number(qty.weightPerRoll || 0)
   const numUnitsNum = Math.max(0, Math.round(Number(qty.numUnits || 0)))
+  const numCartonsNum = Math.max(0, Math.round(Number(qty.numCartons || 0)))
 
   const derivedDisplay = derivedForDisplay
     ? {
@@ -184,6 +185,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
       quantityValueFallback: fallbackLegacy,
       bagsPerCarton: bpc != null ? Number(bpc) : null,
       cartonQtyMode: qty.cartonQtyMode,
+      numCartonsNum,
       isImportDraft: Boolean(loadedJobSheet?.is_import_draft),
     })
   }, [
@@ -193,6 +195,8 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     totalKgNum,
     totalKgDisplay,
     qty.cartonQtyMode,
+    qty.numCartons,
+    numCartonsNum,
     numRollsNum,
     weightPerRollNum,
     numUnitsNum,

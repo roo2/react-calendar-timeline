@@ -53,6 +53,7 @@ import {
   cartonsWeightPerRollKg,
   coerceQtyTypeForFinishMode,
   getOrderQuantityFromJobSheetFields,
+  resolvedProductUnitsForOrder,
   resolveNumRollsForPersistence,
   resolveWeightPerRollForPersistence,
   validateJobSheetQuantityInputs,
@@ -643,6 +644,7 @@ export function ProductVersionEditor(props: {
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
   const weightPerRollNum = Number(qty.weightPerRoll || 0)
   const numUnitsNum = Math.max(0, Math.round(Number(qty.numUnits || 0)))
+  const numCartonsNum = Math.max(0, Math.round(Number(qty.numCartons || 0)))
   const unitsPerRollNum = Math.max(0, Math.round(Number(qty.unitsPerRoll || 0)))
 
   const derivedDisplay = qty.derivedForDisplay
@@ -774,6 +776,8 @@ export function ProductVersionEditor(props: {
     )
     const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
     const bpc = spec.packaging?.bags_per_carton
+    const bpcNum = bpc != null ? Number(bpc) : null
+    const resolvedProductUnits = resolvedProductUnitsForOrder(numUnitsNum, numCartonsNum, bpcNum)
     const oq = getOrderQuantityFromJobSheetFields(
       effectiveQtyType,
       fallbackLegacy,
@@ -781,8 +785,9 @@ export function ProductVersionEditor(props: {
       numUnitsNum,
       persistedRolls,
       finishMode,
-      bpc != null ? Number(bpc) : null,
-      finishMode === 'Cartons' && effectiveQtyType === 'units' ? qty.cartonQtyMode : undefined,
+      bpcNum,
+      finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+      numCartonsNum,
     )
     const keepUnitRate =
       loadedJobSheet?.unit_rate != null && Number.isFinite(Number(loadedJobSheet.unit_rate))
@@ -812,8 +817,12 @@ export function ProductVersionEditor(props: {
       quantity_unit: oq.quantity_unit,
       qty_type: effectiveQtyType,
       num_product_units:
-        effectiveQtyType === 'units'
-          ? numUnitsNum
+        effectiveQtyType === 'units' || finishMode === 'Cartons'
+          ? resolvedProductUnits > 0
+            ? resolvedProductUnits
+            : derivedDisplay?.units != null
+              ? Math.round(Number(derivedDisplay.units))
+              : null
           : derivedDisplay?.units != null
             ? Math.round(Number(derivedDisplay.units))
             : null,
@@ -1049,6 +1058,7 @@ export function ProductVersionEditor(props: {
           derivedDisplay,
         )
         const bpc = spec.packaging?.bags_per_carton
+        const bpcNum = bpc != null ? Number(bpc) : null
         const oq = getOrderQuantityFromJobSheetFields(
           effectiveQtyType,
           1,
@@ -1056,8 +1066,9 @@ export function ProductVersionEditor(props: {
           numUnitsNum,
           persistedRolls,
           finishMode,
-          bpc != null ? Number(bpc) : null,
-          finishMode === 'Cartons' && effectiveQtyType === 'units' ? qty.cartonQtyMode : undefined,
+          bpcNum,
+          finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+          numCartonsNum,
         )
 
         if (flow.orderMode === 'edit' && flow.orderId) {

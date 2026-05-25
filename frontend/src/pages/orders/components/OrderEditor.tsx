@@ -287,6 +287,9 @@ function lineFromApiItem(it: any): OrderLine {
   const rawU = String(it.quantity_unit || '').toLowerCase()
   if (!finish && rawU === 'cartons') finish = 'Cartons'
   if (!finish && rawU === 'rolls') finish = 'Rolls'
+  let quantity_unit = normalizeQuantityUnitFromApi(it.quantity_unit as string | undefined, finish)
+  const allowed = unitChoices(finish)
+  if (finish === 'Cartons' && !allowed.includes(quantity_unit)) quantity_unit = allowed[0]
   return {
     id: String(it.id),
     line_kind: 'product',
@@ -299,7 +302,7 @@ function lineFromApiItem(it: any): OrderLine {
     is_import_draft: Boolean(it.is_import_draft),
     due_date: String(it.due_date || ''),
     finish_mode: finish,
-    quantity_unit: normalizeQuantityUnitFromApi(it.quantity_unit as string | undefined, finish),
+    quantity_unit,
     quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
     rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
     total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
@@ -326,7 +329,7 @@ function unitChoices(
     return ['ea']
   }
   const f = finish === 'Cartons' ? 'Cartons' : 'Rolls'
-  if (f === 'Cartons') return ['kg', 'cartons', '1000']
+  if (f === 'Cartons') return ['cartons', '1000']
   return ['kg', 'rolls', '1000']
 }
 

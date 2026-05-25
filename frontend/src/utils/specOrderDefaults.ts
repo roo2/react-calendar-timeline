@@ -104,7 +104,8 @@ export function buildOrderDefaultsFromEditor(opts: {
     1,
     opts.finishMode,
     opts.bagsPerCarton ?? null,
-    opts.cartonQtyMode,
+    opts.finishMode === 'Cartons' ? opts.cartonQtyMode : undefined,
+    0,
   )
   const wpr = opts.weightPerRollNum > 0 && Number.isFinite(opts.weightPerRollNum) ? opts.weightPerRollNum : null
   const cfd = String(opts.customerFacingDescription ?? '').trim()

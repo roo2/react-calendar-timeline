@@ -399,13 +399,29 @@ export function useSpecLinkedQuantityFields(opts: {
   useEffect(() => {
     if (!syncDerivedQuantity) return
     if (!(finishMode === 'Cartons' && effectiveQtyType === 'units' && cartonQtyMode === 'ctn')) return
+    if (!(numCartonsNum > 0) && numUnitsNum > 0 && bagsPerCartonNum > 0) {
+      const n = Math.max(1, Math.ceil(numUnitsNum / bagsPerCartonNum))
+      if (numCartons !== String(n)) {
+        setNumCartons(String(n))
+        return
+      }
+    }
     if (!(numCartonsNum > 0) || !(bagsPerCartonNum > 0)) {
       if (numUnits !== '') setNumUnits('')
       return
     }
     const nextUnits = String(numCartonsNum * bagsPerCartonNum)
     if (numUnits !== nextUnits) setNumUnits(nextUnits)
-  }, [syncDerivedQuantity, finishMode, effectiveQtyType, cartonQtyMode, numCartonsNum, bagsPerCartonNum, numUnits])
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, cartonQtyMode, numCartonsNum, numCartons, bagsPerCartonNum, numUnitsNum, numUnits])
+
+  /** After hydrate in per-1000 mode, keep carton count in state for CTN qty-type switches. */
+  useEffect(() => {
+    if (!syncDerivedQuantity) return
+    if (!(finishMode === 'Cartons' && effectiveQtyType === 'units')) return
+    if (String(numCartons).trim() !== '') return
+    if (!(numUnitsNum > 0) || !(bagsPerCartonNum > 0)) return
+    setNumCartons(String(Math.max(1, Math.ceil(numUnitsNum / bagsPerCartonNum))))
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, numCartons, numUnitsNum, bagsPerCartonNum])
 
   useEffect(() => {
     if (!syncDerivedQuantity) return
@@ -646,7 +662,15 @@ export function useSpecLinkedQuantityFields(opts: {
     }
 
     let cartonsFromUi: number | null = null
-    if (finishMode === 'Cartons' && cartonQtyMode === 'ctn' && numCartonsNum > 0) cartonsFromUi = numCartonsNum
+    if (finishMode === 'Cartons') {
+      if (numCartonsNum > 0) {
+        cartonsFromUi = numCartonsNum
+      } else if (bagsPerCartonNum > 0 && numUnitsNum > 0) {
+        cartonsFromUi = Math.max(1, Math.ceil(numUnitsNum / bagsPerCartonNum))
+      } else if (cartonCountForDisplay != null && cartonCountForDisplay > 0) {
+        cartonsFromUi = cartonCountForDisplay
+      }
+    }
 
     let unitsPerRollFromUi: number | null = null
     if (effectiveQtyType === 'rolls_units' && unitsPerRollNum > 0) unitsPerRollFromUi = unitsPerRollNum
@@ -700,6 +724,7 @@ export function useSpecLinkedQuantityFields(opts: {
     derivedForDisplay?.kgPerUnit,
     quickInputs?.quantity?.rolls,
     weightPerRoll,
+    cartonCountForDisplay,
   ])
 
   qtyTypeCarrySnapRef.current = qtyTypeTransitionSnapshot
@@ -754,7 +779,15 @@ export function useSpecLinkedQuantityFields(opts: {
 
       if (nextQtyType === 'units') {
         if (finishMode === 'Cartons' && nextCartonQtyMode === 'ctn') {
-          if (snap.cartonsFromUi != null && snap.cartonsFromUi > 0) setNumCartons(String(snap.cartonsFromUi))
+          let cartons =
+            snap.cartonsFromUi != null && snap.cartonsFromUi > 0 ? snap.cartonsFromUi : null
+          if (cartons == null && snap.unitsFromUi != null && snap.unitsFromUi > 0 && bagsPerCartonNum > 0) {
+            cartons = Math.max(1, Math.ceil(snap.unitsFromUi / bagsPerCartonNum))
+          }
+          if (cartons != null && cartons > 0) {
+            setNumCartons(String(cartons))
+            if (bagsPerCartonNum > 0) setNumUnits(String(cartons * bagsPerCartonNum))
+          }
           return
         }
         if (snap.unitsFromUi != null && snap.unitsFromUi > 0) setNumUnits(String(snap.unitsFromUi))
@@ -792,7 +825,7 @@ export function useSpecLinkedQuantityFields(opts: {
         }
       }
     },
-    [finishMode, isContinuousLength, quickInputs?.quantity?.rolls, derivedForDisplay?.derivedTotalKg, weightPerRoll],
+    [finishMode, isContinuousLength, quickInputs?.quantity?.rolls, derivedForDisplay?.derivedTotalKg, weightPerRoll, bagsPerCartonNum],
   )
 
   useEffect(() => {
@@ -863,6 +896,54 @@ export function useSpecLinkedQuantityFields(opts: {
     rollsDisplay,
     productsPerRollDerived,
     weightPerRollDisplay,
+  ])
+
+  /** After hydrate (or when ratebook geometry arrives), derive meters/roll from stored weight/roll. */
+  useEffect(() => {
+    if (!syncDerivedQuantity) return
+    if (!isContinuousLength || finishMode !== 'Rolls') return
+    if (String(metersPerRoll).trim() !== '') return
+
+    const mFromDerived = derivedForDisplay?.mPerRoll
+    if (mFromDerived != null && Number.isFinite(Number(mFromDerived)) && Number(mFromDerived) > 0) {
+      setMetersPerRoll(roundTo2Decimals(String(Number(mFromDerived))))
+      return
+    }
+
+    const wprStored = weightPerRollNum > 0 ? weightPerRollNum : null
+    const wprFromDisplay =
+      weightPerRollDisplay != null && Number.isFinite(Number(weightPerRollDisplay)) && Number(weightPerRollDisplay) > 0
+        ? Number(weightPerRollDisplay)
+        : null
+    const wpr = wprStored ?? wprFromDisplay
+    if (wpr == null || !(wpr > 0)) return
+
+    const totalM = derivedForDisplay?.derivedTotalM
+    const totalKg = derivedForDisplay?.derivedTotalKg
+    const kgPerM =
+      totalM != null &&
+      Number(totalM) > 0 &&
+      totalKg != null &&
+      Number(totalKg) > 0 &&
+      Number.isFinite(Number(totalKg) / Number(totalM))
+        ? Number(totalKg) / Number(totalM)
+        : null
+    if (kgPerM == null || !(kgPerM > 0)) return
+
+    const mpr = wpr / kgPerM
+    if (Number.isFinite(mpr) && mpr > 0) {
+      setMetersPerRoll(roundTo2Decimals(String(mpr)))
+    }
+  }, [
+    syncDerivedQuantity,
+    isContinuousLength,
+    finishMode,
+    metersPerRoll,
+    weightPerRollNum,
+    weightPerRollDisplay,
+    derivedForDisplay?.mPerRoll,
+    derivedForDisplay?.derivedTotalM,
+    derivedForDisplay?.derivedTotalKg,
   ])
 
   useEffect(() => {
