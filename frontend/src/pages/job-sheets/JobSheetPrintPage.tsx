@@ -4,8 +4,8 @@ import { ApiError, apiFetch } from '../../api/client'
 import { Link, useParams } from 'react-router-dom'
 import type { SpecPayload } from '../../components/SpecPayloadForm'
 import {
-  formatJobSheetPrintPageTitle,
   JobSheetPrintOrderHeader,
+  JobSheetPrintPageTitle,
   type JobSheetPrintOrderHeaderModel,
 } from './components/JobSheetPrintOrderHeader'
 import { conversionPackingModeLabel, deriveConversionPackingMode } from '../../utils/conversionPacking'
@@ -78,10 +78,8 @@ import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../..
 import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
 import { buildQuickQuoteInputsFromSpec, type SpecQuantitySlice } from '../../utils/specToQuoteInputs'
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
-import {
-  jobSheetDescriptionWithPackagingTail,
-  jobSheetOrderQuantityLabel,
-} from '../../utils/quoteQuantityDescriptors'
+import { jobSheetDescriptionWithPackagingTail } from '../../utils/quoteQuantityDescriptors'
+import { buildJobSheetPrintHeaderSummaryLine } from '../../utils/jobSheetPrintHeaderSummary'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { derivedInlineSeal, formatSealTypeLabel } from '../../utils/specCompat'
 import {
@@ -935,6 +933,7 @@ type JobSheetPrintShippingModel = {
   orderUnitsLabel: string
   palletsRequired: string
   palletChecklistCount: number
+  packingNotes: string
   overproductionAcceptLabel: string
   overproductionHighlightClass: string | undefined
 }
@@ -947,7 +946,7 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
       <tbody>
         <tr>
           <td className="js-sec" colSpan={4}>
-            Shipping details
+            Packing details
           </td>
         </tr>
         <tr>
@@ -983,17 +982,32 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
           <th>Pallets required</th>
           <td>{ship.palletsRequired || '—'}</td>
         </tr>
-        {ship.palletChecklistCount > 0 ? (
+        {ship.packingNotes.trim() || ship.palletChecklistCount > 0 ? (
           <tr>
             <td colSpan={4} className="js-ship-pallet-checklist-cell">
-              <div className="js-ship-pallet-checklist-label">Pallet checklist</div>
-              <div className="js-ship-pallet-checklist" aria-label="Pallet checklist">
-                {Array.from({ length: ship.palletChecklistCount }, (_, i) => (
-                  <div key={i} className="js-ship-pallet-tick">
-                    P{i + 1}
+              {ship.packingNotes.trim() ? (
+                <div className="js-ship-packing-notes">
+                  <div className="js-ship-packing-notes-label">Packing notes</div>
+                  <div className="js-ship-packing-notes-text js-print-pre-wrap">{ship.packingNotes}</div>
+                </div>
+              ) : null}
+              {ship.palletChecklistCount > 0 ? (
+                <>
+                  <div
+                    className="js-ship-pallet-checklist-label"
+                    style={ship.packingNotes.trim() ? { marginTop: '8px' } : undefined}
+                  >
+                    Pallet checklist
                   </div>
-                ))}
-              </div>
+                  <div className="js-ship-pallet-checklist" aria-label="Pallet checklist">
+                    {Array.from({ length: ship.palletChecklistCount }, (_, i) => (
+                      <div key={i} className="js-ship-pallet-tick">
+                        P{i + 1}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </td>
           </tr>
         ) : null}
@@ -1068,9 +1082,8 @@ function JobSheetPrintExtrusionQcPage(props: {
   q: JobSheetPrintOrderQuantitiesModel
 }): ReactNode {
   const { perforated, header, product, q } = props
-  const pageTitle = formatJobSheetPrintPageTitle(header)
   const extruderRollChunks = chunkExtruderRollIndices(q.extruderOutputRollCount)
-  const extruderTitleClass = `js-title${perforated ? ' js-perf-hl' : ''} js-title--extruder-repeat`
+  const extruderTitleClass = `js-title js-title--spread${perforated ? ' js-perf-hl' : ''} js-title--extruder-repeat`
   return (
     <div className="js-print-extrusion-qc-sheet">
       <JobSheetPrintOrderHeader
@@ -1182,7 +1195,7 @@ function JobSheetPrintExtrusionQcPage(props: {
                   {chunkIdx > 0 ? (
                     <>
                       <div className="js-print-page-break" />
-                      <div className={extruderTitleClass}>{pageTitle}</div>
+                      <JobSheetPrintPageTitle header={header} product={product} className={extruderTitleClass} />
                     </>
                   ) : null}
                   <table className="js-extruder-output-table js-extruder-output-table--pageable" role="presentation">
@@ -1266,7 +1279,7 @@ function JobSheetPrintConversionInstructionsPage(props: {
             <tbody>
               <tr>
                 <td className="js-conv-subtitle" colSpan={2}>
-                  Final specification after setup
+                  Conversion Specification
                 </td>
               </tr>
               <tr>
@@ -1397,10 +1410,12 @@ function JobSheetPrintConversionInstructionsPage(props: {
           <table className="js-conv-box" role="presentation">
             <tbody>
               <tr>
-                <td className="js-conv-subtitle">Conversion Notes</td>
+                <td className="js-conv-subtitle" colSpan={2}>
+                  Conversion Notes
+                </td>
               </tr>
               <tr>
-                <td className="js-conv-comment" style={{ whiteSpace: 'pre-wrap' }}>
+                <td className="js-conv-comment" colSpan={2} style={{ whiteSpace: 'pre-wrap', height: '100%' }}>
                   {String(props.conv.conversionNotes ?? '').trim() !== ''
                     ? props.conv.conversionNotes
                     : '\u00a0'}
@@ -1503,8 +1518,6 @@ export function JobSheetPrintPage() {
     if (!js) return null
 
     const customer = js.customer_name ?? js.customer ?? ''
-    const invoiceNo = js.invoice_no ?? ''
-    const purchaseOrderNo = js.customer_purchase_order_number ?? js.purchase_order_no ?? ''
     const orderDate = js.order_date ?? ''
     const dueDate = js.due_date ?? ''
     const jobCode = js.job_no ?? ''
@@ -1777,7 +1790,17 @@ export function JobSheetPrintPage() {
         totalCtns = Math.max(1, Math.round(totalKg / cartonKg))
       }
       cartonConversion = {
-        bagsPerCarton: bpcN != null && bpcN > 0 ? String(Math.max(1, Math.round(bpcN))) : '',
+        bagsPerCarton: (() => {
+          const count = bpcN != null && bpcN > 0 ? String(Math.max(1, Math.round(bpcN))) : ''
+          if (count === '') return ''
+          const cartonKg =
+            geoDerived?.kgPerUnit != null && Number(geoDerived.kgPerUnit) > 0
+              ? Math.max(1, Math.round(bpcN!)) * Number(geoDerived.kgPerUnit)
+              : null
+          return cartonKg != null && Number.isFinite(cartonKg) && cartonKg > 0
+            ? `${count} (${fmtQtyNumber(cartonKg, 2)}kg)`
+            : count
+        })(),
         totalCartons: totalCtns != null ? String(totalCtns) : '',
       }
     }
@@ -2042,7 +2065,11 @@ export function JobSheetPrintPage() {
       derivedTotalM != null || derivedMPerRoll != null
         ? { derivedTotalM: derivedTotalM ?? 0, mPerRoll: derivedMPerRoll }
         : null
-    const orderedQuantityLabel = jobSheetOrderQuantityLabel(js as Record<string, unknown>, spec as Record<string, unknown>)
+    const headerSummaryLine = buildJobSheetPrintHeaderSummaryLine(
+      js as Record<string, unknown>,
+      spec as Record<string, unknown>,
+      geoSnapshotForTail,
+    )
     const generatedDescriptionWithPackagingTail = jobSheetDescriptionWithPackagingTail(
       String(generatedDescriptionBase ?? ''),
       js as Record<string, unknown>,
@@ -2171,7 +2198,7 @@ export function JobSheetPrintPage() {
     const cartonSizePrint =
       convRaw.carton_size != null && String(convRaw.carton_size).trim() !== '' ? String(convRaw.carton_size) : ''
     const packingModePrint = deriveConversionPackingMode(convRaw as Record<string, unknown>)
-    const packingLabelPrint = conversionPackingModeLabel(packingModePrint)
+    const packingLabelPrint = conversionPackingModeLabel(packingModePrint, { forPrint: true })
     const qtyPerFoldPrint =
       convRaw.qty_per_fold != null && String(convRaw.qty_per_fold).trim() !== ''
         ? String(convRaw.qty_per_fold)
@@ -2211,21 +2238,13 @@ export function JobSheetPrintPage() {
       perforated,
       header: {
         customer: s(customer),
-        invoiceNo: s(invoiceNo),
-        purchaseOrderNo: s(purchaseOrderNo),
         orderDate: s(orderDate),
         dueDate: s(dueDate),
         jobCode: s(jobCode),
       },
       product: {
         generatedProductCode,
-        ...(customerFacingDescriptionWithPackagingTail.trim() !== ''
-          ? { customerFacingDescription: customerFacingDescriptionWithPackagingTail }
-          : {}),
-        ...(generatedDescriptionWithPackagingTail.trim() !== ''
-          ? { generatedDescriptionWithPackagingTail }
-          : {}),
-        orderedQuantityLabel,
+        summaryLine: headerSummaryLine,
         notes: s(notes),
         qualityChecks: qualityCheckLabels,
       },
@@ -2436,6 +2455,7 @@ export function JobSheetPrintPage() {
         orderUnitsLabel: finishNorm === 'cartons' ? 'Order cartons' : 'Order rolls',
         palletsRequired: palletsRequiredForOrder != null ? String(palletsRequiredForOrder) : '',
         palletChecklistCount: palletsRequiredForOrder != null ? palletsRequiredForOrder : 0,
+        packingNotes: s(packaging?.notes),
         ...(() => {
           const overproductionHandling = customerOverproductionFromSpec(
             specTyped,
@@ -2587,11 +2607,38 @@ export function JobSheetPrintPage() {
         }
         .js-title {
           text-align: center;
-          font-weight: 800;
+          font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-title);
           padding: 10px 8px;
           border: 1px solid #000;
           margin-bottom: 8px;
+        }
+        .js-title--spread {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          text-align: left;
+        }
+        .js-title-part {
+          flex: 1 1 0;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .js-title-part--job {
+          text-align: left;
+        }
+        .js-title-part--customer {
+          text-align: center;
+        }
+        .js-title-part--product {
+          text-align: right;
+        }
+        .js-title-sep {
+          flex: 0 0 auto;
+          font-weight: bold;
         }
         .js-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 8px; }
         .js-extrusion-grid { width: 50%; }
@@ -2612,7 +2659,7 @@ export function JobSheetPrintPage() {
         .js-grid td.js-print-primary-text,
         .js-grid th.js-print-primary-text {
           font-size: var(--js-print-fs-dim-primary);
-          font-weight: 700;
+          font-weight: var(--js-print-fw-value);
         }
         /* Keep row height when a value cell is empty (padding alone can collapse in some print engines). */
         .js-grid > tbody > tr > th,
@@ -3032,6 +3079,13 @@ export function JobSheetPrintPage() {
           display: flex;
           flex-direction: column;
         }
+        .js-order-header-summary-line {
+          display: block;
+          margin-top: 6px;
+          font-size: var(--js-print-fs-title);
+          font-weight: var(--js-print-fw-value);
+          line-height: 1.35;
+        }
         .js-order-header-desc-line {
           display: block;
           margin-top: 4px;
@@ -3046,18 +3100,10 @@ export function JobSheetPrintPage() {
         }
         .js-order-header-desc-secondary,
         .js-order-header-notes {
-          display: block;
           width: 100%;
           font-size: var(--js-print-fs-body);
           font-weight: var(--js-print-fw-value);
           line-height: 1.35;
-        }
-        .js-order-header-padded-block {
-          padding: 6px 8px;
-        }
-        .js-order-header-padded-block .js-compact-k {
-          display: block;
-          margin-bottom: 3px;
         }
         .js-quality-list {
           list-style: none;
@@ -3387,6 +3433,13 @@ export function JobSheetPrintPage() {
           font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
           background: #f1f1f1;
+          height: 1.8em;
+          vertical-align: middle;
+          box-sizing: border-box;
+          line-height: 1.25;
+        }
+        .js-conv-box > tbody > tr > .js-conv-subtitle:empty::before {
+          content: '\\00a0';
         }
         .js-conv-box th {
           width: 35%;
@@ -3566,6 +3619,17 @@ export function JobSheetPrintPage() {
         .js-print-ink-form-row .js-print-form-field:last-child { margin-bottom: 0; }
         .js-ship-pallet-checklist-cell {
           vertical-align: top;
+        }
+        .js-ship-packing-notes-label {
+          font-weight: var(--js-print-fw-label);
+          font-size: var(--js-print-fs-label);
+          margin-bottom: 4px;
+        }
+        .js-ship-packing-notes-text {
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+          white-space: pre-wrap;
+          word-break: break-word;
         }
         .js-ship-pallet-checklist-label {
           font-weight: var(--js-print-fw-label);

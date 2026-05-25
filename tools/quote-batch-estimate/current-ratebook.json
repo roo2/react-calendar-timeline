@@ -30,9 +30,9 @@
         }
     },
     "additives_price_per_kg": {
-        "ANTI_BLOCK": 3.5,
-        "ANTI_STATIC": 7.7,
-        "SLIP": 6.4,
+        "AB": 3.5,
+        "AS": 7.7,
+        "SP": 6.4,
         "UV": 13.4
     },
     "colours": {

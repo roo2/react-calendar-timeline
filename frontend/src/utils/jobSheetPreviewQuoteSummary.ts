@@ -5,9 +5,12 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import { computeQuickQuotePreview, type QuoteRatebook, type QuickQuoteInputs } from './quoteCalculator'
 import { fmtHoursMinutesPreview, fmtQtyNumber } from './quoteFormat'
+import { buildJobSheetPrintHeaderSummaryLine } from './jobSheetPrintHeaderSummary'
 import { jobSheetOrderQuantityLabel } from './quoteQuantityDescriptors'
 
 export type JobSheetPreviewQuoteSummary = {
+  /** One-line print header summary (type/finish code, qty, packing, rolls/ctns). */
+  headerSummaryLine: string | null
   orderQuantityLabel: string | null
   /** Extruded film kg from the quote calculator (includes extrusion waste). */
   totalKgIncludingWaste: string | null
@@ -28,12 +31,27 @@ export function computeJobSheetPreviewQuoteSummary(
   ratebook: QuoteRatebook | null | undefined,
   quickInputs: QuickQuoteInputs | null | undefined,
 ): JobSheetPreviewQuoteSummary {
-  const orderRaw = jobSheetOrderQuantityLabel(jsRow, spec as Record<string, unknown>)
+  const specRec = spec as Record<string, unknown>
+  const geoDerived =
+    jsRow.total_m != null && Number(jsRow.total_m) > 0
+      ? {
+          derivedTotalM: Number(jsRow.total_m),
+          mPerRoll:
+            jsRow.num_rolls != null && Number(jsRow.num_rolls) > 0
+              ? Number(jsRow.total_m) / Number(jsRow.num_rolls)
+              : null,
+        }
+      : null
+  const headerSummaryRaw = buildJobSheetPrintHeaderSummaryLine(jsRow, specRec, geoDerived)
+  const headerSummaryLine = headerSummaryRaw.trim() !== '' ? headerSummaryRaw.trim() : null
+
+  const orderRaw = jobSheetOrderQuantityLabel(jsRow, specRec)
   const orderQuantityLabel =
     orderRaw && orderRaw !== '—' && String(orderRaw).trim() !== '' ? String(orderRaw).trim() : null
 
   if (!ratebook || !quickInputs) {
     return {
+      headerSummaryLine,
       orderQuantityLabel,
       totalKgIncludingWaste: null,
       extrusionTimeDisplay: null,
@@ -51,6 +69,7 @@ export function computeJobSheetPreviewQuoteSummary(
 
   if (!preview) {
     return {
+      headerSummaryLine,
       orderQuantityLabel,
       totalKgIncludingWaste: null,
       extrusionTimeDisplay: null,
@@ -97,6 +116,7 @@ export function computeJobSheetPreviewQuoteSummary(
   }
 
   return {
+    headerSummaryLine,
     orderQuantityLabel,
     totalKgIncludingWaste,
     extrusionTimeDisplay,

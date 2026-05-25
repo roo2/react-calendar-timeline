@@ -61,6 +61,7 @@ import {
 import {
   conversionFieldsForPackingMode,
   deriveConversionPackingMode,
+  CONVERSION_PACKING_MODE_UI_LABELS,
   type ConversionPackingMode,
 } from '../utils/conversionPacking'
 import {
@@ -3157,9 +3158,9 @@ export function SpecPayloadForm(props: {
               sx={{ flexWrap: 'wrap', gap: { xs: 0, sm: 2 } }}
             >
               <FormControlLabel value="" control={<Radio size="small" />} label="Not set" />
-              <FormControlLabel value="loose_lay_flat" control={<Radio size="small" />} label="Loose (Lay flat)" />
-              <FormControlLabel value="loose_folded" control={<Radio size="small" />} label="Loose (Folded)" />
-              <FormControlLabel value="in_pack" control={<Radio size="small" />} label="In Packs" />
+              <FormControlLabel value="loose_lay_flat" control={<Radio size="small" />} label={CONVERSION_PACKING_MODE_UI_LABELS.loose_lay_flat} />
+              <FormControlLabel value="loose_folded" control={<Radio size="small" />} label={CONVERSION_PACKING_MODE_UI_LABELS.loose_folded} />
+              <FormControlLabel value="in_pack" control={<Radio size="small" />} label={CONVERSION_PACKING_MODE_UI_LABELS.in_pack} />
             </RadioGroup>
           </FormControl>
 

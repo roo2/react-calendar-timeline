@@ -10,6 +10,7 @@ import {
   type QuoteQtyMode,
 } from '../utils/quoteQuantityDescriptors'
 import { computeJobSheetPreviewQuoteSummary } from '../utils/jobSheetPreviewQuoteSummary'
+import { buildJobSheetPrintHeaderSummaryLine } from '../utils/jobSheetPrintHeaderSummary'
 import { buildLiveJobSheetRowForOrderQuantityLabel } from '../utils/jobSheetQuantityFromApi'
 import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../utils/palletShippingEstimate'
@@ -206,6 +207,36 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     derivedForDisplay?.units,
   ])
 
+  const previewJsForHeaderSummary = useMemo(() => {
+    if (!previewJobSheetQuantityRow) return null
+    const row: Record<string, unknown> = { ...previewJobSheetQuantityRow }
+    if (weightPerRollNum > 0) row.weight_per_roll_kg = weightPerRollNum
+    const upr = qty.unitsPerRoll
+    if (upr != null && Number(upr) > 0) row.units_per_roll = Math.max(1, Math.round(Number(upr)))
+    return row
+  }, [previewJobSheetQuantityRow, weightPerRollNum, qty.unitsPerRoll])
+
+  const previewHeaderSummaryLine = useMemo(() => {
+    if (!previewJsForHeaderSummary) return null
+    const d = derivedForDisplay
+    const geo =
+      d?.derivedTotalM != null && Number(d.derivedTotalM) > 0
+        ? {
+            derivedTotalM: Number(d.derivedTotalM),
+            mPerRoll:
+              d.mPerRoll != null && Number(d.mPerRoll) > 0
+                ? Number(d.mPerRoll)
+                : null,
+          }
+        : null
+    const line = buildJobSheetPrintHeaderSummaryLine(
+      previewJsForHeaderSummary,
+      spec as Record<string, unknown>,
+      geo,
+    )
+    return line.trim() !== '' ? line.trim() : null
+  }, [previewJsForHeaderSummary, spec, derivedForDisplay])
+
   const quoteSummary = useMemo(
     () =>
       previewJobSheetQuantityRow
@@ -317,5 +348,6 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
     palletLoadPlanning,
     palletUnitLabel: finishModeKey === 'Cartons' ? 'cartons' : 'rolls',
     showJobFields,
+    headerSummaryLine: previewHeaderSummaryLine ?? quoteSummary?.headerSummaryLine ?? null,
   }
 }

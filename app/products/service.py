@@ -13,6 +13,11 @@ from app.db.session import SessionLocal
 from app.db.myob_import_placeholders import MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID
 from app.db.models.domain import Product, ProductVersion, OperatorSuggestion, Customer, JobSheet, OrderItem, Order
 from app.exceptions import DomainError
+from app.products.product_code_additive import (
+    PRODUCT_CODE_SEGMENT_SEP,
+    product_code_additive_segment,
+)
+from app.products.product_type_finish_shortcode import finish_mode_char, product_type_prefix
 from app.products.schemas import (
     CreateProductRequest,
     CreateProductVersionRequest,
@@ -283,19 +288,6 @@ def _total_print_inks(printing: dict) -> int:
     return _derive_num_colours(printing)
 
 
-PRODUCT_TYPE_PREFIX: dict[str, str] = {
-    "BAG": "PB",
-    "TUBE": "PT",
-    "SLEEVE": "SV",
-    "SHEET": "ST",
-    "CENTERFOLD": "CF",
-    "U-FILM": "UF",
-    "UFILM": "UF",
-    "J-FILM": "JF",
-    "JFILM": "JF",
-}
-
-
 def compute_product_code_base(spec_payload: Any) -> str:
     """
     Compute product code from spec only (no customer prefix).
@@ -303,7 +295,8 @@ def compute_product_code_base(spec_payload: Any) -> str:
     If ``identity.customer_code`` is set, it is returned as the product code (customer-visible override).
 
     Matches the frontend algorithm:
-    - single dashes between segments (missing segments are omitted)
+    - underscores between segments (missing segments are omitted)
+    - up to two additive short codes in one segment, dot-separated (e.g. AB.AS)
     - xP suffix where P = number of ink_code rows across both sides
     """
     if not isinstance(spec_payload, dict):
@@ -319,10 +312,8 @@ def compute_product_code_base(spec_payload: Any) -> str:
     printing = spec_payload.get("printing") if isinstance(spec_payload.get("printing"), dict) else {}
 
     product_type = _up(identity.get("product_type"))
-    type_prefix = PRODUCT_TYPE_PREFIX.get(product_type, "XX")
-
-    finish_mode = _up(identity.get("finish_mode"))
-    finish_char = "C" if finish_mode == "CARTONS" else "R"
+    type_prefix = product_type_prefix(product_type)
+    finish_char = finish_mode_char(identity.get("finish_mode"))
 
     geometry = _up(dims.get("geometry"))
     base_width = _int_or_null(dims.get("base_width_mm"))
@@ -394,10 +385,13 @@ def compute_product_code_base(spec_payload: Any) -> str:
         parts.append(gauge_um)
     if colour_code:
         parts.append(colour_code)
+    additive_seg = product_code_additive_segment(formulation)
+    if additive_seg:
+        parts.append(additive_seg)
     if print_seg:
         parts.append(print_seg)
 
-    return "-".join(parts)
+    return PRODUCT_CODE_SEGMENT_SEP.join(parts)
 
 
 def compute_product_code_full(product: Product, spec_payload: Any) -> str:

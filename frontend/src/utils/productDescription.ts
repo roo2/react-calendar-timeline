@@ -149,7 +149,7 @@ export function computeProductDescriptionFromSpec(spec: any): string {
 }
 
 /** Product type to 2-letter prefix for product code */
-const PRODUCT_TYPE_PREFIX: Record<string, string> = {
+export const PRODUCT_TYPE_PREFIX: Record<string, string> = {
   BAG: 'PB',
   TUBE: 'PT',
   SLEEVE: 'SV',
@@ -159,6 +159,25 @@ const PRODUCT_TYPE_PREFIX: Record<string, string> = {
   UFILM: 'UF',
   'J-FILM': 'JF',
   JFILM: 'JF',
+}
+
+/** Finish mode suffix for product code / print short codes: Rolls → R, Cartons → C. */
+export function finishModeChar(finishMode: unknown): 'R' | 'C' {
+  return up(finishMode) === 'CARTONS' ? 'C' : 'R'
+}
+
+export function productTypePrefix(productType: unknown): string {
+  return PRODUCT_TYPE_PREFIX[up(productType)] || 'XX'
+}
+
+/** e.g. Bag + Rolls → `PBR`; Centerfold + Cartons → `CFC`. */
+export function productTypeFinishShortcode(productType: unknown, finishMode: unknown): string {
+  return `${productTypePrefix(productType)}${finishModeChar(finishMode)}`
+}
+
+export function productTypeFinishShortcodeFromSpec(spec: unknown): string {
+  const identity = (spec as { identity?: Record<string, unknown> })?.identity || {}
+  return productTypeFinishShortcode(identity.product_type, identity.finish_mode)
 }
 
 /**
@@ -171,9 +190,37 @@ export function getDisplayProductCodeFromSpec(spec: any): string {
   return computeProductCodeFromSpec(spec)
 }
 
+const ADDITIVE_CODE_LEGACY_TO_SHORT: Record<string, string> = {
+  ANTI_BLOCK: 'AB',
+  ANTI_STATIC: 'AS',
+  SLIP: 'SP',
+  UV: 'UV',
+}
+
+function normalizeAdditiveCodeForProductCode(raw: unknown): string {
+  const code = String(raw ?? '')
+    .trim()
+    .toUpperCase()
+  if (!code) return ''
+  return ADDITIVE_CODE_LEGACY_TO_SHORT[code] ?? code
+}
+
+/** Up to two additive codes, dot-separated (e.g. ``AB.AS``). */
+function productCodeAdditiveSegment(formulation: any): string {
+  const additives = formulation?.additives
+  if (!Array.isArray(additives)) return ''
+  const codes: string[] = []
+  for (const row of additives) {
+    const short = normalizeAdditiveCodeForProductCode(row?.additive_code)
+    if (short && !codes.includes(short)) codes.push(short)
+    if (codes.length >= 2) break
+  }
+  return codes.length > 0 ? codes.join('.') : ''
+}
+
 /**
- * Compute product code from spec only (e.g. PBR-(200+50)-600-50-BLK-2P).
- * Does not include a customer prefix; format: {Type}{R|C}-{Width}-{LengthMm}-{GaugeUm}-{Colour3}-{Print?}
+ * Compute product code from spec only (e.g. PBR_(200+50)_600_50_BLK_AB.AS_2P).
+ * Does not include a customer prefix; format: {Type}{R|C}_{Width}_{LengthMm}_{GaugeUm}_{Colour3}_{Additives?}_{Print?}
  */
 export function computeProductCodeFromSpec(spec: any): string {
   const identity = spec?.identity || {}
@@ -182,9 +229,8 @@ export function computeProductCodeFromSpec(spec: any): string {
   const printing = spec?.printing || {}
 
   const productType = up(identity?.product_type)
-  const typePrefix = PRODUCT_TYPE_PREFIX[productType] || 'XX'
-  const finishMode = up(identity?.finish_mode)
-  const finishChar = finishMode === 'CARTONS' ? 'C' : 'R'
+  const typePrefix = productTypePrefix(productType)
+  const finishChar = finishModeChar(identity?.finish_mode)
 
   const geometry = up(dims?.geometry)
   const baseWidth = intOrNull(dims?.base_width_mm)
@@ -247,7 +293,9 @@ export function computeProductCodeFromSpec(spec: any): string {
   if (lengthMm) parts.push(lengthMm)
   if (gaugeUm) parts.push(gaugeUm)
   if (colourCode) parts.push(colourCode)
+  const additiveSeg = productCodeAdditiveSegment(formulation)
+  if (additiveSeg) parts.push(additiveSeg)
   if (printSeg) parts.push(printSeg)
 
-  return parts.filter(Boolean).join('-')
+  return parts.filter(Boolean).join('_')
 }

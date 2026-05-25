@@ -18,14 +18,6 @@ function dash(v: unknown): string {
   return t === '' ? '—' : t
 }
 
-function formatDescWithQty(description: string, orderedQuantityLabel: string): string {
-  const d = String(description ?? '').trim()
-  const q = String(orderedQuantityLabel ?? '').trim()
-  if (!d) return q || '—'
-  if (!q || q === '—') return d
-  return `${d} × ${q}`
-}
-
 /**
  * Shared markup/order for the job sheet order header (below the title on print).
  * Print and preview use the same field order; preview uses smaller MUI typography.
@@ -33,18 +25,9 @@ function formatDescWithQty(description: string, orderedQuantityLabel: string): s
 export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFieldsProps): ReactElement {
   const { header: h, product: prod, printingFooter, variant, hideHeaderGrid = false } = props
 
-  const generatedCode = String(prod.generatedProductCode ?? '').trim()
-  const descCustomer = String(prod.customerFacingDescription ?? '').trim()
-  const descGenerated = String(prod.generatedDescriptionWithPackagingTail ?? '').trim()
-  const qty = prod.orderedQuantityLabel
-  const lineCustomer = descCustomer ? formatDescWithQty(descCustomer, qty) : ''
-  const lineGenerated = descGenerated ? formatDescWithQty(descGenerated, qty) : ''
-  const lineCode = generatedCode
-  const primaryDescLine = lineCode || lineCustomer || lineGenerated
-  const secondaryDescLine =
-    lineCode && lineCustomer ? lineCustomer : lineCode && !lineCustomer && lineGenerated ? lineGenerated : ''
   const notesText = String(prod.notes ?? '').trim()
   const qualityLabels = prod.qualityChecks.map((x) => String(x ?? '').trim()).filter(Boolean)
+  const summaryLine = String(prod.summaryLine ?? '').trim()
   const orderDateDisplay = formatDateDMYShort(h.orderDate)
   const dueDateDisplay = formatDateDMYShort(h.dueDate)
 
@@ -54,16 +37,8 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
         {!hideHeaderGrid ? (
           <div className="js-compact-grid">
             <div className="js-compact-item">
-              <span className="js-compact-k">Invoice No:</span>
-              <span className="js-compact-v">{h.invoiceNo}</span>
-            </div>
-            <div className="js-compact-item">
               <span className="js-compact-k">Order Date:</span>
               <span className="js-compact-v">{orderDateDisplay}</span>
-            </div>
-            <div className="js-compact-item">
-              <span className="js-compact-k">Purchase order:</span>
-              <span className="js-compact-v">{dash(h.purchaseOrderNo)}</span>
             </div>
             <div className="js-compact-item">
               <span className="js-compact-k">Due Date:</span>
@@ -72,33 +47,24 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
           </div>
         ) : null}
 
-        <div className="js-compact-block">
-          {primaryDescLine ? (
-            <div className="js-order-header-desc-line">
-              <span className="js-order-header-desc-primary js-print-primary-text" style={{ whiteSpace: 'pre-wrap' }}>
-                {primaryDescLine}
-              </span>
-            </div>
-          ) : null}
-          {secondaryDescLine ? (
-            <div className="js-order-header-desc-line">
-              <span className="js-order-header-desc-secondary" style={{ whiteSpace: 'pre-wrap' }}>
-                {secondaryDescLine}
-              </span>
-            </div>
-          ) : null}
-          <div className="js-order-header-padded-block">
+        <div className="js-compact-grid">
+          <div className="js-compact-item">
+            <span className="js-compact-k">Notes:</span>
             <span className="js-order-header-notes" style={{ whiteSpace: 'pre-wrap' }}>
               {notesText || '\u00A0'}
             </span>
-            
+          </div>
+          <div className="js-compact-item">
+            <span className="js-compact-k">Quality checks:</span>
             {qualityLabels.length > 0 ? (
               <ul className="js-quality-list">
                 {qualityLabels.map((qc, i) => (
                   <li key={`${qc}-${i}`}>{qc}</li>
                 ))}
               </ul>
-            ) : null}
+            ) : (
+              <span className="js-order-header-notes">{'\u00A0'}</span>
+            )}
           </div>
           {printingFooter ? (
             <>
@@ -117,6 +83,9 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
             </>
           ) : null}
         </div>
+        {summaryLine ? (
+          <div className="js-order-header-summary-line js-print-primary-text">{summaryLine}</div>
+        ) : null}
       </div>
     )
   }
@@ -127,15 +96,7 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
     fontWeight: 500,
     flexShrink: 0,
   } as const
-  const descPrimarySx = {
-    fontSize: '0.9375rem',
-    lineHeight: 1.3,
-    fontWeight: 700,
-    color: 'text.primary',
-    whiteSpace: 'pre-wrap' as const,
-    wordBreak: 'break-word' as const,
-  }
-  const descSecondarySx = {
+  const notesSx = {
     fontSize: '0.8125rem',
     lineHeight: 1.35,
     fontWeight: 500,
@@ -197,17 +158,33 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
             mb: 1,
           }}
         >
-          {row('Invoice No:', h.invoiceNo, { mono: true })}
           {row('Order Date:', orderDateDisplay)}
-          {row('Purchase order:', h.purchaseOrderNo)}
           {row('Due Date:', dueDateDisplay)}
         </Box>
       ) : null}
 
+      {summaryLine ? (
+        <Typography
+          component="div"
+          sx={{
+            fontSize: '0.9375rem',
+            lineHeight: 1.35,
+            fontWeight: 700,
+            color: 'text.primary',
+            py: hideHeaderGrid ? 0 : 0.25,
+            mt: hideHeaderGrid ? 0 : 0.5,
+            borderTop: hideHeaderGrid ? 0 : 1,
+            borderColor: 'divider',
+          }}
+        >
+          {summaryLine}
+        </Typography>
+      ) : null}
+
       <Box
         sx={{
-          pt: hideHeaderGrid ? 0 : 1,
-          mt: hideHeaderGrid ? 0 : 0.5,
+          pt: hideHeaderGrid ? 0 : summaryLine ? 0.75 : 1,
+          mt: hideHeaderGrid ? 0 : summaryLine ? 0.5 : 0.5,
           borderTop: hideHeaderGrid ? 0 : 1,
           borderColor: 'divider',
           display: 'flex',
@@ -215,21 +192,11 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
           gap: 0.5,
         }}
       >
-        {primaryDescLine ? (
-          <Typography component="div" sx={{ ...descPrimarySx, py: 0.125 }}>
-            {primaryDescLine}
-          </Typography>
-        ) : null}
-        {secondaryDescLine ? (
-          <Typography component="div" sx={{ ...descSecondarySx, py: 0.125 }}>
-            {secondaryDescLine}
-          </Typography>
-        ) : null}
         <Box sx={paddedBlockSx}>
           <Typography component="div" sx={{ ...kSx, mb: 0.25 }}>
             Notes:
           </Typography>
-          <Typography component="div" sx={descSecondarySx}>
+          <Typography component="div" sx={notesSx}>
             {notesText || '\u00A0'}
           </Typography>
         </Box>
@@ -271,7 +238,7 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
               ))}
             </Box>
           ) : (
-            <Typography component="div" sx={descSecondarySx}>
+            <Typography component="div" sx={notesSx}>
               {'\u00A0'}
             </Typography>
           )}

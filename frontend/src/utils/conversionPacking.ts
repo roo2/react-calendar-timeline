@@ -1,11 +1,22 @@
 /** How bags are packed in cartons (conversion section). */
 export type ConversionPackingMode = 'loose_lay_flat' | 'loose_folded' | 'in_pack'
 
-export const CONVERSION_PACKING_MODE_LABELS: Record<ConversionPackingMode, string> = {
-  loose_lay_flat: 'Loose (Lay flat)',
-  loose_folded: 'Loose (Folded)',
+/** Editor / spec form radio labels. */
+export const CONVERSION_PACKING_MODE_UI_LABELS: Record<ConversionPackingMode, string> = {
+  loose_lay_flat: 'Lay Flat',
+  loose_folded: 'Folded',
   in_pack: 'In Packs',
 }
+
+/** Job sheet printout labels (loose modes include “(Loose)”). */
+export const CONVERSION_PACKING_MODE_PRINT_LABELS: Record<ConversionPackingMode, string> = {
+  loose_lay_flat: 'Lay Flat (Loose)',
+  loose_folded: 'Folded (Loose)',
+  in_pack: 'In Packs',
+}
+
+/** @deprecated Prefer {@link CONVERSION_PACKING_MODE_UI_LABELS}. */
+export const CONVERSION_PACKING_MODE_LABELS = CONVERSION_PACKING_MODE_UI_LABELS
 
 export function isPositiveIntField(v: unknown): boolean {
   return v != null && v !== '' && Number(v) > 0
@@ -65,7 +76,10 @@ export function conversionFieldsForPackingMode(
   }
 }
 
-export function conversionPackingModeLabel(mode: ConversionPackingMode | ''): string {
+export function conversionPackingModeLabel(
+  mode: ConversionPackingMode | '',
+  opts?: { forPrint?: boolean },
+): string {
   if (!mode) return ''
-  return CONVERSION_PACKING_MODE_LABELS[mode]
+  return opts?.forPrint ? CONVERSION_PACKING_MODE_PRINT_LABELS[mode] : CONVERSION_PACKING_MODE_UI_LABELS[mode]
 }

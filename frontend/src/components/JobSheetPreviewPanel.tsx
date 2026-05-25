@@ -64,6 +64,8 @@ export function JobSheetPreviewPanel(props: {
   qualityCheckLabels?: string[] | null
   /** Live order qty + quote-calculator estimates (same basis as Quotes page). */
   quoteSummary?: JobSheetPreviewQuoteSummary | null
+  /** Print-header one-line summary (type/finish, qty, packing, rolls/ctns). */
+  headerSummaryLine?: string | null
   /** Pallet count for ship quantity (job sheet packaging / volume estimate). */
   palletLoadPlanning?: JobSheetPalletLoadPlanning | null
   /** Lowercase unit label for display (`rolls` / `cartons`). */
@@ -77,13 +79,12 @@ export function JobSheetPreviewPanel(props: {
     showJobFields = true,
     jobCode = '',
     customerName = '',
-    invoiceNo = '',
-    purchaseOrderNo = '',
     orderDate = '',
     dueDate = '',
     notes = null,
     qualityCheckLabels = null,
     quoteSummary = null,
+    headerSummaryLine: headerSummaryLineProp = null,
     palletLoadPlanning = null,
     palletUnitLabel = 'rolls',
   } = props
@@ -98,32 +99,23 @@ export function JobSheetPreviewPanel(props: {
 
   const emptyHeader: JobSheetPrintOrderHeaderModel['header'] = {
     customer: '',
-    invoiceNo: '',
     jobCode: '',
     orderDate: '',
-    purchaseOrderNo: '',
     dueDate: '',
   }
 
   const header: JobSheetPrintOrderHeaderModel['header'] = showJobFields
     ? {
         customer: customerName,
-        invoiceNo: invoiceNo ?? '',
         jobCode: jobCode ?? '',
         orderDate: orderDate ?? '',
-        purchaseOrderNo: purchaseOrderNo ?? '',
         dueDate: dueDate ?? '',
       }
     : emptyHeader
 
   const product: JobSheetPrintOrderHeaderModel['product'] = {
     generatedProductCode: String(generatedProductCode ?? '').trim(),
-    ...(user !== '' ? { customerFacingDescription: user } : {}),
-    ...(specDesc !== '' ? { generatedDescriptionWithPackagingTail: specDesc } : {}),
-    orderedQuantityLabel:
-      quoteSummary?.orderQuantityLabel && String(quoteSummary.orderQuantityLabel).trim() !== ''
-        ? String(quoteSummary.orderQuantityLabel).trim()
-        : '—',
+    summaryLine: String(headerSummaryLineProp ?? quoteSummary?.headerSummaryLine ?? '').trim(),
     notes: String(notes ?? '').trim(),
     qualityChecks: qcLabels,
   }
