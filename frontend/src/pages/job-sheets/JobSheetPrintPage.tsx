@@ -2174,8 +2174,14 @@ export function JobSheetPrintPage() {
     })
 
     const geoSnapshotForTail =
-      derivedTotalM != null || derivedMPerRoll != null
-        ? { derivedTotalM: derivedTotalM ?? 0, mPerRoll: derivedMPerRoll }
+      derivedTotalM != null ||
+      derivedMPerRoll != null ||
+      (geoDerived?.units != null && geoDerived.units > 0)
+        ? {
+            derivedTotalM: derivedTotalM ?? 0,
+            mPerRoll: derivedMPerRoll,
+            derivedProductUnits: geoDerived?.units ?? null,
+          }
         : null
     const headerSummaryLine = buildJobSheetPrintHeaderSummaryLine(
       js as Record<string, unknown>,

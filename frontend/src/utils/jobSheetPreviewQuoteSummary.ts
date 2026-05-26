@@ -32,14 +32,19 @@ export function computeJobSheetPreviewQuoteSummary(
   quickInputs: QuickQuoteInputs | null | undefined,
 ): JobSheetPreviewQuoteSummary {
   const specRec = spec as Record<string, unknown>
+  const npuRaw = jsRow.num_product_units
+  const npu = npuRaw != null && npuRaw !== '' ? Number(npuRaw) : NaN
+  const derivedProductUnits = Number.isFinite(npu) && npu > 0 ? Math.round(npu) : null
   const geoDerived =
-    jsRow.total_m != null && Number(jsRow.total_m) > 0
+    (jsRow.total_m != null && Number(jsRow.total_m) > 0) || derivedProductUnits != null
       ? {
-          derivedTotalM: Number(jsRow.total_m),
+          derivedTotalM:
+            jsRow.total_m != null && Number(jsRow.total_m) > 0 ? Number(jsRow.total_m) : 0,
           mPerRoll:
-            jsRow.num_rolls != null && Number(jsRow.num_rolls) > 0
+            jsRow.num_rolls != null && Number(jsRow.num_rolls) > 0 && jsRow.total_m != null
               ? Number(jsRow.total_m) / Number(jsRow.num_rolls)
               : null,
+          derivedProductUnits,
         }
       : null
   const headerSummaryRaw = buildJobSheetPrintHeaderSummaryLine(jsRow, specRec, geoDerived)

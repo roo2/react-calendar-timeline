@@ -1,5 +1,6 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import { productTypeFinishLabelFromSpec } from './productDescription'
+import { buildSpecQuantitySliceFromPersistedJobSheet } from './jobSheetQuantityFromApi'
 import { resolvedProductUnitsForOrder } from './quantityRollFields'
 import { fmtCount } from './quoteFormat'
 import { extrusionRollCountForPrint, orderQtyPrefsFromJobSheetAndSpec } from './specOrderDefaults'
@@ -15,6 +16,8 @@ import {
 export type JobSheetPrintHeaderGeoSnapshot = {
   derivedTotalM: number
   mPerRoll: number | null
+  /** Product count from geometry calc (tubes, centerfolds, etc.) when not on the job sheet row. */
+  derivedProductUnits?: number | null
 }
 
 /** Normalise order qty for print header (e.g. `40,000 bags` → `40000 Bags`, `99.00 KG` → `99KG`). */
@@ -115,35 +118,81 @@ export function jobSheetRollCartonCountLabel(
   return ''
 }
 
+/** Resolve total product count (bags, tubes, centerfolds, …) for the print header summary. */
+function resolveProductUnitsForPrintHeader(
+  js: Record<string, unknown>,
+  spec: Record<string, unknown>,
+  derivedProductUnits?: number | null,
+): number {
+  const payload = jobSheetAsQuoteQtyPayload(js, spec)
+  const numUnits = Math.round(Number(payload.numUnits ?? payload.num_units ?? 0))
+  const numCartons = Math.round(Number(payload.numCartons ?? payload.num_cartons ?? 0))
+  const bagsPerCarton = Math.max(0, Math.round(Number(payload.bags_per_carton ?? payload.bagsPerCarton ?? 0)))
+  let count = resolvedProductUnitsForOrder(numUnits, numCartons, bagsPerCarton)
+  if (count > 0) return count
+
+  const npuRaw = js.num_product_units
+  const npu = npuRaw != null && npuRaw !== '' ? Number(npuRaw) : NaN
+  if (Number.isFinite(npu) && npu > 0) return Math.round(npu)
+
+  if (
+    derivedProductUnits != null &&
+    derivedProductUnits > 0 &&
+    Number.isFinite(derivedProductUnits)
+  ) {
+    return Math.round(derivedProductUnits)
+  }
+
+  const numRolls = Math.round(Number(payload.numRolls ?? payload.num_rolls ?? 0))
+  let unitsPerRoll = 0
+  try {
+    const slice = buildSpecQuantitySliceFromPersistedJobSheet(js, spec as SpecPayload)
+    if (slice.unitsPerRoll != null && slice.unitsPerRoll > 0) {
+      unitsPerRoll = slice.unitsPerRoll
+    } else if (slice.numUnits > 0 && slice.numRolls > 0) {
+      unitsPerRoll = Math.max(1, Math.round(slice.numUnits / slice.numRolls))
+    } else if (slice.numUnits > 0) {
+      return slice.numUnits
+    }
+  } catch {
+    /* ignore */
+  }
+  if (numRolls > 0 && unitsPerRoll > 0) return numRolls * unitsPerRoll
+
+  return 0
+}
+
 /**
  * Ordered quantity for the print header summary — always in product-type units
- * (e.g. `400 Bags`), not cartons (`20 Ctn`); carton count stays in the roll/ctn segment.
+ * (e.g. `400 Bags`, `12 Centerfolds`), not rolls or cartons (those use later segments).
  */
 export function jobSheetOrderQuantityForPrintHeader(
   js: Record<string, unknown>,
   spec: Record<string, unknown>,
+  opts?: { derivedProductUnits?: number | null },
 ): string {
   const payload = jobSheetAsQuoteQtyPayload(js, spec)
   const mode = quoteQtyModeFromPayload(payload)
   const productType = String(payload.product_type ?? payload.productType ?? '')
-
-  if (mode === 'kg' || mode === 'roll') {
-    return formatOrderQuantityForPrintHeader(quoteTotalQuantityLabelFromPayload(payload))
-  }
-
   const isContinuous = quotePayloadUsesContinuousLength(payload)
   const unitLabel = quoteProductUnitLabel(productType)
-  const numUnits = Math.round(Number(payload.numUnits ?? payload.num_units ?? 0))
-  const numCartons = Math.round(Number(payload.numCartons ?? payload.num_cartons ?? 0))
-  const bagsPerCarton = Math.max(0, Math.round(Number(payload.bags_per_carton ?? payload.bagsPerCarton ?? 0)))
-  const productCount = resolvedProductUnitsForOrder(numUnits, numCartons, bagsPerCarton)
+  const productCount = resolveProductUnitsForPrintHeader(js, spec, opts?.derivedProductUnits)
 
   if (productCount > 0) {
     if (isContinuous) return `${fmtCount(productCount)} ea`
     return `${fmtCount(productCount)} ${unitLabel}`
   }
 
-  return formatOrderQuantityForPrintHeader(quoteTotalQuantityLabelFromPayload(payload))
+  if (mode === 'kg') {
+    return formatOrderQuantityForPrintHeader(quoteTotalQuantityLabelFromPayload(payload))
+  }
+  if (mode === 'ctn') {
+    return formatOrderQuantityForPrintHeader(quoteTotalQuantityLabelFromPayload(payload))
+  }
+
+  const fallback = formatOrderQuantityForPrintHeader(quoteTotalQuantityLabelFromPayload(payload))
+  if (/roll/i.test(fallback)) return ''
+  return fallback
 }
 
 /**
@@ -161,7 +210,9 @@ export function buildJobSheetPrintHeaderSummaryLine(
   const typeFinish = productTypeFinishLabelFromSpec(spec)
   if (typeFinish) parts.push(typeFinish)
 
-  const orderFmt = jobSheetOrderQuantityForPrintHeader(js, spec)
+  const orderFmt = jobSheetOrderQuantityForPrintHeader(js, spec, {
+    derivedProductUnits: geoDerived?.derivedProductUnits,
+  })
   if (orderFmt) parts.push(orderFmt)
 
   const packTail = packagingPerUnitTailFromPersistedJobSheet(js, spec, geoDerived ?? null)

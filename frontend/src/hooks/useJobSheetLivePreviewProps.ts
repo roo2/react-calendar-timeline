@@ -219,14 +219,19 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
   const previewHeaderSummaryLine = useMemo(() => {
     if (!previewJsForHeaderSummary) return null
     const d = derivedForDisplay
+    const derivedUnits =
+      d?.units != null && Number(d.units) > 0 && Number.isFinite(Number(d.units))
+        ? Math.round(Number(d.units))
+        : null
     const geo =
-      d?.derivedTotalM != null && Number(d.derivedTotalM) > 0
+      (d?.derivedTotalM != null && Number(d.derivedTotalM) > 0) || derivedUnits != null
         ? {
-            derivedTotalM: Number(d.derivedTotalM),
+            derivedTotalM: d?.derivedTotalM != null && Number(d.derivedTotalM) > 0 ? Number(d.derivedTotalM) : 0,
             mPerRoll:
-              d.mPerRoll != null && Number(d.mPerRoll) > 0
+              d?.mPerRoll != null && Number(d.mPerRoll) > 0
                 ? Number(d.mPerRoll)
                 : null,
+            derivedProductUnits: derivedUnits,
           }
         : null
     const line = buildJobSheetPrintHeaderSummaryLine(
