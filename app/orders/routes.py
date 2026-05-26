@@ -724,6 +724,7 @@ async def show_order(order_id: str):
                     "due_date": (str(js.due_date.date()) if getattr(js, "due_date", None) is not None else None),
                     "quantity_value": float(js.quantity_value),
                     "quantity_unit": js.quantity_unit,
+                    "qty_type": str(getattr(js, "qty_type", None) or "") or None,
                     "rate": float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None,
                     "total_price": float(js.line_total) if getattr(js, "line_total", None) is not None else None,
                     "income_account_display_id": id_disp,

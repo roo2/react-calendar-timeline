@@ -13,6 +13,19 @@ export function derivedInlineSeal(productType: string | undefined | null, finish
   return pt === 'Bag' && fm === 'Rolls'
 }
 
+/** Editor + print highlight when inline perforated (matches job sheet title bar). */
+export type InlinePerforatedHighlight = 'none' | 'blue' | 'yellow'
+
+export function inlinePerforatedHighlight(
+  productType: string | undefined | null,
+  finishMode: string | undefined | null,
+  inlinePerforated: boolean,
+): InlinePerforatedHighlight {
+  if (!inlinePerforated) return 'none'
+  if (derivedInlineSeal(productType, finishMode)) return 'yellow'
+  return 'blue'
+}
+
 /** User-facing label for `run_requirements.seal_type` / `printing.seal_type` slug (`end` → Bottom). */
 export function formatSealTypeLabel(slug: unknown, opts?: { full?: boolean }): string {
   const x = String(slug ?? '').trim().toLowerCase()

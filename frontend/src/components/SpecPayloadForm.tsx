@@ -48,7 +48,7 @@ import { getSpecOrderDefaults, mergeOrderDefaultsIntoSpec } from '../utils/specO
 import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../utils/productDescription'
 import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
-import { formatSealTypeLabel } from '../utils/specCompat'
+import { formatSealTypeLabel, inlinePerforatedHighlight } from '../utils/specCompat'
 import {
   isRegisteredPrint,
   normalizePrintRegistration,
@@ -496,6 +496,10 @@ export function SpecPayloadForm(props: {
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
   const isBagOnRoll = productType === PRODUCT_TYPE.Bag && finishMode === 'Rolls'
+  const dimensionsGeometryHighlight = useMemo(
+    () => inlinePerforatedHighlight(productType, finishMode, !!run.inline_perforation),
+    [productType, finishMode, run.inline_perforation],
+  )
   const isBagInCarton = productType === PRODUCT_TYPE.Bag && finishMode === 'Cartons'
   const isTubeProduct = productType === PRODUCT_TYPE.Tube
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
@@ -1584,13 +1588,17 @@ export function SpecPayloadForm(props: {
         variant="outlined"
         sx={[
           { p: 2 },
-          run.inline_perforation
+          dimensionsGeometryHighlight === 'blue'
             ? {
-                // Matches job sheet print perforated highlight (`.js-perf-bg` / `.js-title.js-perf-hl` in JobSheetPrintPage).
                 bgcolor: '#dff1ff',
                 '& .MuiOutlinedInput-root': { bgcolor: (theme) => theme.palette.background.paper },
               }
-            : {},
+            : dimensionsGeometryHighlight === 'yellow'
+              ? {
+                  bgcolor: '#fff566',
+                  '& .MuiOutlinedInput-root': { bgcolor: (theme) => theme.palette.background.paper },
+                }
+              : {},
         ]}
       >
         <Typography variant="h6" sx={{ mb: 2 }}>
@@ -2947,7 +2955,10 @@ export function SpecPayloadForm(props: {
               })
             }
             error={!!errorFor('spec.identity.trim_pct')}
-            helperText={errorFor('spec.identity.trim_pct') || ''}
+            helperText={
+              errorFor('spec.identity.trim_pct') ||
+              'Reduces effective gauge for kg calculations; total metres stay the same (e.g. 100 µm + 1% trim → 99 µm).'
+            }
           />
           <TextField
             label="Tolerance (mm)"

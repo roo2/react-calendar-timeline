@@ -53,9 +53,11 @@ import {
   suggestSmallestFittingExtruderCode,
 } from '../../../utils/suggestExtruderFromSpec'
 import {
+  buildOrderToJobSheetQuantityExtras,
   cartonsWeightPerRollKg,
   coerceQtyTypeForFinishMode,
   getOrderQuantityFromJobSheetFields,
+  jobSheetQtyTypeForOrderUnit,
   resolvedProductUnitsForOrder,
   resolveNumRollsForPersistence,
   resolveWeightPerRollForPersistence,
@@ -143,23 +145,24 @@ export type OrderLineQtySnapshot = {
   quantity_value: string
   quantity_unit: string
   due_date: string
+  qty_type?: string
 }
 
 function mergeJobSheetRowWithOrderLineQty(js: any, snap: OrderLineQtySnapshot): any {
   const qvNum = Number(snap.quantity_value)
   const qu = String(snap.quantity_unit || '').trim()
+  const qv = Number.isFinite(qvNum) ? qvNum : Number(js?.quantity_value) || 1
+  const qt = jobSheetQtyTypeForOrderUnit(qu, snap.qty_type ?? js?.qty_type)
   const jsMerged: any = {
     ...js,
-    quantity_value: Number.isFinite(qvNum) ? qvNum : js?.quantity_value,
+    quantity_value: qv,
     quantity_unit: qu || js?.quantity_unit,
-    qty_type: null,
   }
-  if (qu === 'rolls') {
-    const n = Math.max(1, Math.round(Number.isFinite(qvNum) ? qvNum : Number(js?.num_rolls) || 1))
-    jsMerged.num_rolls = n
-  }
-  if (qu === '1000') {
-    jsMerged.num_product_units = Math.round((Number.isFinite(qvNum) ? qvNum : 0) * 1000)
+  if (qt) {
+    jsMerged.qty_type = qt
+    const extras = buildOrderToJobSheetQuantityExtras(qu, qv, qt)
+    if (extras.num_rolls != null) jsMerged.num_rolls = extras.num_rolls
+    if (extras.num_product_units != null) jsMerged.num_product_units = extras.num_product_units
   }
   return jsMerged
 }
@@ -561,7 +564,7 @@ export function ProductVersionEditor(props: {
     }
     setLoadErr(null)
     const snapKey = orderLineQtySnapshot
-      ? `${orderLineQtySnapshot.quantity_value}|${orderLineQtySnapshot.quantity_unit}|${orderLineQtySnapshot.due_date}`
+      ? `${orderLineQtySnapshot.quantity_value}|${orderLineQtySnapshot.quantity_unit}|${orderLineQtySnapshot.due_date}|${orderLineQtySnapshot.qty_type ?? ''}`
       : '__none__'
     if (
       lastHydratedJobDetailDataRef.current === st.data &&

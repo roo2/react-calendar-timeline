@@ -1,4 +1,8 @@
 import type { ProductListItem } from '../store/slices/productsSlice'
+import {
+  jobSheetQtyTypeForOrderUnit,
+  orderQuantityUnitFromJobSheetQtyType,
+} from './quantityRollFields'
 
 export type OrderQuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000' | 'ea' | 'meters'
 
@@ -35,17 +39,6 @@ function normalizeQuantityUnitFromApi(
   return 'kg'
 }
 
-function quantityUnitFromQtyType(
-  qtyType: string | undefined,
-  finish: 'Rolls' | 'Cartons' | null,
-): OrderQuantityUnit | null {
-  const qt = String(qtyType || '').trim().toLowerCase()
-  if (qt === 'kg') return 'kg'
-  if (qt === 'total_rolls') return 'rolls'
-  if (qt === 'units' || qt === 'rolls_units') return finish === 'Cartons' ? 'cartons' : '1000'
-  return null
-}
-
 /**
  * Defaults when adding a product to an order: last job sheet for this customer, else product.default_qty_type, else kg.
  */
@@ -53,27 +46,34 @@ export function buildOrderLineDefaultsFromProduct(p: ProductListItem): {
   quantity_unit: OrderQuantityUnit
   quantity_value: string
   rate: string
+  qty_type?: string
 } {
   const fm = finishModeForProduct(p)
+  const finishForQty: 'Rolls' | 'Cartons' = fm === 'Cartons' ? 'Cartons' : 'Rolls'
   const allowed = unitChoices(fm)
   const last = p.last_order_defaults as ProductLastOrderDefaults | null | undefined
 
   if (last) {
-    let unit = normalizeQuantityUnitFromApi(last.quantity_unit ?? undefined, fm)
+    const lastQt = (last.qty_type || '').trim()
+    let unit =
+      (lastQt ? orderQuantityUnitFromJobSheetQtyType(lastQt, finishForQty) : null) ??
+      normalizeQuantityUnitFromApi(last.quantity_unit ?? undefined, fm)
     if (!allowed.includes(unit)) unit = allowed[0]
     const qv =
       last.quantity_value != null && Number.isFinite(Number(last.quantity_value)) && Number(last.quantity_value) > 0
         ? String(last.quantity_value)
         : '1'
     const rate = last.rate != null && Number.isFinite(Number(last.rate)) && Number(last.rate) >= 0 ? String(last.rate) : ''
-    return { quantity_unit: unit, quantity_value: qv, rate }
+    const qt = jobSheetQtyTypeForOrderUnit(unit, lastQt || undefined)
+    return { quantity_unit: unit, quantity_value: qv, rate, ...(qt ? { qty_type: qt } : {}) }
   }
 
   const dqt = (p.default_qty_type || '').trim()
   if (dqt) {
-    const fromType = quantityUnitFromQtyType(dqt, fm)
+    const fromType = orderQuantityUnitFromJobSheetQtyType(dqt, finishForQty)
     const unit = fromType && allowed.includes(fromType) ? fromType : allowed[0]
-    return { quantity_unit: unit, quantity_value: '1', rate: '' }
+    const qt = jobSheetQtyTypeForOrderUnit(unit, dqt)
+    return { quantity_unit: unit, quantity_value: '1', rate: '', ...(qt ? { qty_type: qt } : {}) }
   }
 
   return { quantity_unit: allowed[0] ?? 'kg', quantity_value: '1', rate: '' }

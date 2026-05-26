@@ -141,6 +141,15 @@ def thickness_um_from_spec(spec: dict) -> float:
 		return 0.0
 
 
+def effective_thickness_um_from_spec(spec: dict) -> float:
+	"""Nominal gauge reduced by trim % for polymer mass; metres are not scaled by trim."""
+	nominal = thickness_um_from_spec(spec)
+	tf = trim_factor_from_spec(spec)
+	if tf is None or nominal <= 0:
+		return nominal
+	return nominal * tf
+
+
 def blend_density_kg_m3(session: Session, spec: dict) -> float:
 	formulation = spec.get("formulation") or {}
 	blend_in = formulation.get("blend") if isinstance(formulation.get("blend"), list) else []
@@ -171,6 +180,7 @@ def blend_density_kg_m3(session: Session, spec: dict) -> float:
 
 
 def trim_factor_from_spec(spec: dict) -> Optional[float]:
+	"""Multiplier on nominal gauge (1 − trim%/100), not on web metres."""
 	identity = spec.get("identity") or {}
 	try:
 		tp = identity.get("trim_pct")
@@ -242,7 +252,7 @@ def web_length_meters_from_spec_and_quantity(session: Session, spec: dict, qty: 
 			unit_length_mm = unit_length_mm * 1000.0
 		effective_len_m = _mm_to_m(unit_length_mm) if unit_length_mm > 0 else 0.0
 
-	thickness_um = thickness_um_from_spec(spec)
+	thickness_um = effective_thickness_um_from_spec(spec)
 	density = blend_density_kg_m3(session, spec)
 	thickness_m = _um_to_m(thickness_um)
 	kg_per_m2 = density * thickness_m
@@ -271,9 +281,6 @@ def web_length_meters_from_spec_and_quantity(session: Session, spec: dict, qty: 
 		else:
 			derived_total_m = 0.0
 
-	tf = trim_factor_from_spec(spec)
-	if tf is not None and derived_total_m > 0:
-		derived_total_m *= tf
 	m = max(0.0, float(derived_total_m))
 	return m * printing_run_up_length_multiplier_from_spec(spec)
 

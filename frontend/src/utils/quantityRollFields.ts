@@ -19,6 +19,76 @@ export function qtyTypeFromPersisted(raw: string | undefined | null): QtyType {
   return 'units'
 }
 
+/** Order line quantity unit (manufactured products). */
+export type OrderLineQuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000'
+
+/**
+ * Map job sheet {@link QtyType} → order line `quantity_unit`.
+ * Both roll modes use `rolls` on the order line; distinguish them with `qty_type`.
+ */
+export function orderQuantityUnitFromJobSheetQtyType(
+  qtyType: string | null | undefined,
+  finishMode: FinishMode = 'Rolls',
+): OrderLineQuantityUnit | null {
+  const qt = qtyTypeFromPersisted(qtyType)
+  if (qt === 'kg') return 'kg'
+  if (qt === 'total_rolls' || qt === 'rolls_units') return 'rolls'
+  if (qt === 'units') return finishMode === 'Cartons' ? 'cartons' : '1000'
+  return null
+}
+
+/**
+ * Map order line `quantity_unit` → job sheet `qty_type` when saving.
+ * Preserves `rolls_units` vs `total_rolls` when the unit stays `rolls`.
+ */
+export function jobSheetQtyTypeForOrderUnit(
+  unit: string,
+  preservedQtyType?: string | null,
+): QtyType | undefined {
+  const preserved = preservedQtyType?.trim() ? qtyTypeFromPersisted(preservedQtyType) : null
+  const u = String(unit || '').toLowerCase()
+  if (u === 'kg') return 'kg'
+  if (u === 'rolls') {
+    if (preserved === 'rolls_units' || preserved === 'total_rolls') return preserved
+    return 'total_rolls'
+  }
+  if (u === '1000') return 'units'
+  if (u === 'cartons') return 'units'
+  return undefined
+}
+
+/** `qty_type` after the user changes order line unit (clears roll mode when leaving `rolls`). */
+export function orderLineQtyTypeAfterUnitChange(
+  newUnit: string,
+  previousUnit: string,
+  previousQtyType?: string | null,
+): string | undefined {
+  if (newUnit === previousUnit) {
+    const qt = jobSheetQtyTypeForOrderUnit(newUnit, previousQtyType)
+    return qt ?? undefined
+  }
+  const qt = jobSheetQtyTypeForOrderUnit(newUnit, null)
+  return qt ?? undefined
+}
+
+/** Extra job sheet / order-item fields derived from order line qty + type. */
+export function buildOrderToJobSheetQuantityExtras(
+  quantityUnit: string,
+  quantityValue: number,
+  qtyType: QtyType | undefined,
+): { qty_type?: string; num_product_units?: number; num_rolls?: number } {
+  if (!qtyType) return {}
+  const out: { qty_type?: string; num_product_units?: number; num_rolls?: number } = { qty_type: qtyType }
+  const u = String(quantityUnit).toLowerCase()
+  if (qtyType === 'units' && u === '1000') {
+    out.num_product_units = Math.round(quantityValue * 1000)
+  }
+  if ((qtyType === 'total_rolls' || qtyType === 'rolls_units') && u === 'rolls') {
+    out.num_rolls = Math.max(1, Math.round(quantityValue))
+  }
+  return out
+}
+
 /** Build the `quantity` object passed to QuickQuoteInputs / computeDerivedGeometryAndTotals. */
 export function buildQuantityObjectForCalculator(
   qtyType: QtyType,

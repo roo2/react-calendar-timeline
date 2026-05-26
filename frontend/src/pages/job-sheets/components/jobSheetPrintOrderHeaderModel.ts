@@ -1,5 +1,11 @@
+import type { InlinePerforatedHighlight } from '../../../utils/specCompat'
+
+/** Job sheet title bar background when inline perforated. */
+export type JobSheetPrintTitleHighlight = InlinePerforatedHighlight
+
 export type JobSheetPrintOrderHeaderModel = {
-  perforated: boolean
+  /** `blue`: perforated film (not bag-on-roll seal); `yellow`: perforated bag on roll. */
+  titleHighlight: JobSheetPrintTitleHighlight
   header: {
     /** Page title: customer (truncated) and job code (not shown in the field grid). */
     customer: string

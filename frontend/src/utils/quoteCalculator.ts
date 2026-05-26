@@ -290,6 +290,23 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
+/**
+ * Trim % reduces effective gauge for polymer mass (kg/m, kg per unit); web metres stay unchanged.
+ * Example: gauge 100 µm with 1% trim → effective gauge 99 µm.
+ */
+export function trimGaugeFactor(trimPct: number | null | undefined): number | null {
+  const p = trimPct != null && Number.isFinite(Number(trimPct)) ? Number(trimPct) : null
+  if (p == null || p <= 0) return null
+  return clamp(1 - p / 100, 0.01, 1)
+}
+
+export function effectiveThicknessUm(nominalUm: number, trimPct: number | null | undefined): number {
+  const g = Number(nominalUm || 0)
+  const f = trimGaugeFactor(trimPct)
+  if (f == null || !(g > 0)) return g
+  return g * f
+}
+
 function toNum(v: unknown): number | null {
   if (v == null) return null
   if (typeof v === 'number') return Number.isFinite(v) ? v : null
@@ -795,7 +812,9 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     .filter((c) => c.resin_code && c.pct > 0)
 
   const density = blendDensity(blend)
-  const thicknessM = umToM(Number(inputs.thickness_um || 0))
+  const nominalThicknessUm = Number(inputs.thickness_um || 0)
+  const effectiveThickness = effectiveThicknessUm(nominalThicknessUm, inputs.trim_pct)
+  const thicknessM = umToM(effectiveThickness)
   const kgPerM2 = density * thicknessM
   const kgPerLinearM = kgPerM2 * mmToM(layflatMassMm)
 
@@ -838,19 +857,18 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     }
   }
 
-  const trimPct = inputs.trim_pct != null && Number.isFinite(Number(inputs.trim_pct)) ? Number(inputs.trim_pct) : null
-  const trimFactor = trimPct != null && trimPct > 0 ? clamp(1 - trimPct / 100, 0.01, 1) : null
-
-  // Trim % is yield loss: effective plastic = nominal × (1 − trim%/100). Same for bag counts (by mass) and kg/m/rolls.
+  // Trim lowers effective gauge (see `effectiveThicknessUm`); metres are not scaled by trim %.
   let derivedTotalKg: number
   let derivedTotalM: number
-  let trimmedTotalKg: number
 
   if (unitsIn != null && kgPerUnit > 0) {
-    const usableKg = kgPerUnit * unitsIn
-    trimmedTotalKg = trimFactor != null ? usableKg * trimFactor : usableKg
-    derivedTotalKg = trimmedTotalKg
-    derivedTotalM = kgPerLinearM > 0 ? trimmedTotalKg / kgPerLinearM : 0
+    derivedTotalKg = kgPerUnit * unitsIn
+    derivedTotalM =
+      !inputs.continuous_roll && effectiveLenM > 0
+        ? unitsIn * effectiveLenM
+        : kgPerLinearM > 0
+          ? derivedTotalKg / kgPerLinearM
+          : 0
   } else {
     derivedTotalKg =
       totalKgReqPlastic != null
@@ -859,12 +877,9 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
           ? totalMReq * kgPerLinearM
           : 0
     derivedTotalM = totalMReq != null ? totalMReq : derivedTotalKg > 0 && kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
-    trimmedTotalKg = derivedTotalKg
-    if (trimFactor != null && derivedTotalM > 0) {
-      derivedTotalM = derivedTotalM * trimFactor
-      trimmedTotalKg = trimmedTotalKg * trimFactor
-    }
   }
+
+  const trimmedTotalKg = derivedTotalKg
 
   const webLengthM = derivedTotalM
 
@@ -920,6 +935,8 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     blend,
     density,
     kgPerM2,
+    nominalThicknessUm,
+    effectiveThicknessUm: effectiveThickness,
     kgPerUnit,
     kgPerLinearM,
     /** Metres of web used to model one "product" when `continuous_roll` (one roll/carton mass). */

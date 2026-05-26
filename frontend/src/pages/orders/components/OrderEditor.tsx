@@ -26,6 +26,12 @@ import {
 import { CustomerSearchAutocomplete } from '../../../components/CustomerSearchAutocomplete'
 import { ProductSearchAutocomplete } from '../../../components/ProductSearchAutocomplete'
 import { buildOrderLineDefaultsFromProduct } from '../../../utils/orderLineDefaults'
+import {
+  buildOrderToJobSheetQuantityExtras,
+  jobSheetQtyTypeForOrderUnit,
+  orderLineQtyTypeAfterUnitChange,
+  orderQuantityUnitFromJobSheetQtyType,
+} from '../../../utils/quantityRollFields'
 import { OrderFormFooter } from './OrderFormFooter'
 import {
   EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID,
@@ -84,6 +90,8 @@ type OrderLine = {
   due_date: string
   quantity_unit: QuantityUnit
   quantity_value: string
+  /** Job sheet quantity mode; both roll modes use `rolls` on the order line. */
+  qty_type?: string
   rate: string
   total_price: string
   /** From product spec (list or order item); drives which units are offered. */
@@ -211,7 +219,11 @@ function applyPreservedFieldsFromLocal(
     ...apiLine,
     ...(fields.rate ? { rate: local.rate } : {}),
     ...(fields.quantity
-      ? { quantity_value: local.quantity_value, quantity_unit: local.quantity_unit }
+      ? {
+          quantity_value: local.quantity_value,
+          quantity_unit: local.quantity_unit,
+          qty_type: local.qty_type,
+        }
       : {}),
     ...(fields.dueDate ? { due_date: local.due_date } : {}),
   }
@@ -287,9 +299,17 @@ function lineFromApiItem(it: any): OrderLine {
   const rawU = String(it.quantity_unit || '').toLowerCase()
   if (!finish && rawU === 'cartons') finish = 'Cartons'
   if (!finish && rawU === 'rolls') finish = 'Rolls'
+  const qtyTypeRaw =
+    it.qty_type != null && String(it.qty_type).trim() !== '' ? String(it.qty_type).trim() : undefined
+  const finishForQty: 'Rolls' | 'Cartons' = finish === 'Cartons' ? 'Cartons' : 'Rolls'
   let quantity_unit = normalizeQuantityUnitFromApi(it.quantity_unit as string | undefined, finish)
+  if (qtyTypeRaw) {
+    const fromQt = orderQuantityUnitFromJobSheetQtyType(qtyTypeRaw, finishForQty)
+    if (fromQt) quantity_unit = fromQt
+  }
   const allowed = unitChoices(finish)
-  if (finish === 'Cartons' && !allowed.includes(quantity_unit)) quantity_unit = allowed[0]
+  if (!allowed.includes(quantity_unit)) quantity_unit = allowed[0]
+  const qt = qtyTypeRaw ?? jobSheetQtyTypeForOrderUnit(quantity_unit, undefined)
   return {
     id: String(it.id),
     line_kind: 'product',
@@ -303,6 +323,7 @@ function lineFromApiItem(it: any): OrderLine {
     due_date: String(it.due_date || ''),
     finish_mode: finish,
     quantity_unit,
+    ...(qt ? { qty_type: qt } : {}),
     quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
     rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
     total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
@@ -333,20 +354,12 @@ function unitChoices(
   return ['kg', 'rolls', '1000']
 }
 
-function qtyTypeForSavedJobSheet(unit: QuantityUnit): string | undefined {
-  if (unit === '1000') return 'units'
-  if (unit === 'rolls') return 'total_rolls'
-  if (unit === 'cartons') return 'units'
-  if (unit === 'kg') return 'kg'
-  return undefined
-}
-
 function buildProductOrderItemBody(
   productId: string,
-  lineDefaults: { quantity_unit: QuantityUnit; quantity_value: string; rate: string },
+  lineDefaults: { quantity_unit: QuantityUnit; quantity_value: string; rate: string; qty_type?: string },
 ) {
   const qv = Number(lineDefaults.quantity_value || '1')
-  const qt = qtyTypeForSavedJobSheet(lineDefaults.quantity_unit)
+  const qt = jobSheetQtyTypeForOrderUnit(lineDefaults.quantity_unit, lineDefaults.qty_type)
   const rate = parseOptionalMoney(lineDefaults.rate)
   return {
     product_id: productId,
@@ -354,14 +367,13 @@ function buildProductOrderItemBody(
     quantity_unit: lineDefaults.quantity_unit,
     quantity_value: qv,
     ...(rate != null ? { rate } : {}),
-    ...(qt ? { qty_type: qt } : {}),
-    ...(lineDefaults.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
+    ...buildOrderToJobSheetQuantityExtras(lineDefaults.quantity_unit, qv, qt),
   }
 }
 
 function buildProductOrderItemBodyFromLine(it: OrderLine) {
   const qv = Number(it.quantity_value || '0')
-  const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
+  const qt = jobSheetQtyTypeForOrderUnit(it.quantity_unit, it.qty_type)
   const rate = parseOptionalMoney(it.rate)
   const totalPrice = computedLineTotal(it)
   return {
@@ -371,8 +383,7 @@ function buildProductOrderItemBodyFromLine(it: OrderLine) {
     quantity_value: qv,
     ...(rate != null ? { rate } : {}),
     ...(totalPrice != null ? { total_price: totalPrice } : {}),
-    ...(qt ? { qty_type: qt } : {}),
-    ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
+    ...buildOrderToJobSheetQuantityExtras(it.quantity_unit, qv, qt),
   }
 }
 
@@ -407,13 +418,12 @@ function isValidMoneyField(s: string): boolean {
 
 function buildJobSheetUpdateBodyFromLine(it: OrderLine) {
   const qv = Number(it.quantity_value || '0')
-  const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
+  const qt = jobSheetQtyTypeForOrderUnit(it.quantity_unit, it.qty_type)
   return {
     due_date: it.due_date || null,
     quantity_value: qv,
     quantity_unit: it.quantity_unit,
-    ...(qt ? { qty_type: qt } : {}),
-    ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
+    ...buildOrderToJobSheetQuantityExtras(it.quantity_unit, qv, qt),
     unit_rate: parseOptionalMoney(it.rate),
     line_total: computedLineTotal(it),
   }
@@ -774,6 +784,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         quantity_value: it.quantity_value,
         quantity_unit: it.quantity_unit,
         due_date: it.due_date,
+        qty_type: it.qty_type,
       },
     })
   }
@@ -876,6 +887,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         quantity_value: line.quantity_value,
         quantity_unit: line.quantity_unit,
         due_date: line.due_date,
+        qty_type: line.qty_type,
       },
     })
   }, [mode, orderId, items, loc.state, loc.pathname, loc.search, loc.hash, canEditProduct, nav])
@@ -901,7 +913,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         const allowed = unitChoices(fm)
         let qtyUnit = l.quantity_unit
         if (!allowed.includes(qtyUnit)) qtyUnit = allowed[0]
-        return { ...l, finish_mode: fm, quantity_unit: qtyUnit }
+        const finishForQty: 'Rolls' | 'Cartons' = fm === 'Cartons' ? 'Cartons' : 'Rolls'
+        const fromQt = l.qty_type ? orderQuantityUnitFromJobSheetQtyType(l.qty_type, finishForQty) : null
+        if (fromQt && allowed.includes(fromQt)) qtyUnit = fromQt
+        const qt = jobSheetQtyTypeForOrderUnit(qtyUnit, l.qty_type)
+        return { ...l, finish_mode: fm, quantity_unit: qtyUnit, ...(qt ? { qty_type: qt } : {}) }
       })
       return changed ? next : prev
     })
@@ -1028,9 +1044,6 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       return
     }
     const lineDefaults = buildOrderLineDefaultsFromProduct(p)
-    const qv = Number(lineDefaults.quantity_value || '1')
-    const qt = qtyTypeForSavedJobSheet(lineDefaults.quantity_unit)
-    const rate = parseOptionalMoney(lineDefaults.rate)
     const prevLineKeys = new Set(items.map((it) => it.order_item_id || it.id))
     try {
       setErr(null)
@@ -1039,15 +1052,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       await dispatch(
         addOrderItem({
           orderId,
-          body: {
-            product_id: p.id,
-            due_date: defaultDueDate(),
-            quantity_unit: lineDefaults.quantity_unit,
-            quantity_value: qv,
-            ...(rate != null ? { rate } : {}),
-            ...(qt ? { qty_type: qt } : {}),
-            ...(lineDefaults.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
-          },
+          body: buildProductOrderItemBody(p.id, { ...lineDefaults, quantity_value: lineDefaults.quantity_value }),
         }),
       ).unwrap()
       // reload order to pick up job_sheet_id/order_item_id
@@ -1068,6 +1073,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             quantity_value: newLine.quantity_value,
             quantity_unit: newLine.quantity_unit,
             due_date: newLine.due_date,
+            qty_type: newLine.qty_type,
           },
         })
       }
@@ -1139,22 +1145,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
           ...(customerPoNumber.trim() ? { customer_purchase_order_number: customerPoNumber.trim() } : {}),
           ...(orderDate ? { order_date: orderDate } : {}),
-          items: productLines.map((it) => {
-            const rate = parseOptionalMoney(it.rate)
-            const totalPrice = computedLineTotal(it)
-            const qv = Number(it.quantity_value || '0')
-            const qt = qtyTypeForSavedJobSheet(it.quantity_unit)
-            return {
-              product_id: it.product_id,
-              due_date: it.due_date || null,
-              quantity_unit: it.quantity_unit,
-              quantity_value: qv,
-              ...(rate != null ? { rate } : {}),
-              ...(totalPrice != null ? { total_price: totalPrice } : {}),
-              ...(qt ? { qty_type: qt } : {}),
-              ...(it.quantity_unit === '1000' ? { num_product_units: Math.round(qv * 1000) } : {}),
-            }
-          }),
+          items: productLines.map((it) => buildProductOrderItemBodyFromLine(it)),
           ...(resellLines.length ? { resell_items: buildResellItemsPayloadFromLines(resellLines) } : {}),
         }),
       ).unwrap()
@@ -1198,6 +1189,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           o.due_date !== it.due_date ||
           o.quantity_unit !== it.quantity_unit ||
           o.quantity_value !== it.quantity_value ||
+          o.qty_type !== it.qty_type ||
           o.rate !== it.rate ||
           totalNow !== totalOrig
         )
@@ -1381,7 +1373,13 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               const v = e.target.value as QuantityUnit
               const allowed = unitChoices(it.finish_mode, it.line_kind)
               const next = allowed.includes(v) ? v : allowed[0]
-              setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, quantity_unit: next } : x)))
+              setItems((prev) =>
+                prev.map((x) => {
+                  if (x.id !== it.id) return x
+                  const qt = orderLineQtyTypeAfterUnitChange(next, x.quantity_unit, x.qty_type)
+                  return { ...x, quantity_unit: next, ...(qt ? { qty_type: qt } : { qty_type: undefined }) }
+                }),
+              )
               setDirty(true)
             }}
             sx={{ minWidth: 120 }}

@@ -6,6 +6,7 @@ import type { SpecPayload } from '../../components/SpecPayloadForm'
 import {
   JobSheetPrintOrderHeader,
   JobSheetPrintPageTitle,
+  jobSheetPrintTitleSpreadClassName,
   type JobSheetPrintOrderHeaderModel,
 } from './components/JobSheetPrintOrderHeader'
 import { conversionPackingModeLabel, deriveConversionPackingMode } from '../../utils/conversionPacking'
@@ -107,7 +108,7 @@ import {
 import { jobSheetDescriptionWithPackagingTail } from '../../utils/quoteQuantityDescriptors'
 import { buildJobSheetPrintHeaderSummaryLine } from '../../utils/jobSheetPrintHeaderSummary'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
-import { derivedInlineSeal, formatSealTypeLabel } from '../../utils/specCompat'
+import { derivedInlineSeal, formatSealTypeLabel, inlinePerforatedHighlight } from '../../utils/specCompat'
 import {
   formatPrintPositionForPrint,
   isBottomSealType,
@@ -1110,18 +1111,18 @@ function chunkExtruderRollIndices(rollCount: number): number[][] {
 }
 
 function JobSheetPrintExtrusionQcPage(props: {
-  perforated: boolean
+  titleHighlight: JobSheetPrintOrderHeaderModel['titleHighlight']
   header: JobSheetPrintOrderHeaderModel['header']
   product: JobSheetPrintOrderHeaderModel['product']
   extruderOutputRollCount: number
 }): ReactNode {
-  const { perforated, header, product, extruderOutputRollCount } = props
+  const { titleHighlight, header, product, extruderOutputRollCount } = props
   const extruderRollChunks = chunkExtruderRollIndices(extruderOutputRollCount)
-  const extruderTitleClass = `js-title js-title--spread${perforated ? ' js-perf-hl' : ''} js-title--extruder-repeat`
+  const extruderTitleClass = `${jobSheetPrintTitleSpreadClassName(titleHighlight, 'js-title--extruder-repeat')}`
   return (
     <div className="js-print-extrusion-qc-sheet">
       <JobSheetPrintOrderHeader
-        perforated={perforated}
+        titleHighlight={titleHighlight}
         header={header}
         product={product}
       />
@@ -1335,7 +1336,7 @@ function JobSheetPrintConversionInstructionsPage(props: {
   return (
     <div className="js-print-conversion-sheet">
       <JobSheetPrintOrderHeader
-        perforated={orderHeader.perforated}
+        titleHighlight={orderHeader.titleHighlight}
         header={orderHeader.header}
         product={orderHeader.product}
       />
@@ -1777,7 +1778,8 @@ export function JobSheetPrintPage() {
     const coresLine = s(packaging?.core_type ?? spec?.core_type)
     const shrink = !!run?.shrink
     const inlineSeal = derivedInlineSeal(String(productType || ''), String(finishMode || ''))
-    const perforated = !!run?.inline_perforation
+    const inlinePerforated = !!run?.inline_perforation
+    const titleHighlight = inlinePerforatedHighlight(productType, finishMode, inlinePerforated)
     const runRecord = (run || {}) as Record<string, unknown>
     const holePunched = inlinePunchEnabled(runRecord)
 
@@ -2490,7 +2492,7 @@ export function JobSheetPrintPage() {
       }) || ''
 
     return {
-      perforated,
+      titleHighlight,
       header: {
         customer: s(customer),
         orderDate: s(orderDate),
@@ -2528,7 +2530,7 @@ export function JobSheetPrintPage() {
         treatHighlight,
         shrink,
         inlineSeal,
-        inlinePerforated: perforated,
+        inlinePerforated,
         inlinePunched: holePunched,
         inlinePunchPrint,
         vented: ventedConversion,
@@ -2672,9 +2674,13 @@ export function JobSheetPrintPage() {
           print-color-adjust: exact;
           color-adjust: exact;
         }
-        /* Perforated bag on roll: highlight job title only */
+        /* Inline perforated (not bag on roll): blue title */
         .js-title.js-perf-hl {
           background: #dff1ff !important;
+        }
+        /* Inline perforated bag on roll: yellow title */
+        .js-title.js-yellow {
+          background: #fff566 !important;
         }
         @media print {
           .no-print { display: none !important; }
@@ -2684,7 +2690,7 @@ export function JobSheetPrintPage() {
             width: 100% !important;
             margin: 0 !important;
             padding: 16px 18px !important;
-            font-size: 11pt !important;
+            font-size: 13pt !important;
             line-height: 1.25;
             box-shadow: none !important;
             background: #fff !important;
@@ -2698,16 +2704,16 @@ export function JobSheetPrintPage() {
           margin: 0 auto 16px;
           --js-print-page-padding: 16px 18px;
           padding: var(--js-print-page-padding);
-          font-size: 11px;
+          font-size: 13px;
           line-height: 1.35;
           font-weight: 400;
           background: #fff;
           box-sizing: border-box;
           box-shadow: 0 0 0 1px #d6d6d6;
-          --js-print-fs-body: 11px;
-          --js-print-fs-label: 10px;
-          --js-print-fs-title: 14px;
-          --js-print-fs-dim-primary: 14px;
+          --js-print-fs-body: 13px;
+          --js-print-fs-label: 12px;
+          --js-print-fs-title: 16px;
+          --js-print-fs-dim-primary: 16px;
           --js-print-fw-label: 500;
           --js-print-fw-value: 600;
         }
@@ -3160,7 +3166,7 @@ export function JobSheetPrintPage() {
           border-collapse: collapse;
           table-layout: fixed;
           margin: 0;
-          font-size: 12px;
+          font-size: 14px;
         }
         .js-printing-nested > tbody > tr > th {
           background: #f1f1f1;
@@ -3585,7 +3591,7 @@ export function JobSheetPrintPage() {
         }
         .js-conv-sheet {
           border: 1px solid #000;
-          font-size: 11px;
+          font-size: 13px;
           line-height: 1.25;
         }
         .js-conv-head,
@@ -3653,7 +3659,7 @@ export function JobSheetPrintPage() {
         }
         .js-conv-dimension {
           text-align: center;
-          font-size: 9px;
+          font-size: 11px;
           vertical-align: middle;
         }
         .js-conv-dimension-label {
@@ -3669,7 +3675,7 @@ export function JobSheetPrintPage() {
         .js-conv-qc th.js-conv-qc-corner {
           width: 34%;
           min-width: 4.5rem;
-          font-size: 9px;
+          font-size: 11px;
           vertical-align: middle;
         }
         .js-conv-qc th.js-conv-qc-phase-h {
@@ -3706,7 +3712,7 @@ export function JobSheetPrintPage() {
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
-          font-size: 10px;
+          font-size: 12px;
           padding-top: 10px;
         }
         .js-print-inline-ink-table th,
@@ -3891,7 +3897,7 @@ export function JobSheetPrintPage() {
         ) : null}
 
         <JobSheetPrintOrderHeader
-          perforated={model.perforated}
+          titleHighlight={model.titleHighlight}
           header={model.header}
           product={model.product}
         />
@@ -4075,7 +4081,7 @@ export function JobSheetPrintPage() {
 
         <div className="js-print-page-break">
           <JobSheetPrintExtrusionQcPage
-            perforated={model.perforated}
+            titleHighlight={model.titleHighlight}
             header={model.header}
             product={model.product}
             extruderOutputRollCount={qty.extruderOutputRollCount}
@@ -4085,7 +4091,7 @@ export function JobSheetPrintPage() {
         {isUtecoPrinted ? (
           <div className="js-print-page-break">
              <JobSheetPrintOrderHeader
-              perforated={model.perforated}
+              titleHighlight={model.titleHighlight}
               header={model.header}
               product={model.product}
               printingFooter={{
@@ -4102,7 +4108,7 @@ export function JobSheetPrintPage() {
             <JobSheetPrintConversionInstructionsPage
               conv={conv}
               orderHeader={{
-                perforated: model.perforated,
+                titleHighlight: model.titleHighlight,
                 header: model.header,
                 product: model.product,
               }}

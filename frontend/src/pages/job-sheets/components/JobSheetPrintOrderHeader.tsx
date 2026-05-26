@@ -1,8 +1,21 @@
 import type { ReactElement } from 'react'
-import type { JobSheetPrintOrderHeaderModel } from './jobSheetPrintOrderHeaderModel'
+import type {
+  JobSheetPrintOrderHeaderModel,
+  JobSheetPrintTitleHighlight,
+} from './jobSheetPrintOrderHeaderModel'
 import { JobSheetPrintOrderHeaderFields } from './JobSheetPrintOrderHeaderFields'
 
-export type { JobSheetPrintOrderHeaderModel } from './jobSheetPrintOrderHeaderModel'
+export type { JobSheetPrintOrderHeaderModel, JobSheetPrintTitleHighlight } from './jobSheetPrintOrderHeaderModel'
+
+export function jobSheetPrintTitleSpreadClassName(
+  highlight: JobSheetPrintTitleHighlight,
+  extraClass = '',
+): string {
+  const base = ['js-title', 'js-title--spread', extraClass].filter(Boolean).join(' ')
+  if (highlight === 'blue') return `${base} js-perf-hl`
+  if (highlight === 'yellow') return `${base} js-yellow`
+  return base
+}
 
 const CUSTOMER_NAME_PRINT_TITLE_MAX = 20
 
@@ -63,8 +76,8 @@ export function JobSheetPrintPageTitle(props: {
  * Repeated at the top of each printed sheet (main job sheet + Uteco printing page).
  */
 export function JobSheetPrintOrderHeader(props: JobSheetPrintOrderHeaderModel): ReactElement {
-  const { perforated, header, product, printingFooter } = props
-  const titleClass = `js-title js-title--spread${perforated ? ' js-perf-hl' : ''}`
+  const { titleHighlight, header, product, printingFooter } = props
+  const titleClass = jobSheetPrintTitleSpreadClassName(titleHighlight)
   return (
     <>
       <JobSheetPrintPageTitle header={header} product={product} className={titleClass} />
