@@ -51,13 +51,7 @@ export function JobSheetPrintPageTitle(props: {
   return (
     <div className={className}>
       <span className="js-title-part js-title-part--job">{p.jobCode}</span>
-      <span className="js-title-sep" aria-hidden="true">
-      •
-      </span>
       <span className="js-title-part js-title-part--customer">{p.customer}</span>
-      <span className="js-title-sep" aria-hidden="true">
-      •
-      </span>
       <span className="js-title-part js-title-part--product">{p.productCode}</span>
     </div>
   )

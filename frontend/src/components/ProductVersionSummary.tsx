@@ -2,6 +2,7 @@ import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Ty
 import { derivedInlineSeal } from '../utils/specCompat'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 import { collectQualityFlagIds } from '../utils/qualityFlagLabels'
+import { productSummaryPunchedChecked, ventedEnabledFromConv } from '../utils/punchHoleSpec'
 
 function fmtMm(v: unknown): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
@@ -148,12 +149,17 @@ export function ProductVersionSummary(props: { spec: any }) {
   const artworkRefs = Array.isArray(spec?.printing?.artwork_refs) ? spec.printing.artwork_refs.filter(Boolean) : []
 
   const gussetOn = spec?.dimensions?.geometry === 'Gusset'
+  const run = (spec?.run_requirements || {}) as Record<string, unknown>
+  const conv = ((run.conversion as Record<string, unknown>) || {}) as Record<string, unknown>
+  const punched = productSummaryPunchedChecked(run, spec?.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls')
+  const vented = ventedEnabledFromConv(conv)
   const options = [
     gussetOn ? 'Gusset' : null,
     printed ? 'Printed' : null,
     spec?.run_requirements?.inline_perforation ? 'Perforated' : null,
     derivedInlineSeal(spec?.identity?.product_type, spec?.identity?.finish_mode) ? 'Sealed' : null,
-    spec?.run_requirements?.hole_punched ? 'Punched' : null,
+    punched ? 'Punched' : null,
+    vented ? 'Vented' : null,
   ].filter(Boolean)
 
   const lengthUnitsRaw = (spec?.dimensions?.length_units as string | undefined) || 'mm'

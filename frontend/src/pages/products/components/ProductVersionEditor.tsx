@@ -48,7 +48,10 @@ import {
   useSpecLinkedQuantityFields,
   type SpecLinkedQuantityHydrate,
 } from '../../../hooks/useSpecLinkedQuantityFields'
-import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
+import {
+  extruderCodeFitsSpecWidth,
+  suggestSmallestFittingExtruderCode,
+} from '../../../utils/suggestExtruderFromSpec'
 import {
   cartonsWeightPerRollKg,
   coerceQtyTypeForFinishMode,
@@ -682,11 +685,17 @@ export function ProductVersionEditor(props: {
   useEffect(() => {
     if (!jobSheetId && !embedded) return
     if (extruderUserTouchedRef.current) return
-    if (productionExtruderCode.trim() !== '') return
-    const code = extruderSuggestion.extruderCode
-    if (!code) return
-    setProductionExtruderCode(code)
-  }, [jobSheetId, embedded, productionExtruderCode, extruderSuggestion.extruderCode])
+    const suggested = extruderSuggestion.extruderCode
+    if (!suggested) return
+    const current = productionExtruderCode.trim()
+    if (!current) {
+      setProductionExtruderCode(suggested)
+      return
+    }
+    if (!extruderCodeFitsSpecWidth(current, spec, ratebook ?? null)) {
+      setProductionExtruderCode(suggested)
+    }
+  }, [jobSheetId, embedded, productionExtruderCode, extruderSuggestion.extruderCode, spec, ratebook])
 
   const bagsPerCartonStr = spec.packaging?.bags_per_carton != null ? String(spec.packaging.bags_per_carton) : ''
 
@@ -867,6 +876,45 @@ export function ProductVersionEditor(props: {
     const ok = await persistJobSheetWithoutClose()
     if (!ok) return
     window.open(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`, '_blank', 'noopener,noreferrer')
+  }
+
+  async function persistProductWithoutClose(): Promise<boolean> {
+    if (!productId || embedded) return false
+    setJobSaveErr(null)
+    try {
+      const orderDefaultsPatch = buildOrderDefaultsFromEditor({
+        effectiveQtyType,
+        finishMode,
+        weightPerRollNum: Number(qty.weightPerRoll || 0),
+        customerFacingDescription: customerFacingDescriptionFromSpec(spec),
+        bagsPerCarton: spec.packaging?.bags_per_carton != null ? Number(spec.packaging.bags_per_carton) : null,
+        cartonQtyMode: qty.cartonQtyMode,
+        customerOverproductionHandling: customerOverproductionFromSpec(spec, finishMode),
+      })
+      const specToSave = mergeOrderDefaultsIntoSpec(spec, orderDefaultsPatch)
+      await dispatch(createProductVersion({ productId, spec: specToSave })).unwrap()
+      setDirty(false)
+      return true
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setJobSaveErr(p.message || 'Failed to save product')
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { messages } = parseFastApiValidationDetail(e.body.detail)
+        setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+      } else {
+        setJobSaveErr(e instanceof Error ? e.message : 'Failed to save product')
+      }
+      return false
+    }
+  }
+
+  async function onViewPreviousVersionsClick(e: React.MouseEvent): Promise<void> {
+    e.preventDefault()
+    if (!productId || busy) return
+    const ok = jobSheetId ? await persistJobSheetWithoutClose() : await persistProductWithoutClose()
+    if (!ok) return
+    nav(`/products/${encodeURIComponent(productId)}`)
   }
 
   async function persistJobSheet(asNewProduct: boolean) {
@@ -1218,7 +1266,6 @@ export function ProductVersionEditor(props: {
   const theme = useTheme()
   const isNarrow = useMediaQuery(theme.breakpoints.down('md'))
   /** Order modal keeps the order open; standalone product/job sheet editors navigate in-tab. */
-  const previousVersionsLinkOpensNewTab = Boolean(jobSheetId && onCancel)
 
   const waitingForJobSheet =
     !!jobSheetId &&
@@ -1405,13 +1452,12 @@ export function ProductVersionEditor(props: {
                     <Typography variant="h6">Product Spec</Typography>
                     {!embedded ? (
                       <MuiLink
-                        component={Link}
-                        to={`/products/${encodeURIComponent(productId)}`}
-                        {...(previousVersionsLinkOpensNewTab
-                          ? { target: '_blank', rel: 'noreferrer' }
-                          : {})}
+                        component="button"
+                        type="button"
                         underline="hover"
                         sx={{ fontSize: '0.875rem' }}
+                        disabled={busy}
+                        onClick={onViewPreviousVersionsClick}
                       >
                         View previous versions
                       </MuiLink>
@@ -1553,10 +1599,12 @@ export function ProductVersionEditor(props: {
                       Product Spec
                     </Typography>
                     <MuiLink
-                      component={Link}
-                      to={`/products/${encodeURIComponent(productId)}`}
+                      component="button"
+                      type="button"
                       underline="hover"
                       sx={{ fontSize: '0.875rem' }}
+                      disabled={busy}
+                      onClick={onViewPreviousVersionsClick}
                     >
                       View previous versions
                     </MuiLink>

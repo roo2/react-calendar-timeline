@@ -60,6 +60,7 @@ class PrintingArtworkFile(BaseModel):
 class TreatIO(str, Enum):
     INSIDE = "inside"
     OUTSIDE = "outside"
+    BOTH_SIDES = "both_sides"
     NONE = "none"
 
 
@@ -208,12 +209,20 @@ class ConversionSpec(BaseModel):
     pack_lay_flat: Optional[bool] = False
     tag_packs: Optional[bool] = False
     tag_ctn: Optional[bool] = False
+    # Conversion punch (hole punch machine).
+    punched_conversion_enabled: Optional[bool] = False
+    punched_conversion_hole_size_mm: Optional[int] = Field(6, ge=0)
+    punched_conversion_holes_across: Optional[int] = Field(None, ge=0)
+    punched_conversion_holes_along: Optional[int] = Field(None, ge=0)
+    punched_conversion_hole_position_description: Optional[str] = None
+    # Conversion vent (pinprick).
+    vented_enabled: Optional[bool] = False
+    # Legacy vent fields (read/migrate only).
     vent_enabled: Optional[bool] = False
     vent_hole_size_mm: Optional[int] = Field(6, ge=0)
     vent_holes_across: Optional[int] = Field(None, ge=0)
     vent_holes_along: Optional[int] = Field(None, ge=0)
     vent_hole_position_description: Optional[str] = None
-    # Legacy (read/migrate only; UI uses fields above).
     vent_rows: Optional[int] = Field(None, ge=0)
     vent_holes_per_row: Optional[int] = Field(None, ge=0)
     vent_description: Optional[str] = None
@@ -231,18 +240,53 @@ class ConversionSpec(BaseModel):
         if not isinstance(data, dict):
             return data
         out = {k: v for k, v in data.items() if k not in _DEPRECATED_CONVERSION_FLAG_KEYS}
-        if out.get("vent_holes_across") is None and out.get("vent_holes_per_row") is not None:
-            out["vent_holes_across"] = out["vent_holes_per_row"]
-        if out.get("vent_holes_along") is None and out.get("vent_rows") is not None:
-            out["vent_holes_along"] = out["vent_rows"]
-        if out.get("vent_hole_position_description") is None and out.get("vent_description"):
-            out["vent_hole_position_description"] = out["vent_description"]
-        if out.get("vent_hole_size_mm") is None:
-            out["vent_hole_size_mm"] = 6
+        # Legacy vent hole fields were historically used for conversion punching.
+        if out.get("punched_conversion_holes_across") is None:
+            if out.get("vent_holes_across") is not None:
+                out["punched_conversion_holes_across"] = out["vent_holes_across"]
+            elif out.get("vent_holes_per_row") is not None:
+                out["punched_conversion_holes_across"] = out["vent_holes_per_row"]
+        if out.get("punched_conversion_holes_along") is None:
+            if out.get("vent_holes_along") is not None:
+                out["punched_conversion_holes_along"] = out["vent_holes_along"]
+            elif out.get("vent_rows") is not None:
+                out["punched_conversion_holes_along"] = out["vent_rows"]
+        if out.get("punched_conversion_hole_position_description") is None:
+            if out.get("vent_hole_position_description"):
+                out["punched_conversion_hole_position_description"] = out["vent_hole_position_description"]
+            elif out.get("vent_description"):
+                out["punched_conversion_hole_position_description"] = out["vent_description"]
+        if out.get("punched_conversion_hole_size_mm") is None:
+            out["punched_conversion_hole_size_mm"] = out.get("vent_hole_size_mm", 6)
+        if out.get("vented_enabled") is None:
+            hole_detail = any(
+                out.get(k) not in (None, "", 0)
+                for k in (
+                    "punched_conversion_holes_across",
+                    "punched_conversion_holes_along",
+                    "punched_conversion_hole_position_description",
+                )
+            )
+            if out.get("vent_enabled") is True and not hole_detail:
+                out["vented_enabled"] = True
+            else:
+                out["vented_enabled"] = False
+        if out.get("punched_conversion_enabled") is None:
+            has_punch_detail = any(
+                out.get(k) not in (None, "", 0)
+                for k in (
+                    "punched_conversion_holes_across",
+                    "punched_conversion_holes_along",
+                    "punched_conversion_hole_position_description",
+                )
+            )
+            out["punched_conversion_enabled"] = bool(has_punch_detail or out.get("vent_enabled") is True)
         return out
 
     @model_validator(mode="after")
     def _normalize_vent_fields(self) -> "ConversionSpec":
+        if self.punched_conversion_hole_size_mm is None or int(self.punched_conversion_hole_size_mm) not in (6, 8, 10):
+            self.punched_conversion_hole_size_mm = 6
         if self.vent_hole_size_mm is None or int(self.vent_hole_size_mm) not in (6, 8, 10):
             self.vent_hole_size_mm = 6
         return self
@@ -294,13 +338,24 @@ class RunRequirementsSpec(BaseModel):
     slit: Optional[Literal["none", "one_side", "both_sides", "middle"]] = "none"
     treat_inside_outside: Optional[TreatIO] = TreatIO.NONE
     inline_perforation: Optional[bool] = False
+    # Inline punched (extrusion hole punch machine).
     hole_punched: Optional[bool] = False
+    inline_punch_hole_size_mm: Optional[int] = Field(6, ge=0)
+    inline_punch_holes_across: Optional[int] = Field(None, ge=0)
+    inline_punch_holes_along: Optional[int] = Field(None, ge=0)
+    inline_punch_hole_position_description: Optional[str] = None
     inline_seal: Optional[bool] = False
     notes: Optional[str] = None
     # Seal for conversion (job sheet); distinct from ``printing.seal_type`` when migrating.
     seal_type: Optional[Literal["end", "side", "none"]] = None
     shrink: Optional[bool] = False
     conversion: Optional[ConversionSpec] = None
+
+    @model_validator(mode="after")
+    def _normalize_inline_punch(self) -> "RunRequirementsSpec":
+        if self.inline_punch_hole_size_mm is None or int(self.inline_punch_hole_size_mm) not in (6, 8, 10):
+            self.inline_punch_hole_size_mm = 6
+        return self
 
 
 class PackagingSpec(BaseModel):

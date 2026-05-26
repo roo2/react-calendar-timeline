@@ -1,6 +1,8 @@
+import type { SpecPayload } from '../components/SpecPayloadForm'
 import { productTypeFinishShortcodeFromSpec } from './productDescription'
 import { resolvedProductUnitsForOrder } from './quantityRollFields'
 import { fmtCount } from './quoteFormat'
+import { extrusionRollCountForPrint, orderQtyPrefsFromJobSheetAndSpec } from './specOrderDefaults'
 import {
   jobSheetAsQuoteQtyPayload,
   packagingPerUnitTailFromPersistedJobSheet,
@@ -50,19 +52,47 @@ export function formatPackagingPerUnitForPrintHeader(tail: string): string {
   return t
 }
 
+function orderedKgForExtrusionRollCount(js: Record<string, unknown>): number | null {
+  const qv = Number(js.quantity_value ?? 0)
+  const qu = String(js.quantity_unit ?? '').toLowerCase()
+  if (qu === 'kg' && qv > 0 && Number.isFinite(qv)) return qv
+  const totalKg = js.total_kg != null ? Number(js.total_kg) : NaN
+  if (Number.isFinite(totalKg) && totalKg > 0) return totalKg
+  return null
+}
+
 /** Roll / carton count for print header (e.g. `40 Ctns`, `12 Rolls`, `40 Ctns (12 Rolls)`). */
 export function jobSheetRollCartonCountLabel(
   js: Record<string, unknown>,
   spec: Record<string, unknown>,
+  extrusionRollCountOverride?: number | null,
 ): string {
   const identity = (spec as { identity?: Record<string, unknown> }).identity || {}
   const packaging = (spec as { packaging?: Record<string, unknown> }).packaging || {}
   const finish = String(identity.finish_mode || 'Rolls').trim() === 'Cartons' ? 'Cartons' : 'Rolls'
-  const numRolls = Math.max(0, Math.round(Number(js.num_rolls || 0)))
+  const schedulingRolls = Math.max(0, Math.round(Number(js.num_rolls || 0)))
   const qtyType = String(js.qty_type || 'kg').trim()
   const qu = String(js.quantity_unit || '').toLowerCase()
   const qv = Number(js.quantity_value || 0)
   const bagsPerCarton = Math.max(0, Math.round(Number(packaging.bags_per_carton || 0)))
+
+  const prefs = orderQtyPrefsFromJobSheetAndSpec(js, spec as SpecPayload)
+  const weightPerRollKg =
+    prefs.weight_per_roll_kg != null && prefs.weight_per_roll_kg > 0
+      ? prefs.weight_per_roll_kg
+      : js.weight_per_roll_kg != null && Number(js.weight_per_roll_kg) > 0
+        ? Number(js.weight_per_roll_kg)
+        : null
+
+  const extrusionRolls =
+    extrusionRollCountOverride != null && extrusionRollCountOverride > 0
+      ? Math.round(extrusionRollCountOverride)
+      : extrusionRollCountForPrint({
+          finishMode: finish,
+          totalKg: orderedKgForExtrusionRollCount(js),
+          weightPerRollKg,
+          schedulingRollCount: schedulingRolls > 0 ? schedulingRolls : null,
+        })
 
   if (finish === 'Cartons') {
     let numCartons = qtyType === 'units' && qu === 'cartons' && qv > 0 ? Math.round(qv) : 0
@@ -70,15 +100,17 @@ export function jobSheetRollCartonCountLabel(
     if (!(numCartons > 0) && Number.isFinite(npu) && npu > 0 && bagsPerCarton > 0) {
       numCartons = Math.ceil(npu / bagsPerCarton)
     }
-    if (numCartons > 0 && numRolls > 0) {
-      return `${fmtCount(numCartons)} Ctns (${fmtCount(numRolls)} Rolls)`
+    if (numCartons > 0 && extrusionRolls > 0) {
+      return `${fmtCount(numCartons)} Ctns (${fmtCount(extrusionRolls)} Rolls)`
     }
     if (numCartons > 0) return `${fmtCount(numCartons)} Ctns`
-    if (numRolls > 0) return `${fmtCount(numRolls)} Rolls`
+    if (extrusionRolls > 0) {
+      return extrusionRolls === 1 ? '1 Roll' : `${fmtCount(extrusionRolls)} Rolls`
+    }
     return ''
   }
-  if (numRolls > 0) {
-    return numRolls === 1 ? '1 Roll' : `${fmtCount(numRolls)} Rolls`
+  if (extrusionRolls > 0) {
+    return extrusionRolls === 1 ? '1 Roll' : `${fmtCount(extrusionRolls)} Rolls`
   }
   return ''
 }
@@ -122,6 +154,7 @@ export function buildJobSheetPrintHeaderSummaryLine(
   js: Record<string, unknown>,
   spec: Record<string, unknown>,
   geoDerived?: JobSheetPrintHeaderGeoSnapshot | null,
+  opts?: { extrusionRollCount?: number | null },
 ): string {
   const parts: string[] = []
 
@@ -135,8 +168,8 @@ export function buildJobSheetPrintHeaderSummaryLine(
   const packFmt = formatPackagingPerUnitForPrintHeader(packTail)
   if (packFmt) parts.push(packFmt)
 
-  const rollCtn = jobSheetRollCartonCountLabel(js, spec)
+  const rollCtn = jobSheetRollCartonCountLabel(js, spec, opts?.extrusionRollCount)
   if (rollCtn) parts.push(rollCtn)
 
-  return parts.join(', ')
+  return parts.join('. ')
 }

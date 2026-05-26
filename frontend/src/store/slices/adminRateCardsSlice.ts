@@ -30,6 +30,8 @@ export type QuoteDefaultsSettings = {
   formulation_custom_blend_markup: number
   extrusion_gusset_retail_per_kg: number
   extrusion_punched_retail_per_kg: number
+  /** Baseline extrusion waste % of productive order kg (e.g. 1 = 1%). */
+  default_order_waste_pct: number
 }
 
 export type MaterialsRetailBand = {

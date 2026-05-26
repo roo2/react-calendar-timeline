@@ -65,13 +65,21 @@ import {
   type ConversionPackingMode,
 } from '../utils/conversionPacking'
 import {
-  normalizeVentHoleSizeMm,
-  ventEnabledFromConv,
-  ventHolesAcrossFromConv,
-  ventHolesAlongFromConv,
-  ventTotalHoles,
-  VENT_HOLE_SIZE_MM_OPTIONS,
-} from '../utils/conversionVent'
+  PUNCH_HOLE_SIZE_MM_OPTIONS,
+  inlinePunchEnabled,
+  inlinePunchHolesAcross,
+  inlinePunchHolesAlong,
+  inlinePunchPosition,
+  inlinePunchTotalHoles,
+  normalizePunchHoleSizeMm,
+  productSummaryPunchedChecked,
+  punchedConversionEnabledFromConv,
+  punchedConversionHolesAcross,
+  punchedConversionHolesAlong,
+  punchedConversionPosition,
+  punchedConversionTotalHoles,
+  ventedEnabledFromConv,
+} from '../utils/punchHoleSpec'
 
 type DerivedDimensions = {
   layflat_mm: number
@@ -227,6 +235,10 @@ export function makeDefaultSpec(): SpecPayload {
       inline_perforation: false,
       shrink: false,
       hole_punched: false,
+      inline_punch_hole_size_mm: 6,
+      inline_punch_holes_across: null,
+      inline_punch_holes_along: null,
+      inline_punch_hole_position_description: null,
       inline_seal: false,
       notes: null,
       seal_type: null,
@@ -236,6 +248,13 @@ export function makeDefaultSpec(): SpecPayload {
         pack_lay_flat: false,
         tag_packs: false,
         tag_ctn: false,
+        punched_conversion_enabled: false,
+        punched_conversion_hole_size_mm: 6,
+        punched_conversion_holes_across: null,
+        punched_conversion_holes_along: null,
+        punched_conversion_hole_position_description: null,
+        vented_enabled: false,
+        // Legacy payload compatibility.
         vent_enabled: false,
         vent_hole_size_mm: 6,
         vent_holes_across: null,
@@ -376,7 +395,10 @@ export function SpecPayloadForm(props: {
   const packaging = spec.packaging || {}
   const conversion = (run as { conversion?: Record<string, unknown> }).conversion || {}
   const packingMode = deriveConversionPackingMode(conversion)
-  const ventEnabled = ventEnabledFromConv(conversion)
+  const inlinePunchOn = inlinePunchEnabled(run)
+  const conversionPunchOn = punchedConversionEnabledFromConv(conversion)
+  const ventedOn = ventedEnabledFromConv(conversion)
+  const punchedOn = productSummaryPunchedChecked(run, identity.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls')
 
   function patchConversion(patch: Record<string, unknown>) {
     update((d) => {
@@ -894,9 +916,10 @@ export function SpecPayloadForm(props: {
       error={!!errorFor('spec.run_requirements.treat_inside_outside')}
       helperText={errorFor('spec.run_requirements.treat_inside_outside') || ''}
     >
-      <MenuItem value="none">none</MenuItem>
-      <MenuItem value="inside">inside</MenuItem>
-      <MenuItem value="outside">outside</MenuItem>
+      <MenuItem value="none">None</MenuItem>
+      <MenuItem value="inside">Inside</MenuItem>
+      <MenuItem value="outside">Outside</MenuItem>
+      <MenuItem value="both_sides">Inside and Outside</MenuItem>
     </DefaultSelectField>
   )
   const sealTypeField = (
@@ -1638,11 +1661,41 @@ export function SpecPayloadForm(props: {
           <FormControlLabel
             control={
               <Checkbox
-                checked={!!run.hole_punched}
-                onChange={(e) => update((d) => (d.run_requirements.hole_punched = e.target.checked))}
+                checked={punchedOn}
+                onChange={(e) =>
+                  update((d) => {
+                    const checked = e.target.checked
+                    const rr = (d.run_requirements as Record<string, unknown>) || {}
+                    const conv = ((rr.conversion as Record<string, unknown>) || {}) as Record<string, unknown>
+                    if (!checked) {
+                      ;(d.run_requirements as any).hole_punched = false
+                      ;(d.run_requirements as any).conversion = { ...conv, punched_conversion_enabled: false }
+                      return
+                    }
+                    if (finishMode === 'Cartons') {
+                      ;(d.run_requirements as any).hole_punched = false
+                      ;(d.run_requirements as any).conversion = { ...conv, punched_conversion_enabled: true }
+                    } else {
+                      ;(d.run_requirements as any).hole_punched = true
+                    }
+                  })
+                }
               />
             }
             label="Punched"
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={ventedOn}
+                onChange={(e) =>
+                  patchConversion({
+                    vented_enabled: e.target.checked,
+                  })
+                }
+              />
+            }
+            label="Vented"
           />
           <FormControlLabel
             control={<Checkbox checked={!!run.shrink} onChange={(e) => update((d) => ((d.run_requirements as any).shrink = e.target.checked))} />}
@@ -2227,9 +2280,11 @@ export function SpecPayloadForm(props: {
                   ? 'Inside'
                   : run.treat_inside_outside === 'outside'
                     ? 'Outside'
-                    : run.treat_inside_outside === 'none' || !run.treat_inside_outside
-                      ? '—'
-                      : String(run.treat_inside_outside)
+                    : run.treat_inside_outside === 'both_sides'
+                      ? 'Inside and Outside'
+                      : run.treat_inside_outside === 'none' || !run.treat_inside_outside
+                        ? '—'
+                        : String(run.treat_inside_outside)
               const sealText = formatSealTypeLabel(sealTypeUiValue) || sealTypeUiValue
               const rowFilter = (pairs: unknown) =>
                 (Array.isArray(pairs) ? pairs : [])
@@ -2926,6 +2981,102 @@ export function SpecPayloadForm(props: {
           {printingTreatField}
         </Box>
 
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              md: 'auto repeat(4, minmax(0, 1fr))',
+            },
+            gap: 2,
+            mt: 2,
+            alignItems: 'end',
+          }}
+        >
+          <FormControlLabel
+            sx={{ m: 0, alignSelf: 'end', pb: 1 }}
+            control={
+              <Checkbox
+                checked={inlinePunchOn}
+                onChange={(e) =>
+                  update((d) => {
+                    ;(d.run_requirements as any).hole_punched = e.target.checked
+                  })
+                }
+              />
+            }
+            label="Punched (Inline)"
+          />
+          <DefaultSelectField
+            label="Hole size"
+            defaultValue={6}
+            value={String(normalizePunchHoleSizeMm((run as any).inline_punch_hole_size_mm))}
+            onChange={(e) =>
+              update((d) => {
+                ;(d.run_requirements as any).inline_punch_hole_size_mm = normalizePunchHoleSizeMm(e.target.value)
+              })
+            }
+            fullWidth
+            disabled={!inlinePunchOn}
+          >
+            {PUNCH_HOLE_SIZE_MM_OPTIONS.map((mm) => (
+              <MenuItem key={mm} value={String(mm)}>
+                {mm}mm
+              </MenuItem>
+            ))}
+          </DefaultSelectField>
+          <TextField
+            label="Holes across"
+            type="number"
+            inputProps={{ min: 0, step: 1 }}
+            value={inlinePunchHolesAcross(run) > 0 ? String(inlinePunchHolesAcross(run)) : ''}
+            onChange={(e) =>
+              update((d) => {
+                ;(d.run_requirements as any).inline_punch_holes_across =
+                  e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value)))
+              })
+            }
+            fullWidth
+            disabled={!inlinePunchOn}
+          />
+          <TextField
+            label="Hole rows"
+            type="number"
+            inputProps={{ min: 0, step: 1 }}
+            value={inlinePunchHolesAlong(run) > 0 ? String(inlinePunchHolesAlong(run)) : ''}
+            onChange={(e) =>
+              update((d) => {
+                ;(d.run_requirements as any).inline_punch_holes_along =
+                  e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value)))
+              })
+            }
+            fullWidth
+            disabled={!inlinePunchOn}
+          />
+          <TextField
+            label="Total holes"
+            value={inlinePunchOn && inlinePunchTotalHoles(run) > 0 ? String(inlinePunchTotalHoles(run)) : ''}
+            fullWidth
+            disabled
+          />
+        </Box>
+        <TextField
+          label="Hole position description"
+          value={inlinePunchPosition(run)}
+          onChange={(e) =>
+            update((d) => {
+              ;(d.run_requirements as any).inline_punch_hole_position_description =
+                e.target.value === '' ? null : e.target.value
+            })
+          }
+          fullWidth
+          multiline
+          minRows={2}
+          sx={{ mt: 2 }}
+          disabled={!inlinePunchOn}
+          placeholder="e.g. 50mm from bottom, then 80mm between rows"
+        />
+
       </Paper>
 
       {finishMode === 'Cartons' ? (
@@ -3056,32 +3207,32 @@ export function SpecPayloadForm(props: {
             }}
           >
             <FormControlLabel
-              sx={{ m: 0, alignSelf: 'end', pb: 1 }}
+              sx={{ mt: 0, alignSelf: 'end', pb: 1 }}
               control={
                 <Checkbox
-                  checked={ventEnabled}
+                  checked={conversionPunchOn}
                   onChange={(e) =>
                     patchConversion({
-                      vent_enabled: e.target.checked,
+                      punched_conversion_enabled: e.target.checked,
                     })
                   }
                 />
               }
-              label="Vent"
+              label="Punched (Conversion)"
             />
             <DefaultSelectField
               label="Hole size"
               defaultValue={6}
-              value={String(normalizeVentHoleSizeMm(conversion.vent_hole_size_mm))}
+              value={String(normalizePunchHoleSizeMm((conversion as any).punched_conversion_hole_size_mm))}
               onChange={(e) =>
                 patchConversion({
-                  vent_hole_size_mm: normalizeVentHoleSizeMm(e.target.value),
+                  punched_conversion_hole_size_mm: normalizePunchHoleSizeMm(e.target.value),
                 })
               }
               fullWidth
-              disabled={!ventEnabled}
+              disabled={!conversionPunchOn}
             >
-              {VENT_HOLE_SIZE_MM_OPTIONS.map((mm) => (
+              {PUNCH_HOLE_SIZE_MM_OPTIONS.map((mm) => (
                 <MenuItem key={mm} value={String(mm)}>
                   {mm}mm
                 </MenuItem>
@@ -3091,34 +3242,34 @@ export function SpecPayloadForm(props: {
               label="Holes across"
               type="number"
               inputProps={{ min: 0, step: 1 }}
-              value={ventHolesAcrossFromConv(conversion) > 0 ? String(ventHolesAcrossFromConv(conversion)) : ''}
+              value={punchedConversionHolesAcross(conversion) > 0 ? String(punchedConversionHolesAcross(conversion)) : ''}
               onChange={(e) =>
                 patchConversion({
-                  vent_holes_across:
+                  punched_conversion_holes_across:
                     e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
                 })
               }
               fullWidth
-              disabled={!ventEnabled}
+              disabled={!conversionPunchOn}
             />
             <TextField
               label="Hole rows"
               type="number"
               inputProps={{ min: 0, step: 1 }}
-              value={ventHolesAlongFromConv(conversion) > 0 ? String(ventHolesAlongFromConv(conversion)) : ''}
+              value={punchedConversionHolesAlong(conversion) > 0 ? String(punchedConversionHolesAlong(conversion)) : ''}
               onChange={(e) =>
                 patchConversion({
-                  vent_holes_along:
+                  punched_conversion_holes_along:
                     e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))),
                 })
               }
               fullWidth
-              disabled={!ventEnabled}
+              disabled={!conversionPunchOn}
             />
             <TextField
               label="Total holes"
               value={
-                ventEnabled && ventTotalHoles(conversion) > 0 ? String(ventTotalHoles(conversion)) : ''
+                conversionPunchOn && punchedConversionTotalHoles(conversion) > 0 ? String(punchedConversionTotalHoles(conversion)) : ''
               }
               fullWidth
               disabled
@@ -3126,22 +3277,28 @@ export function SpecPayloadForm(props: {
           </Box>
           <TextField
             label="Hole position description"
-            value={
-              conversion.vent_hole_position_description != null
-                ? String(conversion.vent_hole_position_description)
-                : ''
-            }
+            value={punchedConversionPosition(conversion)}
             onChange={(e) =>
               patchConversion({
-                vent_hole_position_description: e.target.value === '' ? null : e.target.value,
+                punched_conversion_hole_position_description: e.target.value === '' ? null : e.target.value,
               })
             }
             fullWidth
             multiline
             minRows={2}
             sx={{ mt: 2 }}
-            disabled={!ventEnabled}
+            disabled={!conversionPunchOn}
             placeholder="e.g. 50mm from bottom, then 80mm between rows"
+          />
+          <FormControlLabel
+            sx={{ mt: 1 }}
+            control={
+              <Checkbox
+                checked={ventedOn}
+                onChange={(e) => patchConversion({ vented_enabled: e.target.checked })}
+              />
+            }
+            label="Vented"
           />
 
           <FormControl component="fieldset" sx={{ mt: 2, width: '100%' }}>

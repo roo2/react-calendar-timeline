@@ -32,6 +32,8 @@ export type QuoteRatebook = {
     gusset_per_kg?: number
     punched_per_kg?: number
   }
+  /** Baseline extrusion waste allowance as % of productive order kg (quote_defaults; default 1). */
+  default_order_waste_pct?: number
   extruders?: Array<{
     extruder_code: string
     model: string | null
@@ -142,8 +144,14 @@ export type QuotePreview = {
   extrusion_waste_minutes: number
   /** Productive plastic (derived) plus kg run to waste during extrusion downtime (ratebook waste adders + extrusion waste minutes × throughput). */
   total_extruded_kg: number | null
-  /** Kg of material attributed to extrusion waste (downtime × throughput); same basis as `cost_breakdown.waste_cost`. */
+  /** Total extrusion waste kg (setup/downtime + order % allowance). */
   waste_kg: number | null
+  /** Waste kg from extrusion setup / downtime minutes × throughput. */
+  waste_kg_downtime: number | null
+  /** Waste kg from configurable % of productive order kg (`default_order_waste_pct`). */
+  waste_kg_order_pct: number | null
+  /** Ratebook default order waste % used for this preview (e.g. 1). */
+  default_order_waste_pct: number
   /** Metres of core (rolls × layflat width) when Rolls + core; for breakdown labelling. */
   core_length_m: number | null
   conversion_minutes_total?: number | null
@@ -168,6 +176,8 @@ export type QuotePreview = {
     conversion_cost: number
     core_cost: number
     waste_cost: number
+    waste_cost_downtime: number
+    waste_cost_order_pct: number
   }
   price_breakdown: {
     material_price: number
@@ -328,6 +338,15 @@ function readExtrusionFeatureRetails(ratebook: QuoteRatebook): { gusset_per_kg: 
     gusset_per_kg: num(x?.gusset_per_kg, DEFAULT_EXTRUSION_FEATURE_RETAIL_PER_KG.gusset_per_kg),
     punched_per_kg: num(x?.punched_per_kg, DEFAULT_EXTRUSION_FEATURE_RETAIL_PER_KG.punched_per_kg),
   }
+}
+
+const DEFAULT_ORDER_WASTE_PCT = 1
+
+/** Configurable baseline waste % of productive order kg (from ratebook / quote_defaults). */
+export function readDefaultOrderWastePct(ratebook: QuoteRatebook): number {
+  const n = Number(ratebook.default_order_waste_pct)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_ORDER_WASTE_PCT
+  return Math.min(100, n)
 }
 
 function productUnitsNounPluralForMoq(productType: string): string {
@@ -1230,12 +1249,19 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     0,
   )
   const wasteMinutes = baseWasteAdderMinutes + extrusionExtraMinutes
-  const extrusionWasteKg =
+  const downtimeWasteKg =
     wasteMinutes > 0 && throughput > 0 ? (wasteMinutes / 60) * throughput : 0
-  let wasteCost = 0
-  if (extrusionWasteKg > 0 && materialCostPerKg > 0) {
-    wasteCost = extrusionWasteKg * materialCostPerKg
+  const defaultOrderWastePct = readDefaultOrderWastePct(ratebook)
+  const orderWasteKg =
+    derivedTotalKg > 0 && defaultOrderWastePct > 0 ? (derivedTotalKg * defaultOrderWastePct) / 100 : 0
+  const extrusionWasteKg = downtimeWasteKg + orderWasteKg
+  let downtimeWasteCost = 0
+  let orderWasteCost = 0
+  if (materialCostPerKg > 0) {
+    if (downtimeWasteKg > 0) downtimeWasteCost = downtimeWasteKg * materialCostPerKg
+    if (orderWasteKg > 0) orderWasteCost = orderWasteKg * materialCostPerKg
   }
+  const wasteCost = downtimeWasteCost + orderWasteCost
   // Sell-side: no separate retail line for waste (material uplift policy); cost side still has wasteCost.
   const wastePrice = 0
   const totalExtrudedKg = derivedTotalKg + extrusionWasteKg
@@ -1326,6 +1352,9 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     extrusion_waste_minutes: Math.max(0, Math.round(extrusionExtraMinutes)),
     total_extruded_kg: totalExtrudedKg > 0 ? roundMoney(totalExtrudedKg) : null,
     waste_kg: extrusionWasteKg > 0 ? roundMoney(extrusionWasteKg) : null,
+    waste_kg_downtime: downtimeWasteKg > 0 ? roundMoney(downtimeWasteKg) : null,
+    waste_kg_order_pct: orderWasteKg > 0 ? roundMoney(orderWasteKg) : null,
+    default_order_waste_pct: defaultOrderWastePct,
     core_length_m: coreLengthM != null && coreLengthM > 0 ? roundMoney(coreLengthM) : null,
     conversion_minutes_total: conversionTotalMinutes,
     conversion_minutes_run: conversionRunMinutes,
@@ -1345,6 +1374,8 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
       conversion_cost: roundMoney(conversionCost),
       core_cost: roundMoney(coreCost),
       waste_cost: roundMoney(wasteCost),
+      waste_cost_downtime: roundMoney(downtimeWasteCost),
+      waste_cost_order_pct: roundMoney(orderWasteCost),
     },
     price_breakdown: {
       material_price: roundMoney(materialPrice),

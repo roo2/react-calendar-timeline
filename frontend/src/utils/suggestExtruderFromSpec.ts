@@ -16,21 +16,9 @@ function runUpSlugToNumber(runUp: string | undefined): number {
   return 1
 }
 
-export type ExtruderWidthSuggestion = {
-  /** `extruder_code` of the best-fit row, or the largest available if nothing fits. */
-  extruderCode: string | null
-  /** Optional one-line note (e.g. no extruder wide enough). */
-  hintLine: string
-}
-
-export function suggestSmallestFittingExtruderCode(
-  spec: SpecPayload,
-  ratebook: QuoteRatebook | null | undefined,
-): ExtruderWidthSuggestion {
-  const extruders = Array.isArray(ratebook?.extruders) ? ratebook.extruders : []
-  if (!extruders.length || !spec?.dimensions) {
-    return { extruderCode: null, hintLine: '' }
-  }
+/** Decision width (mm) used to pick an extruder — same calculation as {@link suggestSmallestFittingExtruderCode}. */
+export function extruderDecisionWidthMmFromSpec(spec: SpecPayload): number | null {
+  if (!spec?.dimensions) return null
   const pt = String(spec.identity?.product_type || 'Bag')
   const isLRFilm = isLeftRightWidthFilmProductType(pt)
   const isUFilm = isUFilmProductType(pt)
@@ -38,7 +26,7 @@ export function suggestSmallestFittingExtruderCode(
   const ufilmL = Math.round(Number(spec.dimensions?.ufilm_left_width_mm || 0) || 0)
   const ufilmR = Math.round(Number(spec.dimensions?.ufilm_right_width_mm || 0) || 0)
   if (!(widthMmNum > 0) && !(isLRFilm && ufilmL > 0 && ufilmR > 0)) {
-    return { extruderCode: null, hintLine: '' }
+    return null
   }
   const rawGeom = String(spec.dimensions?.geometry || '')
   const canHaveGusset = productTypeCanHaveGusset(pt)
@@ -60,9 +48,50 @@ export function suggestSmallestFittingExtruderCode(
         ufilm_left_width_mm: isLRFilm ? Math.round(Number(spec.dimensions?.ufilm_left_width_mm || 0) || 0) : null,
         ufilm_right_width_mm: isLRFilm ? Math.round(Number(spec.dimensions?.ufilm_right_width_mm || 0) || 0) : null,
       })
-  if (!(extruderDecisionWidthMm > 0)) {
+  return extruderDecisionWidthMm > 0 ? extruderDecisionWidthMm : null
+}
+
+/** True when the ratebook row for `extruderCode` is wide enough for the spec's decision width. */
+export function extruderCodeFitsSpecWidth(
+  extruderCode: string,
+  spec: SpecPayload,
+  ratebook: QuoteRatebook | null | undefined,
+): boolean {
+  const code = String(extruderCode || '').trim()
+  if (!code) return false
+  const need = extruderDecisionWidthMmFromSpec(spec)
+  if (need == null) return true
+  const extruders = Array.isArray(ratebook?.extruders) ? ratebook.extruders : []
+  const row = extruders.find((e) => e && String(e.extruder_code || '').trim() === code)
+  if (!row || typeof row.decision_width_mm !== 'number' || !Number.isFinite(row.decision_width_mm)) {
+    return false
+  }
+  return Number(row.decision_width_mm) >= need
+}
+
+export type ExtruderWidthSuggestion = {
+  /** `extruder_code` of the best-fit row, or the largest available if nothing fits. */
+  extruderCode: string | null
+  /** Optional one-line note (e.g. no extruder wide enough). */
+  hintLine: string
+}
+
+export function suggestSmallestFittingExtruderCode(
+  spec: SpecPayload,
+  ratebook: QuoteRatebook | null | undefined,
+): ExtruderWidthSuggestion {
+  const extruders = Array.isArray(ratebook?.extruders) ? ratebook.extruders : []
+  if (!extruders.length || !spec?.dimensions) {
     return { extruderCode: null, hintLine: '' }
   }
+  const extruderDecisionWidthMm = extruderDecisionWidthMmFromSpec(spec)
+  if (extruderDecisionWidthMm == null) {
+    return { extruderCode: null, hintLine: '' }
+  }
+
+  const pt = String(spec.identity?.product_type || 'Bag')
+  const isUFilm = isUFilmProductType(pt)
+  const widthLabel = isUFilm ? 'middle width' : 'layflat'
 
   const usable = extruders
     .filter((e) => e && typeof e.decision_width_mm === 'number' && Number.isFinite(e.decision_width_mm))
@@ -76,7 +105,6 @@ export function suggestSmallestFittingExtruderCode(
     return { extruderCode: null, hintLine: 'No extruders in ratebook.' }
   }
 
-  const widthLabel = isUFilm ? 'middle width' : 'layflat'
   const firstFit = usable.find((e) => (e.decision_width_mm ?? 0) >= extruderDecisionWidthMm) || null
   if (firstFit) {
     return {

@@ -12,6 +12,7 @@ import {
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
 import { derivedInlineSeal, productTypeCanHaveGusset } from './specCompat'
 import { isLeftRightWidthFilmProductType } from './filmProductTypes'
+import { productSummaryPunchedChecked } from './punchHoleSpec'
 
 function dimensionsAreContinuous(dim: any, productType: string): boolean {
   const lu = String(dim?.length_units || '')
@@ -42,12 +43,52 @@ function mapPrintMethod(m: string | undefined): 'None' | 'Inline' | 'Uteco' {
   return 'None'
 }
 
-function mapRollBilling(
-  v: string | undefined,
-): 'core_included' | 'core_off' | 'core_half_off' | null {
-  if (v === 'core_half_off') return 'core_half_off'
-  if (v === 'core_off') return 'core_off'
-  if (v === 'core_included') return 'core_included'
+export type RollWeightBillingSlug = 'core_included' | 'core_off' | 'core_half_off'
+
+/** Legacy specs sometimes only set `packaging.core_policy` (quote import / older saves). */
+export function rollBillingRawFromCorePolicy(policy: unknown): RollWeightBillingSlug | undefined {
+  const x = String(policy ?? '')
+    .trim()
+    .toLowerCase()
+  if (x === 'include') return 'core_included'
+  if (x === 'exclude') return 'core_off'
+  if (x === 'half') return 'core_half_off'
+  return undefined
+}
+
+/** Same resolution as job sheet print / {@link SpecPayloadForm} (identity → spec → packaging policy). */
+export function pickRollWeightBillingRaw(spec: SpecPayload | Record<string, unknown>): unknown {
+  const rec = spec as Record<string, unknown>
+  const id = (rec.identity as Record<string, unknown> | undefined) || {}
+  const pack = (rec.packaging as Record<string, unknown> | undefined) || {}
+  const fromPolicy = rollBillingRawFromCorePolicy(pack.core_policy)
+  return (
+    id.roll_weight_billing ??
+    (id as { rollWeightBilling?: unknown }).rollWeightBilling ??
+    rec.roll_weight_billing ??
+    (rec.identity as { roll_weight_billing?: unknown } | undefined)?.roll_weight_billing ??
+    fromPolicy
+  )
+}
+
+export function resolveRollWeightBillingSlug(raw: unknown): RollWeightBillingSlug {
+  const x = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\s+/g, '_')
+  if (x === 'core_half_off' || x === 'half_core' || x === 'half') return 'core_half_off'
+  if (x === 'core_off' || x === 'exclude_core' || x === 'exclude' || x === 'without_core' || x === 'no_core') {
+    return 'core_off'
+  }
+  if (
+    x === 'core_included' ||
+    x === 'include_core' ||
+    x === 'include' ||
+    x === 'with_core'
+  ) {
+    return 'core_included'
+  }
   return 'core_off'
 }
 
@@ -150,6 +191,7 @@ export function buildQuickQuoteInputsFromSpec(
     },
   )
 
+  const punched = productSummaryPunchedChecked(run as Record<string, unknown>, finishMode)
   return {
     override_price_per_kg: null,
     product_type: productType,
@@ -163,7 +205,7 @@ export function buildQuickQuoteInputsFromSpec(
     continuous_roll: continuousRoll,
     inline_perforation: !!run.inline_perforation,
     inline_seal: derivedInlineSeal(productType, finishMode),
-    hole_punched: !!run.hole_punched,
+    hole_punched: punched,
     gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
     trim_pct: trimPct,
     resin_blend_code: form.blend_type != null ? String(form.blend_type) : null,
@@ -172,7 +214,8 @@ export function buildQuickQuoteInputsFromSpec(
     finish_mode: finishMode,
     bags_per_carton: finishMode === 'Cartons' ? (pack.bags_per_carton != null ? Number(pack.bags_per_carton) : null) : null,
     core_type: pack.core_type != null ? String(pack.core_type) : '13mm',
-    roll_weight_billing: finishMode === 'Rolls' ? mapRollBilling(id.roll_weight_billing) : null,
+    roll_weight_billing:
+      finishMode === 'Rolls' ? resolveRollWeightBillingSlug(pickRollWeightBillingRaw(spec)) : null,
     extruder_code: opts?.extruderCode ?? null,
     colour_components: colourComponents,
     additives,

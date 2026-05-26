@@ -50,7 +50,10 @@ export function JobSheetPrintOrderHeaderFields(props: JobSheetPrintOrderHeaderFi
         <div className="js-compact-grid">
           <div className="js-compact-item">
             <span className="js-compact-k">Notes:</span>
-            <span className="js-order-header-notes" style={{ whiteSpace: 'pre-wrap' }}>
+            <span
+              className={notesText ? 'js-order-header-notes js-hl-value js-yellow' : 'js-order-header-notes'}
+              style={{ whiteSpace: 'pre-wrap' }}
+            >
               {notesText || '\u00A0'}
             </span>
           </div>

@@ -620,5 +620,6 @@
     "extrusion_throughput_kg_per_hr": 0,
     "packing_factor_rolls": 0.7,
     "packing_factor_cartons": 0.5,
-    "pallet_volume_m3": 1.0
+    "pallet_volume_m3": 1.0,
+    "default_order_waste_pct": 1
 }

@@ -629,5 +629,6 @@
   "quote_extrusion_feature_retails": {
     "gusset_per_kg": 0.5,
     "punched_per_kg": 0.2
-  }
+  },
+  "default_order_waste_pct": 1
 }

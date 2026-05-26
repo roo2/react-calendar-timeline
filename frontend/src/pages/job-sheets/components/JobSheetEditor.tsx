@@ -54,7 +54,10 @@ import { CustomerOverproductionHandlingField } from '../../../components/quantit
 import { CartonRollWeightField, LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
-import { suggestSmallestFittingExtruderCode } from '../../../utils/suggestExtruderFromSpec'
+import {
+  extruderCodeFitsSpecWidth,
+  suggestSmallestFittingExtruderCode,
+} from '../../../utils/suggestExtruderFromSpec'
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
 import { canEnableSaveAsNewProduct } from '../../../utils/saveAsNewProductEligibility'
 import { normalizeCustomerOverproductionHandling } from '../../../utils/customerOverproductionHandling'
@@ -430,11 +433,17 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   useEffect(() => {
     if (extruderUserTouchedRef.current) return
-    if (productionExtruderCode.trim() !== '') return
-    const code = extruderSuggestion.extruderCode
-    if (!code) return
-    setProductionExtruderCode(code)
-  }, [productionExtruderCode, extruderSuggestion.extruderCode])
+    const suggested = extruderSuggestion.extruderCode
+    if (!suggested) return
+    const current = productionExtruderCode.trim()
+    if (!current) {
+      setProductionExtruderCode(suggested)
+      return
+    }
+    if (!extruderCodeFitsSpecWidth(current, spec, ratebook ?? null)) {
+      setProductionExtruderCode(suggested)
+    }
+  }, [productionExtruderCode, extruderSuggestion.extruderCode, spec, ratebook])
 
   const estimatedUnitsPerPalletVolume = useMemo(
     () =>
@@ -446,9 +455,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       }),
     [ratebook, spec, qty.quickInputs, extruderCodeForQty],
   )
-
-  const displayProductCode =
-    (previewProductCode.trim() || (mode === 'edit' ? (productInfo?.code || '').trim() : '')).trim() || '—'
 
   const livePreviewProps = useJobSheetLivePreviewProps({
     spec,
@@ -1036,26 +1042,23 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           }}
           {...jobSheetQuantityFieldsProps}
           productRow={
-            <Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.5 }}>
-                  {mode === 'new' ? 'Customer-facing product code (generated)' : 'Customer-facing product code'}
-                </Typography>
-                <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 600, wordBreak: 'break-word' }}>
-                  {displayProductCode}
-                </Typography>
-              </Box>
-              {mode === 'edit' && productId ? (
-                <MuiLink
-                  component={Link}
-                  to={`/products/${encodeURIComponent(productId)}`}
-                  underline="hover"
-                  sx={{ display: 'inline-block', mt: 1, fontSize: '0.875rem' }}
-                >
-                  View product versions
-                </MuiLink>
-              ) : null}
-            </Box>
+            mode === 'edit' && productId ? (
+              <MuiLink
+                component="button"
+                type="button"
+                underline="hover"
+                sx={{ fontSize: '0.875rem', verticalAlign: 'baseline', textAlign: 'left' }}
+                disabled={savingJobSheet}
+                onClick={async (e) => {
+                  e.preventDefault()
+                  const ok = await onSave()
+                  if (!ok) return
+                  nav(`/products/${encodeURIComponent(productId)}`)
+                }}
+              >
+                View product versions
+              </MuiLink>
+            ) : null
           }
         />
 
