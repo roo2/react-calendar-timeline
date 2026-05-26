@@ -2914,7 +2914,7 @@ export function JobSheetPrintPage() {
           column-gap: 1.25em;
           row-gap: 8px;
           align-items: center;
-          justify-content: space-around;
+          justify-content: space-between;
         }
         .js-extrusion-run-flags--run-requirements {
           justify-content: flex-start;
