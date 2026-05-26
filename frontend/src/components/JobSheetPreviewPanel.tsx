@@ -115,6 +115,7 @@ export function JobSheetPreviewPanel(props: {
 
   const product: JobSheetPrintOrderHeaderModel['product'] = {
     generatedProductCode: String(generatedProductCode ?? '').trim(),
+    productFinishLabel: '',
     summaryLine: String(headerSummaryLineProp ?? quoteSummary?.headerSummaryLine ?? '').trim(),
     notes: String(notes ?? '').trim(),
     qualityChecks: qcLabels,

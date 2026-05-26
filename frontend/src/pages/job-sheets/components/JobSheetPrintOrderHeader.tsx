@@ -4,14 +4,14 @@ import { JobSheetPrintOrderHeaderFields } from './JobSheetPrintOrderHeaderFields
 
 export type { JobSheetPrintOrderHeaderModel } from './jobSheetPrintOrderHeaderModel'
 
-const CUSTOMER_NAME_PRINT_TITLE_MAX = 14
+const CUSTOMER_NAME_PRINT_TITLE_MAX = 20
 
 function dash(v: string): string {
   const t = String(v ?? '').trim()
   return t === '' ? '—' : t
 }
 
-/** Customer name truncated for the print title line (max 14 characters). */
+/** Customer name capped for the print title line (max 20 characters, no ellipsis). */
 export function truncateCustomerNameForPrintTitle(
   name: string,
   maxLen = CUSTOMER_NAME_PRINT_TITLE_MAX,
@@ -24,10 +24,11 @@ export function truncateCustomerNameForPrintTitle(
 export function buildJobSheetPrintTitleParts(
   header: JobSheetPrintOrderHeaderModel['header'],
   product: JobSheetPrintOrderHeaderModel['product'],
-): { jobCode: string; customer: string; productCode: string } {
+): { jobCode: string; customer: string; productFinish: string; productCode: string } {
   return {
     jobCode: dash(String(header.jobCode ?? '')),
     customer: truncateCustomerNameForPrintTitle(String(header.customer ?? '')),
+    productFinish: dash(String(product.productFinishLabel ?? '')),
     productCode: dash(String(product.generatedProductCode ?? '')),
   }
 }
@@ -38,7 +39,7 @@ export function formatJobSheetPrintPageTitle(
   product: JobSheetPrintOrderHeaderModel['product'],
 ): string {
   const p = buildJobSheetPrintTitleParts(header, product)
-  return `${p.jobCode} * ${p.customer} * ${p.productCode}`
+  return `${p.jobCode} * ${p.customer} * ${p.productFinish} * ${p.productCode}`
 }
 
 export function JobSheetPrintPageTitle(props: {
@@ -52,6 +53,7 @@ export function JobSheetPrintPageTitle(props: {
     <div className={className}>
       <span className="js-title-part js-title-part--job">{p.jobCode}</span>
       <span className="js-title-part js-title-part--customer">{p.customer}</span>
+      <span className="js-title-part js-title-part--finish">{p.productFinish}</span>
       <span className="js-title-part js-title-part--product">{p.productCode}</span>
     </div>
   )

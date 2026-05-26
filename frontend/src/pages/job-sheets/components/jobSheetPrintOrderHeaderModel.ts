@@ -10,6 +10,8 @@ export type JobSheetPrintOrderHeaderModel = {
   product: {
     /** Algorithmic product code from spec (shown in the page title). */
     generatedProductCode: string
+    /** Long-form product + finish for the title row (e.g. `Bag on Roll`). */
+    productFinishLabel: string
     /** One-line summary: type/finish code, order qty, packing, roll/ctn count. */
     summaryLine: string
     notes: string

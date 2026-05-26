@@ -270,8 +270,8 @@ function productCodeAdditiveSegment(formulation: any): string {
 }
 
 /**
- * Compute product code from spec only (e.g. PBR_(200+50)_600_50_BLK_AB.AS_2P).
- * Does not include a customer prefix; format: {Type}{R|C}_{Width}_{LengthMm}_{GaugeUm}_{Colour3}_{Additives?}_{Print?}
+ * Compute product code from spec only (e.g. `PBR_(200+50)x600x50_BLK_AB.AS_2P`, `PTR_1000x500x50_GRE`).
+ * Does not include a customer prefix; format: {Type}{R|C}_{Width}x{LengthMm}x{GaugeUm}_{Colour3}_{Additives?}_{Print?}
  */
 export function computeProductCodeFromSpec(spec: any): string {
   const identity = spec?.identity || {}
@@ -339,14 +339,13 @@ export function computeProductCodeFromSpec(spec: any): string {
     if (n > 0) printSeg = `${n}P`
   }
 
-  const parts = [`${typePrefix}${finishChar}`]
-  if (widthSeg) parts.push(widthSeg)
-  if (lengthMm) parts.push(lengthMm)
-  if (gaugeUm) parts.push(gaugeUm)
-  if (colourCode) parts.push(colourCode)
+  const dimParts = [widthSeg, lengthMm, gaugeUm].filter((s) => String(s ?? '').trim() !== '')
+  const codeParts = [`${typePrefix}${finishChar}`]
+  if (dimParts.length > 0) codeParts.push(dimParts.join('x'))
+  if (colourCode) codeParts.push(colourCode)
   const additiveSeg = productCodeAdditiveSegment(formulation)
-  if (additiveSeg) parts.push(additiveSeg)
-  if (printSeg) parts.push(printSeg)
+  if (additiveSeg) codeParts.push(additiveSeg)
+  if (printSeg) codeParts.push(printSeg)
 
-  return parts.filter(Boolean).join('_')
+  return codeParts.filter(Boolean).join('_')
 }

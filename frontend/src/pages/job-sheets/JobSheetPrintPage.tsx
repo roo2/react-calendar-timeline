@@ -2470,6 +2470,12 @@ export function JobSheetPrintPage() {
           }
     })()
 
+    const productFinishLabel =
+      productTypeFinishLabel(productType, finishMode, {
+        geometry: geometryLabelRaw,
+        gussetMm,
+      }) || ''
+
     return {
       perforated,
       header: {
@@ -2480,6 +2486,7 @@ export function JobSheetPrintPage() {
       },
       product: {
         generatedProductCode,
+        productFinishLabel,
         summaryLine: headerSummaryLine,
         notes: s(notes),
         qualityChecks: qualityCheckLabels,
@@ -2487,11 +2494,7 @@ export function JobSheetPrintPage() {
       extrusion: {
         productType: s(productType),
         finishMode: s(finishMode),
-        productFinishHeadline:
-          productTypeFinishLabel(productType, finishMode, {
-            geometry: geometryLabelRaw,
-            gussetMm,
-          }) || '—',
+        productFinishHeadline: productFinishLabel || '—',
         geometryLabel: displayGeometryLabel(geometryLabelRaw),
         geometryExtras: [
           gussetMm != null && gussetMm > 0 ? `Gusset ${formatExtrusionQty(gussetMm)} mm` : '',
@@ -2707,21 +2710,25 @@ export function JobSheetPrintPage() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 8px;
+          gap: 6px;
           text-align: left;
         }
         .js-title-part {
-          flex: 1 1 0;
+          flex: 0 1 auto;
           min-width: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
           white-space: nowrap;
+          overflow: visible;
         }
         .js-title-part--job {
           text-align: left;
         }
         .js-title-part--customer {
           text-align: center;
+          flex: 1 1 0;
+        }
+        .js-title-part--finish {
+          text-align: center;
+          flex: 1 1 auto;
         }
         .js-title-part--product {
           text-align: right;
@@ -3939,6 +3946,10 @@ export function JobSheetPrintPage() {
                         <span className="js-dim-primary-unit">µm</span>
                       </span>
                     </div>
+                    <div className="js-extrusion-run-flag">
+                      <span className="js-extrusion-spec-label">Number of rolls: </span>
+                      <b>{qty.extruderOutputRollCount > 0 ? fmtCount(qty.extruderOutputRollCount) : '-'}</b>
+                    </div>
                   </div>
                 </td>
               </tr>
@@ -3956,6 +3967,23 @@ export function JobSheetPrintPage() {
                       </b>
                     </div>
                     <div className="js-extrusion-run-flag">
+                      <span className="js-extrusion-spec-label">Meters per roll: </span>
+                      <b
+                        className={printHlValueClass(
+                          qty.highlightOrderedM && metersPerRollDisplay !== '-' ? 'js-yellow' : undefined,
+                        )}
+                      >
+                        {metersPerRollDisplay}
+                      </b>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td colSpan={6} className="js-extrusion-spec-line" aria-label="Extrusion roll quantities">
+                  <div className="js-extrusion-run-flags">
+                    
+                  <div className="js-extrusion-run-flag">
                       <span className="js-extrusion-spec-label">Ordered KG: </span>
                       <b
                         className={printHlValueClass(
@@ -3973,26 +4001,6 @@ export function JobSheetPrintPage() {
                           {')'}
                         </span>
                       ) : null}
-                    </div>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td colSpan={6} className="js-extrusion-spec-line" aria-label="Extrusion roll quantities">
-                  <div className="js-extrusion-run-flags">
-                    <div className="js-extrusion-run-flag">
-                      <span className="js-extrusion-spec-label">Number of rolls: </span>
-                      <b>{qty.extruderOutputRollCount > 0 ? fmtCount(qty.extruderOutputRollCount) : '-'}</b>
-                    </div>
-                    <div className="js-extrusion-run-flag">
-                      <span className="js-extrusion-spec-label">Meters per roll: </span>
-                      <b
-                        className={printHlValueClass(
-                          qty.highlightOrderedM && metersPerRollDisplay !== '-' ? 'js-yellow' : undefined,
-                        )}
-                      >
-                        {metersPerRollDisplay}
-                      </b>
                     </div>
                     <div className="js-extrusion-run-flag">
                       <span className="js-extrusion-spec-label">KG per roll: </span>
