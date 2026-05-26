@@ -14,6 +14,7 @@ import {
   coreWeightIncludedKgForBilling,
   formatBlendKgCell,
   formatBlendPct,
+  formatExtrusionQty,
   kgPerRollWithCoreWeight,
   type ExtrusionResinBlendComponent,
   type ExtrusionResinBlendPrintTable,
@@ -21,6 +22,7 @@ import {
 import {
   CONVERSION_PUNCH_FIELDS,
   formatPunchPrintLines,
+  INLINE_PUNCH_FIELDS,
   inlinePunchEnabled,
   punchedConversionEnabledFromConv,
   ventedEnabledFromConv,
@@ -97,7 +99,11 @@ import {
   resolveRollWeightBillingSlug,
   type SpecQuantitySlice,
 } from '../../utils/specToQuoteInputs'
-import { computeProductCodeFromSpec, computeProductDescriptionFromSpec } from '../../utils/productDescription'
+import {
+  computeProductCodeFromSpec,
+  computeProductDescriptionFromSpec,
+  productTypeFinishLabel,
+} from '../../utils/productDescription'
 import { jobSheetDescriptionWithPackagingTail } from '../../utils/quoteQuantityDescriptors'
 import { buildJobSheetPrintHeaderSummaryLine } from '../../utils/jobSheetPrintHeaderSummary'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
@@ -107,7 +113,6 @@ import {
   isBottomSealType,
   normalizePrintRegistration,
   printPositionHighlight,
-  printPositionHighlightClass,
   type PrintPositionHighlight,
 } from '../../utils/printRegistration'
 import { runUpNumericalFromSlug } from '../../utils/runUpNumerical'
@@ -121,7 +126,6 @@ import {
 import {
   overproductionOptionLabel,
   overproductionPrintHighlight,
-  overproductionPrintHighlightClass,
 } from '../../utils/customerOverproductionHandling'
 import { palletsRequiredCeil } from '../../utils/palletShippingEstimate'
 
@@ -228,11 +232,26 @@ function displayTreat(raw: unknown): string {
   return map[key] ?? (fallback !== '' ? fallback : '')
 }
 
+type InlinePunchPrintLines = {
+  summary: string
+  position: string
+  holeSizeMm: number
+  highlightHoleSize: boolean
+}
+
 type ExtrusionRunFlag = {
   key: string
   label: string
   value: string
   valueClassName?: string
+  valueNode?: ReactNode
+  flagClassName?: string
+}
+
+/** Job sheet print: yellow for emphasis; pink reserved for punch hole size ≠ 6mm and treat both sides. */
+function jobSheetPrintPositionHighlightClass(kind: PrintPositionHighlight): string | undefined {
+  if (kind === 'none') return undefined
+  return 'js-yellow'
 }
 
 /** Non-default extrusion run flags only (for print spec line). */
@@ -240,10 +259,12 @@ function buildExtrusionRunFlags(input: {
   runUpLine: string
   slit: string
   treat: string
+  treatHighlight: 'inside' | 'outside' | 'both' | ''
   shrink: boolean
   inlineSeal: boolean
   inlinePerforated: boolean
   inlinePunched: boolean
+  inlinePunchPrint: InlinePunchPrintLines | null
   widthToleranceDisplay: string
   widthToleranceHighlight: boolean
   gaugeTrimDisplay: string
@@ -265,7 +286,13 @@ function buildExtrusionRunFlags(input: {
 
   const treat = String(input.treat ?? '').trim()
   if (treat && treat.toLowerCase() !== 'none') {
-    flags.push({ key: 'treat', label: 'Treat', value: treat, valueClassName: hl })
+    flags.push({
+      key: 'treat',
+      label: 'Treat',
+      value: treat,
+      valueClassName:
+        input.treatHighlight === 'both' ? printHlValueClass('js-pink') : hl,
+    })
   }
 
   if (input.shrink) {
@@ -276,9 +303,6 @@ function buildExtrusionRunFlags(input: {
   }
   if (input.inlinePerforated) {
     flags.push({ key: 'inlinePerf', label: 'Inline perf', value: 'Yes', valueClassName: hl })
-  }
-  if (input.inlinePunched) {
-    flags.push({ key: 'inlinePunch', label: 'Inline punch', value: 'Yes', valueClassName: hl })
   }
   if (input.widthToleranceHighlight && String(input.widthToleranceDisplay ?? '').trim()) {
     flags.push({
@@ -298,6 +322,30 @@ function buildExtrusionRunFlags(input: {
   }
   if (input.vented) {
     flags.push({ key: 'vented', label: 'Vented', value: 'Yes', valueClassName: hl })
+  }
+  if (input.inlinePunched) {
+    const punch = input.inlinePunchPrint
+    const hasDetail =
+      punch != null &&
+      (String(punch.summary ?? '').trim() !== '' || String(punch.position ?? '').trim() !== '')
+    if (hasDetail && punch) {
+      flags.push({
+        key: 'inlinePunch',
+        label: 'Inline punched',
+        value: '',
+        flagClassName: 'js-extrusion-run-flag--inline-punch',
+        valueNode: (
+          <ExtrusionInlinePunchFlagValue
+            summary={punch.summary}
+            position={punch.position}
+            holeSizeMm={punch.holeSizeMm}
+            highlightHoleSize={punch.highlightHoleSize}
+          />
+        ),
+      })
+    } else {
+      flags.push({ key: 'inlinePunch', label: 'Inline punched', value: 'Yes', valueClassName: hl })
+    }
   }
 
   return flags
@@ -366,7 +414,7 @@ function formatEyeSpot(v: unknown): string {
 }
 
 function formatKgPerRoll(kprNum: number | null): string {
-  return kprNum != null && kprNum > 0 && Number.isFinite(kprNum) ? `${fmtQtyNumber(kprNum, 2)}kg/roll` : ''
+  return kprNum != null && kprNum > 0 && Number.isFinite(kprNum) ? `${formatExtrusionQty(kprNum)}kg/roll` : ''
 }
 
 /** Highlight background on print values — pair with js-pink, js-yellow, etc. */
@@ -426,7 +474,7 @@ function JobSheetPrintResinBlendTable(props: { table: ExtrusionResinBlendPrintTa
             {table.rows.map((row) => (
               <tr key={row.key}>
                 <td
-                  className="js-resin-blend-col-resin"
+                  className={`js-resin-blend-col-resin${row.bgHex ? ' js-resin-blend-col-resin--hl' : ''}`}
                   style={
                     row.bgHex
                       ? {
@@ -479,39 +527,6 @@ function displayGeometryHeadline(raw: unknown): string {
   if (normalized === 'j_film' || normalized === 'jfilm') return 'Jfilm'
   if (normalized === 'sheet') return 'SWS'
   return displayGeometryLabel(raw)
-}
-
-function displayProductTypeLabel(raw: unknown): string {
-  const v = String(raw ?? '').trim()
-  if (!v) return ''
-  const norm = v.toLowerCase()
-  if (norm === 'centerfold' || norm === 'centrefold') return 'Centrefold'
-  if (norm === 'u-film' || norm === 'u_film' || norm === 'ufilm') return 'U-Film'
-  if (norm === 'j-film' || norm === 'j_film' || norm === 'jfilm') return 'J-Film'
-  return v
-}
-
-function hasGussetForExtrusionHeadline(geometryRaw: unknown, gussetMm: number | null): boolean {
-  const g = String(geometryRaw ?? '')
-    .trim()
-    .toLowerCase()
-  if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return true
-  return gussetMm != null && gussetMm > 0 && Number.isFinite(gussetMm)
-}
-
-/** Single extrusion headline: product type (+ Gusseted when applicable) + on Roll / in Carton. */
-function formatExtrusionProductFinishHeadline(
-  productTypeRaw: unknown,
-  finishModeRaw: unknown,
-  geometryRaw: unknown,
-  gussetMm: number | null,
-): string {
-  const typeLabel = displayProductTypeLabel(productTypeRaw)
-  if (!typeLabel) return '—'
-  const finishSuffix =
-    String(finishModeRaw ?? '').trim().toLowerCase() === 'cartons' ? 'in Carton' : 'on Roll'
-  const prefix = hasGussetForExtrusionHeadline(geometryRaw, gussetMm) ? 'Gusseted ' : ''
-  return `${prefix}${typeLabel} ${finishSuffix}`
 }
 
 /** Matches {@link SpecPayloadForm} `intOrDash` for film / bag readouts. */
@@ -606,7 +621,7 @@ function JobSheetPrintPrintingFormField(props: {
   children: ReactNode
   positionHighlight?: PrintPositionHighlight
 }): ReactNode {
-  const hl = printPositionHighlightClass(props.positionHighlight ?? 'none')
+  const hl = jobSheetPrintPositionHighlightClass(props.positionHighlight ?? 'none')
   return (
     <div className="js-print-form-field">
       <span className="js-print-form-k">{props.label}</span>
@@ -869,7 +884,7 @@ function JobSheetPrintUtecoPage(props: {
         <JobSheetPrintUtecoField label="Total meters">{u.totalMeters || blankLine}</JobSheetPrintUtecoField>
         <JobSheetPrintUtecoField
           label="Print position"
-          valueClass={printPositionHighlightClass(u.printPositionHighlight)}
+          valueClass={jobSheetPrintPositionHighlightClass(u.printPositionHighlight)}
         >
           <span className="js-print-pre">{u.printPosition.trim() ? u.printPosition : blankLine}</span>
         </JobSheetPrintUtecoField>
@@ -967,8 +982,8 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
           </td>
         </tr>
         <tr>
-          <th className={highlightPalletType ? 'js-pink' : undefined} style={{ width: '20%' }}>Pallet type</th>
-          <td className={highlightPalletType ? 'js-pink' : undefined} style={{ width: '30%' }}>{ship.palletType || '—'}</td>
+          <th className={highlightPalletType ? 'js-yellow' : undefined} style={{ width: '20%' }}>Pallet type</th>
+          <td className={highlightPalletType ? 'js-yellow' : undefined} style={{ width: '30%' }}>{ship.palletType || '—'}</td>
           <th style={{ width: '20%' }}>{ship.finishModeKey === 'cartons' ? 'Cartons per pallet' : 'Rolls per pallet'}</th>
           <td style={{ width: '30%' }}>
             {ship.finishModeKey === 'cartons' ? ship.cartonsPerPallet || '—' : ship.rollsPerPallet || '—'}
@@ -1251,6 +1266,43 @@ function JobSheetPrintExtrusionQcPage(props: {
   )
 }
 
+function InlinePunchSummaryInline(props: {
+  summary: string
+  holeSizeMm: number
+  highlightHoleSize: boolean
+}): ReactNode {
+  const summary = String(props.summary ?? '').trim()
+  if (!summary) return null
+  if (!props.highlightHoleSize) return <>{summary}</>
+  const prefix = `${props.holeSizeMm}mm`
+  const rest = summary.startsWith(prefix) ? summary.slice(prefix.length) : summary
+  return (
+    <>
+      <span className="js-pink">{prefix}</span>
+      {rest}
+    </>
+  )
+}
+
+function ExtrusionInlinePunchFlagValue(props: InlinePunchPrintLines): ReactNode {
+  const summary = String(props.summary ?? '').trim()
+  const position = String(props.position ?? '').trim()
+  if (!summary && !position) return <>Yes</>
+  return (
+    <span className={`js-extrusion-inline-punch-cell ${printHlValueClass('js-yellow') ?? ''}`}>
+      {summary ? (
+        <InlinePunchSummaryInline
+          summary={summary}
+          holeSizeMm={props.holeSizeMm}
+          highlightHoleSize={props.highlightHoleSize}
+        />
+      ) : null}
+      {summary && position ? <span className="js-extrusion-inline-punch-sep"> · </span> : null}
+      {position ? <span className="js-extrusion-inline-punch-position">{position}</span> : null}
+    </span>
+  )
+}
+
 function VentSummaryPrintLine(props: { summary: string; holeSizeMm: number; highlightHoleSize: boolean }) {
   const summary = String(props.summary ?? '').trim()
   if (!summary) return null
@@ -1319,7 +1371,7 @@ function JobSheetPrintConversionInstructionsPage(props: {
                   {c?.sealWatertightCritical ? (
                     <>
                       {' '}
-                      (<span className="js-pink">Watertight seals critical</span>)
+                      (<span className="js-yellow">Watertight seals critical</span>)
                     </>
                   ) : null}
                 </th>
@@ -1327,11 +1379,11 @@ function JobSheetPrintConversionInstructionsPage(props: {
               </tr>
               {c?.printPositionDetails != null ? (
                 <tr>
-                  <th className={printPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none')}>
+                  <th className={jobSheetPrintPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none')}>
                     Print position details
                   </th>
                   <td
-                    className={`js-print-pre-wrap${printPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none') ? ` ${printPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none')}` : ''}`}
+                    className={`js-print-pre-wrap${jobSheetPrintPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none') ? ` ${jobSheetPrintPositionHighlightClass(c.printPositionDetailsHighlight ?? 'none')}` : ''}`}
                   >
                     {v(c.printPositionDetails)}
                   </td>
@@ -1569,9 +1621,17 @@ export function JobSheetPrintPage() {
       if (code) colourHexByCode.set(code, hx)
       if (name) colourHexByName.set(name, hx)
     }
+    const additiveLookupRows = Array.isArray(productSpecBundle.additives) ? productSpecBundle.additives : []
+    const additiveHexByCode = new Map<string, string>()
+    for (const a of additiveLookupRows) {
+      const code = String((a as { additive_code?: unknown }).additive_code ?? '').trim().toUpperCase()
+      const hx = normalizeHex((a as { highlight_hex_code?: unknown }).highlight_hex_code)
+      if (!code || !hx) continue
+      additiveHexByCode.set(code, hx)
+    }
     const geometryLabelRaw = dimensions?.geometry ?? spec?.geometry ?? ''
     const widthMm = n(dimensions?.base_width_mm ?? spec?.base_width_mm)
-    const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)} mm` : ''
+    const widthShorthandWmm = widthMm != null && widthMm > 0 ? formatExtrusionQty(widthMm) : ''
     const ufilmLeftMm = n(dimensions?.ufilm_left_width_mm ?? spec?.ufilm_left_width_mm)
     const ufilmRightMm = n(dimensions?.ufilm_right_width_mm ?? spec?.ufilm_right_width_mm)
     const gussetMm = n(dimensions?.gusset_mm ?? spec?.gusset_mm)
@@ -1580,10 +1640,10 @@ export function JobSheetPrintPage() {
     const widthTolMm = n(widthTolRaw)
     const widthToleranceDisplay =
       widthTolMm != null && widthTolMm > 0
-        ? `± ${widthTolMm} mm`
+        ? `± ${formatExtrusionQty(widthTolMm)} mm`
         : widthTolRaw != null && String(widthTolRaw).trim() !== ''
           ? s(widthTolRaw)
-          : `± ${widthTolDefaultMm} mm`
+          : `± ${formatExtrusionQty(widthTolDefaultMm)} mm`
     const widthToleranceHighlight =
       widthTolMm != null && widthTolMm > 0
         ? Math.abs(widthTolMm - widthTolDefaultMm) > 1e-6
@@ -1593,7 +1653,7 @@ export function JobSheetPrintPage() {
     const lengthTolMm = n(lengthTolRaw)
     const lengthToleranceDisplay =
       lengthTolMm != null && lengthTolMm > 0
-        ? `± ${lengthTolMm} mm`
+        ? `± ${formatExtrusionQty(lengthTolMm)} mm`
         : lengthTolRaw != null && String(lengthTolRaw).trim() !== ''
           ? s(lengthTolRaw)
           : '-'
@@ -1603,12 +1663,12 @@ export function JobSheetPrintPage() {
     const isJFilmPrint = productTypeNorm === 'j-film' || productTypeNorm === 'j_film' || productTypeNorm === 'jfilm'
     const widthSplitMm: number[] = []
     if (isJFilmPrint) {
-      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
-      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
+      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(ufilmLeftMm)
+      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(ufilmRightMm)
     } else {
-      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
-      if (widthMm != null && widthMm > 0) widthSplitMm.push(Math.round(widthMm))
-      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
+      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(ufilmLeftMm)
+      if (widthMm != null && widthMm > 0) widthSplitMm.push(widthMm)
+      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(ufilmRightMm)
     }
     const geometryNorm = String(geometryLabelRaw ?? '')
       .trim()
@@ -1616,7 +1676,7 @@ export function JobSheetPrintPage() {
     const runUpSlugPrint = String(run?.run_up ?? spec?.run_up ?? 'none').trim()
     const runUpNumPrint = runUpNumericalFromSlug(runUpSlugPrint, productType)
     const widthDisplay = (() => {
-      if (widthSplitMm.length >= 3) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
+      if (widthSplitMm.length >= 3) return `${widthSplitMm.map((x) => formatExtrusionQty(x)).join('/')}`
       if (
         (geometryNorm === 'gusset' || geometryNorm === 'bottomgusset' || geometryNorm === 'bottom_gusset') &&
         widthMm != null &&
@@ -1624,26 +1684,26 @@ export function JobSheetPrintPage() {
         gussetMm != null &&
         gussetMm > 0
       ) {
-        return `(${widthMm} + ${gussetMm})`
+        return `(${formatExtrusionQty(widthMm)} + ${formatExtrusionQty(gussetMm)})`
       }
       // Layflat bracket notation (e.g. 1000(500)) — Sheet / Centerfold only; bags use plain width.
       if (!runUpNotApplicable) {
         const ru = runUpNumPrint
         if ((geometryNorm === 'centrefold' || geometryNorm === 'centerfold') && widthMm != null && widthMm > 0) {
-          const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm * 0.5)
-          return `${widthMm}(${layflatMm})`
+          const layflatMm = ru > 0 ? widthMm * (ru / 2) : widthMm * 0.5
+          return `${formatExtrusionQty(widthMm)}(${formatExtrusionQty(layflatMm)})`
         }
         if (
           widthMm != null &&
           widthMm > 0 &&
           (geometryNorm === 'sheet' || geometryNorm === 'flat' || geometryNorm === 'layflat')
         ) {
-          const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm)
-          return `${widthMm}(${layflatMm})`
+          const layflatMm = ru > 0 ? widthMm * (ru / 2) : widthMm
+          return `${formatExtrusionQty(widthMm)}(${formatExtrusionQty(layflatMm)})`
         }
       }
-      if (widthSplitMm.length >= 2) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
-      if (widthMm != null && widthMm > 0) return `${widthMm}`
+      if (widthSplitMm.length >= 2) return `${widthSplitMm.map((x) => formatExtrusionQty(x)).join('/')}`
+      if (widthMm != null && widthMm > 0) return formatExtrusionQty(widthMm)
       return widthShorthandWmm
     })()
 
@@ -1661,29 +1721,26 @@ export function JobSheetPrintPage() {
       geometryNorm === 'centrefold' ||
       geometryNorm === 'centerfold'
     const widthDisplayProductForFilm =
-      useProductWidthOnlyForFilm && widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}` : widthDisplay
+      useProductWidthOnlyForFilm && widthMm != null && widthMm > 0 ? formatExtrusionQty(widthMm) : widthDisplay
 
-    const lengthLine = s(
-      String(dimensions?.length_units ?? '').trim().toLowerCase() === 'continuous'
-        ? ''
-        : dimensions?.length_units === 'M'
-          ? `${dimensions.base_length_mm / 1000}`
-          : `${dimensions.base_length_mm}`,
-    )
-    const lengthUnits = s(dimensions?.length_units ?? spec?.length_units ?? '')
-    const gaugeLine = s(
-      dimensions?.thickness_um != null
-        ? `${dimensions.thickness_um}`
-        : spec?.thickness_um != null
-          ? `${spec.thickness_um}`
-          : spec?.gauge,
-    )
-    const trimPct =
-      identity?.trim_pct != null
-        ? `${identity.trim_pct}%`
-        : spec?.trim_pct != null
-          ? `${spec.trim_pct}%`
-          : ''
+    const lengthUnitsRaw = String(dimensions?.length_units ?? spec?.length_units ?? '').trim()
+    const lengthIsContinuous = lengthUnitsRaw.toLowerCase() === 'continuous'
+    const baseLengthMm = n(dimensions?.base_length_mm ?? spec?.base_length_mm)
+    const lengthLine = lengthIsContinuous
+      ? ''
+      : baseLengthMm != null && baseLengthMm > 0
+        ? lengthUnitsRaw === 'M'
+          ? formatExtrusionQty(baseLengthMm / 1000)
+          : formatExtrusionQty(baseLengthMm)
+        : ''
+    const lengthUnits = lengthIsContinuous ? 'continuous' : s(lengthUnitsRaw)
+    const thicknessUm = n(dimensions?.thickness_um ?? spec?.thickness_um ?? spec?.gauge)
+    const gaugeLine =
+      thicknessUm != null && thicknessUm > 0
+        ? formatExtrusionQty(thicknessUm)
+        : s(dimensions?.thickness_um ?? spec?.thickness_um ?? spec?.gauge)
+    const trimPctNum = n(identity?.trim_pct ?? spec?.trim_pct)
+    const trimPct = trimPctNum != null ? `${formatExtrusionQty(trimPctNum)}%` : ''
     const gaugeTrimDisplay = trimPct !== '' ? trimPct : ''
     const gaugeTrimExplicit = trimPct !== ''
     const slitRaw = run?.slit ?? spec?.slit
@@ -1708,7 +1765,8 @@ export function JobSheetPrintPage() {
     const shrink = !!run?.shrink
     const inlineSeal = derivedInlineSeal(String(productType || ''), String(finishMode || ''))
     const perforated = !!run?.inline_perforation
-    const holePunched = inlinePunchEnabled((run || {}) as Record<string, unknown>)
+    const runRecord = (run || {}) as Record<string, unknown>
+    const holePunched = inlinePunchEnabled(runRecord)
 
     const qv = n(js.quantity_value)
     const qtyUnitRaw = String(js.quantity_unit || '').trim().toLowerCase()
@@ -1784,6 +1842,7 @@ export function JobSheetPrintPage() {
         : null
 
     const finishNorm = String(finishMode || '').trim().toLowerCase()
+    const inlinePunchPrint = holePunched ? formatPunchPrintLines(runRecord, INLINE_PUNCH_FIELDS) : null
     const highlightOrderedM =
       qtyUnitRaw === '1000' || qtyUnitRaw === 'cartons' || qtyUnitRaw === 'rolls'
     const highlightOrderedKg = qtyUnitRaw === 'kg'
@@ -1975,10 +2034,13 @@ export function JobSheetPrintPage() {
       const code = s(row?.additive_code, '')
       const pct = n(row?.pct)
       if (code === '' || pct == null || pct <= 0) continue
+      const addHx = additiveHexByCode.get(code.trim().toUpperCase()) || null
       resinBlendComponents.push({
         key: `additive-${code}`,
         label: `Additive ${code}`.trim(),
         pct,
+        bgHex: addHx,
+        textColor: addHx ? textColorForHex(addHx) : null,
       })
     }
 
@@ -2294,7 +2356,7 @@ export function JobSheetPrintPage() {
                 ? totalMStored
                 : null
           const totalMPrint =
-            totalMNum != null && totalMNum > 0 ? `${fmtQtyNumber(totalMNum, 2)}m` : ''
+            totalMNum != null && totalMNum > 0 ? `${formatExtrusionQty(totalMNum)}m` : ''
 
           const orderedKgNum =
             n(quotePreviewForWaste?.totals_kg) ??
@@ -2302,7 +2364,7 @@ export function JobSheetPrintPage() {
             (totalKg != null && totalKg > 0 ? totalKg : null)
           const orderedKgPrint =
             orderedKgNum != null && orderedKgNum > 0 && Number.isFinite(orderedKgNum)
-              ? `${fmtQtyNumber(orderedKgNum, 2)}kg`
+              ? `${formatExtrusionQty(orderedKgNum)}kg`
               : ''
 
           const kprFromPreview =
@@ -2350,7 +2412,7 @@ export function JobSheetPrintPage() {
                   ? totalMNum / extruderOutputRollCount
                   : null
           const mPerRollPrint =
-            mprNum != null && mprNum > 0 ? `${fmtQtyNumber(mprNum, 2)}m` : ''
+            mprNum != null && mprNum > 0 ? `${formatExtrusionQty(mprNum)}m` : ''
           const mPerRollFormatted = mPerRollPrint ? `${mPerRollPrint}/roll` : ''
           const rwbRaw = pickRollWeightBillingRaw(specTyped)
           const coreTypeStr = String(packaging?.core_type ?? spec?.core_type ?? '').trim()
@@ -2419,15 +2481,14 @@ export function JobSheetPrintPage() {
       extrusion: {
         productType: s(productType),
         finishMode: s(finishMode),
-        productFinishHeadline: formatExtrusionProductFinishHeadline(
-          productType,
-          finishMode,
-          geometryLabelRaw,
-          gussetMm,
-        ),
+        productFinishHeadline:
+          productTypeFinishLabel(productType, finishMode, {
+            geometry: geometryLabelRaw,
+            gussetMm,
+          }) || '—',
         geometryLabel: displayGeometryLabel(geometryLabelRaw),
         geometryExtras: [
-          gussetMm != null && gussetMm > 0 ? `Gusset ${Math.round(gussetMm)} mm` : '',
+          gussetMm != null && gussetMm > 0 ? `Gusset ${formatExtrusionQty(gussetMm)} mm` : '',
         ].filter(Boolean),
         widthSplitMm: widthSplitMm.length >= 2 ? widthSplitMm : null,
         widthPrimarySingle: widthDisplay,
@@ -2446,7 +2507,8 @@ export function JobSheetPrintPage() {
         shrink,
         inlineSeal,
         inlinePerforated: perforated,
-        inlinePunched: holePunched && finishNorm === 'rolls',
+        inlinePunched: holePunched,
+        inlinePunchPrint,
         vented: ventedConversion,
         runUpLine: runUpNotApplicable ? '-' : runUpLine,
         coresLine,
@@ -2473,9 +2535,10 @@ export function JobSheetPrintPage() {
           )
           return {
             overproductionAcceptLabel: overproductionOptionLabel(overproductionHandling, productType),
-            overproductionHighlightClass: overproductionPrintHighlightClass(
-              overproductionPrintHighlight(overproductionHandling),
-            ),
+            overproductionHighlightClass: (() => {
+              const kind = overproductionPrintHighlight(overproductionHandling)
+              return kind === 'none' ? undefined : 'js-yellow'
+            })(),
           }
         })(),
       },
@@ -2528,7 +2591,7 @@ export function JobSheetPrintPage() {
       utecoPrinting,
       packingDimensionShorthandForConversion,
     }
-  }, [data, quoteRatebook.data, productSpecBundle.colours, productSpecBundle.resinBlends, productSpecBundle.resins])
+  }, [data, quoteRatebook.data, productSpecBundle.additives, productSpecBundle.colours, productSpecBundle.resinBlends, productSpecBundle.resins])
 
   if (err && !data && entry?.status === 'failed') {
     return (
@@ -2800,7 +2863,7 @@ export function JobSheetPrintPage() {
           line-height: 1.2;
         }
         .js-dim-primary.js-dim-primary-hl {
-          background: #fff59d;
+          background: #fff566;
         }
         .js-dim-primary-unit {
           font-size: var(--js-print-fs-body);
@@ -2825,6 +2888,7 @@ export function JobSheetPrintPage() {
           column-gap: 1.25em;
           row-gap: 8px;
           align-items: center;
+          justify-content: space-between;
         }
         .js-extrusion-run-flag {
           display: inline-flex;
@@ -2835,6 +2899,25 @@ export function JobSheetPrintPage() {
         }
         .js-extrusion-run-flag--extruder {
           align-items: center;
+        }
+        .js-extrusion-run-flag--inline-punch {
+          flex-basis: 100%;
+          width: 100%;
+          align-items: center;
+          white-space: normal;
+        }
+        .js-extrusion-inline-punch-cell {
+          display: inline-block;
+          font-weight: var(--js-print-fw-value);
+          font-size: var(--js-print-fs-body);
+          line-height: 1.35;
+        }
+        .js-extrusion-inline-punch-cell.js-hl-value {
+          display: inline-block;
+        }
+        .js-extrusion-inline-punch-sep,
+        .js-extrusion-inline-punch-position {
+          display: inline;
         }
         .js-extrusion-extruder-value {
           display: inline-flex;
@@ -2850,7 +2933,7 @@ export function JobSheetPrintPage() {
           font-size: var(--js-print-fs-body);
           font-weight: 400;
         }
-        .js-dim-secondary.js-dim-secondary-hl { background: #fff59d; }
+        .js-dim-secondary.js-dim-secondary-hl { background: #fff566; }
         .js-run-triple { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
         .js-run-triple td {
           font-weight: var(--js-print-fw-value);
@@ -2901,7 +2984,7 @@ export function JobSheetPrintPage() {
           line-height: 1.2;
         }
         .js-extrusion-dim-inline.js-dim-primary-hl {
-          background: #fff59d;
+          background: #fff566;
           padding: 0 2px;
         }
         .js-extrusion-dim-sep {
@@ -2960,9 +3043,6 @@ export function JobSheetPrintPage() {
         .js-resin-mix-blend--preset {
           background: #fff9cc;
         }
-        .js-resin-mix-blend--custom {
-          background: #ffe8ec;
-        }
         .js-extrusion-grid td.js-resin-blend-table-wrap {
           padding: 0 !important;
           height: 1px; // take minimum height so that the cell does not grow with empty content
@@ -3013,6 +3093,10 @@ export function JobSheetPrintPage() {
         .js-resin-blend-table .js-resin-blend-col-resin {
           width: 42%;
           font-weight: var(--js-print-fw-value);
+        }
+        .js-resin-blend-table .js-resin-blend-col-resin--hl {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
         .js-resin-blend-table .js-resin-blend-col-pct,
         .js-resin-blend-table .js-resin-blend-col-kg,
@@ -3728,7 +3812,7 @@ export function JobSheetPrintPage() {
         tr.js-print-qty-stock-hl > th,
         tr.js-print-qty-stock-hl > td {
           font-weight: var(--js-print-fw-value);
-          background: #fff59d;
+          background: #fff566;
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
         }
@@ -3803,13 +3887,13 @@ export function JobSheetPrintPage() {
                     </div>
                     <div className="js-extrusion-run-flag">
                       <span className="js-extrusion-spec-label">Cores: </span>
-                      <b className={printHlValueClass(highlightExtrusionCoreType && 'js-pink')}>
+                      <b className={printHlValueClass(highlightExtrusionCoreType && 'js-yellow')}>
                         {coresLinePrint || '-'}
                       </b>
                     </div>
                     <div className="js-extrusion-run-flag">
                       <span className="js-extrusion-spec-label">Pallets: </span>
-                      <b className={printHlValueClass(highlightExtrusionPalletType && 'js-pink')}>
+                      <b className={printHlValueClass(highlightExtrusionPalletType && 'js-yellow')}>
                         {palletTypePrint || '-'}
                       </b>
                     </div>
@@ -3827,7 +3911,11 @@ export function JobSheetPrintPage() {
                       </span>
                       <span className="js-extrusion-dim-sep">x</span>
                       <span className="js-extrusion-dim-inline">
-                        {e.lengthUnits === 'M' ? (
+                        {String(e.lengthUnits ?? '')
+                          .trim()
+                          .toLowerCase() === 'continuous' ? (
+                          <span className={printHlValueClass('js-yellow')}>continuous</span>
+                        ) : e.lengthUnits === 'M' ? (
                           <span className={printHlValueClass('js-yellow')}>
                             <span>{e.lengthLine || '-'}</span>
                             <span className="js-dim-primary-unit js-dim-primary-unit-m">{e.lengthUnits}</span>
@@ -3855,7 +3943,7 @@ export function JobSheetPrintPage() {
                       <span className="js-extrusion-spec-label">Ordered Meters: </span>
                       <b
                         className={printHlValueClass(
-                          qty.highlightOrderedM && qty.orderedM ? 'js-pink' : undefined,
+                          qty.highlightOrderedM && qty.orderedM ? 'js-yellow' : undefined,
                         )}
                       >
                         {qty.orderedM || '-'}
@@ -3865,7 +3953,7 @@ export function JobSheetPrintPage() {
                       <span className="js-extrusion-spec-label">Ordered KG: </span>
                       <b
                         className={printHlValueClass(
-                          qty.highlightOrderedKg && qty.orderedKg ? 'js-pink' : undefined,
+                          qty.highlightOrderedKg && qty.orderedKg ? 'js-yellow' : undefined,
                         )}
                       >
                         {qty.orderedKg || '-'}
@@ -3874,7 +3962,7 @@ export function JobSheetPrintPage() {
                         <span className="js-extrusion-core-weight-note">
                           {' ('}
                           <span className="js-extrusion-spec-label">including </span>
-                          <b>{fmtQtyNumber(qty.coreWeightIncludedKg, 2)}kg</b>
+                          <b>{formatExtrusionQty(qty.coreWeightIncludedKg)}kg</b>
                           <span className="js-extrusion-spec-label"> core weight</span>
                           {')'}
                         </span>
@@ -3894,7 +3982,7 @@ export function JobSheetPrintPage() {
                       <span className="js-extrusion-spec-label">Meters per roll: </span>
                       <b
                         className={printHlValueClass(
-                          qty.highlightOrderedM && metersPerRollDisplay !== '-' ? 'js-pink' : undefined,
+                          qty.highlightOrderedM && metersPerRollDisplay !== '-' ? 'js-yellow' : undefined,
                         )}
                       >
                         {metersPerRollDisplay}
@@ -3904,7 +3992,7 @@ export function JobSheetPrintPage() {
                       <span className="js-extrusion-spec-label">KG per roll: </span>
                       <b
                         className={printHlValueClass(
-                          qty.highlightOrderedKg && kgPerRollWithCoreDisplay !== '-' ? 'js-pink' : undefined,
+                          qty.highlightOrderedKg && kgPerRollWithCoreDisplay !== '-' ? 'js-yellow' : undefined,
                         )}
                       >
                         {kgPerRollWithCoreDisplay}
@@ -3931,9 +4019,16 @@ export function JobSheetPrintPage() {
                   <td colSpan={6} className="js-extrusion-spec-line" aria-label="Extrusion run requirements">
                     <div className="js-extrusion-run-flags">
                       {extrusionRunFlags.map((flag) => (
-                        <div key={flag.key} className="js-extrusion-run-flag">
+                        <div
+                          key={flag.key}
+                          className={`js-extrusion-run-flag${flag.flagClassName ? ` ${flag.flagClassName}` : ''}`}
+                        >
                           <span className="js-extrusion-spec-label">{flag.label}: </span>
-                          <b className={flag.valueClassName}>{flag.value}</b>
+                          {flag.valueNode != null ? (
+                            flag.valueNode
+                          ) : (
+                            <b className={flag.valueClassName}>{flag.value}</b>
+                          )}
                         </div>
                       ))}
                     </div>

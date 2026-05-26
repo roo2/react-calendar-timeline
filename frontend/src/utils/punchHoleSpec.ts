@@ -69,7 +69,7 @@ function positionFrom(obj: Record<string, unknown>, fields: PunchFieldSet): stri
     obj[fields.positionKey] ??
     (fields.legacyPositionKey ? obj[fields.legacyPositionKey] : undefined) ??
     (fields.legacyPositionKey ? obj.vent_description : undefined)
-  return raw != null ? String(raw).trim() : ''
+  return raw != null ? String(raw) : ''
 }
 
 function holeSizeFrom(obj: Record<string, unknown>, fields: PunchFieldSet): PunchHoleSizeMm {
@@ -87,7 +87,7 @@ export function punchTotalHoles(obj: Record<string, unknown>, fields: PunchField
 
 export function punchHasAnyDetailData(obj: Record<string, unknown>, fields: PunchFieldSet): boolean {
   if (holesAcrossFrom(obj, fields) > 0 || holesAlongFrom(obj, fields) > 0) return true
-  return positionFrom(obj, fields) !== ''
+  return positionFrom(obj, fields).trim() !== ''
 }
 
 export function formatPunchSummaryLine(obj: Record<string, unknown>, fields: PunchFieldSet): string {
@@ -110,7 +110,7 @@ export function formatPunchPrintLines(
   const holeSizeMm = holeSizeFrom(obj, fields)
   return {
     summary: formatPunchSummaryLine(obj, fields),
-    position: positionFrom(obj, fields),
+    position: positionFrom(obj, fields).trim(),
     holeSizeMm,
     highlightHoleSize: holeSizeMm !== 6,
   }

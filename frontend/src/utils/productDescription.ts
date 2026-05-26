@@ -180,6 +180,57 @@ export function productTypeFinishShortcodeFromSpec(spec: unknown): string {
   return productTypeFinishShortcode(identity.product_type, identity.finish_mode)
 }
 
+/** Human-readable product type (e.g. `bag` → `Bag`, `centerfold` → `Centrefold`). */
+export function displayProductTypeLabel(productType: unknown): string {
+  const v = String(productType ?? '').trim()
+  if (!v) return ''
+  const norm = v.toLowerCase()
+  if (norm === 'centerfold' || norm === 'centrefold') return 'Centrefold'
+  if (norm === 'u-film' || norm === 'u_film' || norm === 'ufilm') return 'U-Film'
+  if (norm === 'j-film' || norm === 'j_film' || norm === 'jfilm') return 'J-Film'
+  return v
+}
+
+function hasGussetForProductFinishLabel(geometryRaw: unknown, gussetMm: number | null): boolean {
+  const g = String(geometryRaw ?? '')
+    .trim()
+    .toLowerCase()
+  if (g === 'gusset' || g === 'bottomgusset' || g === 'bottom_gusset') return true
+  return gussetMm != null && gussetMm > 0 && Number.isFinite(gussetMm)
+}
+
+/**
+ * Long-form product + finish for print (e.g. `Bag in Carton`, `Gusseted Bag on Roll`).
+ * Shortcode equivalent: {@link productTypeFinishShortcode} → `PBC`.
+ */
+export function productTypeFinishLabel(
+  productType: unknown,
+  finishMode: unknown,
+  opts?: { geometry?: unknown; gussetMm?: number | null },
+): string {
+  const typeLabel = displayProductTypeLabel(productType)
+  if (!typeLabel) return ''
+  const finishSuffix = up(finishMode) === 'CARTONS' ? 'in Carton' : 'on Roll'
+  const prefix =
+    opts && hasGussetForProductFinishLabel(opts.geometry, opts.gussetMm ?? null) ? 'Gusseted ' : ''
+  return `${prefix}${typeLabel} ${finishSuffix}`
+}
+
+/** {@link productTypeFinishLabel} from a spec payload (`identity` + `dimensions`). */
+export function productTypeFinishLabelFromSpec(spec: unknown): string {
+  const identity = (spec as { identity?: Record<string, unknown> })?.identity || {}
+  const dims = (spec as { dimensions?: Record<string, unknown> })?.dimensions || {}
+  const gussetRaw = dims.gusset_mm
+  const gussetMm =
+    gussetRaw != null && String(gussetRaw).trim() !== '' && Number.isFinite(Number(gussetRaw))
+      ? Number(gussetRaw)
+      : null
+  return productTypeFinishLabel(identity.product_type, identity.finish_mode, {
+    geometry: dims.geometry,
+    gussetMm,
+  })
+}
+
 /**
  * Product code for UI and persistence: optional manual `identity.customer_code`, else generated.
  * Use {@link computeProductCodeFromSpec} when you need the algorithmic code only (e.g. placeholder).

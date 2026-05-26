@@ -1,5 +1,5 @@
 import type { SpecPayload } from '../components/SpecPayloadForm'
-import { productTypeFinishShortcodeFromSpec } from './productDescription'
+import { productTypeFinishLabelFromSpec } from './productDescription'
 import { resolvedProductUnitsForOrder } from './quantityRollFields'
 import { fmtCount } from './quoteFormat'
 import { extrusionRollCountForPrint, orderQtyPrefsFromJobSheetAndSpec } from './specOrderDefaults'
@@ -148,7 +148,7 @@ export function jobSheetOrderQuantityForPrintHeader(
 
 /**
  * One-line job sheet print header summary:
- * `{PBR}, {10000 Bags}, {200 bags/roll}, {12 Rolls}` (omits empty segments).
+ * `{Bag on Roll}, {10000 Bags}, {200 bags/roll}, {12 Rolls}` (omits empty segments).
  */
 export function buildJobSheetPrintHeaderSummaryLine(
   js: Record<string, unknown>,
@@ -158,7 +158,7 @@ export function buildJobSheetPrintHeaderSummaryLine(
 ): string {
   const parts: string[] = []
 
-  const typeFinish = productTypeFinishShortcodeFromSpec(spec)
+  const typeFinish = productTypeFinishLabelFromSpec(spec)
   if (typeFinish) parts.push(typeFinish)
 
   const orderFmt = jobSheetOrderQuantityForPrintHeader(js, spec)

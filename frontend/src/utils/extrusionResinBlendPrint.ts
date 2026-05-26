@@ -11,6 +11,13 @@
 import { fmtQtyNumber } from './quoteFormat'
 import type { RollWeightBillingSlug } from './specToQuoteInputs'
 
+/** Decimal places for all numeric values on the extrusion specifications print block. */
+export const EXTRUSION_PRINT_QTY_DP = 1
+
+export function formatExtrusionQty(n: number): string {
+  return fmtQtyNumber(n, EXTRUSION_PRINT_QTY_DP)
+}
+
 export type ExtrusionResinBlendComponent = {
   key: string
   label: string
@@ -37,13 +44,13 @@ export type ExtrusionResinBlendPrintTable = {
 
 function roundKg(n: number): number {
   if (!Number.isFinite(n)) return 0
-  return Math.round(n * 100) / 100
+  const factor = 10 ** EXTRUSION_PRINT_QTY_DP
+  return Math.round(n * factor) / factor
 }
 
 export function formatBlendPct(pct: number): string {
   if (!Number.isFinite(pct)) return '-'
-  if (Math.abs(pct - Math.round(pct)) < 1e-6) return `${Math.round(pct)}%`
-  return `${pct.toFixed(2)}%`
+  return `${formatExtrusionQty(pct)}%`
 }
 
 /** Core mass deducted from resin blend KG (matches quote `derivedTotalKg` adjustment). */
@@ -68,7 +75,8 @@ export function kgPerRollWithCoreWeight(
   const corePerRoll = opts.totalCoreKg / rolls
   const addCoreFrac =
     opts.billingSlug === 'core_included' ? 0 : opts.billingSlug === 'core_half_off' ? 0.5 : 1
-  return Math.round((kgPerRoll + corePerRoll * addCoreFrac) * 100) / 100
+  const factor = 10 ** EXTRUSION_PRINT_QTY_DP
+  return Math.round((kgPerRoll + corePerRoll * addCoreFrac) * factor) / factor
 }
 
 export function coreKgIncludedForRollWeightBilling(
@@ -81,9 +89,10 @@ export function coreKgIncludedForRollWeightBilling(
   if (kgPerMeter == null || kgPerMeter <= 0 || !Number.isFinite(kgPerMeter)) return null
   const totalCoreKg = coreLengthM * kgPerMeter
   const frac = billingSlug === 'core_half_off' ? 0.5 : 1
+  const factor = 10 ** EXTRUSION_PRINT_QTY_DP
   return {
-    totalCoreKg: Math.round(totalCoreKg * 100) / 100,
-    includedKg: Math.round(totalCoreKg * frac * 100) / 100,
+    totalCoreKg: Math.round(totalCoreKg * factor) / factor,
+    includedKg: Math.round(totalCoreKg * frac * factor) / factor,
   }
 }
 
@@ -100,7 +109,7 @@ export function coreWeightIncludedKgForBilling(
 
 export function formatBlendKgCell(n: number | null, opts?: { withSuffix?: boolean }): string {
   if (n == null || !Number.isFinite(n)) return '-'
-  const core = fmtQtyNumber(n, 2)
+  const core = formatExtrusionQty(n)
   return opts?.withSuffix ? `${core}kg` : core
 }
 
