@@ -1631,7 +1631,7 @@ export function JobSheetPrintPage() {
     }
     const geometryLabelRaw = dimensions?.geometry ?? spec?.geometry ?? ''
     const widthMm = n(dimensions?.base_width_mm ?? spec?.base_width_mm)
-    const widthShorthandWmm = widthMm != null && widthMm > 0 ? formatExtrusionQty(widthMm) : ''
+    const widthShorthandWmm = widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}` : ''
     const ufilmLeftMm = n(dimensions?.ufilm_left_width_mm ?? spec?.ufilm_left_width_mm)
     const ufilmRightMm = n(dimensions?.ufilm_right_width_mm ?? spec?.ufilm_right_width_mm)
     const gussetMm = n(dimensions?.gusset_mm ?? spec?.gusset_mm)
@@ -1640,10 +1640,10 @@ export function JobSheetPrintPage() {
     const widthTolMm = n(widthTolRaw)
     const widthToleranceDisplay =
       widthTolMm != null && widthTolMm > 0
-        ? `± ${formatExtrusionQty(widthTolMm)} mm`
+        ? `± ${widthTolMm} mm`
         : widthTolRaw != null && String(widthTolRaw).trim() !== ''
           ? s(widthTolRaw)
-          : `± ${formatExtrusionQty(widthTolDefaultMm)} mm`
+          : `± ${widthTolDefaultMm} mm`
     const widthToleranceHighlight =
       widthTolMm != null && widthTolMm > 0
         ? Math.abs(widthTolMm - widthTolDefaultMm) > 1e-6
@@ -1653,7 +1653,7 @@ export function JobSheetPrintPage() {
     const lengthTolMm = n(lengthTolRaw)
     const lengthToleranceDisplay =
       lengthTolMm != null && lengthTolMm > 0
-        ? `± ${formatExtrusionQty(lengthTolMm)} mm`
+        ? `± ${lengthTolMm} mm`
         : lengthTolRaw != null && String(lengthTolRaw).trim() !== ''
           ? s(lengthTolRaw)
           : '-'
@@ -1663,12 +1663,12 @@ export function JobSheetPrintPage() {
     const isJFilmPrint = productTypeNorm === 'j-film' || productTypeNorm === 'j_film' || productTypeNorm === 'jfilm'
     const widthSplitMm: number[] = []
     if (isJFilmPrint) {
-      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(ufilmLeftMm)
-      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(ufilmRightMm)
+      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
+      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
     } else {
-      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(ufilmLeftMm)
-      if (widthMm != null && widthMm > 0) widthSplitMm.push(widthMm)
-      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(ufilmRightMm)
+      if (ufilmLeftMm != null && ufilmLeftMm > 0) widthSplitMm.push(Math.round(ufilmLeftMm))
+      if (widthMm != null && widthMm > 0) widthSplitMm.push(Math.round(widthMm))
+      if (ufilmRightMm != null && ufilmRightMm > 0) widthSplitMm.push(Math.round(ufilmRightMm))
     }
     const geometryNorm = String(geometryLabelRaw ?? '')
       .trim()
@@ -1676,7 +1676,7 @@ export function JobSheetPrintPage() {
     const runUpSlugPrint = String(run?.run_up ?? spec?.run_up ?? 'none').trim()
     const runUpNumPrint = runUpNumericalFromSlug(runUpSlugPrint, productType)
     const widthDisplay = (() => {
-      if (widthSplitMm.length >= 3) return `${widthSplitMm.map((x) => formatExtrusionQty(x)).join('/')}`
+      if (widthSplitMm.length >= 3) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
       if (
         (geometryNorm === 'gusset' || geometryNorm === 'bottomgusset' || geometryNorm === 'bottom_gusset') &&
         widthMm != null &&
@@ -1684,26 +1684,26 @@ export function JobSheetPrintPage() {
         gussetMm != null &&
         gussetMm > 0
       ) {
-        return `(${formatExtrusionQty(widthMm)} + ${formatExtrusionQty(gussetMm)})`
+        return `(${widthMm} + ${gussetMm})`
       }
       // Layflat bracket notation (e.g. 1000(500)) — Sheet / Centerfold only; bags use plain width.
       if (!runUpNotApplicable) {
         const ru = runUpNumPrint
         if ((geometryNorm === 'centrefold' || geometryNorm === 'centerfold') && widthMm != null && widthMm > 0) {
-          const layflatMm = ru > 0 ? widthMm * (ru / 2) : widthMm * 0.5
-          return `${formatExtrusionQty(widthMm)}(${formatExtrusionQty(layflatMm)})`
+          const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm * 0.5)
+          return `${widthMm}(${layflatMm})`
         }
         if (
           widthMm != null &&
           widthMm > 0 &&
           (geometryNorm === 'sheet' || geometryNorm === 'flat' || geometryNorm === 'layflat')
         ) {
-          const layflatMm = ru > 0 ? widthMm * (ru / 2) : widthMm
-          return `${formatExtrusionQty(widthMm)}(${formatExtrusionQty(layflatMm)})`
+          const layflatMm = ru > 0 ? Math.round(widthMm * (ru / 2)) : Math.round(widthMm)
+          return `${widthMm}(${layflatMm})`
         }
       }
-      if (widthSplitMm.length >= 2) return `${widthSplitMm.map((x) => formatExtrusionQty(x)).join('/')}`
-      if (widthMm != null && widthMm > 0) return formatExtrusionQty(widthMm)
+      if (widthSplitMm.length >= 2) return `${widthSplitMm.map((x) => Math.round(x)).join('/')}`
+      if (widthMm != null && widthMm > 0) return `${widthMm}`
       return widthShorthandWmm
     })()
 
@@ -1721,26 +1721,39 @@ export function JobSheetPrintPage() {
       geometryNorm === 'centrefold' ||
       geometryNorm === 'centerfold'
     const widthDisplayProductForFilm =
-      useProductWidthOnlyForFilm && widthMm != null && widthMm > 0 ? formatExtrusionQty(widthMm) : widthDisplay
+      useProductWidthOnlyForFilm && widthMm != null && widthMm > 0 ? `${Math.round(widthMm)}` : widthDisplay
 
     const lengthUnitsRaw = String(dimensions?.length_units ?? spec?.length_units ?? '').trim()
     const lengthIsContinuous = lengthUnitsRaw.toLowerCase() === 'continuous'
-    const baseLengthMm = n(dimensions?.base_length_mm ?? spec?.base_length_mm)
     const lengthLine = lengthIsContinuous
       ? ''
-      : baseLengthMm != null && baseLengthMm > 0
-        ? lengthUnitsRaw === 'M'
-          ? formatExtrusionQty(baseLengthMm / 1000)
-          : formatExtrusionQty(baseLengthMm)
-        : ''
+      : s(
+          lengthUnitsRaw === 'M'
+            ? dimensions?.base_length_mm != null
+              ? `${Number(dimensions.base_length_mm) / 1000}`
+              : spec?.base_length_mm != null
+                ? `${Number(spec.base_length_mm) / 1000}`
+                : ''
+            : dimensions?.base_length_mm != null
+              ? `${dimensions.base_length_mm}`
+              : spec?.base_length_mm != null
+                ? `${spec.base_length_mm}`
+                : '',
+        )
     const lengthUnits = lengthIsContinuous ? 'continuous' : s(lengthUnitsRaw)
-    const thicknessUm = n(dimensions?.thickness_um ?? spec?.thickness_um ?? spec?.gauge)
-    const gaugeLine =
-      thicknessUm != null && thicknessUm > 0
-        ? formatExtrusionQty(thicknessUm)
-        : s(dimensions?.thickness_um ?? spec?.thickness_um ?? spec?.gauge)
-    const trimPctNum = n(identity?.trim_pct ?? spec?.trim_pct)
-    const trimPct = trimPctNum != null ? `${formatExtrusionQty(trimPctNum)}%` : ''
+    const gaugeLine = s(
+      dimensions?.thickness_um != null
+        ? `${dimensions.thickness_um}`
+        : spec?.thickness_um != null
+          ? `${spec.thickness_um}`
+          : spec?.gauge,
+    )
+    const trimPct =
+      identity?.trim_pct != null
+        ? `${identity.trim_pct}%`
+        : spec?.trim_pct != null
+          ? `${spec.trim_pct}%`
+          : ''
     const gaugeTrimDisplay = trimPct !== '' ? trimPct : ''
     const gaugeTrimExplicit = trimPct !== ''
     const slitRaw = run?.slit ?? spec?.slit
@@ -2497,7 +2510,7 @@ export function JobSheetPrintPage() {
         productFinishHeadline: productFinishLabel || '—',
         geometryLabel: displayGeometryLabel(geometryLabelRaw),
         geometryExtras: [
-          gussetMm != null && gussetMm > 0 ? `Gusset ${formatExtrusionQty(gussetMm)} mm` : '',
+          gussetMm != null && gussetMm > 0 ? `Gusset ${Math.round(gussetMm)} mm` : '',
         ].filter(Boolean),
         widthSplitMm: widthSplitMm.length >= 2 ? widthSplitMm : null,
         widthPrimarySingle: widthDisplay,
@@ -2901,7 +2914,10 @@ export function JobSheetPrintPage() {
           column-gap: 1.25em;
           row-gap: 8px;
           align-items: center;
-          justify-content: space-between;
+          justify-content: space-around;
+        }
+        .js-extrusion-run-flags--run-requirements {
+          justify-content: flex-start;
         }
         .js-extrusion-run-flag {
           display: inline-flex;
@@ -4031,7 +4047,7 @@ export function JobSheetPrintPage() {
               {extrusionRunFlags.length > 0 ? (
                 <tr>
                   <td colSpan={6} className="js-extrusion-spec-line" aria-label="Extrusion run requirements">
-                    <div className="js-extrusion-run-flags">
+                    <div className="js-extrusion-run-flags js-extrusion-run-flags--run-requirements">
                       {extrusionRunFlags.map((flag) => (
                         <div
                           key={flag.key}
