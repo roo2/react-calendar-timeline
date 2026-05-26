@@ -1563,10 +1563,28 @@ export function JobSheetPrintPage() {
   const err = entry?.error
   const quoteRatebook = useAppSelector((state) => state.quotes.quoteRatebook)
   const productSpecBundle = useAppSelector((state) => state.productSpec.bundle)
+  /** Block rendering on cached detail until a fresh GET completes (avoids stale qty after save-then-print). */
+  const [freshLoadDone, setFreshLoadDone] = useState(false)
 
   useEffect(() => {
-    if (!jobSheetId) return
-    void dispatch(fetchJobSheet(jobSheetId))
+    if (!jobSheetId) {
+      setFreshLoadDone(false)
+      return
+    }
+    let alive = true
+    setFreshLoadDone(false)
+    void (async () => {
+      try {
+        await dispatch(fetchJobSheet(jobSheetId)).unwrap()
+      } catch {
+        /* entry.error is set by the slice */
+      } finally {
+        if (alive) setFreshLoadDone(true)
+      }
+    })()
+    return () => {
+      alive = false
+    }
   }, [jobSheetId, dispatch])
 
   useEffect(() => {
@@ -2617,7 +2635,7 @@ export function JobSheetPrintPage() {
     }
   }, [data, quoteRatebook.data, productSpecBundle.additives, productSpecBundle.colours, productSpecBundle.resinBlends, productSpecBundle.resins])
 
-  if (err && !data && entry?.status === 'failed') {
+  if (freshLoadDone && err && !data && entry?.status === 'failed') {
     return (
       <div className="js-print-root">
         <p>
@@ -2630,7 +2648,7 @@ export function JobSheetPrintPage() {
     )
   }
 
-  if (!model) {
+  if (!freshLoadDone || !model) {
     return (
       <div className="js-print-root">
         <p>Loading…</p>

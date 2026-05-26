@@ -856,6 +856,7 @@ export function ProductVersionEditor(props: {
     setSavingEmbeddedJob(true)
     try {
       await dispatch(updateJobSheet({ jobSheetId, body })).unwrap()
+      await dispatch(fetchJobSheet(jobSheetId)).unwrap()
       setDirty(false)
       return true
     } catch (e: unknown) {

@@ -50,7 +50,9 @@ function roundKg(n: number): number {
 
 export function formatBlendPct(pct: number): string {
   if (!Number.isFinite(pct)) return '-'
-  return `${formatExtrusionQty(pct)}%`
+  const isWhole = Math.abs(pct - Math.round(pct)) < 1e-6
+  if (isWhole) return `${Math.round(pct).toLocaleString('en-US')}%`
+  return `${fmtQtyNumber(pct, EXTRUSION_PRINT_QTY_DP)}%`
 }
 
 /** Core mass deducted from resin blend KG (matches quote `derivedTotalKg` adjustment). */

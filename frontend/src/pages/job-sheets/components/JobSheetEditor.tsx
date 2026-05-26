@@ -711,7 +711,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           setSpec(ensureSpec(specForSave))
           loadedOrderDefaultsRef.current = getSpecOrderDefaults(specForSave)
         }
-        void dispatch(fetchJobSheet(jobSheetId))
+        await dispatch(fetchJobSheet(jobSheetId)).unwrap()
         return true
       }
     } catch (e: unknown) {
