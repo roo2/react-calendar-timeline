@@ -638,13 +638,7 @@ export function ProductVersionEditor(props: {
   }, [finishMode])
 
   const effectiveQtyType = qty.effectiveQtyType
-  const stockPlanningTotalUnits = useMemo(() => {
-    if (finishMode === 'Cartons') {
-      return qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0 ? qty.cartonCountForDisplay : null
-    }
-    const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
-    return nr > 0 ? nr : null
-  }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
+  const stockPlanningTotalUnits = qty.stockPlanningTotalUnits
 
   const totalKgNum = Number(qty.totalKg || 0)
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
@@ -1555,7 +1549,7 @@ export function ProductVersionEditor(props: {
                             {loadedJobSheet?.order_id != null && String(loadedJobSheet.order_id).trim() !== '' ? (
                               <MuiLink
                                 component={Link}
-                                to={`/orders/${encodeURIComponent(String(loadedJobSheet.order_id))}`}
+                                to={`/orders/${encodeURIComponent(String(loadedJobSheet.order_id))}/edit`}
                                 underline="hover"
                                 variant="body2"
                                 sx={{ flexShrink: 0 }}

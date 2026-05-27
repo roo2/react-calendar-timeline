@@ -464,7 +464,7 @@ export function MyobAdminPage() {
             <Button
               size="small"
               component={RouterLink}
-              to={`/orders/${encodeURIComponent((pipelineResult.orders as MyobImportAllResult).results[0].order_id)}`}
+              to={`/orders/${encodeURIComponent((pipelineResult.orders as MyobImportAllResult).results[0].order_id)}/edit`}
               variant="outlined"
               sx={{ mt: 1 }}
             >

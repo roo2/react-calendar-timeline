@@ -94,7 +94,7 @@ export function JobSheetQuantityFields(props: JobSheetQuantityFieldsProps) {
         <TextField
           label="Total KG"
           type="number"
-          inputProps={{ min: 0, step: 0.1 }}
+          inputProps={{ min: 0, step: 'any' }}
           value={totalKgField.value}
           onChange={totalKgField.onChange ? (e) => totalKgField.onChange!(e.target.value) : undefined}
           disabled={totalKgField.disabled}

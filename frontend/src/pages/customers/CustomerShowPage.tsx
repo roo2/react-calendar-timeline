@@ -350,7 +350,7 @@ export function CustomerShowPage() {
               {orders.map((o) => (
                 <TableRow key={o.id} hover>
                   <TableCell>
-                    <MuiLink component={Link} to={`/orders/${o.id}`} underline="hover">
+                    <MuiLink component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`} underline="hover">
                       {o.code}
                     </MuiLink>
                   </TableCell>

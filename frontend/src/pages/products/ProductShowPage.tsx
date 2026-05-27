@@ -207,7 +207,7 @@ export function ProductShowPage() {
                     {js.order_id ? (
                       <MuiLink
                         component={Link}
-                        to={`/orders/${encodeURIComponent(js.order_id)}`}
+                        to={`/orders/${encodeURIComponent(js.order_id)}/edit`}
                         underline="hover"
                       >
                         {js.invoice_no?.trim() || js.order_id}

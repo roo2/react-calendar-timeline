@@ -983,19 +983,19 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
           </td>
         </tr>
         <tr>
-          <th className={highlightPalletType ? 'js-yellow' : undefined} style={{ width: '20%' }}>Pallet type</th>
-          <td className={highlightPalletType ? 'js-yellow' : undefined} style={{ width: '30%' }}>{ship.palletType || '—'}</td>
-          <th style={{ width: '20%' }}>{ship.finishModeKey === 'cartons' ? 'Cartons per pallet' : 'Rolls per pallet'}</th>
-          <td style={{ width: '30%' }}>
+          <th className={highlightPalletType ? 'js-yellow' : undefined} style={{ width: '15%' }}>Pallet type</th>
+          <td className={highlightPalletType ? 'js-yellow' : undefined} style={{ width: '35%' }}>{ship.palletType || '—'}</td>
+          <th style={{ width: '15%' }}>{ship.finishModeKey === 'cartons' ? 'Cartons per pallet' : 'Rolls per pallet'}</th>
+          <td style={{ width: '35%' }}>
             {ship.finishModeKey === 'cartons' ? ship.cartonsPerPallet || '—' : ship.rollsPerPallet || '—'}
           </td>
         </tr>
         <tr>
           <th>{ship.orderUnitsLabel}</th>
           <td>
-            <div>{ship.orderUnitsForPallets || '—'}</div>
+            <span>{ship.orderUnitsForPallets || '—'}</span>
             {ship.overproductionAcceptLabel.trim() ? (
-              <div
+              <span
                 className={
                   ship.overproductionHighlightClass
                     ? `js-ship-overproduction ${ship.overproductionHighlightClass}`
@@ -1003,7 +1003,7 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
                 }
               >
                 {ship.overproductionAcceptLabel}
-              </div>
+              </span>
             ) : null}
           </td>
           <th>Pallets required</th>
@@ -1019,27 +1019,20 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
           <tr>
             <td colSpan={4} className="js-ship-pallet-checklist-cell">
               {ship.packingNotes.trim() ? (
-                <div className="js-ship-packing-notes">
-                  <div className="js-ship-packing-notes-label">Packing notes</div>
-                  <div className="js-ship-packing-notes-text js-print-pre-wrap">{ship.packingNotes}</div>
-                </div>
+                <div className="js-ship-packing-notes-text js-print-pre-wrap js-yellow">{ship.packingNotes}</div>
               ) : null}
               {ship.palletChecklistCount > 0 ? (
-                <>
-                  <div
-                    className="js-ship-pallet-checklist-label"
-                    style={ship.packingNotes.trim() ? { marginTop: '8px' } : undefined}
-                  >
-                    Pallet checklist
-                  </div>
-                  <div className="js-ship-pallet-checklist" aria-label="Pallet checklist">
-                    {Array.from({ length: ship.palletChecklistCount }, (_, i) => (
-                      <div key={i} className="js-ship-pallet-tick">
-                        P{i + 1}
-                      </div>
-                    ))}
-                  </div>
-                </>
+                <div
+                  className="js-ship-pallet-checklist"
+                  aria-label="Pallet checklist"
+                  style={ship.packingNotes.trim() ? { marginTop: '8px' } : undefined}
+                >
+                  {Array.from({ length: ship.palletChecklistCount }, (_, i) => (
+                    <div key={i} className="js-ship-pallet-tick">
+                      P{i + 1}
+                    </div>
+                  ))}
+                </div>
               ) : null}
             </td>
           </tr>
@@ -1157,6 +1150,45 @@ function JobSheetPrintExtrusionQcPage(props: {
             {Array.from({ length: 11 }, (_, i) => (
               <td key={`extruder-settings-run2-${i}`}>{'\u00a0'}</td>
             ))}
+          </tr>
+        </tbody>
+      </table>
+      <table className="js-grid js-extrusion-details-table">
+        <tbody>
+          <tr>
+            <td className="js-sec" colSpan={6}>
+              Extrusion details
+            </td>
+          </tr>
+          <tr>
+            <th>Start Date</th>
+            <td>{'\u00a0'}</td>
+            <th>Start Time</th>
+            <td>{'\u00a0'}</td>
+            <th>Sign</th>
+            <td>{'\u00a0'}</td>
+          </tr>
+          <tr>
+            <th>Finish Date</th>
+            <td>{'\u00a0'}</td>
+            <th>Finish Time</th>
+            <td>{'\u00a0'}</td>
+            <th>Sign</th>
+            <td>{'\u00a0'}</td>
+          </tr>
+          <tr>
+            <th>Setup Waste</th>
+            <td>{'\u00a0'}</td>
+            <th>Purge Waste</th>
+            <td>{'\u00a0'}</td>
+            <th>Other Waste</th>
+            <td>{'\u00a0'}</td>
+          </tr>
+          <tr>
+            <th>Notes</th>
+            <td colSpan={5} className="js-extrusion-details-notes">
+              {'\u00a0'}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -1340,7 +1372,6 @@ function JobSheetPrintConversionInstructionsPage(props: {
         header={orderHeader.header}
         product={orderHeader.product}
       />
-      <div className="js-conv-section-label">Conversion</div>
       <div className="js-conv-sheet">
         <div className="js-conv-main">
           <table className="js-conv-box" role="presentation">
@@ -3577,32 +3608,85 @@ export function JobSheetPrintPage() {
         .js-print-conversion-sheet .js-compact {
           margin-bottom: 10px;
         }
-        .js-conv-section-label {
-          font-size: var(--js-print-fs-body);
-          font-weight: var(--js-print-fw-value);
-          margin: 0 0 8px;
-        }
         .js-print-extrusion-qc-sheet {
           padding: 0;
           box-sizing: border-box;
-          font-size: var(--js-print-fs-body);
+          --js-extrusion-qc-fs-body: 11px;
+          --js-extrusion-qc-fs-label: 10px;
+          --js-extrusion-qc-fs-title: 14px;
+          font-size: var(--js-extrusion-qc-fs-body);
+          line-height: 1.2;
+        }
+        .js-print-extrusion-qc-sheet .js-title,
+        .js-print-extrusion-qc-sheet .js-title-part,
+        .js-print-extrusion-qc-sheet .js-compact,
+        .js-print-extrusion-qc-sheet .js-compact-k,
+        .js-print-extrusion-qc-sheet .js-compact-v,
+        .js-print-extrusion-qc-sheet .js-order-header-notes,
+        .js-print-extrusion-qc-sheet .js-order-header-desc-secondary,
+        .js-print-extrusion-qc-sheet .js-order-header-summary-line,
+        .js-print-extrusion-qc-sheet .js-quality-list li {
           line-height: 1.35;
         }
         .js-print-extrusion-qc-sheet .js-grid {
-          margin-bottom: 8px;
+          margin-bottom: 6px;
         }
-        .js-print-extrusion-qc-sheet .js-title {
-          font-size: var(--js-print-fs-title);
-        }
-        .js-extruder-settings-table th,
-        .js-extruder-settings-table td {
-          font-size: var(--js-print-fs-body);
+        .js-print-extrusion-qc-sheet .js-grid th,
+        .js-print-extrusion-qc-sheet .js-grid td {
+          padding: 2px 2px;
+          font-size: var(--js-extrusion-qc-fs-body);
           white-space: normal;
           word-break: break-word;
         }
-        .js-extruder-settings-table td.js-sec {
+        .js-print-extrusion-qc-sheet .js-grid th {
+          font-size: var(--js-extrusion-qc-fs-label);
+        }
+        .js-print-extrusion-qc-sheet .js-grid > tbody > tr > th,
+        .js-print-extrusion-qc-sheet .js-grid > tbody > tr > td {
+          min-height: 1.35em;
+        }
+        .js-print-extrusion-qc-sheet .js-grid td.js-sec {
           font-weight: var(--js-print-fw-value);
-          font-size: var(--js-print-fs-body);
+          font-size: var(--js-extrusion-qc-fs-body);
+          height: auto;
+          min-height: 1.35em;
+        }
+        .js-print-extrusion-qc-sheet .js-extrusion-details-table th {
+          font-weight: var(--js-print-fw-label);
+          width: 14%;
+        }
+        .js-print-extrusion-qc-sheet .js-extrusion-details-notes {
+          min-height: 2.5em;
+          vertical-align: top;
+        }
+        .js-print-extrusion-qc-sheet .js-qc-checklist th,
+        .js-print-extrusion-qc-sheet .js-qc-checklist td {
+          padding: 2px 2px;
+          font-size: var(--js-extrusion-qc-fs-body);
+        }
+        .js-print-extrusion-qc-sheet .js-qc-checklist td.js-qc-title {
+          font-size: var(--js-extrusion-qc-fs-body);
+        }
+        .js-print-extrusion-qc-sheet .js-qc-checklist .js-qc-check-for,
+        .js-print-extrusion-qc-sheet .js-qc-checklist .js-qc-wi,
+        .js-print-extrusion-qc-sheet .js-qc-checklist .js-qc-details-label {
+          font-size: var(--js-extrusion-qc-fs-label);
+        }
+        .js-print-extrusion-qc-sheet .js-qc-checklist .js-qc-details-label {
+          height: 32px;
+        }
+        .js-print-extrusion-qc-sheet .js-extruder-output-table {
+          font-size: var(--js-extrusion-qc-fs-body);
+        }
+        .js-print-extrusion-qc-sheet .js-extruder-output-table th,
+        .js-print-extrusion-qc-sheet .js-extruder-output-table td {
+          padding: 2px 2px;
+          font-size: var(--js-extrusion-qc-fs-body);
+          min-height: 1.25em;
+        }
+        .js-print-extrusion-qc-sheet .js-extruder-output-table th {
+          font-size: var(--js-extrusion-qc-fs-label);
+          line-height: 1.1;
         }
         .js-extrusion-cert-side-note {
           min-height: 92px;
@@ -3827,21 +3911,12 @@ export function JobSheetPrintPage() {
         .js-ship-pallet-checklist-cell {
           vertical-align: top;
         }
-        .js-ship-packing-notes-label {
-          font-weight: var(--js-print-fw-label);
-          font-size: var(--js-print-fs-label);
-          margin-bottom: 4px;
-        }
         .js-ship-packing-notes-text {
           font-weight: var(--js-print-fw-value);
           font-size: var(--js-print-fs-body);
           white-space: pre-wrap;
           word-break: break-word;
-        }
-        .js-ship-pallet-checklist-label {
-          font-weight: var(--js-print-fw-label);
-          font-size: var(--js-print-fs-label);
-          margin-bottom: 6px;
+          padding: 4px 6px;
         }
         .js-ship-pallet-checklist {
           display: flex;

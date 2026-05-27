@@ -29,7 +29,6 @@ import { InventoryReceivePage } from './pages/inventory/InventoryReceivePage'
 import { InventoryAdjustPage } from './pages/inventory/InventoryAdjustPage'
 import { InventoryTransactionsPage } from './pages/inventory/InventoryTransactionsPage'
 import { OrderNewPage } from './pages/orders/OrderNewPage'
-import { OrderShowPage } from './pages/orders/OrderShowPage'
 import { OrderAddJobPage } from './pages/orders/OrderAddJobPage'
 import { OrderEditPage } from './pages/orders/OrderEditPage'
 import {
@@ -82,6 +81,14 @@ function JobSheetRedirectToEdit() {
   const id = (jobSheetId || '').trim()
   if (!id) return <Navigate to="/job-sheets" replace />
   return <Navigate to={`/job-sheets/${encodeURIComponent(id)}/edit`} replace />
+}
+
+/** `/orders/:id` opens the editor (no separate read-only view). */
+function OrderRedirectToEdit() {
+  const { orderId } = useParams()
+  const id = (orderId || '').trim()
+  if (!id) return <Navigate to="/orders" replace />
+  return <Navigate to={`/orders/${encodeURIComponent(id)}/edit`} replace />
 }
 
 function RequireAuth() {
@@ -249,7 +256,7 @@ function App() {
               <Route path="/products/:productId/versions/:versionId" element={<ProductVersionEditPage />} />
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/orders/new" element={<OrderNewPage />} />
-              <Route path="/orders/:orderId" element={<OrderShowPage />} />
+              <Route path="/orders/:orderId" element={<OrderRedirectToEdit />} />
               <Route path="/orders/:orderId/edit" element={<OrderEditPage />} />
               <Route path="/orders/:orderId/jobs/new" element={<OrderAddJobPage />} />
               <Route path="/inventory" element={<InventoryPage />} />

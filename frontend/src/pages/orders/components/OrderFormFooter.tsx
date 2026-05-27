@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { can } from '../../../auth/permissions'
 import { deleteOrder, fetchOrder, patchOrder } from '../../../store/slices/ordersSlice'
@@ -26,7 +25,7 @@ export const ORDER_STATUS_OPTIONS = [
   'cancelled',
 ] as const
 
-export type OrderFormFooterVariant = 'new' | 'edit' | 'view'
+export type OrderFormFooterVariant = 'new' | 'edit'
 
 type Props = {
   variant: OrderFormFooterVariant
@@ -171,10 +170,6 @@ export function OrderFormFooter(props: Props) {
         saving={Boolean(saveChangesPending)}
         label="Save changes"
       />
-    ) : variant === 'view' && orderId && canEdit ? (
-      <Button variant="outlined" component={Link} to={`/orders/${encodeURIComponent(orderId)}/edit`}>
-        Edit order
-      </Button>
     ) : null
 
   const importControl =

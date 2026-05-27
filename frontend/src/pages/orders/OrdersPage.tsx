@@ -120,7 +120,6 @@ export function OrdersPage() {
   const { items, status, error, total } = useAppSelector((s) => s.orders.list)
   const ordersBootstrap = useAppSelector((s) => s.orders.bootstrap)
   const canCreate = can(roles, 'SALES', 'PROD_MANAGER')
-  const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const loading = status === 'loading'
   const [debouncing, setDebouncing] = useState(false)
   const [brands, setBrands] = useState<Array<{ id: string; code: string; name: string }>>([])
@@ -335,7 +334,7 @@ export function OrdersPage() {
               {(items as OrderRow[]).map((o) => (
                 <TableRow key={o.id} hover>
                   <TableCell>
-                    <MuiLink component={Link} to={`/orders/${o.id}`} underline="hover">
+                    <MuiLink component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`} underline="hover">
                       {o.code}
                     </MuiLink>
                   </TableCell>
@@ -371,14 +370,9 @@ export function OrdersPage() {
                   <TableCell>{formatDateDMYShort(o.order_date || o.created_at, '')}</TableCell>
                   <TableCell align="right">
                     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
-                      <Button size="small" variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(o.id)}`}>
-                        View
+                      <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
+                        Open
                       </Button>
-                      {canEdit ? (
-                        <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
-                          Edit
-                        </Button>
-                      ) : null}
                     </Box>
                   </TableCell>
                 </TableRow>

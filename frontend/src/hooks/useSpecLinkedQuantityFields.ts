@@ -354,6 +354,28 @@ export function useSpecLinkedQuantityFields(opts: {
       (effectiveQtyType === 'rolls_units' && unitsPerRollNum > 0) ||
       (effectiveQtyType === 'total_rolls' && isContinuousLength && metersPerRollNum > 0))
 
+  /** Roll/carton count for packaging “Order total” — mirrors {@link LinkedQuantityFields} display values. */
+  const stockPlanningTotalUnits = useMemo(() => {
+    if (finishMode === 'Cartons') {
+      if (effectiveQtyType === 'units' && cartonQtyMode === 'ctn' && numCartonsNum > 0) {
+        return numCartonsNum
+      }
+      return cartonCountForDisplay != null && cartonCountForDisplay > 0 ? cartonCountForDisplay : null
+    }
+    if (rollsEditable && numRollsNum > 0) return numRollsNum
+    if (rollsDisplay != null && rollsDisplay > 0) return Math.round(Number(rollsDisplay))
+    return numRollsNum > 0 ? numRollsNum : null
+  }, [
+    finishMode,
+    effectiveQtyType,
+    cartonQtyMode,
+    numCartonsNum,
+    cartonCountForDisplay,
+    rollsEditable,
+    numRollsNum,
+    rollsDisplay,
+  ])
+
   const totalMetersReadonly = useMemo(() => {
     if (!ratebook) return '…'
     if (!derivedForDisplay) return '—'
@@ -1098,6 +1120,7 @@ export function useSpecLinkedQuantityFields(opts: {
     ratebook,
     derivedForDisplay,
     quickInputs,
+    stockPlanningTotalUnits,
     totalKgDisplay,
     rollsDisplay,
     weightPerRollDisplay,

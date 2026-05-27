@@ -28,7 +28,7 @@ export function OrderAddJobPage() {
           },
         }),
       ).unwrap()
-      nav(`/orders/${orderId}`)
+      nav(`/orders/${orderId}/edit`)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to create job')
     } finally {
@@ -68,7 +68,7 @@ export function OrderAddJobPage() {
             <Button variant="contained" onClick={submit} disabled={saving || !plannedQty}>
               {saving ? 'Creating…' : 'Create Job'}
             </Button>
-            <Button variant="outlined" component={Link} to={`/orders/${orderId}`}>
+            <Button variant="outlined" component={Link} to={`/orders/${orderId}/edit`}>
               Cancel
             </Button>
           </Box>

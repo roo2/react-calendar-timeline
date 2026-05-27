@@ -166,7 +166,7 @@ export function LinkedQuantityFields(props: {
         <TextField
           label="Total KG"
           type="number"
-          inputProps={{ min: 0, step: 0.1 }}
+          inputProps={{ min: 0, step: 'any' }}
           value={
             totalKgEditable
               ? totalKg

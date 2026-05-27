@@ -252,14 +252,7 @@ export function useJobSheetLivePreviewProps(params: UseJobSheetLivePreviewParams
 
   const extruderCodeForQty = productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : null
 
-  const stockPlanningTotalUnits = useMemo(() => {
-    if (!includeProductionEstimates) return null
-    if (finishMode === 'Cartons') {
-      return qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0 ? qty.cartonCountForDisplay : null
-    }
-    const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
-    return nr > 0 ? nr : null
-  }, [includeProductionEstimates, finishMode, qty.cartonCountForDisplay, qty.numRolls])
+  const stockPlanningTotalUnits = includeProductionEstimates ? qty.stockPlanningTotalUnits : null
 
   const estimatedUnitsPerPalletVolume = useMemo(
     () =>

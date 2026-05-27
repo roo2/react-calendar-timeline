@@ -423,13 +423,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     [spec, ratebook],
   )
 
-  const stockPlanningTotalUnits = useMemo(() => {
-    if (finishMode === 'Cartons') {
-      return qty.cartonCountForDisplay != null && qty.cartonCountForDisplay > 0 ? qty.cartonCountForDisplay : null
-    }
-    const nr = Math.max(0, Math.round(Number(qty.numRolls || 0)))
-    return nr > 0 ? nr : null
-  }, [finishMode, qty.cartonCountForDisplay, qty.numRolls])
+  const stockPlanningTotalUnits = qty.stockPlanningTotalUnits
 
   useEffect(() => {
     if (extruderUserTouchedRef.current) return
@@ -960,7 +954,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           Cancel
         </Button>
         {mode === 'edit' && orderId ? (
-          <Button variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(orderId)}`}>
+          <Button variant="text" color="primary" component={Link} to={`/orders/${encodeURIComponent(orderId)}/edit`}>
             View Order
           </Button>
         ) : null}
@@ -1163,7 +1157,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                       {mode === 'edit' && orderId.trim() ? (
                         <MuiLink
                           component={Link}
-                          to={`/orders/${encodeURIComponent(orderId)}`}
+                          to={`/orders/${encodeURIComponent(orderId)}/edit`}
                           underline="hover"
                           variant="body2"
                           sx={{ flexShrink: 0 }}

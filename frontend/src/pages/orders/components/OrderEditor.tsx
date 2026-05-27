@@ -1311,7 +1311,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }
 
   const title = mode === 'new' ? 'New Order' : 'Edit Order'
-  const cancelTo = mode === 'edit' && orderId ? `/orders/${orderId}` : '/orders'
+  const cancelTo = '/orders'
 
   function onCancel() {
     if (mode === 'edit') {
