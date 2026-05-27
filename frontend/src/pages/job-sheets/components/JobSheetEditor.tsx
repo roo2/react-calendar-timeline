@@ -19,12 +19,8 @@ import {
   Alert,
   Box,
   Button,
-  FormControl,
-  InputLabel,
   Link as MuiLink,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Typography,
   useMediaQuery,
@@ -54,8 +50,9 @@ import { CustomerOverproductionHandlingField } from '../../../components/quantit
 import { CartonRollWeightField, LinkedQuantityFields } from '../../../components/quantity/LinkedQuantityFields'
 import { useSpecLinkedQuantityFields } from '../../../hooks/useSpecLinkedQuantityFields'
 import { JobSheetIdentityQuantitySection, productionStatusShowsDatetimeFields, type JobSheetQuantityFieldsProps } from './JobSheetIdentityQuantitySection'
+import { ProductionExtruderSelect } from '../../../components/extruder/ProductionExtruderSelect'
 import {
-  extruderCodeFitsSpecWidth,
+  extruderCodeIsSelectableForSpec,
   suggestSmallestFittingExtruderCode,
 } from '../../../utils/suggestExtruderFromSpec'
 import { estimateUnitsPerPalletVolumeFromLiveSpec } from '../../../utils/palletShippingEstimate'
@@ -191,7 +188,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (st.status !== 'succeeded' || !st.data) return
     if (lastJobDetailDataRef.current === st.data) return
     lastJobDetailDataRef.current = st.data
-    extruderUserTouchedRef.current = false
     setSaveErr(null)
     setSpecFieldErrors({})
     const res = st.data
@@ -260,7 +256,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       String(loadedSpec0.identity.production_extruder_code).trim() !== ''
         ? String(loadedSpec0.identity.production_extruder_code).trim()
         : ''
-    setProductionExtruderCode(extFromRow || extLegacy)
+    const loadedExtruder = extFromRow || extLegacy
+    setProductionExtruderCode(loadedExtruder)
+    extruderUserTouchedRef.current = !!loadedExtruder
     const fm: FinishMode = loadedSpec0.identity?.finish_mode === 'Cartons' ? 'Cartons' : 'Rolls'
     const pt = String(loadedSpec0.identity?.product_type || 'Bag')
     const lenRaw = String(loadedSpec0.dimensions?.length_units || '')
@@ -434,7 +432,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       setProductionExtruderCode(suggested)
       return
     }
-    if (!extruderCodeFitsSpecWidth(current, spec, ratebook ?? null)) {
+    if (!extruderCodeIsSelectableForSpec(current, spec, ratebook ?? null)) {
       setProductionExtruderCode(suggested)
     }
   }, [productionExtruderCode, extruderSuggestion.extruderCode, spec, ratebook])
@@ -1097,50 +1095,20 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                     <Typography variant="h6" sx={{ mb: 2 }}>
                       Extruder
                     </Typography>
-                    <Stack spacing={2}>
-                      <FormControl fullWidth size="small" sx={{ maxWidth: 520 }}>
-                        <InputLabel id="job-sheet-production-extruder-label">Extruder</InputLabel>
-                        <Select
-                          labelId="job-sheet-production-extruder-label"
-                          label="Extruder"
-                          value={productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : ''}
-                          onChange={(e) => {
-                            extruderUserTouchedRef.current = true
-                            const v = String(e.target.value || '').trim()
-                            setProductionExtruderCode(v)
-                            setDirty(true)
-                          }}
-                        >
-                          <MenuItem value="">
-                            <em>None</em>
-                          </MenuItem>
-                          {(Array.isArray(ratebook?.extruders) ? ratebook!.extruders : [])
-                            .filter((ex) => ex && String(ex.extruder_code || '').trim())
-                            .map((ex) => {
-                              const code = String(ex.extruder_code || '').trim()
-                              const model = ex?.model != null && String(ex.model).trim() ? String(ex.model).trim() : ''
-                              const dieMm = ex?.die_size_mm != null ? Number(ex.die_size_mm) : null
-                              const dw = ex?.decision_width_mm != null ? Number(ex.decision_width_mm) : null
-                              const avg = ex?.average_kg_hr != null ? Number(ex.average_kg_hr) : null
-                              const bits = [code]
-                              if (model) bits.push(`— ${model}`)
-                              if (dieMm != null && Number.isFinite(dieMm)) bits.push(`die ${Math.round(dieMm)} mm`)
-                              if (dw != null && Number.isFinite(dw)) bits.push(`${Math.round(dw)} mm`)
-                              if (avg != null && Number.isFinite(avg)) bits.push(`~${avg} kg/h`)
-                              return (
-                                <MenuItem key={code} value={code}>
-                                  {bits.join(' · ')}
-                                </MenuItem>
-                              )
-                            })}
-                        </Select>
-                      </FormControl>
-                      {extruderSuggestion.hintLine ? (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                          {extruderSuggestion.hintLine}
-                        </Typography>
-                      ) : null}
-                    </Stack>
+                    <ProductionExtruderSelect
+                      labelId="job-sheet-production-extruder-label"
+                      value={productionExtruderCode}
+                      spec={spec}
+                      ratebook={ratebook ?? null}
+                      hintLine={extruderSuggestion.hintLine}
+                      onUserTouched={() => {
+                        extruderUserTouchedRef.current = true
+                      }}
+                      onChange={(code) => {
+                        setProductionExtruderCode(code)
+                        setDirty(true)
+                      }}
+                    />
                   </Paper>
                   <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                     <Box

@@ -2084,7 +2084,13 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (!extruders.length || !(extruderDecisionWidthMm > 0)) return { extruder: null as any, helperText: '' }
 
     const usable = extruders
-      .filter((e) => e && typeof e.decision_width_mm === 'number' && Number.isFinite(e.decision_width_mm))
+      .filter(
+        (e) =>
+          e &&
+          !e.is_broken &&
+          typeof e.decision_width_mm === 'number' &&
+          Number.isFinite(e.decision_width_mm),
+      )
       .map((e) => ({ ...e, decision_width_mm: Number(e.decision_width_mm) }))
       .sort((a, b) => (a.decision_width_mm! - b.decision_width_mm!) || String(a.extruder_code).localeCompare(String(b.extruder_code)))
 

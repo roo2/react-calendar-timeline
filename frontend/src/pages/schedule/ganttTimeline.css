@@ -29,3 +29,7 @@
 .react-calendar-timeline .rct-item:hover {
   z-index: 52;
 }
+
+.react-calendar-timeline .gantt-extruder-broken {
+  background-color: #ececec !important;
+}

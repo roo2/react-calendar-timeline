@@ -194,6 +194,7 @@ class ExtruderDTO(BaseModel):
     average_kg_hr: int | None = None
     ave_width: float | None = None
     cost_per_hr: float | None = None
+    is_broken: bool = False
 
 
 class ExtruderUpsertRequest(BaseModel):
@@ -205,6 +206,7 @@ class ExtruderUpsertRequest(BaseModel):
     average_kg_hr: int | None = None
     ave_width: float | None = None
     cost_per_hr: float | None = Field(default=None, ge=0)
+    is_broken: bool = False
 
 
 class ExtrusionWasteFactorDTO(BaseModel):
@@ -1339,6 +1341,7 @@ async def list_extruders():
                 average_kg_hr=e.average_kg_hr,
                 ave_width=float(e.ave_width) if e.ave_width is not None else None,
                 cost_per_hr=float(e.cost_per_hr) if e.cost_per_hr is not None else None,
+                is_broken=bool(e.is_broken),
             )
             for e in rows
         ]
@@ -1367,6 +1370,7 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
         row.average_kg_hr = payload.average_kg_hr
         row.ave_width = payload.ave_width
         row.cost_per_hr = payload.cost_per_hr
+        row.is_broken = payload.is_broken
 
     with SessionLocal() as db:
         e2 = db.get(Extruder, code)
@@ -1381,6 +1385,7 @@ async def upsert_extruder(extruder_code: str, payload: ExtruderUpsertRequest):
             average_kg_hr=e2.average_kg_hr,
             ave_width=float(e2.ave_width) if e2.ave_width is not None else None,
             cost_per_hr=float(e2.cost_per_hr) if e2.cost_per_hr is not None else None,
+            is_broken=bool(e2.is_broken),
         )
 
 

@@ -269,6 +269,7 @@ class Extruder(Base):
     average_kg_hr: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ave_width: Mapped[float | None] = mapped_column(Numeric(12, 3), nullable=True)
     cost_per_hr: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    is_broken: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     extrusion_queue_items: Mapped[list["ExtrusionQueueItem"]] = relationship(
         back_populates="extruder", foreign_keys="ExtrusionQueueItem.extruder_code"

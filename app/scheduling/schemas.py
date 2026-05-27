@@ -102,6 +102,7 @@ class GanttLaneDTO(BaseModel):
 	machine_type: str
 	film_width_min_mm: Optional[int] = Field(default=None, description="Extruder rate card min film width (mm)")
 	film_width_max_mm: Optional[int] = Field(default=None, description="Extruder rate card max film width (mm)")
+	is_broken: Optional[bool] = Field(default=None, description="Extruder marked unavailable in admin")
 	bars: List[GanttBarDTO]
 
 

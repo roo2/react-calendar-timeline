@@ -148,6 +148,7 @@ async def get_ratebook():
                 Extruder.decision_width_mm,
                 Extruder.average_kg_hr,
                 Extruder.cost_per_hr,
+                Extruder.is_broken,
             ).order_by(Extruder.decision_width_mm.asc().nulls_last(), Extruder.extruder_code.asc())
         ).all()
         printing_rates = db.execute(
@@ -260,8 +261,9 @@ async def get_ratebook():
                 "decision_width_mm": (int(dw) if dw is not None else None),
                 "average_kg_hr": (int(avg) if avg is not None else None),
                 "cost_per_hr": (float(cph) if cph is not None else None),
+                "is_broken": bool(is_broken),
             }
-            for code, model, die_mm, dw, avg, cph in extruders
+            for code, model, die_mm, dw, avg, cph, is_broken in extruders
         ],
         "printing_rates": out_printing,
         "printing_pricing_tiers": [

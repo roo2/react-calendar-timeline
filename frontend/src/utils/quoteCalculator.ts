@@ -41,6 +41,7 @@ export type QuoteRatebook = {
     decision_width_mm: number | null
     average_kg_hr: number | null
     cost_per_hr: number | null
+    is_broken?: boolean | null
   }>
   printing_pricing_tiers?: Array<{
     method: 'inline' | 'uteco'

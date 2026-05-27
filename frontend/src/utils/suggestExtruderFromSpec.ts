@@ -8,6 +8,59 @@ import { computeLayflatWidthMm, type QuoteRatebook } from './quoteCalculator'
 import { productTypeCanHaveGusset } from './specCompat'
 import { isLeftRightWidthFilmProductType, isUFilmProductType } from './filmProductTypes'
 
+/** True when an extruder ratebook row is marked unavailable in admin. */
+export function extruderIsBroken(ex: { is_broken?: boolean | null } | null | undefined): boolean {
+  return !!ex?.is_broken
+}
+
+/** Resolve whether a ratebook extruder code is marked unavailable. */
+export function extruderCodeIsBroken(
+  extruderCode: string,
+  ratebook: QuoteRatebook | null | undefined,
+): boolean {
+  const code = String(extruderCode || '').trim()
+  if (!code) return false
+  const extruders = Array.isArray(ratebook?.extruders) ? ratebook.extruders : []
+  const row = extruders.find((e) => e && String(e.extruder_code || '').trim() === code)
+  return extruderIsBroken(row)
+}
+
+export type ExtruderDisableReason = 'Unavailable' | 'Incompatible'
+
+/** Why an extruder cannot be chosen for this spec, or `null` if it is selectable. */
+export function extruderDisableReasonForSpec(
+  extruderCode: string,
+  spec: SpecPayload,
+  ratebook: QuoteRatebook | null | undefined,
+): ExtruderDisableReason | null {
+  const code = String(extruderCode || '').trim()
+  if (!code) return null
+  if (extruderCodeIsBroken(code, ratebook)) return 'Unavailable'
+  if (!extruderCodeFitsSpecWidth(code, spec, ratebook)) return 'Incompatible'
+  return null
+}
+
+export function extruderCodeIsSelectableForSpec(
+  extruderCode: string,
+  spec: SpecPayload,
+  ratebook: QuoteRatebook | null | undefined,
+): boolean {
+  return extruderDisableReasonForSpec(extruderCode, spec, ratebook) == null
+}
+
+/** Disable reason for a ratebook row in the extruder dropdown. */
+export function extruderRowDisableReason(
+  ex: { extruder_code?: string | null; is_broken?: boolean | null },
+  spec: SpecPayload,
+  ratebook: QuoteRatebook | null | undefined,
+): ExtruderDisableReason | null {
+  const code = String(ex?.extruder_code || '').trim()
+  if (!code) return null
+  if (extruderIsBroken(ex)) return 'Unavailable'
+  if (!extruderCodeFitsSpecWidth(code, spec, ratebook)) return 'Incompatible'
+  return null
+}
+
 function runUpSlugToNumber(runUp: string | undefined): number {
   if (!runUp || runUp === 'none') return 1
   if (runUp === '2up') return 2
@@ -94,7 +147,13 @@ export function suggestSmallestFittingExtruderCode(
   const widthLabel = isUFilm ? 'middle width' : 'layflat'
 
   const usable = extruders
-    .filter((e) => e && typeof e.decision_width_mm === 'number' && Number.isFinite(e.decision_width_mm))
+    .filter(
+      (e) =>
+        e &&
+        !extruderIsBroken(e) &&
+        typeof e.decision_width_mm === 'number' &&
+        Number.isFinite(e.decision_width_mm),
+    )
     .map((e) => ({ ...e, decision_width_mm: Number(e.decision_width_mm) }))
     .sort(
       (a, b) =>

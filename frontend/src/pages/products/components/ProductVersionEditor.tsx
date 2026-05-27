@@ -10,12 +10,8 @@ import {
   Alert,
   Box,
   Button,
-  FormControl,
-  InputLabel,
   Link as MuiLink,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Typography,
   useMediaQuery,
@@ -48,8 +44,9 @@ import {
   useSpecLinkedQuantityFields,
   type SpecLinkedQuantityHydrate,
 } from '../../../hooks/useSpecLinkedQuantityFields'
+import { ProductionExtruderSelect } from '../../../components/extruder/ProductionExtruderSelect'
 import {
-  extruderCodeFitsSpecWidth,
+  extruderCodeIsSelectableForSpec,
   suggestSmallestFittingExtruderCode,
 } from '../../../utils/suggestExtruderFromSpec'
 import {
@@ -591,7 +588,6 @@ export function ProductVersionEditor(props: {
       }
     }
     setSpec(loadedSpec0)
-    extruderUserTouchedRef.current = false
     const extFromRow =
       js?.production_extruder_code != null && String(js.production_extruder_code).trim() !== ''
         ? String(js.production_extruder_code).trim()
@@ -601,7 +597,9 @@ export function ProductVersionEditor(props: {
       String(loadedSpec0.identity.production_extruder_code).trim() !== ''
         ? String(loadedSpec0.identity.production_extruder_code).trim()
         : ''
-    setProductionExtruderCode(extFromRow || extLegacy)
+    const loadedExtruder = extFromRow || extLegacy
+    setProductionExtruderCode(loadedExtruder)
+    extruderUserTouchedRef.current = !!loadedExtruder
     setCustomerId(js?.customer_id || '')
     setOrderDate(js?.order_date ? String(js.order_date).slice(0, 10) : '')
     setDueDate(orderLineQtySnapshot ? orderLineQtySnapshot.due_date || '' : js?.due_date || '')
@@ -689,7 +687,7 @@ export function ProductVersionEditor(props: {
       setProductionExtruderCode(suggested)
       return
     }
-    if (!extruderCodeFitsSpecWidth(current, spec, ratebook ?? null)) {
+    if (!extruderCodeIsSelectableForSpec(current, spec, ratebook ?? null)) {
       setProductionExtruderCode(suggested)
     }
   }, [jobSheetId, embedded, productionExtruderCode, extruderSuggestion.extruderCode, spec, ratebook])
@@ -1491,48 +1489,20 @@ export function ProductVersionEditor(props: {
                           <Typography variant="h6" sx={{ mb: 2 }}>
                             Extruder
                           </Typography>
-                          <Stack spacing={2}>
-                            <FormControl fullWidth size="small" sx={{ maxWidth: 520 }}>
-                              <InputLabel id="pv-job-sheet-production-extruder-label">Extruder</InputLabel>
-                              <Select
-                                labelId="pv-job-sheet-production-extruder-label"
-                                label="Extruder"
-                                value={productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : ''}
-                                onChange={(e) => {
-                                  extruderUserTouchedRef.current = true
-                                  const v = String(e.target.value || '').trim()
-                                  setProductionExtruderCode(v)
-                                  setDirty(true)
-                                }}
-                              >
-                                <MenuItem value="">
-                                  <em>None</em>
-                                </MenuItem>
-                                {(Array.isArray(ratebook?.extruders) ? ratebook!.extruders : [])
-                                  .filter((ex) => ex && String(ex.extruder_code || '').trim())
-                                  .map((ex) => {
-                                    const code = String(ex.extruder_code || '').trim()
-                                    const model = ex?.model != null && String(ex.model).trim() ? String(ex.model).trim() : ''
-                                    const dw = ex?.decision_width_mm != null ? Number(ex.decision_width_mm) : null
-                                    const avg = ex?.average_kg_hr != null ? Number(ex.average_kg_hr) : null
-                                    const bits = [code]
-                                    if (model) bits.push(`— ${model}`)
-                                    if (dw != null && Number.isFinite(dw)) bits.push(`${Math.round(dw)} mm`)
-                                    if (avg != null && Number.isFinite(avg)) bits.push(`~${avg} kg/h`)
-                                    return (
-                                      <MenuItem key={code} value={code}>
-                                        {bits.join(' · ')}
-                                      </MenuItem>
-                                    )
-                                  })}
-                              </Select>
-                            </FormControl>
-                            {extruderSuggestion.hintLine ? (
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                {extruderSuggestion.hintLine}
-                              </Typography>
-                            ) : null}
-                          </Stack>
+                          <ProductionExtruderSelect
+                            labelId="pv-job-sheet-production-extruder-label"
+                            value={productionExtruderCode}
+                            spec={spec}
+                            ratebook={ratebook ?? null}
+                            hintLine={extruderSuggestion.hintLine}
+                            onUserTouched={() => {
+                              extruderUserTouchedRef.current = true
+                            }}
+                            onChange={(code) => {
+                              setProductionExtruderCode(code)
+                              setDirty(true)
+                            }}
+                          />
                         </Paper>
                         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                           <Box

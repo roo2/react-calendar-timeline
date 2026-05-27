@@ -479,6 +479,8 @@ type TimelineGroup = {
   sidebarMachineCode: string
   /** Extruder: e.g. `200–400 mm`; non-extruder / unknown range: `null`. */
   sidebarWidthRange: string | null
+  /** Extruder marked unavailable in admin. */
+  isBroken?: boolean
 }
 
 type TimelineItem = {
@@ -929,6 +931,7 @@ function buildGanttTimelineItems(
 }
 
 function ganttTimelineGroupRenderer({ group }: { group: TimelineGroup }) {
+  const broken = !!group.isBroken
   const rowStyle: CSSProperties = {
     paddingLeft: 8,
     paddingRight: 6,
@@ -937,16 +940,22 @@ function ganttTimelineGroupRenderer({ group }: { group: TimelineGroup }) {
     alignItems: 'center',
     minWidth: 0,
     overflow: 'hidden',
+    ...(broken
+      ? {
+          backgroundColor: '#e0e0e0',
+          color: 'rgba(13, 27, 42, 0.58)',
+        }
+      : {}),
   }
   if (group.machineType === 'extruder') {
     return (
-      <div style={rowStyle} title={group.title}>
+      <div style={rowStyle} title={broken ? `${group.title} · Unavailable` : group.title}>
         <span style={{ fontWeight: 700, flexShrink: 0 }}>{group.sidebarMachineCode}</span>
         {group.sidebarWidthRange ? (
           <span
             style={{
               fontWeight: 400,
-              color: 'rgba(13, 27, 42, 0.62)',
+              color: broken ? 'rgba(13, 27, 42, 0.52)' : 'rgba(13, 27, 42, 0.62)',
               marginLeft: 4,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -956,7 +965,10 @@ function ganttTimelineGroupRenderer({ group }: { group: TimelineGroup }) {
           >
             {' · '}
             {group.sidebarWidthRange}
+            {broken ? ' · Unavailable' : ''}
           </span>
+        ) : broken ? (
+          <span style={{ marginLeft: 4, fontSize: '0.8125rem', fontWeight: 400 }}>· Unavailable</span>
         ) : null}
       </div>
     )
@@ -1031,6 +1043,7 @@ export function GanttBoard() {
   const groups = useMemo<TimelineGroup[]>(() => {
     return lanes.map((lane) => {
       const range = extruderLaneMmRangeLabel(lane)
+      const isBroken = lane.machine_type === 'extruder' && !!lane.is_broken
       const title = range != null ? `${lane.machine_code} · ${range}` : lane.machine_code
       return {
         id: lane.machine_id,
@@ -1039,6 +1052,7 @@ export function GanttBoard() {
         height: extruderLaneRowHeightPx(lane),
         sidebarMachineCode: lane.machine_code,
         sidebarWidthRange: range,
+        isBroken,
       }
     })
   }, [lanes])
@@ -1278,6 +1292,19 @@ export function GanttBoard() {
       ro.disconnect()
     }
   }, [timelineScrollEl, syncOverlayFromTimeline])
+
+  useLayoutEffect(() => {
+    if (!timelineScrollEl || !groups.length) return
+    const root = timelineScrollEl.closest('.react-calendar-timeline')
+    if (!root) return
+    const sidebarRows = root.querySelectorAll('.rct-sidebar .rct-sidebar-row')
+    const gridRows = root.querySelectorAll('.rct-horizontal-lines > div')
+    groups.forEach((group, index) => {
+      const broken = !!group.isBroken
+      sidebarRows[index]?.classList.toggle('gantt-extruder-broken', broken)
+      gridRows[index]?.classList.toggle('gantt-extruder-broken', broken)
+    })
+  }, [timelineScrollEl, groups])
 
   useLayoutEffect(() => {
     requestAnimationFrame(() => {

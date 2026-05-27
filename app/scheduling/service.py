@@ -2308,12 +2308,14 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 				continue
 			film_min = lane.extruder.film_width_min_mm if lane.kind == "extrusion" and lane.extruder else None
 			film_max = lane.extruder.film_width_max_mm if lane.kind == "extrusion" and lane.extruder else None
+			is_broken = bool(lane.extruder.is_broken) if lane.kind == "extrusion" and lane.extruder else None
 			lanes.append(GanttLaneDTO(
 				machine_id=machine_id_str,
 				machine_code=machine_code,
 				machine_type=machine_type_str,
 				film_width_min_mm=film_min,
 				film_width_max_mm=film_max,
+				is_broken=is_broken,
 				bars=bars,
 			))
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Box, Button, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Checkbox, FormControlLabel, Paper, Stack, TableBody, TableCell, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import {
@@ -172,6 +172,7 @@ export function ExtrusionAdminPage() {
   const [newExtruderAvgKgHr, setNewExtruderAvgKgHr] = useState<number | ''>('')
   const [newExtruderAveWidth, setNewExtruderAveWidth] = useState<number | ''>('')
   const [newExtruderCostPerHr, setNewExtruderCostPerHr] = useState<number | ''>('')
+  const [newExtruderBroken, setNewExtruderBroken] = useState(false)
   const [savingFeatureRetails, setSavingFeatureRetails] = useState(false)
   const [gussetRetailPerKg, setGussetRetailPerKg] = useState('')
   const [punchedRetailPerKg, setPunchedRetailPerKg] = useState('')
@@ -564,6 +565,7 @@ export function ExtrusionAdminPage() {
                 <TableCell sx={{ width: 140 }}>Avg (kg/hr)</TableCell>
                 <TableCell sx={{ width: 120 }}>Ave width</TableCell>
                 <TableCell sx={{ width: 100 }}>Cost/hr ($)</TableCell>
+                <TableCell sx={{ width: 120 }}>Unavailable</TableCell>
                 <TableCell sx={{ width: 220 }} />
               </TableRow>
             </TableHead>
@@ -611,6 +613,12 @@ export function ExtrusionAdminPage() {
                 <TableCell>
                   <TextField size="small" inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }} value={newExtruderCostPerHr} onChange={(e) => setNewExtruderCostPerHr(e.target.value ? parseFloat(e.target.value) : '')} />
                 </TableCell>
+                <TableCell>
+                  <FormControlLabel
+                    control={<Checkbox size="small" checked={newExtruderBroken} onChange={(e) => setNewExtruderBroken(e.target.checked)} />}
+                    label="Broken"
+                  />
+                </TableCell>
                 <TableCell align="right">
                   <Button
                     size="small"
@@ -627,6 +635,7 @@ export function ExtrusionAdminPage() {
                         average_kg_hr: newExtruderAvgKgHr === '' ? null : Number(newExtruderAvgKgHr),
                         ave_width: newExtruderAveWidth === '' ? null : Number(newExtruderAveWidth),
                         cost_per_hr: newExtruderCostPerHr === '' ? null : Number(newExtruderCostPerHr),
+                        is_broken: newExtruderBroken,
                       }).then(() => {
                         setNewExtruderCode('')
                         setNewExtruderModel('')
@@ -637,6 +646,7 @@ export function ExtrusionAdminPage() {
                         setNewExtruderAvgKgHr('')
                         setNewExtruderAveWidth('')
                         setNewExtruderCostPerHr('')
+                        setNewExtruderBroken(false)
                       })
                     }}
                   >
@@ -691,6 +701,7 @@ function ExtruderRow(props: {
   const [avgKgHr, setAvgKgHr] = useState<number | ''>(row.average_kg_hr ?? '')
   const [aveWidth, setAveWidth] = useState<number | ''>(row.ave_width ?? '')
   const [costPerHr, setCostPerHr] = useState<number | ''>(row.cost_per_hr ?? '')
+  const [isBroken, setIsBroken] = useState(!!row.is_broken)
   useEffect(() => {
     setModel(row.model || '')
     setDieMm(row.die_size_mm ?? '')
@@ -700,7 +711,8 @@ function ExtruderRow(props: {
     setAvgKgHr(row.average_kg_hr ?? '')
     setAveWidth(row.ave_width ?? '')
     setCostPerHr(row.cost_per_hr ?? '')
-  }, [row.model, row.die_size_mm, row.film_width_min_mm, row.film_width_max_mm, row.decision_width_mm, row.average_kg_hr, row.ave_width, row.cost_per_hr])
+    setIsBroken(!!row.is_broken)
+  }, [row.model, row.die_size_mm, row.film_width_min_mm, row.film_width_max_mm, row.decision_width_mm, row.average_kg_hr, row.ave_width, row.cost_per_hr, row.is_broken])
 
   const dirty =
     model !== (row.model || '') ||
@@ -710,10 +722,11 @@ function ExtruderRow(props: {
     decisionW !== (row.decision_width_mm ?? '') ||
     avgKgHr !== (row.average_kg_hr ?? '') ||
     aveWidth !== (row.ave_width ?? '') ||
-    costPerHr !== (row.cost_per_hr ?? '')
+    costPerHr !== (row.cost_per_hr ?? '') ||
+    isBroken !== !!row.is_broken
 
   return (
-    <TableRow hover>
+    <TableRow hover sx={isBroken ? { bgcolor: 'action.hover' } : undefined}>
       <TableCell sx={{ fontFamily: 'monospace' }}>{row.extruder_code}</TableCell>
       <TableCell>
         <TextField size="small" value={model} onChange={(e) => setModel(e.target.value)} />
@@ -739,6 +752,12 @@ function ExtruderRow(props: {
       <TableCell>
         <TextField size="small" inputProps={{ inputMode: 'decimal', min: 0, step: 0.01 }} value={costPerHr} onChange={(e) => setCostPerHr(e.target.value ? parseFloat(e.target.value) : '')} />
       </TableCell>
+      <TableCell>
+        <FormControlLabel
+          control={<Checkbox size="small" checked={isBroken} onChange={(e) => setIsBroken(e.target.checked)} />}
+          label="Broken"
+        />
+      </TableCell>
       <TableCell align="right">
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
@@ -755,6 +774,7 @@ function ExtruderRow(props: {
                 average_kg_hr: avgKgHr === '' ? null : Number(avgKgHr),
                 ave_width: aveWidth === '' ? null : Number(aveWidth),
                 cost_per_hr: costPerHr === '' ? null : Number(costPerHr),
+                is_broken: isBroken,
               })
             }
           >

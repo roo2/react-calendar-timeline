@@ -52,6 +52,8 @@ export type GanttLane = {
   /** Extruder rate card film width range (mm); null for non-extrusion lanes */
   film_width_min_mm?: number | null
   film_width_max_mm?: number | null
+  /** Extruder marked unavailable in admin */
+  is_broken?: boolean | null
   bars: GanttBar[]
 }
 
