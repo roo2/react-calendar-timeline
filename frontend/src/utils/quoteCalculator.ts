@@ -34,6 +34,8 @@ export type QuoteRatebook = {
   }
   /** Baseline extrusion waste allowance as % of productive order kg (quote_defaults; default 1). */
   default_order_waste_pct?: number
+  /** Extra waste % of productive order kg for carton (converted) products only. */
+  conversion_waste_pct?: number
   extruders?: Array<{
     extruder_code: string
     model: string | null
@@ -151,8 +153,12 @@ export type QuotePreview = {
   waste_kg_downtime: number | null
   /** Waste kg from configurable % of productive order kg (`default_order_waste_pct`). */
   waste_kg_order_pct: number | null
+  /** Waste kg from conversion waste % when finish mode is Cartons. */
+  waste_kg_conversion_pct: number | null
   /** Ratebook default order waste % used for this preview (e.g. 1). */
   default_order_waste_pct: number
+  /** Ratebook conversion waste % applied when finish mode is Cartons (0 otherwise). */
+  conversion_waste_pct: number
   /** Metres of core (rolls × layflat width) when Rolls + core; for breakdown labelling. */
   core_length_m: number | null
   conversion_minutes_total?: number | null
@@ -359,11 +365,19 @@ function readExtrusionFeatureRetails(ratebook: QuoteRatebook): { gusset_per_kg: 
 }
 
 const DEFAULT_ORDER_WASTE_PCT = 1
+const DEFAULT_CONVERSION_WASTE_PCT = 0
 
 /** Configurable baseline waste % of productive order kg (from ratebook / quote_defaults). */
 export function readDefaultOrderWastePct(ratebook: QuoteRatebook): number {
   const n = Number(ratebook.default_order_waste_pct)
   if (!Number.isFinite(n) || n < 0) return DEFAULT_ORDER_WASTE_PCT
+  return Math.min(100, n)
+}
+
+/** Conversion waste % for carton products (from ratebook / quote_defaults). */
+export function readConversionWastePct(ratebook: QuoteRatebook): number {
+  const n = Number(ratebook.conversion_waste_pct)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_CONVERSION_WASTE_PCT
   return Math.min(100, n)
 }
 
@@ -1272,14 +1286,22 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   const defaultOrderWastePct = readDefaultOrderWastePct(ratebook)
   const orderWasteKg =
     derivedTotalKg > 0 && defaultOrderWastePct > 0 ? (derivedTotalKg * defaultOrderWastePct) / 100 : 0
-  const extrusionWasteKg = downtimeWasteKg + orderWasteKg
+  const isCartonProduct = String(inputs.finish_mode || '') === 'Cartons'
+  const conversionWastePctApplied = isCartonProduct ? readConversionWastePct(ratebook) : 0
+  const conversionWasteKg =
+    isCartonProduct && derivedTotalKg > 0 && conversionWastePctApplied > 0
+      ? (derivedTotalKg * conversionWastePctApplied) / 100
+      : 0
+  const extrusionWasteKg = downtimeWasteKg + orderWasteKg + conversionWasteKg
   let downtimeWasteCost = 0
   let orderWasteCost = 0
+  let conversionWasteCost = 0
   if (materialCostPerKg > 0) {
     if (downtimeWasteKg > 0) downtimeWasteCost = downtimeWasteKg * materialCostPerKg
     if (orderWasteKg > 0) orderWasteCost = orderWasteKg * materialCostPerKg
+    if (conversionWasteKg > 0) conversionWasteCost = conversionWasteKg * materialCostPerKg
   }
-  const wasteCost = downtimeWasteCost + orderWasteCost
+  const wasteCost = downtimeWasteCost + orderWasteCost + conversionWasteCost
   // Sell-side: no separate retail line for waste (material uplift policy); cost side still has wasteCost.
   const wastePrice = 0
   const totalExtrudedKg = derivedTotalKg + extrusionWasteKg
@@ -1372,7 +1394,9 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
     waste_kg: extrusionWasteKg > 0 ? roundMoney(extrusionWasteKg) : null,
     waste_kg_downtime: downtimeWasteKg > 0 ? roundMoney(downtimeWasteKg) : null,
     waste_kg_order_pct: orderWasteKg > 0 ? roundMoney(orderWasteKg) : null,
+    waste_kg_conversion_pct: conversionWasteKg > 0 ? roundMoney(conversionWasteKg) : null,
     default_order_waste_pct: defaultOrderWastePct,
+    conversion_waste_pct: conversionWastePctApplied,
     core_length_m: coreLengthM != null && coreLengthM > 0 ? roundMoney(coreLengthM) : null,
     conversion_minutes_total: conversionTotalMinutes,
     conversion_minutes_run: conversionRunMinutes,

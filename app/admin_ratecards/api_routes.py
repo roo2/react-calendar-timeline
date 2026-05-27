@@ -261,6 +261,7 @@ class QuoteDefaultsDTO(BaseModel):
     extrusion_gusset_retail_per_kg: float
     extrusion_punched_retail_per_kg: float
     default_order_waste_pct: float
+    conversion_waste_pct: float
 
 
 class QuoteDefaultsUpsertRequest(BaseModel):
@@ -271,6 +272,7 @@ class QuoteDefaultsUpsertRequest(BaseModel):
     extrusion_gusset_retail_per_kg: float = Field(..., ge=0)
     extrusion_punched_retail_per_kg: float = Field(..., ge=0)
     default_order_waste_pct: float = Field(..., ge=0, le=100)
+    conversion_waste_pct: float = Field(..., ge=0, le=100)
 
 
 @router.get(
@@ -825,6 +827,7 @@ async def get_quote_defaults():
                 extrusion_gusset_retail_per_kg=0.5,
                 extrusion_punched_retail_per_kg=0.2,
                 default_order_waste_pct=1.0,
+                conversion_waste_pct=0.0,
             )
         return QuoteDefaultsDTO(
             extrusion_retail_addon_per_kg=float(row.extrusion_retail_addon_per_kg),
@@ -834,6 +837,7 @@ async def get_quote_defaults():
             extrusion_gusset_retail_per_kg=float(row.extrusion_gusset_retail_per_kg),
             extrusion_punched_retail_per_kg=float(row.extrusion_punched_retail_per_kg),
             default_order_waste_pct=float(getattr(row, "default_order_waste_pct", 1.0) or 1.0),
+            conversion_waste_pct=float(getattr(row, "conversion_waste_pct", 0.0) or 0.0),
         )
 
 
@@ -855,6 +859,7 @@ async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
                 extrusion_gusset_retail_per_kg=payload.extrusion_gusset_retail_per_kg,
                 extrusion_punched_retail_per_kg=payload.extrusion_punched_retail_per_kg,
                 default_order_waste_pct=payload.default_order_waste_pct,
+                conversion_waste_pct=payload.conversion_waste_pct,
             )
             db.add(row)
         else:
@@ -865,6 +870,7 @@ async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
             row.extrusion_gusset_retail_per_kg = payload.extrusion_gusset_retail_per_kg
             row.extrusion_punched_retail_per_kg = payload.extrusion_punched_retail_per_kg
             row.default_order_waste_pct = payload.default_order_waste_pct
+            row.conversion_waste_pct = payload.conversion_waste_pct
 
     with SessionLocal() as db:
         row2 = db.execute(select(QuoteDefaults).where(QuoteDefaults.id == 1)).scalar_one_or_none()
@@ -877,6 +883,7 @@ async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
                 extrusion_gusset_retail_per_kg=0.5,
                 extrusion_punched_retail_per_kg=0.2,
                 default_order_waste_pct=1.0,
+                conversion_waste_pct=0.0,
             )
         return QuoteDefaultsDTO(
             extrusion_retail_addon_per_kg=float(row2.extrusion_retail_addon_per_kg),
@@ -886,6 +893,7 @@ async def upsert_quote_defaults(payload: QuoteDefaultsUpsertRequest):
             extrusion_gusset_retail_per_kg=float(row2.extrusion_gusset_retail_per_kg),
             extrusion_punched_retail_per_kg=float(row2.extrusion_punched_retail_per_kg),
             default_order_waste_pct=float(getattr(row2, "default_order_waste_pct", 1.0) or 1.0),
+            conversion_waste_pct=float(getattr(row2, "conversion_waste_pct", 0.0) or 0.0),
         )
 
 

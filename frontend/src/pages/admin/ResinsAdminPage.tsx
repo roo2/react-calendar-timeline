@@ -295,6 +295,7 @@ export function ResinsAdminPage() {
       setSavingQuoteDefaults(true)
       const payload: QuoteDefaultsSettings = {
         ...base,
+        conversion_waste_pct: base.conversion_waste_pct ?? 0,
         formulation_colours_markup: colours,
         formulation_additives_markup: additives,
         formulation_custom_blend_markup: blend,

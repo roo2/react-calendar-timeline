@@ -156,17 +156,27 @@ export function JobSheetPreviewPanel(props: {
               Production (estimate)
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, pl: 0.25 }}>
+              <PreviewInlineRow label="Original order:" value={quoteSummary.orderQuantityLabel || ''} />
               <PreviewInlineRow label="Extruded meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
+              <PreviewInlineRow
+                label="Order KG (before waste):"
+                value={quoteSummary.productiveKg != null ? `${quoteSummary.productiveKg} kg` : ''}
+              />
               <PreviewInlineRow
                 label="Total KG (inc waste):"
                 value={quoteSummary.totalKgIncludingWaste != null ? `${quoteSummary.totalKgIncludingWaste} kg` : ''}
               />
               <PreviewInlineRow label="Extrusion time:" value={quoteSummary.extrusionTimeDisplay || ''} />
+              {quoteSummary.wasteBreakdownLines.length > 0 ? (
+                quoteSummary.wasteBreakdownLines.map((line) => (
+                  <PreviewInlineRow key={`${line.label}-${line.value}`} label={line.label} value={line.value} />
+                ))
+              ) : (
+                <PreviewInlineRow label="Waste factors:" value="None" />
+              )}
               <PreviewInlineRow
-                label="Extrusion waste factor:"
-                value={
-                  quoteSummary.estimatedWasteFactorPct ? `${quoteSummary.estimatedWasteFactorPct} of extruded resin` : ''
-                }
+                label="Total waste factor:"
+                value={quoteSummary.estimatedWasteFactorPct ? `${quoteSummary.estimatedWasteFactorPct} of order KG` : ''}
               />
             </Box>
           </>

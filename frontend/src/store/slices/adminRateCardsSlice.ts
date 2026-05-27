@@ -32,6 +32,8 @@ export type QuoteDefaultsSettings = {
   extrusion_punched_retail_per_kg: number
   /** Baseline extrusion waste % of productive order kg (e.g. 1 = 1%). */
   default_order_waste_pct: number
+  /** Extra waste % of productive order kg for carton (converted) products only. */
+  conversion_waste_pct: number
 }
 
 export type MaterialsRetailBand = {

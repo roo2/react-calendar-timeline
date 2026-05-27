@@ -12,8 +12,11 @@ export type JobSheetPreviewQuoteSummary = {
   /** One-line print header summary (type/finish code, qty, packing, rolls/ctns). */
   headerSummaryLine: string | null
   orderQuantityLabel: string | null
+  /** Productive plastic kg before waste factors are added. */
+  productiveKg: string | null
   /** Extruded film kg from the quote calculator (includes extrusion waste). */
   totalKgIncludingWaste: string | null
+  wasteBreakdownLines: Array<{ label: string; value: string }>
   /** Same basis as Quotes: {@link fmtHoursMinutesPreview}(extrusion_hours × 60); job sheet UI omits parentheses around the string. */
   extrusionTimeDisplay: string | null
   extrudedMeters: string | null
@@ -58,7 +61,9 @@ export function computeJobSheetPreviewQuoteSummary(
     return {
       headerSummaryLine,
       orderQuantityLabel,
+      productiveKg: null,
       totalKgIncludingWaste: null,
+      wasteBreakdownLines: [],
       extrusionTimeDisplay: null,
       extrudedMeters: null,
       estimatedWasteFactorPct: null,
@@ -76,7 +81,9 @@ export function computeJobSheetPreviewQuoteSummary(
     return {
       headerSummaryLine,
       orderQuantityLabel,
+      productiveKg: null,
       totalKgIncludingWaste: null,
+      wasteBreakdownLines: [],
       extrusionTimeDisplay: null,
       extrudedMeters: null,
       estimatedWasteFactorPct: null,
@@ -109,9 +116,9 @@ export function computeJobSheetPreviewQuoteSummary(
   const extKg = extKgRaw != null && Number.isFinite(Number(extKgRaw)) && Number(extKgRaw) > 0 ? Number(extKgRaw) : null
   const wasteKg =
     wasteKgRaw != null && Number.isFinite(Number(wasteKgRaw)) && Number(wasteKgRaw) > 0 ? Number(wasteKgRaw) : 0
+  const plasticKg = extKg != null ? Math.max(0, extKg - wasteKg) : null
   if (extKg != null) {
-    const plasticKg = Math.max(0, extKg - wasteKg)
-    if (plasticKg > 0) {
+    if (plasticKg != null && plasticKg > 0) {
       const pct = (wasteKg / plasticKg) * 100
       if (Number.isFinite(pct)) {
         estimatedWasteFactorPct =
@@ -120,10 +127,49 @@ export function computeJobSheetPreviewQuoteSummary(
     }
   }
 
+  const fmtKg = (kg: number) => `${fmtQtyNumber(kg, 2)} kg`
+  const fmtPct = (pct: number) => (Math.abs(pct - Math.round(pct)) < 1e-6 ? `${Math.round(pct)}%` : `${pct.toFixed(2)}%`)
+  const wasteBreakdownLines: Array<{ label: string; value: string }> = []
+  const downtimeWasteKg =
+    preview.waste_kg_downtime != null && Number.isFinite(Number(preview.waste_kg_downtime)) && Number(preview.waste_kg_downtime) > 0
+      ? Number(preview.waste_kg_downtime)
+      : 0
+  if (downtimeWasteKg > 0) {
+    const minutes = Number(preview.extrusion_waste_minutes || 0)
+    wasteBreakdownLines.push({
+      label: 'Setup / extrusion waste:',
+      value: `${fmtKg(downtimeWasteKg)}${minutes > 0 ? ` (${Math.round(minutes)} min)` : ''}`,
+    })
+  }
+  const orderWasteKg =
+    preview.waste_kg_order_pct != null && Number.isFinite(Number(preview.waste_kg_order_pct)) && Number(preview.waste_kg_order_pct) > 0
+      ? Number(preview.waste_kg_order_pct)
+      : 0
+  if (orderWasteKg > 0) {
+    wasteBreakdownLines.push({
+      label: 'Default order waste:',
+      value: `${fmtKg(orderWasteKg)} (${fmtPct(Number(preview.default_order_waste_pct || 0))})`,
+    })
+  }
+  const conversionWasteKg =
+    preview.waste_kg_conversion_pct != null &&
+    Number.isFinite(Number(preview.waste_kg_conversion_pct)) &&
+    Number(preview.waste_kg_conversion_pct) > 0
+      ? Number(preview.waste_kg_conversion_pct)
+      : 0
+  if (conversionWasteKg > 0) {
+    wasteBreakdownLines.push({
+      label: 'Conversion waste:',
+      value: `${fmtKg(conversionWasteKg)} (${fmtPct(Number(preview.conversion_waste_pct || 0))})`,
+    })
+  }
+
   return {
     headerSummaryLine,
     orderQuantityLabel,
+    productiveKg: plasticKg != null && plasticKg > 0 ? fmtQtyNumber(plasticKg, 2) : null,
     totalKgIncludingWaste,
+    wasteBreakdownLines,
     extrusionTimeDisplay,
     extrudedMeters,
     estimatedWasteFactorPct,

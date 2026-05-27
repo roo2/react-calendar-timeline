@@ -310,6 +310,8 @@ class QuoteDefaults(Base):
     extrusion_punched_retail_per_kg: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0.2)
     # Baseline extrusion waste allowance as % of productive order kg (e.g. 1 → 1%).
     default_order_waste_pct: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False, default=1.0)
+    # Extra waste % of productive order kg for converted (carton) products only.
+    conversion_waste_pct: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False, default=0.0)
 
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_quote_defaults_singleton"),
@@ -322,6 +324,10 @@ class QuoteDefaults(Base):
         CheckConstraint(
             "default_order_waste_pct >= 0 AND default_order_waste_pct <= 100",
             name="ck_quote_defaults_default_order_waste_pct_range",
+        ),
+        CheckConstraint(
+            "conversion_waste_pct >= 0 AND conversion_waste_pct <= 100",
+            name="ck_quote_defaults_conversion_waste_pct_range",
         ),
     )
 

@@ -177,6 +177,7 @@ export function ExtrusionAdminPage() {
   const [gussetRetailPerKg, setGussetRetailPerKg] = useState('')
   const [punchedRetailPerKg, setPunchedRetailPerKg] = useState('')
   const [defaultOrderWastePct, setDefaultOrderWastePct] = useState('')
+  const [conversionWastePct, setConversionWastePct] = useState('')
 
   const canCreateExtruder = useMemo(() => !!newExtruderCode.trim(), [newExtruderCode])
 
@@ -195,13 +196,15 @@ export function ExtrusionAdminPage() {
     setGussetRetailPerKg(String(quoteDefaults.extrusion_gusset_retail_per_kg))
     setPunchedRetailPerKg(String(quoteDefaults.extrusion_punched_retail_per_kg))
     setDefaultOrderWastePct(String(quoteDefaults.default_order_waste_pct))
+    setConversionWastePct(String(quoteDefaults.conversion_waste_pct))
   }, [quoteDefaults])
 
   const extrusionFeatureRetailDirty =
     quoteDefaults != null &&
     (Number(gussetRetailPerKg) !== quoteDefaults.extrusion_gusset_retail_per_kg ||
       Number(punchedRetailPerKg) !== quoteDefaults.extrusion_punched_retail_per_kg ||
-      Number(defaultOrderWastePct) !== quoteDefaults.default_order_waste_pct)
+      Number(defaultOrderWastePct) !== quoteDefaults.default_order_waste_pct ||
+      Number(conversionWastePct) !== quoteDefaults.conversion_waste_pct)
 
   const bandsDirty = useMemo(() => {
     const a = JSON.stringify(draftBands || [])
@@ -228,8 +231,20 @@ export function ExtrusionAdminPage() {
     const g = Number(gussetRetailPerKg)
     const p = Number(punchedRetailPerKg)
     const w = Number(defaultOrderWastePct)
-    if (!Number.isFinite(g) || g < 0 || !Number.isFinite(p) || p < 0 || !Number.isFinite(w) || w < 0 || w > 100) {
-      setErr('Gusset/punched rates must be non-negative, and default order waste must be 0–100%.')
+    const cw = Number(conversionWastePct)
+    if (
+      !Number.isFinite(g) ||
+      g < 0 ||
+      !Number.isFinite(p) ||
+      p < 0 ||
+      !Number.isFinite(w) ||
+      w < 0 ||
+      w > 100 ||
+      !Number.isFinite(cw) ||
+      cw < 0 ||
+      cw > 100
+    ) {
+      setErr('Gusset/punched rates must be non-negative, and waste percentages must be 0–100%.')
       return
     }
     try {
@@ -240,6 +255,7 @@ export function ExtrusionAdminPage() {
         extrusion_gusset_retail_per_kg: g,
         extrusion_punched_retail_per_kg: p,
         default_order_waste_pct: w,
+        conversion_waste_pct: cw,
       }
       await dispatch(adminSaveQuoteDefaults(payload)).unwrap()
       setDirty(false)
@@ -404,6 +420,18 @@ export function ExtrusionAdminPage() {
               value={defaultOrderWastePct}
               onChange={(e) => {
                 setDefaultOrderWastePct(e.target.value)
+                setDirty(true)
+              }}
+            />
+            <TextField
+              size="small"
+              label="Conversion waste (%)"
+              type="number"
+              inputProps={{ min: 0, max: 100, step: 0.1 }}
+              value={conversionWastePct}
+              helperText="Carton products only — extra % of productive order kg"
+              onChange={(e) => {
+                setConversionWastePct(e.target.value)
                 setDirty(true)
               }}
             />

@@ -332,4 +332,7 @@ async def get_ratebook():
         "default_order_waste_pct": float(getattr(quote_defaults_row, "default_order_waste_pct", 1.0) or 1.0)
         if quote_defaults_row is not None
         else 1.0,
+        "conversion_waste_pct": float(getattr(quote_defaults_row, "conversion_waste_pct", 0.0) or 0.0)
+        if quote_defaults_row is not None
+        else 0.0,
     }
