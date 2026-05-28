@@ -22,7 +22,10 @@ export type GanttBar = {
   job_code: string
   operation_type: string
   customer: string
+  product_id?: string | null
+  job_sheet_id?: string | null
   product_code: string
+  generated_product_code?: string | null
   planned_qty: number
   estimated_duration_hours: number
   roll_count?: number
@@ -94,7 +97,10 @@ export type UnqueuedScheduleJob = {
   order_code: string
   job_code: string
   customer: string
+  product_id?: string | null
+  job_sheet_id?: string | null
   product_code: string
+  generated_product_code?: string | null
   planned_qty: number
   roll_count: number
   job_sheet_job_no?: string | null
@@ -266,6 +272,7 @@ export const moveScheduleBar = createAsyncThunk(
       target_machine_id: string
       /** ISO UTC; server derives queue order from this. */
       target_start?: string
+      target_position?: number
     },
     { dispatch },
   ) => {
@@ -275,6 +282,7 @@ export const moveScheduleBar = createAsyncThunk(
       target_machine_id: payload.target_machine_id,
     }
     if (payload.target_start != null) body.target_start = payload.target_start
+    if (payload.target_position != null) body.target_position = payload.target_position
     try {
       await apiFetch('/api/schedule/gantt/move', {
         method: 'POST',

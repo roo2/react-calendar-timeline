@@ -63,7 +63,10 @@ class GanttBarDTO(BaseModel):
 	job_code: str
 	operation_type: str
 	customer: str
+	product_id: Optional[str] = None
+	job_sheet_id: Optional[str] = None
 	product_code: str
+	generated_product_code: Optional[str] = None
 	planned_qty: float
 	estimated_duration_hours: float
 	roll_count: int = Field(
@@ -133,7 +136,10 @@ class UnqueuedScheduleJobDTO(BaseModel):
 	order_code: str = ""
 	job_code: str
 	customer: str
+	product_id: Optional[str] = None
+	job_sheet_id: Optional[str] = None
 	product_code: str
+	generated_product_code: Optional[str] = None
 	planned_qty: float
 	roll_count: int = 1
 	job_sheet_job_no: Optional[str] = None

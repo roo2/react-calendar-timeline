@@ -47,6 +47,7 @@ from app.machines.service import (
 	validate_capability_dict,
 	validate_extruder_for_spec,
 )
+from app.products.service import compute_product_code_full
 from app.scheduling.spec_payload import _compute_gauge_um_from_spec
 from app.scheduling.lane_context import ScheduleLane, list_active_lanes, resolve_schedule_lane
 from app.scheduling.web_meters import pick_uteco_printing_tier, web_length_meters_for_uteco_schedule
@@ -123,6 +124,15 @@ def _scheduled_start_from_db(dt: datetime) -> datetime:
 	if dt.tzinfo is None:
 		return dt.replace(tzinfo=timezone.utc)
 	return dt.astimezone(timezone.utc)
+
+
+def _job_status_value(job: Job) -> str:
+	status = getattr(job, "status", None)
+	return status.value if hasattr(status, "value") else str(status or "")
+
+
+def _job_status_is_running_or_later(job: Job) -> bool:
+	return getattr(job, "status", None) in (JobStatus.RUNNING, JobStatus.DISPATCHED, JobStatus.CANCELLED)
 
 
 def _default_append_scheduled_start_utc(
@@ -922,6 +932,54 @@ def _sync_chain_queue_starts_from_extrusion(session: Session, job: Job, ctx: Any
 			)
 
 
+def _recompute_extrusion_lane_scheduled_starts(
+	session: Session,
+	lane: ScheduleLane,
+	ctx: Any,
+	*,
+	anchor_start_utc: Optional[datetime] = None,
+) -> list[ExtrusionQueueItem]:
+	"""Persist continuous starts for an extruder queue so downstream chains use the real queue start."""
+	if lane.kind != "extrusion" or not lane.extruder:
+		return []
+	items = [
+		i
+		for i in _load_lane_items_for_update(session, lane)
+		if i.status in (QueueStatus.QUEUED, QueueStatus.RUNNING)
+	]
+	items.sort(key=lambda x: x.position)
+	if not items:
+		return []
+	if anchor_start_utc is not None:
+		cursor_local = _target_start_as_utc(anchor_start_utc).astimezone(ctx.tz)
+	else:
+		first_start = items[0].scheduled_start_utc
+		if first_start is not None:
+			cursor_local = _scheduled_start_from_db(first_start).astimezone(ctx.tz)
+		else:
+			_, cursor_local = _gantt_anchor_local(session)
+
+	for queue_item in items:
+		queue_item.scheduled_start_utc = cursor_local.astimezone(timezone.utc)
+		queue_item.operating_hours_lead_before = 0
+		job, _, pv = _get_job_with_context(session, uuid.UUID(str(queue_item.job_id)))
+		dur = _estimate_lane_duration_hours(session, lane, job, pv)
+		cursor_local = add_operating_hours(cursor_local, dur, ctx)
+	session.flush()
+	return items
+
+
+def _sync_chain_queue_starts_for_extrusion_lane(session: Session, lane: ScheduleLane, ctx: Any) -> None:
+	if lane.kind != "extrusion" or not lane.extruder:
+		return
+	for queue_item in _load_lane_items_read(session, lane):
+		if queue_item.status not in (QueueStatus.QUEUED, QueueStatus.RUNNING):
+			continue
+		job = session.get(Job, str(queue_item.job_id))
+		if job is not None:
+			_sync_chain_queue_starts_from_extrusion(session, job, ctx)
+
+
 def _remove_satellite_queue_rows_for_job(session: Session, job_id_str: str) -> None:
 	ut = session.execute(select(UtecoQueueItem).where(UtecoQueueItem.job_id == job_id_str).limit(1)).scalars().first()
 	if ut:
@@ -1055,7 +1113,7 @@ def _gantt_roll_segment_count_for_job(session: Session, job: Job, product_versio
 		spec = {}
 	if _spec_finish_requires_conversion(spec):
 		roll_avg_kg = _conversion_factor_value(session, "roll_weight_avg", 0.0)
-		derived_kg = _estimated_extrusion_kg(job, product_version)
+		derived_kg = _estimated_extrusion_kg(job, product_version, session)
 		if roll_avg_kg > 0 and derived_kg > 0:
 			return max(1, min(int(math.ceil(derived_kg / roll_avg_kg)), 500))
 	return max(1, min(_num_rolls_for_job(session, job, product_version), 500))
@@ -1100,8 +1158,34 @@ def _find_extruder_for_queued_job(session: Session, job_id: uuid.UUID | str) -> 
 	return session.execute(q).scalars().first()
 
 
-def _estimated_extrusion_kg(job: Job, product_version: Optional[ProductVersion]) -> float:
+def _estimated_extrusion_kg(
+	job: Job,
+	product_version: Optional[ProductVersion],
+	session: Optional[Session] = None,
+) -> float:
 	planned_qty = float(job.planned_qty)
+	if session is not None:
+		js = _job_sheet_for_job(session, job)
+		if js is not None:
+			qty_unit = str(getattr(js, "quantity_unit", "") or "").strip().lower()
+			qty_type = str(getattr(js, "qty_type", "") or "").strip().lower()
+			qty_value = getattr(js, "quantity_value", None)
+			if qty_unit == "kg" or qty_type == "kg":
+				try:
+					kg = float(qty_value)
+					if kg > 0:
+						return max(kg, 0.01)
+				except (TypeError, ValueError):
+					pass
+			weight_per_roll = getattr(js, "weight_per_roll_kg", None)
+			num_rolls = getattr(js, "num_rolls", None)
+			try:
+				wpr = float(weight_per_roll) if weight_per_roll is not None else 0.0
+				rolls = int(num_rolls) if num_rolls is not None else 0
+				if wpr > 0 and rolls > 0:
+					return max(wpr * rolls, 0.01)
+			except (TypeError, ValueError):
+				pass
 	spec = (product_version.spec_payload if product_version else {}) or {}
 	rr = spec.get("run_requirements") or {}
 	if isinstance(rr, dict):
@@ -1195,7 +1279,7 @@ def _conversion_duration_hours_from_ratebook(
 
 	roll_avg_kg = _conversion_factor_value(session, "roll_weight_avg", 0.0)
 	roll_change_mins = _conversion_factor_value(session, "roll_change_minutes", 0.0)
-	derived_kg = _estimated_extrusion_kg(job, product_version)
+	derived_kg = _estimated_extrusion_kg(job, product_version, session)
 	roll_changes = (
 		math.ceil(derived_kg / roll_avg_kg) if roll_avg_kg > 0 and derived_kg > 0 else 0
 	)
@@ -1222,26 +1306,30 @@ def _extrusion_duration_hours_for_extruder(
 	ext = extruder
 	kg_hr = float(ext.average_kg_hr) if ext and ext.average_kg_hr is not None else 100.0
 	kg_hr = max(kg_hr, 1.0)
-	kg = _estimated_extrusion_kg(job, product_version)
+	kg = _estimated_extrusion_kg(job, product_version, session)
 	return max(0.25, kg / kg_hr)
 
 
 def _job_sheet_job_no_for_job(session: Session, job: Job) -> Optional[str]:
+	js = _job_sheet_for_job(session, job)
+	return js.job_no if js else None
+
+
+def _job_sheet_for_job(session: Session, job: Job) -> Optional[JobSheet]:
 	if job.job_sheet_id:
-		js = session.get(JobSheet, job.job_sheet_id)
-		return js.job_no if js else None
+		return session.get(JobSheet, job.job_sheet_id)
 	if not job.order_id:
 		return None
 	items = list(
 		session.execute(
-			select(OrderItem).where(OrderItem.order_id == job.order_id).order_by(OrderItem.id.asc())
+			select(OrderItem).where(OrderItem.order_id == job.order_id).order_by(OrderItem.line_index.asc(), OrderItem.id.asc())
 		).scalars().all()
 	)
 	idx = int(job.job_code) - 1
 	if idx < 0 or idx >= len(items):
 		return None
-	js = session.get(JobSheet, items[idx].job_sheet_id)
-	return js.job_no if js else None
+	job_sheet_id = items[idx].job_sheet_id
+	return session.get(JobSheet, job_sheet_id) if job_sheet_id else None
 
 
 def _estimate_job_operations_core(
@@ -1260,7 +1348,7 @@ def _estimate_job_operations_core(
 	planned_qty = float(job.planned_qty)
 
 	if requires_extrusion:
-		estimated_kg = _estimated_extrusion_kg(job, product_version)
+		estimated_kg = _estimated_extrusion_kg(job, product_version, session)
 		if extrusion_extruder is not None:
 			duration_hours = _extrusion_duration_hours_for_extruder(
 				session, extrusion_extruder, job, product_version
@@ -1805,6 +1893,7 @@ def move_bar(
 	target_machine_id: str,
 	proposed_start: Optional[datetime] = None,
 	target_start: Optional[datetime] = None,
+	target_position: Optional[int] = None,
 ) -> MoveResult:
 	with SessionLocal.begin() as session:
 		target = resolve_schedule_lane(session, str(target_machine_id))
@@ -1818,6 +1907,9 @@ def move_bar(
 			raise DomainError("Queue item for this operation not found")
 		if item.status == QueueStatus.RUNNING:
 			raise DomainError("Cannot move a running item")
+		job_for_lock = session.get(Job, jid_str)
+		if job_for_lock is not None and _job_status_is_running_or_later(job_for_lock):
+			raise DomainError("Cannot move a job that has started production")
 
 		if source_lane.lane_id == target.lane_id:
 			items_one = _load_lane_items_for_update(session, source_lane)
@@ -1826,6 +1918,30 @@ def move_bar(
 				raise DomainError("Queue item not found in this lane")
 			if it.status == QueueStatus.RUNNING:
 				raise DomainError("Cannot reorder a running item")
+			if operation_type == OperationType.EXTRUSION and target_position is not None:
+				ordered_before = sorted(items_one, key=lambda x: x.position)
+				current_anchor_utc = ordered_before[0].scheduled_start_utc if ordered_before else None
+				anchor_utc = _target_start_as_utc(target_start) if target_start is not None else current_anchor_utc
+				items_without = [i for i in items_one if i.id != it.id]
+				insert_pos = max(1, min(int(target_position), len(items_without) + 1))
+				items_without.insert(insert_pos - 1, it)
+				for idx, queue_item in enumerate(items_without):
+					queue_item.position = _REINDEX_TEMP_POSITION_BASE + idx
+				session.flush()
+				for idx, queue_item in enumerate(items_without, start=1):
+					queue_item.position = idx
+				session.flush()
+				ctx_adj = load_operating_context(session)
+				_recompute_extrusion_lane_scheduled_starts(
+					session,
+					source_lane,
+					ctx_adj,
+					anchor_start_utc=_scheduled_start_from_db(anchor_utc) if anchor_utc is not None else None,
+				)
+				_sync_chain_queue_starts_for_extrusion_lane(session, source_lane, ctx_adj)
+				ref = _load_lane_items_for_update(session, source_lane)
+				ld = _lane_dto(source_lane.lane_id, ref)
+				return MoveResult(source_lane=ld, target_lane=ld)
 			if target_start is None:
 				ref = _load_lane_items_for_update(session, source_lane)
 				ld = _lane_dto(source_lane.lane_id, ref)
@@ -1843,14 +1959,6 @@ def move_bar(
 			job, order, product_version = _get_job_with_context(session, job_id)
 			ctx_adj = load_operating_context(session)
 			if operation_type in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
-				_maybe_pull_upstream_for_first_roll_constraint(
-					session,
-					job,
-					product_version,
-					ctx_adj,
-					moved_operation=operation_type,
-					satellite_start_utc=it.scheduled_start_utc,
-				)
 				_maybe_push_satellite_forward_for_first_roll_constraint(
 					session,
 					job,
@@ -1923,6 +2031,10 @@ def move_bar(
 
 		source_items = _load_lane_items_for_update(session, source_lane)
 		target_items = _load_lane_items_for_update(session, target)
+		source_anchor_utc = None
+		if operation_type == OperationType.EXTRUSION and source_lane.kind == "extrusion":
+			source_ordered = sorted(source_items, key=lambda x: x.position)
+			source_anchor_utc = source_ordered[0].scheduled_start_utc if source_ordered else None
 
 		source_items = [i for i in source_items if i.id != item.id]
 		# Delete the moved row before reindexing siblings. Otherwise SQLite UNIQUE (lane, position)
@@ -1934,7 +2046,12 @@ def move_bar(
 
 		target_others = list(target_items)
 		ordered_tgt = sorted(target_others, key=lambda x: x.position)
-		insert_pos = max((i.position for i in ordered_tgt), default=0) + 1
+		if operation_type == OperationType.EXTRUSION and target_position is not None:
+			insert_pos = max(1, min(int(target_position), len(ordered_tgt) + 1))
+			_bump_queue_positions_from(target_others, insert_pos)
+			session.flush()
+		else:
+			insert_pos = max((i.position for i in ordered_tgt), default=0) + 1
 		ctx, anchor_local = _gantt_anchor_local(session)
 		if target_start is not None:
 			sched_utc = _target_start_as_utc(target_start)
@@ -1980,15 +2097,22 @@ def move_bar(
 		session.flush()
 
 		ctx_move = load_operating_context(session)
-		if operation_type in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
-			_maybe_pull_upstream_for_first_roll_constraint(
+		if operation_type == OperationType.EXTRUSION:
+			_recompute_extrusion_lane_scheduled_starts(
 				session,
-				job,
-				product_version,
+				source_lane,
 				ctx_move,
-				moved_operation=operation_type,
-				satellite_start_utc=new_item.scheduled_start_utc,
+				anchor_start_utc=_scheduled_start_from_db(source_anchor_utc) if source_anchor_utc is not None else None,
 			)
+			_recompute_extrusion_lane_scheduled_starts(
+				session,
+				target,
+				ctx_move,
+				anchor_start_utc=sched_utc if insert_pos == 1 else None,
+			)
+			_sync_chain_queue_starts_for_extrusion_lane(session, source_lane, ctx_move)
+			_sync_chain_queue_starts_for_extrusion_lane(session, target, ctx_move)
+		if operation_type in (OperationType.PRINTING_UTECO, OperationType.CONVERSION):
 			_maybe_push_satellite_forward_for_first_roll_constraint(
 				session,
 				job,
@@ -2044,10 +2168,6 @@ def move_bar(
 			window=window,
 			tool_type_codes=required_codes,
 		)
-
-		if operation_type == OperationType.EXTRUSION:
-			ctx_sync = load_operating_context(session)
-			_sync_chain_queue_starts_from_extrusion(session, job, ctx_sync)
 
 		warnings = _lane_enqueue_warnings(session, target, job, product_version)
 
@@ -2172,12 +2292,9 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 			queue_items.sort(key=lambda x: x.position)
 
 			bars: List[GanttBarDTO] = []
-			cursor_local = anchor_local
+			cursor_local = now_local if lane.kind == "extrusion" else anchor_local
 
 			for queue_item in queue_items:
-				tentative_start_local, cursor_local = _gantt_tentative_start_local_for_item(
-					session, lane, queue_item, ctx, cursor_local
-				)
 				job, order, product_version = _get_job_with_context(session, uuid.UUID(str(queue_item.job_id)))
 
 				if order:
@@ -2198,15 +2315,55 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 
 				duration_hours = _estimate_lane_duration_hours(session, lane, job, product_version)
 				spec = (product_version.spec_payload if product_version else {}) or {}
+				generated_product_code = (
+					compute_product_code_full(product, spec)
+					if product is not None and product_version is not None
+					else product_code
+				)
 				roll_count = _gantt_roll_segment_count_for_job(session, job, product_version)
 				hours_per_roll = duration_hours / roll_count if roll_count > 0 else duration_hours
 				job_sheet_job_no = _job_sheet_job_no_for_job(session, job)
 
-				tentative_finish_local = add_operating_hours(tentative_start_local, duration_hours, ctx)
+				if lane.kind == "extrusion":
+					if _job_status_is_running_or_later(job):
+						start_utc = job.production_started_at or getattr(queue_item, "scheduled_start_utc", None)
+						tentative_start_local = (
+							_scheduled_start_from_db(start_utc).astimezone(ctx.tz)
+							if start_utc is not None
+							else cursor_local
+						)
+						if job.production_finished_at is not None:
+							tentative_finish_local = _scheduled_start_from_db(job.production_finished_at).astimezone(ctx.tz)
+						else:
+							estimated_finish = add_operating_hours(tentative_start_local, duration_hours, ctx)
+							tentative_finish_local = max(now_local, estimated_finish)
+						cursor_local = max(cursor_local, tentative_finish_local)
+					else:
+						tentative_start_local = cursor_local
+						tentative_finish_local = add_operating_hours(tentative_start_local, duration_hours, ctx)
+						cursor_local = tentative_finish_local
+				else:
+					if _job_status_is_running_or_later(job):
+						start_utc = job.production_started_at or getattr(queue_item, "scheduled_start_utc", None)
+						tentative_start_local = (
+							_scheduled_start_from_db(start_utc).astimezone(ctx.tz)
+							if start_utc is not None
+							else cursor_local
+						)
+						if job.production_finished_at is not None:
+							tentative_finish_local = _scheduled_start_from_db(job.production_finished_at).astimezone(ctx.tz)
+						else:
+							estimated_finish = add_operating_hours(tentative_start_local, duration_hours, ctx)
+							tentative_finish_local = max(now_local, estimated_finish)
+					else:
+						tentative_start_local, cursor_local = _gantt_tentative_start_local_for_item(
+							session, lane, queue_item, ctx, cursor_local
+						)
+						tentative_finish_local = add_operating_hours(tentative_start_local, duration_hours, ctx)
 				all_starts_local.append(tentative_start_local)
 				all_ends_local.append(tentative_finish_local)
 
-				status_str = queue_item.status.value if hasattr(queue_item.status, "value") else str(queue_item.status)
+				status_str = _job_status_value(job)
 
 				readiness = "running" if status_str == "running" else "ready"
 				printing_method = _get_printing_method_from_spec(product_version)
@@ -2240,7 +2397,10 @@ def get_gantt_overview(operating_calendar: Optional[dict] = None) -> GanttOvervi
 						job_code=job_code,
 						operation_type=operation_type_str,
 						customer=customer_name,
+						product_id=str(product.id) if product else None,
+						job_sheet_id=str(job.job_sheet_id) if job.job_sheet_id else None,
 						product_code=product_code,
+						generated_product_code=generated_product_code,
 						planned_qty=float(job.planned_qty),
 						estimated_duration_hours=duration_hours,
 						roll_count=roll_count,
@@ -2374,6 +2534,12 @@ def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
 			_, order, product_version = resolve_job_context(session, uuid.UUID(str(job.id)))
 			rc = _gantt_roll_segment_count_for_job(session, job, product_version)
 			product = session.get(Product, product_version.product_id) if product_version else None
+			spec = (product_version.spec_payload if product_version else {}) or {}
+			generated_product_code = (
+				compute_product_code_full(product, spec)
+				if product is not None and product_version is not None
+				else (product.code if product else "Unknown")
+			)
 			job_sheet_no = _job_sheet_job_no_for_job(session, job)
 			layflat_mm = layflat_width_mm_from_product_version(product_version)
 			if order:
@@ -2384,7 +2550,10 @@ def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
 						order_code=order.code,
 						job_code=f"{order.code}-{job.job_code}",
 						customer=customer.name if customer else "Unknown",
+						product_id=str(product.id) if product else None,
+						job_sheet_id=str(job.job_sheet_id) if job.job_sheet_id else None,
 						product_code=product.code if product else "Unknown",
+						generated_product_code=generated_product_code,
 						planned_qty=float(job.planned_qty),
 						roll_count=rc,
 						job_sheet_job_no=job_sheet_no,
@@ -2400,7 +2569,10 @@ def get_unqueued_schedule_jobs() -> List[UnqueuedScheduleJobDTO]:
 						order_code="",
 						job_code=js.job_no if js else str(job.job_code),
 						customer=customer.name if customer else "Unknown",
+						product_id=str(product.id) if product else None,
+						job_sheet_id=str(job.job_sheet_id) if job.job_sheet_id else None,
 						product_code=product.code if product else "Unknown",
+						generated_product_code=generated_product_code,
 						planned_qty=float(job.planned_qty),
 						roll_count=rc,
 						job_sheet_job_no=job_sheet_no,

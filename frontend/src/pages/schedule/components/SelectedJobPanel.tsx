@@ -1,14 +1,16 @@
-import { Box, Divider, Paper, Stack, Typography } from '@mui/material'
+import { Box, Button, Dialog, DialogContent, Divider, Paper, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '../../../api/client'
 import type { GanttBar, GanttLane, UnqueuedScheduleJob } from '../../../store/slices/scheduleSlice'
 import { formatDateTimeDMYShort } from '../../../utils/dateFormat'
+import { ProductVersionEditor } from '../../products/components/ProductVersionEditor'
 
 type Props = {
   jobId: string | null
   lanes: GanttLane[]
   unqueuedJobs: UnqueuedScheduleJob[]
   onClear: () => void
+  onJobSheetUpdated?: () => void | Promise<void>
 }
 
 function findBar(lanes: GanttLane[], jobId: string): { bar: GanttBar; lane: GanttLane } | null {
@@ -33,7 +35,7 @@ function conversionHoursFromGantt(lanes: GanttLane[], jobId: string): number | n
   return null
 }
 
-export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props) {
+export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear, onJobSheetUpdated }: Props) {
   const fromLane = jobId ? findBar(lanes, jobId) : null
   const fromPool = jobId ? unqueuedJobs.find((j) => String(j.job_id) === String(jobId)) : null
 
@@ -43,6 +45,11 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
   )
 
   const [conversionHoursFromApi, setConversionHoursFromApi] = useState<number | null>(null)
+  const [jobSheetModalOpen, setJobSheetModalOpen] = useState(false)
+
+  useEffect(() => {
+    setJobSheetModalOpen(false)
+  }, [jobId])
 
   useEffect(() => {
     if (!jobId) {
@@ -77,6 +84,11 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
   }, [jobId, conversionHoursOnGantt])
 
   const conversionHours = conversionHoursOnGantt ?? conversionHoursFromApi
+  const selectedProductId = fromLane?.bar.product_id ?? fromPool?.product_id ?? null
+  const selectedJobSheetId = fromLane?.bar.job_sheet_id ?? fromPool?.job_sheet_id ?? null
+  const selectedGeneratedProductCode =
+    fromLane?.bar.generated_product_code ?? fromPool?.generated_product_code ?? null
+  const canOpenJobSheet = Boolean(selectedProductId && selectedJobSheetId)
 
   return (
     <Paper
@@ -143,10 +155,22 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
             </Typography>
           )}
           {fromLane.bar.job_sheet_job_no ? (
-            <Typography variant="body2">Sheet {fromLane.bar.job_sheet_job_no}</Typography>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              <Typography variant="body2">Sheet {fromLane.bar.job_sheet_job_no}</Typography>
+              {canOpenJobSheet ? (
+                <Button size="small" variant="text" onClick={() => setJobSheetModalOpen(true)} sx={{ minWidth: 0, px: 0.5 }}>
+                  Open
+                </Button>
+              ) : null}
+            </Stack>
           ) : null}
           <Divider />
           <Typography variant="body2">{fromLane.bar.customer}</Typography>
+          {selectedGeneratedProductCode ? (
+            <Typography variant="body2" color="text.secondary">
+              Generated code: {selectedGeneratedProductCode}
+            </Typography>
+          ) : null}
           <Typography variant="body2" color="text.secondary">
             {fromLane.bar.product_code} · qty {fromLane.bar.planned_qty}
           </Typography>
@@ -185,10 +209,22 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
             {fromPool.job_code}
           </Typography>
           {fromPool.job_sheet_job_no ? (
-            <Typography variant="body2">Sheet {fromPool.job_sheet_job_no}</Typography>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              <Typography variant="body2">Sheet {fromPool.job_sheet_job_no}</Typography>
+              {canOpenJobSheet ? (
+                <Button size="small" variant="text" onClick={() => setJobSheetModalOpen(true)} sx={{ minWidth: 0, px: 0.5 }}>
+                  Open
+                </Button>
+              ) : null}
+            </Stack>
           ) : null}
           <Divider />
           <Typography variant="body2">{fromPool.customer}</Typography>
+          {selectedGeneratedProductCode ? (
+            <Typography variant="body2" color="text.secondary">
+              Generated code: {selectedGeneratedProductCode}
+            </Typography>
+          ) : null}
           <Typography variant="body2" color="text.secondary">
             {fromPool.product_code} · qty {fromPool.planned_qty} · {fromPool.roll_count} roll
             {fromPool.roll_count === 1 ? '' : 's'}
@@ -217,6 +253,24 @@ export function SelectedJobPanel({ jobId, lanes, unqueuedJobs, onClear }: Props)
           Job not found in the current view.
         </Typography>
       )}
+      <Dialog open={jobSheetModalOpen} onClose={() => setJobSheetModalOpen(false)} maxWidth="lg" fullWidth>
+        <DialogContent dividers sx={{ p: 0 }}>
+          {jobSheetModalOpen && selectedProductId && selectedJobSheetId ? (
+            <Box sx={{ p: 2 }}>
+              <ProductVersionEditor
+                productId={selectedProductId}
+                jobSheetId={selectedJobSheetId}
+                title="Job sheet"
+                onCancel={() => setJobSheetModalOpen(false)}
+                onDone={() => {
+                  setJobSheetModalOpen(false)
+                  void onJobSheetUpdated?.()
+                }}
+              />
+            </Box>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </Paper>
   )
 }

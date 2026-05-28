@@ -39,11 +39,8 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # OAuth scopes for Xero authorize / token exchange (not read from .env — edit here to change consent).
-# offline_access is required for refresh tokens. accounting.* scopes cover Quotes + Invoices + Contacts.
-XERO_SCOPES = (
-    "openid profile email offline_access "
-    "accounting.settings accounting.contacts accounting.transactions"
-)
+# offline_access is required for refresh tokens. New Xero apps use granular Accounting API scopes.
+XERO_SCOPES = "offline_access accounting.contacts accounting.invoices accounting.settings"
 
 
 # OAuth scopes for MYOB authorize / token exchange (not read from .env — edit here to change consent).

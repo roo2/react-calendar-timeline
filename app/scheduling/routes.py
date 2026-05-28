@@ -97,12 +97,16 @@ async def gantt_move(payload: dict):
 		target_start = datetime.fromisoformat(str(target_start).replace("Z", "+00:00"))
 	else:
 		target_start = None
+	target_position = payload.get("target_position")
+	if target_position is not None:
+		target_position = int(target_position)
 	move: MoveResult = SchedulingService.move_bar(
 		job_id=job_id,
 		operation_type=operation_type,
 		target_machine_id=target_machine_id,
 		proposed_start=proposed_start,
 		target_start=target_start,
+		target_position=target_position,
 	)
 	return {"move": move}
 

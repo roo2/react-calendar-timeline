@@ -23,6 +23,7 @@ from app.integrations.xero.service import (
     exchange_authorization_code,
     refresh_tokens,
     set_tenant_id,
+    xero_get_endpoint,
     xero_configured,
 )
 
@@ -143,6 +144,24 @@ async def xero_disconnect(_identity: SysAdminIdentity):
     with SessionLocal() as db:
         disconnect_xero(db)
     return {"ok": True}
+
+
+class XeroGetEndpointBody(BaseModel):
+    endpoint: str = Field(..., min_length=1, description="Relative Xero Accounting API endpoint, e.g. /Contacts?page=1")
+
+
+@router.post("/api-get", dependencies=[Depends(csrf_protect())])
+async def xero_api_get(_identity: SysAdminIdentity, body: XeroGetEndpointBody):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return xero_get_endpoint(db, endpoint=body.endpoint)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
 
 class XeroDraftQuoteBody(BaseModel):

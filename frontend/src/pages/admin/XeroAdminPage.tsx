@@ -48,6 +48,8 @@ export function XeroAdminPage() {
   const [quoteQty, setQuoteQty] = useState('1')
   const [quoteAmount, setQuoteAmount] = useState('0')
   const [quoteResult, setQuoteResult] = useState<unknown>(null)
+  const [apiEndpoint, setApiEndpoint] = useState('/Contacts?where=IsCustomer==true&page=1')
+  const [apiResult, setApiResult] = useState<unknown>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -119,11 +121,35 @@ export function XeroAdminPage() {
     setBusy('disconnect')
     setErr(null)
     setQuoteResult(null)
+    setApiResult(null)
     try {
       await apiFetch<{ ok: boolean }>('/api/xero/disconnect', { method: 'POST' })
       await load()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Disconnect failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doXeroApiGet() {
+    const endpoint = apiEndpoint.trim()
+    if (!endpoint) {
+      setErr('Enter a Xero Accounting API endpoint, for example /Contacts?page=1.')
+      return
+    }
+    setBusy('api-get')
+    setErr(null)
+    setApiResult(null)
+    try {
+      const out = await apiFetch<unknown>('/api/xero/api-get', {
+        method: 'POST',
+        body: JSON.stringify({ endpoint }),
+      })
+      setApiResult(out)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Xero API GET failed')
     } finally {
       setBusy(null)
     }
@@ -271,6 +297,53 @@ export function XeroAdminPage() {
                     Save tenant
                   </Button>
                 </Stack>
+              </Paper>
+            ) : null}
+
+            {status?.connected ? (
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Xero API GET utility
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                  Enter a relative Xero Accounting API endpoint. Authentication and <code>xero-tenant-id</code> are added by the
+                  server.
+                </Typography>
+                <Stack spacing={1.5}>
+                  <TextField
+                    size="small"
+                    label="Endpoint"
+                    value={apiEndpoint}
+                    onChange={(e) => setApiEndpoint(e.target.value)}
+                    helperText="Examples: /Contacts?where=IsCustomer==true&page=1, /Contacts/{ContactID}, /Accounts"
+                    fullWidth
+                  />
+                  <Button
+                    variant="contained"
+                    onClick={() => void doXeroApiGet()}
+                    disabled={busy !== null || !apiEndpoint.trim()}
+                    sx={{ alignSelf: 'flex-start' }}
+                  >
+                    Call Xero GET endpoint
+                  </Button>
+                </Stack>
+                {apiResult ? (
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      mt: 2,
+                      p: 1,
+                      maxHeight: 420,
+                      overflow: 'auto',
+                      bgcolor: 'background.paper',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                      fontSize: 11,
+                    }}
+                    component="pre"
+                  >
+                    {JSON.stringify(apiResult, null, 2)}
+                  </Paper>
+                ) : null}
               </Paper>
             ) : null}
 

@@ -5,7 +5,7 @@ import secrets
 import sys
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy import delete
@@ -306,6 +306,59 @@ def disconnect_xero(db: Session) -> None:
     row.scope = None
     row.last_refreshed_at = None
     db.commit()
+
+
+def _accounting_api_url(endpoint: str) -> str:
+    raw = (endpoint or "").strip()
+    if not raw:
+        raise XeroConfigError("Xero endpoint is required.")
+
+    parsed = urlsplit(raw)
+    if parsed.scheme or parsed.netloc:
+        raise XeroConfigError("Enter a relative Xero Accounting API endpoint, for example /Contacts?page=1.")
+    if parsed.fragment:
+        raise XeroConfigError("Xero endpoint must not include a URL fragment.")
+
+    path = parsed.path or ""
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if "//" in path:
+        raise XeroConfigError("Xero endpoint path must not contain '//'.")
+
+    return f"{XERO_API_BASE}{urlunsplit(('', '', path, parsed.query, ''))}"
+
+
+def xero_get_endpoint(db: Session, *, endpoint: str) -> dict[str, Any]:
+    """
+    Call a relative Xero Accounting API GET endpoint using the stored tenant and OAuth token.
+
+    This intentionally accepts only relative endpoints to avoid turning the admin utility into
+    a general-purpose authenticated HTTP proxy.
+    """
+    access = ensure_xero_access_token_for_api(db)
+    row = _singleton(db)
+    tenant = (row.tenant_id or "").strip()
+    if not tenant:
+        raise XeroConfigError("Xero tenant_id is missing.")
+
+    url = _accounting_api_url(endpoint)
+    headers = {
+        "Authorization": f"Bearer {access}",
+        "xero-tenant-id": tenant,
+        "Accept": "application/json",
+    }
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.get(url, headers=headers)
+
+    try:
+        payload: Any = resp.json()
+    except Exception:
+        payload = resp.text
+
+    if resp.status_code >= 400:
+        raise XeroApiError(f"Xero GET error {resp.status_code}: {payload}")
+
+    return {"request_url": url, "status_code": resp.status_code, "xero": payload}
 
 
 def authorize_url(*, state: str) -> str:
