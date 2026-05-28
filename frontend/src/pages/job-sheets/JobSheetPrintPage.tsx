@@ -578,7 +578,7 @@ function JobSheetPrintInlineInkTable(props: { rows: Array<{ ink: string; plate: 
     <table className="js-print-inline-ink-table" role="presentation">
       <thead>
         <tr>
-          <th className="js-print-inline-ink-th-deck">Deck</th>
+          <th className="js-print-inline-ink-th-deck">#</th>
           <th>Colour</th>
           <th className="js-print-inline-ink-th-plate">Plate</th>
         </tr>
@@ -908,7 +908,7 @@ function JobSheetPrintUtecoPage(props: {
             <table className="js-print-uteco-deck-table" role="presentation">
               <thead>
                 <tr>
-                  <th style={{ width: '100px' }}>Deck</th>
+                  <th style={{ width: '100px' }}>#</th>
                   <th>Colour</th>
                 </tr>
               </thead>
@@ -3143,7 +3143,6 @@ export function JobSheetPrintPage() {
         .js-resin-blend-table {
           width: 100%;
           border-collapse: collapse;
-          table-layout: fixed;
           margin: 0;
           border: none;
         }
