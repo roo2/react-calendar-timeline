@@ -8,11 +8,20 @@ from typing import Any
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import XERO_SCOPES, settings
-from app.db.models.domain import Customer, XeroConnection, XeroOAuthState
+from app.db.models.domain import (
+    Customer,
+    Order,
+    Product,
+    SavedQuote,
+    XeroConnection,
+    XeroOAuthState,
+)
+from app.db.myob_import_placeholders import MYOB_DRAFT_INTERNAL_CUSTOMER_ID
 
 XERO_AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
@@ -118,7 +127,9 @@ def _post_token_form(body: dict[str, str]) -> dict[str, Any]:
     return resp.json()
 
 
-def _apply_token_payload(db: Session, payload: dict[str, Any], *, log_access_token: bool = False) -> None:
+def _apply_token_payload(
+    db: Session, payload: dict[str, Any], *, log_access_token: bool = False
+) -> None:
     row = _singleton(db)
     access = payload.get("access_token")
     refresh = payload.get("refresh_token")
@@ -234,9 +245,13 @@ def ensure_xero_access_token_for_api(db: Session) -> str:
     _require_config()
     row = _singleton(db)
     if not row.refresh_token:
-        raise XeroConfigError("Xero is not connected (no refresh token). Use Connect Xero in Admin first.")
+        raise XeroConfigError(
+            "Xero is not connected (no refresh token). Use Connect Xero in Admin first."
+        )
     if not (row.tenant_id or "").strip():
-        raise XeroConfigError("Xero tenant is not selected. Reconnect Xero or POST /api/xero/tenant with tenant_id.")
+        raise XeroConfigError(
+            "Xero tenant is not selected. Reconnect Xero or POST /api/xero/tenant with tenant_id."
+        )
     tok = _current_access_token(db)
     if not tok:
         raise XeroOAuthError("No access token after refresh.")
@@ -315,7 +330,9 @@ def _accounting_api_url(endpoint: str) -> str:
 
     parsed = urlsplit(raw)
     if parsed.scheme or parsed.netloc:
-        raise XeroConfigError("Enter a relative Xero Accounting API endpoint, for example /Contacts?page=1.")
+        raise XeroConfigError(
+            "Enter a relative Xero Accounting API endpoint, for example /Contacts?page=1."
+        )
     if parsed.fragment:
         raise XeroConfigError("Xero endpoint must not include a URL fragment.")
 
@@ -328,13 +345,7 @@ def _accounting_api_url(endpoint: str) -> str:
     return f"{XERO_API_BASE}{urlunsplit(('', '', path, parsed.query, ''))}"
 
 
-def xero_get_endpoint(db: Session, *, endpoint: str) -> dict[str, Any]:
-    """
-    Call a relative Xero Accounting API GET endpoint using the stored tenant and OAuth token.
-
-    This intentionally accepts only relative endpoints to avoid turning the admin utility into
-    a general-purpose authenticated HTTP proxy.
-    """
+def _xero_api_get_json(db: Session, *, endpoint: str) -> tuple[str, int, Any]:
     access = ensure_xero_access_token_for_api(db)
     row = _singleton(db)
     tenant = (row.tenant_id or "").strip()
@@ -358,7 +369,267 @@ def xero_get_endpoint(db: Session, *, endpoint: str) -> dict[str, Any]:
     if resp.status_code >= 400:
         raise XeroApiError(f"Xero GET error {resp.status_code}: {payload}")
 
-    return {"request_url": url, "status_code": resp.status_code, "xero": payload}
+    return url, resp.status_code, payload
+
+
+def xero_get_endpoint(db: Session, *, endpoint: str) -> dict[str, Any]:
+    """
+    Call a relative Xero Accounting API GET endpoint using the stored tenant and OAuth token.
+
+    This intentionally accepts only relative endpoints to avoid turning the admin utility into
+    a general-purpose authenticated HTTP proxy.
+    """
+    url, status_code, payload = _xero_api_get_json(db, endpoint=endpoint)
+    return {"request_url": url, "status_code": status_code, "xero": payload}
+
+
+def _normalize_match_text(value: Any) -> str:
+    s = str(value or "").casefold()
+    s = re.sub(r"&", " and ", s)
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _normalize_account_code(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _normalize_tax_number(value: Any) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def _first_present(*values: Any) -> str:
+    for value in values:
+        s = str(value or "").strip()
+        if s:
+            return s
+    return ""
+
+
+def _xero_contact_account_code(raw: dict[str, Any]) -> str:
+    return _first_present(
+        raw.get("AccountNumber"),
+        raw.get("ContactNumber"),
+        raw.get("ContactCode"),
+    )
+
+
+def _xero_contact_id(raw: dict[str, Any]) -> str:
+    return str(raw.get("ContactID") or raw.get("ContactId") or "").strip()
+
+
+def _load_xero_customer_contacts(db: Session, *, max_pages: int = 50) -> list[dict[str, Any]]:
+    contacts: list[dict[str, Any]] = []
+    where_q = quote("IsCustomer==true", safe="")
+    for page in range(1, max(1, int(max_pages)) + 1):
+        _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts?where={where_q}&page={page}")
+        rows = payload.get("Contacts") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or not rows:
+            break
+        contacts.extend([r for r in rows if isinstance(r, dict)])
+        if len(rows) < 100:
+            break
+    return contacts
+
+
+def _unique_index(rows: list[Customer], key_fn) -> dict[str, Customer]:
+    buckets: dict[str, list[Customer]] = {}
+    for row in rows:
+        key = key_fn(row)
+        if key:
+            buckets.setdefault(key, []).append(row)
+    return {key: matches[0] for key, matches in buckets.items() if len(matches) == 1}
+
+
+def _customer_counts(db: Session) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
+    pairs = (
+        (Order, "orders_count"),
+        (SavedQuote, "quotes_count"),
+        (Product, "products_count"),
+    )
+    for model, key in pairs:
+        rows = db.execute(
+            select(model.customer_id, func.count(model.id)).group_by(model.customer_id)
+        ).all()
+        for customer_id, count in rows:
+            out.setdefault(str(customer_id), {})[key] = int(count or 0)
+    return out
+
+
+def _customer_review_row(cust: Customer, counts: dict[str, dict[str, int]]) -> dict[str, Any]:
+    c = counts.get(str(cust.id), {})
+    return {
+        "id": str(cust.id),
+        "name": cust.name,
+        "status": cust.status,
+        "myob_customer_uid": getattr(cust, "myob_customer_uid", None),
+        "myob_display_id": getattr(cust, "myob_display_id", None),
+        "xero_contact_id": getattr(cust, "xero_contact_id", None),
+        "orders_count": int(c.get("orders_count", 0)),
+        "quotes_count": int(c.get("quotes_count", 0)),
+        "products_count": int(c.get("products_count", 0)),
+    }
+
+
+def preview_xero_customer_links(db: Session) -> dict[str, Any]:
+    """
+    Match Xero customer contacts to existing app customers without changing customer details.
+
+    The only field the apply step writes is customers.xero_contact_id. Matching is conservative:
+    existing links, unique MYOB/Xero account code, unique ABN/tax number, then unique exact name.
+    Ambiguous or unmatched contacts are reported for manual review.
+    """
+    contacts = _load_xero_customer_contacts(db)
+    customer_stmt = select(Customer).where(Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID))
+    customers = list(db.scalars(customer_stmt).all())
+    linked_by_xero = {
+        str(c.xero_contact_id).strip(): c
+        for c in customers
+        if str(getattr(c, "xero_contact_id", "") or "").strip()
+    }
+    by_myob_display = _unique_index(customers, lambda c: _normalize_account_code(c.myob_display_id))
+    by_abn = _unique_index(customers, lambda c: _normalize_tax_number(c.abn))
+    by_name = _unique_index(customers, lambda c: _normalize_match_text(c.name))
+
+    claimed_customer_ids: set[str] = set()
+    matches: list[dict[str, Any]] = []
+    unmatched_xero: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+
+    for raw in contacts:
+        contact_id = _xero_contact_id(raw)
+        name = str(raw.get("Name") or "").strip()
+        account_code = _xero_contact_account_code(raw)
+        tax_number = str(raw.get("TaxNumber") or "").strip()
+        if not contact_id:
+            unmatched_xero.append({"name": name, "reason": "missing_contact_id", "xero": raw})
+            continue
+
+        match: Customer | None = linked_by_xero.get(contact_id)
+        reason = "existing_xero_contact_id" if match is not None else ""
+        if match is None:
+            for next_reason, candidate in (
+                ("myob_display_id", by_myob_display.get(_normalize_account_code(account_code))),
+                ("abn", by_abn.get(_normalize_tax_number(tax_number))),
+                ("name", by_name.get(_normalize_match_text(name))),
+            ):
+                if candidate is not None:
+                    match = candidate
+                    reason = next_reason
+                    break
+
+        if match is None:
+            unmatched_xero.append(
+                {
+                    "contact_id": contact_id,
+                    "name": name,
+                    "account_code": account_code,
+                    "tax_number": tax_number,
+                    "reason": "no_unique_app_customer_match",
+                }
+            )
+            continue
+
+        existing_xero_id = str(getattr(match, "xero_contact_id", "") or "").strip()
+        if existing_xero_id and existing_xero_id != contact_id:
+            conflicts.append(
+                {
+                    "contact_id": contact_id,
+                    "name": name,
+                    "app_customer_id": str(match.id),
+                    "app_customer_name": match.name,
+                    "existing_xero_contact_id": existing_xero_id,
+                    "reason": "app_customer_already_linked_to_different_contact",
+                }
+            )
+            continue
+        if str(match.id) in claimed_customer_ids and reason != "existing_xero_contact_id":
+            conflicts.append(
+                {
+                    "contact_id": contact_id,
+                    "name": name,
+                    "app_customer_id": str(match.id),
+                    "app_customer_name": match.name,
+                    "reason": "multiple_xero_contacts_match_same_app_customer",
+                }
+            )
+            continue
+        claimed_customer_ids.add(str(match.id))
+
+        matches.append(
+            {
+                "contact_id": contact_id,
+                "xero_name": name,
+                "xero_account_code": account_code,
+                "app_customer_id": str(match.id),
+                "app_customer_name": match.name,
+                "myob_display_id": getattr(match, "myob_display_id", None),
+                "reason": reason,
+                "already_linked": existing_xero_id == contact_id,
+                "will_link": not existing_xero_id,
+            }
+        )
+
+    return {
+        "xero_contacts_count": len(contacts),
+        "matched_count": len(matches),
+        "will_link_count": sum(1 for m in matches if bool(m.get("will_link"))),
+        "already_linked_count": sum(1 for m in matches if bool(m.get("already_linked"))),
+        "unmatched_xero_count": len(unmatched_xero),
+        "conflict_count": len(conflicts),
+        "matches": matches,
+        "unmatched_xero": unmatched_xero,
+        "conflicts": conflicts,
+    }
+
+
+def import_xero_customer_links(db: Session) -> dict[str, Any]:
+    preview = preview_xero_customer_links(db)
+    linked = 0
+    errors: list[str] = []
+    for row in preview["matches"]:
+        if not row.get("will_link"):
+            continue
+        customer_id = str(row.get("app_customer_id") or "")
+        contact_id = str(row.get("contact_id") or "")
+        cust = db.get(Customer, customer_id)
+        if cust is None:
+            errors.append(f"Customer not found during link: {customer_id}")
+            continue
+        if str(getattr(cust, "xero_contact_id", "") or "").strip():
+            continue
+        try:
+            with db.begin_nested():
+                cust.xero_contact_id = contact_id
+                db.add(cust)
+                db.flush()
+            linked += 1
+        except IntegrityError:
+            errors.append(f"Xero contact already linked elsewhere: {contact_id}")
+    db.commit()
+    return {**preview, "ok": not errors, "linked_count": linked, "errors": errors}
+
+
+def unlinked_xero_customer_review(db: Session) -> dict[str, Any]:
+    counts = _customer_counts(db)
+    rows = list(
+        db.scalars(
+            select(Customer)
+            .where(
+                Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
+                Customer.xero_contact_id.is_(None),
+            )
+            .order_by(Customer.name.asc())
+        ).all()
+    )
+    items = [_customer_review_row(c, counts) for c in rows]
+    return {
+        "total": len(items),
+        "with_orders_count": sum(1 for r in items if int(r["orders_count"]) > 0),
+        "without_orders_count": sum(1 for r in items if int(r["orders_count"]) == 0),
+        "items": items,
+    }
 
 
 def authorize_url(*, state: str) -> str:
@@ -375,7 +646,10 @@ def authorize_url(*, state: str) -> str:
     return f"{XERO_AUTHORIZE_URL}?{urlencode(q, quote_via=quote)}"
 
 
-_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
 
 
 def _is_uuid(v: str) -> bool:
@@ -401,7 +675,9 @@ def create_draft_quote(
         raise XeroConfigError("Customer not found.")
     cid = (cust.xero_contact_id or "").strip()
     if not cid:
-        raise XeroConfigError("Customer has no xero_contact_id. Set it on the customer record (Xero Contact UUID).")
+        raise XeroConfigError(
+            "Customer has no xero_contact_id. Set it on the customer record (Xero Contact UUID)."
+        )
     if not _is_uuid(cid):
         raise XeroConfigError("customers.xero_contact_id must be a Xero GUID (ContactID).")
     access = ensure_xero_access_token_for_api(db)

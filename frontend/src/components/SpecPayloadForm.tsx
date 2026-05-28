@@ -225,6 +225,9 @@ export function makeDefaultSpec(): SpecPayload {
       flags: [],
       known_issues: null,
     },
+    production_actuals: {
+      extruders: {},
+    },
     run_requirements: {
       preferred_extruders: [],
       preferred_printer: null,

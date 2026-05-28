@@ -10,6 +10,11 @@ import {
   Paper,
   Select,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
 } from '@mui/material'
@@ -33,6 +38,50 @@ type XeroStatus = {
   connections: XeroConnectionRow[]
 }
 
+type XeroCustomerLinkMatch = {
+  contact_id: string
+  xero_name: string
+  xero_account_code?: string | null
+  app_customer_id: string
+  app_customer_name: string
+  myob_display_id?: string | null
+  reason: string
+  already_linked: boolean
+  will_link: boolean
+}
+
+type XeroCustomerLinkPreview = {
+  xero_contacts_count: number
+  matched_count: number
+  will_link_count: number
+  already_linked_count: number
+  unmatched_xero_count: number
+  conflict_count: number
+  linked_count?: number
+  errors?: string[]
+  matches: XeroCustomerLinkMatch[]
+  unmatched_xero: Array<Record<string, unknown>>
+  conflicts: Array<Record<string, unknown>>
+}
+
+type XeroUnlinkedCustomerRow = {
+  id: string
+  name: string
+  status?: string | null
+  myob_display_id?: string | null
+  myob_customer_uid?: string | null
+  orders_count: number
+  quotes_count: number
+  products_count: number
+}
+
+type XeroUnlinkedCustomerReview = {
+  total: number
+  with_orders_count: number
+  without_orders_count: number
+  items: XeroUnlinkedCustomerRow[]
+}
+
 export function XeroAdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -50,6 +99,8 @@ export function XeroAdminPage() {
   const [quoteResult, setQuoteResult] = useState<unknown>(null)
   const [apiEndpoint, setApiEndpoint] = useState('/Contacts?where=IsCustomer==true&page=1')
   const [apiResult, setApiResult] = useState<unknown>(null)
+  const [linkPreview, setLinkPreview] = useState<XeroCustomerLinkPreview | null>(null)
+  const [unlinkedReview, setUnlinkedReview] = useState<XeroUnlinkedCustomerReview | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -150,6 +201,49 @@ export function XeroAdminPage() {
     } catch (e) {
       if (e instanceof ApiError) setErr(e.message)
       else setErr(e instanceof Error ? e.message : 'Xero API GET failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doPreviewCustomerLinks() {
+    setBusy('xero-customer-preview')
+    setErr(null)
+    try {
+      const out = await apiFetch<XeroCustomerLinkPreview>('/api/xero/customers/link-preview')
+      setLinkPreview(out)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Xero customer link preview failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doImportCustomerLinks() {
+    setBusy('xero-customer-import')
+    setErr(null)
+    try {
+      const out = await apiFetch<XeroCustomerLinkPreview>('/api/xero/customers/link-import', { method: 'POST' })
+      setLinkPreview(out)
+      await load()
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Xero customer link import failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doLoadUnlinkedCustomers() {
+    setBusy('xero-unlinked')
+    setErr(null)
+    try {
+      const out = await apiFetch<XeroUnlinkedCustomerReview>('/api/xero/customers/unlinked')
+      setUnlinkedReview(out)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Failed to load unlinked customers')
     } finally {
       setBusy(null)
     }
@@ -297,6 +391,134 @@ export function XeroAdminPage() {
                     Save tenant
                   </Button>
                 </Stack>
+              </Paper>
+            ) : null}
+
+            {status?.connected ? (
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Link Xero customers
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                  Matches Xero customer contacts to existing app customers and only writes{' '}
+                  <code>xero_contact_id</code>. App customer details are not synced from Xero.
+                </Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
+                  <Button
+                    variant="outlined"
+                    onClick={() => void doPreviewCustomerLinks()}
+                    disabled={busy !== null}
+                  >
+                    Preview customer links
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={() => void doImportCustomerLinks()}
+                    disabled={busy !== null || (linkPreview != null && linkPreview.will_link_count === 0)}
+                  >
+                    Apply safe links
+                  </Button>
+                  <Button variant="outlined" onClick={() => void doLoadUnlinkedCustomers()} disabled={busy !== null}>
+                    Show unlinked app customers
+                  </Button>
+                </Stack>
+
+                {linkPreview ? (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Xero contacts: <strong>{linkPreview.xero_contacts_count}</strong> · Matched:{' '}
+                      <strong>{linkPreview.matched_count}</strong> · To link:{' '}
+                      <strong>{linkPreview.will_link_count}</strong> · Already linked:{' '}
+                      <strong>{linkPreview.already_linked_count}</strong> · Unmatched Xero:{' '}
+                      <strong>{linkPreview.unmatched_xero_count}</strong> · Conflicts:{' '}
+                      <strong>{linkPreview.conflict_count}</strong>
+                      {linkPreview.linked_count != null ? (
+                        <>
+                          {' '}
+                          · Linked this run: <strong>{linkPreview.linked_count}</strong>
+                        </>
+                      ) : null}
+                    </Typography>
+                    {linkPreview.errors && linkPreview.errors.length > 0 ? (
+                      <Alert severity="warning" sx={{ mb: 1 }}>
+                        {linkPreview.errors.join('; ')}
+                      </Alert>
+                    ) : null}
+                    <Paper variant="outlined" sx={{ maxHeight: 320, overflow: 'auto' }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Xero customer</TableCell>
+                            <TableCell>App customer</TableCell>
+                            <TableCell>Reason</TableCell>
+                            <TableCell>Action</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {linkPreview.matches.slice(0, 50).map((m) => (
+                            <TableRow key={m.contact_id}>
+                              <TableCell>
+                                <Typography variant="body2">{m.xero_name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {m.xero_account_code || m.contact_id}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">{m.app_customer_name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {m.myob_display_id || m.app_customer_id}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>{m.reason}</TableCell>
+                              <TableCell>{m.already_linked ? 'Already linked' : m.will_link ? 'Will link' : '—'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Paper>
+                    {linkPreview.matches.length > 50 ? (
+                      <Typography variant="caption" color="text.secondary">
+                        Showing first 50 matched rows.
+                      </Typography>
+                    ) : null}
+                  </Box>
+                ) : null}
+
+                {unlinkedReview ? (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Unlinked app customers: <strong>{unlinkedReview.total}</strong> · With orders:{' '}
+                      <strong>{unlinkedReview.with_orders_count}</strong> · Without orders:{' '}
+                      <strong>{unlinkedReview.without_orders_count}</strong>
+                    </Typography>
+                    <Paper variant="outlined" sx={{ maxHeight: 360, overflow: 'auto' }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Customer</TableCell>
+                            <TableCell>MYOB display</TableCell>
+                            <TableCell align="right">Orders</TableCell>
+                            <TableCell align="right">Quotes</TableCell>
+                            <TableCell align="right">Products</TableCell>
+                            <TableCell>Status</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {unlinkedReview.items.map((row) => (
+                            <TableRow key={row.id} hover>
+                              <TableCell>{row.name}</TableCell>
+                              <TableCell>{row.myob_display_id || '—'}</TableCell>
+                              <TableCell align="right">{row.orders_count}</TableCell>
+                              <TableCell align="right">{row.quotes_count}</TableCell>
+                              <TableCell align="right">{row.products_count}</TableCell>
+                              <TableCell>{row.status || '—'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Paper>
+                  </Box>
+                ) : null}
               </Paper>
             ) : null}
 

@@ -20,6 +20,7 @@ from app.db.models.enums import OrderStatus
 from app.exceptions import DomainError
 from app.job_context import ensure_scheduling_job_for_job_sheet
 from app.job_production_timestamps import apply_job_production_timestamps
+from app.str_norm import customer_facing_product_code_from_import_description
 
 
 def sync_product_default_qty_type_from_job_sheet(db, js: JobSheet) -> None:
@@ -118,6 +119,40 @@ def _strip_qty_to_stock_from_spec_payload(spec_payload: Any) -> Any:
         rr_out["conversion"] = conv_out
     out["run_requirements"] = rr_out
     return out
+
+
+def _import_description_product_code_key(value: str | None) -> str:
+    code = customer_facing_product_code_from_import_description(value)
+    return str(code or "").strip().casefold()
+
+
+def _positive_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
 
 
 def _order_defaults_dict(spec_payload: Any) -> Dict[str, Any]:
@@ -542,7 +577,14 @@ def _infer_qty_fields_for_order_line(
     npu: Optional[float]
     if qt == "units":
         # Order line unit "1000": quantity_value is thousands of products.
-        npu = float(quantity_value) * 1000.0 if qu == "1000" else float(quantity_value)
+        if qu == "1000":
+            npu = float(quantity_value) * 1000.0
+        elif qu == "cartons":
+            # Carton line quantity is carton count, not product count. The job sheet editor
+            # resolves product units after bags/carton is known.
+            npu = None
+        else:
+            npu = float(quantity_value)
     else:
         npu = None
     return qt, npu, None, int(nr)
@@ -880,10 +922,156 @@ def get_job_sheet(job_sheet_id: str) -> Optional[JobSheet]:
         return js
 
 
-def finalize_import_draft_job_sheet_after_spec_save(db, job_sheet_id: str) -> None:
+def _delete_orphan_import_draft_job_sheet(db, js: JobSheet | None) -> None:
+    if js is None or not bool(getattr(js, "is_import_draft", False)):
+        return
+    refs = db.scalar(
+        select(func.count()).select_from(OrderItem).where(OrderItem.job_sheet_id == str(js.id))
+    )
+    if int(refs or 0) == 0:
+        db.delete(js)
+
+
+def _complete_matching_myob_import_drafts_for_product(
+    db,
+    *,
+    source_order_item: OrderItem,
+    product_id: str,
+    created_by: str,
+) -> int:
     """
-    After staff save a real spec for a MYOB import draft sheet: clear the draft flag, treat the order line
-    as normal production, and ensure a scheduling Job exists (planned).
+    When the first imported line for a product is completed, convert matching imported draft lines
+    for the same customer to normal manufactured lines that share the same underlying product.
+
+    Matching is intentionally narrow: same customer, still a MYOB import draft, and same leading
+    customer-facing product code in the imported line description.
+    """
+    source_key = _import_description_product_code_key(
+        getattr(source_order_item, "import_line_description", None)
+    )
+    if not source_key:
+        return 0
+
+    source_order = db.get(Order, str(source_order_item.order_id))
+    if source_order is None:
+        return 0
+
+    product = db.get(Product, str(product_id))
+    if product is None or str(getattr(product, "customer_id", "")) != str(source_order.customer_id):
+        return 0
+    if not getattr(product, "active_version_id", None):
+        return 0
+
+    rows = db.execute(
+        select(OrderItem, Order)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(
+            Order.customer_id == str(source_order.customer_id),
+            OrderItem.id != str(source_order_item.id),
+            OrderItem.line_kind == "myob_import",
+            OrderItem.import_requires_job_sheet.is_(True),
+        )
+    ).all()
+
+    converted = 0
+    for oi, order in rows:
+        candidate_key = _import_description_product_code_key(
+            getattr(oi, "import_line_description", None)
+        )
+        if candidate_key != source_key:
+            continue
+
+        old_js = (
+            db.get(JobSheet, str(oi.job_sheet_id))
+            if getattr(oi, "job_sheet_id", None)
+            else None
+        )
+        if old_js is not None and not bool(getattr(old_js, "is_import_draft", False)):
+            continue
+        if old_js is not None and str(getattr(old_js, "product_id", "")) != str(
+            MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID
+        ):
+            continue
+
+        qty = _positive_float_or_none(getattr(oi, "import_ship_quantity", None))
+        if qty is None and old_js is not None:
+            qty = _positive_float_or_none(getattr(old_js, "quantity_value", None))
+        if qty is None:
+            continue
+
+        quantity_unit = (
+            str(
+                getattr(oi, "import_quantity_unit", None)
+                or getattr(old_js, "quantity_unit", None)
+                or "kg"
+            ).strip()
+            or "kg"
+        )
+        qty_type = (
+            str(
+                getattr(oi, "import_qty_type", None)
+                or getattr(old_js, "qty_type", None)
+                or quantity_unit
+            ).strip()
+            or quantity_unit
+        )
+        due_date = getattr(old_js, "due_date", None) if old_js is not None else None
+        unit_rate = _float_or_none(getattr(oi, "import_unit_price", None))
+        if unit_rate is None and old_js is not None:
+            unit_rate = _float_or_none(getattr(old_js, "unit_rate", None))
+        line_total = _float_or_none(getattr(oi, "import_line_total", None))
+        if line_total is None and old_js is not None:
+            line_total = _float_or_none(getattr(old_js, "line_total", None))
+
+        new_js = create_job_sheet_from_product_latest_version(
+            db=db,
+            customer_id=str(order.customer_id),
+            product_id=str(product.id),
+            due_date=due_date,
+            quantity_value=qty,
+            quantity_unit=quantity_unit,
+            created_by=(created_by or "system").strip() or "system",
+            unit_rate=unit_rate,
+            line_total=line_total,
+            qty_type=qty_type,
+            num_product_units=(
+                _positive_float_or_none(getattr(old_js, "num_product_units", None))
+                if old_js
+                else None
+            ),
+            weight_per_roll_kg=(
+                _positive_float_or_none(getattr(old_js, "weight_per_roll_kg", None))
+                if old_js
+                else None
+            ),
+            num_rolls=_positive_int_or_none(getattr(old_js, "num_rolls", None)) if old_js else None,
+        )
+        if old_js is not None and getattr(old_js, "customer_facing_description", None):
+            new_js.customer_facing_description = (
+                str(old_js.customer_facing_description).strip() or None
+            )
+        elif getattr(oi, "import_line_description", None):
+            new_js.customer_facing_description = str(oi.import_line_description).strip() or None
+
+        oi.job_sheet_id = str(new_js.id)
+        oi.line_kind = "manufactured"
+        db.add(new_js)
+        db.add(oi)
+        db.flush()
+        assign_order_job_no(db, str(order.id), new_js)
+        ensure_scheduling_job_for_job_sheet(db, str(new_js.id))
+        _delete_orphan_import_draft_job_sheet(db, old_js)
+        converted += 1
+
+    return converted
+
+
+def finalize_import_draft_job_sheet_after_spec_save(
+    db, job_sheet_id: str, *, updated_by: str = "system"
+) -> None:
+    """
+    After staff save a real spec for a MYOB import draft sheet: clear the draft flag,
+    treat the order line as normal production, and ensure a scheduling Job exists.
     """
     try:
         jid = str(uuid.UUID(str(job_sheet_id)))
@@ -902,6 +1090,12 @@ def finalize_import_draft_job_sheet_after_spec_save(db, job_sheet_id: str) -> No
         )
     ).scalars().first()
     if oi is not None:
+        _complete_matching_myob_import_drafts_for_product(
+            db,
+            source_order_item=oi,
+            product_id=str(js.product_id),
+            created_by=updated_by,
+        )
         oi.line_kind = "manufactured"
         db.add(oi)
     db.flush()
@@ -995,7 +1189,7 @@ def update_job_sheet(job_sheet_id: str, payload: JobSheetUpdateRequest, *, updat
         db.flush()
         sync_product_default_qty_type_from_job_sheet(db, js)
         if payload.spec is not None and import_draft_before:
-            finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
+            finalize_import_draft_job_sheet_after_spec_save(db, str(js.id), updated_by=updated_by)
 
         if "production_extruder_code" in upd and str(js.product_id) != str(MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID):
             prod = db.get(Product, str(js.product_id))
@@ -1106,7 +1300,7 @@ def save_job_sheet_as_new_product(job_sheet_id: str, payload: JobSheetUpdateRequ
         db.flush()
         sync_product_default_qty_type_from_job_sheet(db, js)
         if import_draft_before:
-            finalize_import_draft_job_sheet_after_spec_save(db, str(js.id))
+            finalize_import_draft_job_sheet_after_spec_save(db, str(js.id), updated_by=updated_by)
 
         oid = _ensure_draft_order_for_job_sheet_in_db(db, str(js.id))
         assign_order_job_no(db, str(oid), js)

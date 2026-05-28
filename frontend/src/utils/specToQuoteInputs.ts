@@ -13,6 +13,7 @@ import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from 
 import { derivedInlineSeal, productTypeCanHaveGusset } from './specCompat'
 import { isLeftRightWidthFilmProductType } from './filmProductTypes'
 import { productSummaryPunchedChecked } from './punchHoleSpec'
+import { getExtruderTimePerRollHours } from './specProductionActuals'
 
 function dimensionsAreContinuous(dim: any, productType: string): boolean {
   const lu = String(dim?.length_units || '')
@@ -192,6 +193,7 @@ export function buildQuickQuoteInputsFromSpec(
   )
 
   const punched = productSummaryPunchedChecked(run as Record<string, unknown>, finishMode)
+  const extruderCode = opts?.extruderCode ?? null
   return {
     override_price_per_kg: null,
     product_type: productType,
@@ -216,7 +218,8 @@ export function buildQuickQuoteInputsFromSpec(
     core_type: pack.core_type != null ? String(pack.core_type) : '13mm',
     roll_weight_billing:
       finishMode === 'Rolls' ? resolveRollWeightBillingSlug(pickRollWeightBillingRaw(spec)) : null,
-    extruder_code: opts?.extruderCode ?? null,
+    extruder_code: extruderCode,
+    extruder_time_per_roll_hours: getExtruderTimePerRollHours(spec, extruderCode),
     colour_components: colourComponents,
     additives,
     blend: blend.length ? blend : undefined,

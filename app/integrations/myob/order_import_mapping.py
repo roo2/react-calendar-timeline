@@ -131,14 +131,10 @@ def map_myob_item_to_app_quantity(
         "cartons",
         "box",
         "boxes",
-        "bag",
-        "bags",
         "pack",
         "packs",
         "pallet",
         "pallets",
-        "sheet",
-        "sheets",
     ):
         return "cartons", "units", raw_display
 
@@ -160,6 +156,10 @@ def map_myob_item_to_app_quantity(
         "gst",
         "item",
         "items",
+        "bag",
+        "bags",
+        "sheet",
+        "sheets",
     ):
         return "ea", "units", raw_display
 

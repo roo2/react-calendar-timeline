@@ -408,6 +408,7 @@ class SpecPayload(BaseModel):
     formulation: FormulationSpec
     printing: PrintingSpec
     quality_expectations: QualityExpectationsSpec
+    production_actuals: Dict[str, Any] = Field(default_factory=dict)
     run_requirements: RunRequirementsSpec
     packaging: PackagingSpec
     tool_requirements: List[ToolRequirementSpec] = []

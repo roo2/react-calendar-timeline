@@ -128,6 +128,25 @@ export function JobSheetPreviewPanel(props: {
       </Typography>
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {effective ? (
+          <Box
+            sx={{
+              p: 1,
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 1,
+              bgcolor: 'action.hover',
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontWeight: 600, mb: 0.25 }}>
+              Customer-facing description
+            </Typography>
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {effective}
+            </Typography>
+          </Box>
+        ) : null}
+
         <JobSheetPrintOrderHeaderFields
           variant="preview"
           header={header}

@@ -182,6 +182,7 @@ def _products_summary(o) -> tuple[str | None, int]:
 
 
 def _order_to_list_dto(o) -> OrderListItemDTO:
+    totals = service.order_tax_totals_from_orm(o)
     return OrderListItemDTO(
         id=o.id,
         code=o.code,
@@ -191,7 +192,11 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
         product_version_id=o.product_version_id,
         customer_name=(o.customer.name if getattr(o, "customer", None) else None),
         item_count=len(getattr(o, "items", []) or []),
-        order_total=service.order_total_from_orm(o),
+        gst_rate=float(totals["gst_rate"] or 0.0),
+        order_subtotal_ex_gst=totals["order_subtotal_ex_gst"],
+        order_gst=totals["order_gst"],
+        order_total_inc_gst=totals["order_total_inc_gst"],
+        order_total=totals["order_subtotal_ex_gst"],
         created_at=str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None,
         order_date=str(getattr(o, "order_date", None)) if getattr(o, "order_date", None) else None,
         import_source=getattr(o, "import_source", None),
@@ -623,6 +628,8 @@ async def show_order(order_id: str):
                         "quantity_unit": str(oi.resell_quantity_unit or "ea"),
                         "rate": float(oi.resell_unit_rate) if getattr(oi, "resell_unit_rate", None) is not None else None,
                         "total_price": float(oi.resell_line_total) if getattr(oi, "resell_line_total", None) is not None else None,
+                        "tax_code": getattr(oi, "tax_code", None),
+                        "gst_rate": float(oi.gst_rate) if getattr(oi, "gst_rate", None) is not None else None,
                     }
                 )
                 continue
@@ -669,6 +676,8 @@ async def show_order(order_id: str):
                         "total_price": line_total,
                         "income_account_display_id": id_disp,
                         "income_account_name": nm_income,
+                        "tax_code": getattr(oi, "tax_code", None),
+                        "gst_rate": float(oi.gst_rate) if getattr(oi, "gst_rate", None) is not None else None,
                     }
                 )
                 continue
@@ -729,6 +738,8 @@ async def show_order(order_id: str):
                     "total_price": float(js.line_total) if getattr(js, "line_total", None) is not None else None,
                     "income_account_display_id": id_disp,
                     "income_account_name": nm_income,
+                    "tax_code": getattr(oi, "tax_code", None),
+                    "gst_rate": float(oi.gst_rate) if getattr(oi, "gst_rate", None) is not None else None,
                 }
             )
         if changed_items:

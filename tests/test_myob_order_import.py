@@ -23,7 +23,10 @@ from app.db.models.domain import (
     ProductVersion,
 )
 from app.config import settings
-from app.job_sheets.service import finalize_import_draft_job_sheet_after_spec_save
+from app.job_sheets.service import (
+    create_myob_import_draft_job_sheet,
+    finalize_import_draft_job_sheet_after_spec_save,
+)
 from app.db.myob_import_placeholders import (
     MYOB_DRAFT_INTERNAL_CUSTOMER_ID,
     MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID,
@@ -192,6 +195,70 @@ def test_import_one_order_creates_rows_and_pallet_does_not_require_job_sheet():
     # Re-import: stable UID
     res2 = import_one_myob_sale_order(db, myob_order=dict(SAMPLE_MYOB_ORDER), item_fetch=f)
     assert res2["order_id"] == res["order_id"]
+
+
+def test_import_tax_inclusive_myob_prices_are_stored_ex_gst_and_reimport_overrides_job_sheet():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(
+        id=str(uuid.uuid4()),
+        name="SANOFI (test)",
+        myob_customer_uid="4e675b59-3b4b-46d6-bbe0-88dc2cdf94a9",
+    )
+    db.add(cust)
+    db.commit()
+
+    order = dict(SAMPLE_MYOB_ORDER)
+    order["UID"] = str(uuid.uuid4())
+    order["Number"] = "GST-INCL-1"
+    order["IsTaxInclusive"] = True
+    order["Subtotal"] = 220.0
+    order["TotalTax"] = 20.0
+    order["TotalAmount"] = 220.0
+    order["Lines"] = [
+        {
+            "RowID": 777,
+            "Type": "Transaction",
+            "Description": "GST inclusive manufactured line",
+            "ShipQuantity": 2.0,
+            "UnitPrice": 110.0,
+            "Total": 220.0,
+            "TaxCode": {"Code": "GST"},
+            "Item": {
+                "UID": "951c35aa-9f4c-4acd-aae1-802d6d11be36",
+                "Number": "S25035",
+                "Name": "SANOFI",
+                "URI": "https://api.myob.com/accountright/x/Inventory/Item/951c35aa-9f4c-4acd-aae1-802d6d11be36",
+            },
+        }
+    ]
+    f = _item_fetch("951c35aa-9f4c-4acd-aae1-802d6d11be36", "4d3e1150-452d-47fc-a1ef-4561fba93cc3")
+
+    res = import_one_myob_sale_order(db, myob_order=order, item_fetch=f)
+    oi = db.scalar(select(OrderItem).where(OrderItem.order_id == str(res["order_id"])))
+    assert oi is not None
+    assert oi.source_unit_price_includes_gst is True
+    assert float(oi.import_unit_price) == pytest.approx(100.0)
+    assert float(oi.import_line_total) == pytest.approx(200.0)
+    js = db.get(JobSheet, str(oi.job_sheet_id))
+    assert js is not None
+    assert float(js.unit_rate) == pytest.approx(100.0)
+    assert float(js.line_total) == pytest.approx(200.0)
+
+    order2 = dict(order)
+    order2["Lines"] = [dict(order["Lines"][0], UnitPrice=121.0, Total=242.0)]
+    res2 = import_one_myob_sale_order(db, myob_order=order2, item_fetch=f)
+    assert res2["order_id"] == res["order_id"]
+    db.refresh(oi)
+    db.refresh(js)
+    assert float(oi.import_unit_price) == pytest.approx(110.0)
+    assert float(oi.import_line_total) == pytest.approx(220.0)
+    assert float(js.unit_rate) == pytest.approx(110.0)
+    assert float(js.line_total) == pytest.approx(220.0)
 
 
 def test_import_core_like_item_name_suppresses_job_sheet_when_not_resell():
@@ -423,6 +490,106 @@ def test_finalize_import_draft_clears_draft_converts_line_and_creates_job():
     jobs = list(db.query(Job).filter(Job.order_id == str(order.id)).all())
     assert len(jobs) == 1
     assert str(getattr(jobs[0].status, "value", jobs[0].status)).lower() == "planned"
+
+
+def test_finalize_import_draft_links_duplicate_import_lines_to_same_product():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(id=str(uuid.uuid4()), name="Dolphin Customer")
+    db.add(cust)
+    product = Product(id=str(uuid.uuid4()), customer_id=str(cust.id), code="PB240G440120BKUV")
+    db.add(product)
+    version = ProductVersion(
+        id=str(uuid.uuid4()),
+        product_id=str(product.id),
+        version_number=1,
+        created_by="test",
+        spec_payload={"identity": {"finish_mode": "Cartons"}},
+    )
+    db.add(version)
+    product.active_version_id = str(version.id)
+    db.add(product)
+    order_a = Order(code="INV-A", customer_id=str(cust.id), status=OrderStatus.CONFIRMED)
+    order_b = Order(code="INV-B", customer_id=str(cust.id), status=OrderStatus.CONFIRMED)
+    db.add_all([order_a, order_b])
+    db.flush()
+
+    source_js = create_myob_import_draft_job_sheet(
+        db=db,
+        customer_id=str(cust.id),
+        quantity_value=10,
+        quantity_unit="kg",
+        qty_type="kg",
+        unit_rate=5,
+        line_total=50,
+        created_by="test",
+    )
+    duplicate_draft_js = create_myob_import_draft_job_sheet(
+        db=db,
+        customer_id=str(cust.id),
+        quantity_value=20,
+        quantity_unit="kg",
+        qty_type="kg",
+        unit_rate=6,
+        line_total=120,
+        created_by="test",
+    )
+    source_js.product_id = str(product.id)
+    source_js.product_version_id = str(version.id)
+    db.add(source_js)
+
+    description = "PB240G440120BKUV - L/D 7LT TALL BLACK PLANTER BAG"
+    source_line = OrderItem(
+        order_id=str(order_a.id),
+        line_index=0,
+        line_kind="myob_import",
+        job_sheet_id=str(source_js.id),
+        import_line_description=description,
+        import_requires_job_sheet=True,
+        import_ship_quantity=10,
+        import_quantity_unit="kg",
+        import_qty_type="kg",
+        import_unit_price=5,
+        import_line_total=50,
+    )
+    duplicate_line = OrderItem(
+        order_id=str(order_b.id),
+        line_index=0,
+        line_kind="myob_import",
+        job_sheet_id=str(duplicate_draft_js.id),
+        import_line_description=description,
+        import_requires_job_sheet=True,
+        import_ship_quantity=20,
+        import_quantity_unit="kg",
+        import_qty_type="kg",
+        import_unit_price=6,
+        import_line_total=120,
+    )
+    db.add_all([source_line, duplicate_line])
+    db.flush()
+
+    finalize_import_draft_job_sheet_after_spec_save(db, str(source_js.id), updated_by="test")
+    db.commit()
+
+    db.refresh(source_line)
+    db.refresh(duplicate_line)
+    assert source_line.line_kind == "manufactured"
+    assert duplicate_line.line_kind == "manufactured"
+    assert str(duplicate_line.job_sheet_id) != str(duplicate_draft_js.id)
+
+    duplicate_js = db.get(JobSheet, str(duplicate_line.job_sheet_id))
+    assert duplicate_js is not None
+    assert duplicate_js.is_import_draft is False
+    assert str(duplicate_js.product_id) == str(product.id)
+    assert str(duplicate_js.product_version_id) == str(version.id)
+    assert float(duplicate_js.quantity_value) == 20.0
+    assert float(duplicate_js.unit_rate) == 6.0
+    assert float(duplicate_js.line_total) == 120.0
+    assert db.get(JobSheet, str(duplicate_draft_js.id)) is None
 
 
 def test_import_uses_item_uom_cache_without_inventory_get():
@@ -763,6 +930,34 @@ def test_map_myob_item_uses_selling_unit_of_measure():
 
     qu7, qt7, raw7 = map_myob_item_to_app_quantity({"SellingDetails": {"SellingUnitOfMeasure": "100"}})
     assert qu7 == "ea" and qt7 == "units" and raw7 == "100"
+
+
+def test_myob_carton_import_draft_keeps_carton_count_separate_from_product_units():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Sess = sessionmaker(bind=engine)
+    db = Sess()
+    _seed_myob_draft_placeholders(db)
+
+    cust = Customer(id=str(uuid.uuid4()), name="Carton Customer")
+    db.add(cust)
+    db.commit()
+
+    js = create_myob_import_draft_job_sheet(
+        db=db,
+        customer_id=str(cust.id),
+        quantity_value=12,
+        quantity_unit="cartons",
+        qty_type="units",
+        unit_rate=10,
+        line_total=120,
+        created_by="test",
+    )
+
+    assert js.quantity_unit == "cartons"
+    assert js.qty_type == "units"
+    assert float(js.quantity_value) == 12.0
+    assert js.num_product_units is None
 
 
 def test_myob_accountright_api_host_ok_accepts_regional_api_hosts():

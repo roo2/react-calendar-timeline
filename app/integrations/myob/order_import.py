@@ -64,6 +64,73 @@ def _float_or_none(v: Any) -> float | None:
 
 
 _QTY_EPS = 1e-6
+DEFAULT_GST_RATE = 0.10
+_NON_GST_TAX_CODES = frozenset({"N-T", "NT", "FRE", "FREE", "GST FREE", "EXP", "ITS"})
+
+
+def _bool_from_myob(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v or "").strip().lower()
+    return s in ("1", "true", "yes", "y")
+
+
+def _myob_order_source_prices_include_gst(doc: dict[str, Any]) -> bool:
+    return _bool_from_myob(doc.get("IsTaxInclusive"))
+
+
+def _myob_order_gst_rate(doc: dict[str, Any]) -> float:
+    tax = _float_or_none(doc.get("TotalTax"))
+    subtotal = _float_or_none(doc.get("Subtotal"))
+    if tax is not None and tax > 0 and subtotal is not None and subtotal > 0:
+        denominator = subtotal - tax if _myob_order_source_prices_include_gst(doc) else subtotal
+        if denominator > 0:
+            rate = tax / denominator
+            if 0 < rate < 1:
+                return rate
+    return DEFAULT_GST_RATE
+
+
+def _myob_line_tax_code(line: dict[str, Any]) -> str | None:
+    tax = line.get("TaxCode")
+    if isinstance(tax, dict):
+        for key in ("Code", "DisplayID", "DisplayId", "UID"):
+            v = tax.get(key)
+            if v is not None and str(v).strip():
+                return str(v).strip()[:32]
+    return None
+
+
+def _gst_rate_for_myob_line(line: dict[str, Any], order_gst_rate: float) -> float:
+    tax_code = (_myob_line_tax_code(line) or "").strip().upper()
+    if tax_code in _NON_GST_TAX_CODES:
+        return 0.0
+    if "GST" in tax_code or not tax_code:
+        return float(order_gst_rate or DEFAULT_GST_RATE)
+    return 0.0
+
+
+def _amount_ex_gst(v: float | None, *, source_prices_include_gst: bool, gst_rate: float) -> float | None:
+    if v is None:
+        return None
+    if source_prices_include_gst and gst_rate > 0:
+        return float(v) / (1.0 + float(gst_rate))
+    return float(v)
+
+
+def _sync_linked_job_sheet_pricing_from_import_line(db: Session, oi: OrderItem) -> None:
+    if not getattr(oi, "job_sheet_id", None):
+        return
+    js = db.get(JobSheet, str(oi.job_sheet_id))
+    if js is None:
+        return
+    if getattr(oi, "import_unit_price", None) is not None:
+        js.unit_rate = float(oi.import_unit_price)
+    if getattr(oi, "import_line_total", None) is not None:
+        js.line_total = float(oi.import_line_total)
+    db.add(js)
 
 
 def _myob_transaction_ship_qty_by_item_uid(doc: dict[str, Any]) -> dict[str, float]:
@@ -455,6 +522,8 @@ def import_one_myob_sale_order(
         if source_document == "invoice"
         else derive_order_status_for_sale_order_only(myob_order)
     )
+    source_prices_include_gst = _myob_order_source_prices_include_gst(myob_order)
+    order_gst_rate = _myob_order_gst_rate(myob_order)
 
     if item_fetch is None:
 
@@ -498,6 +567,8 @@ def import_one_myob_sale_order(
             order_date=order_date,
             customer_purchase_order_number=customer_po_number,
             import_review_status="incomplete",
+            gst_rate=order_gst_rate,
+            source_prices_include_gst=source_prices_include_gst,
         )
         db.add(order)
         db.flush()
@@ -511,6 +582,8 @@ def import_one_myob_sale_order(
         order.customer_purchase_order_number = customer_po_number
         order.myob_source_sales_order_json = dict(myob_order) if source_document == "order" else None
         order.myob_source_invoices_json = list(associated_invoices) if associated_invoices else []
+        order.gst_rate = order_gst_rate
+        order.source_prices_include_gst = source_prices_include_gst
         if number_s and len(number_s) <= 32 and order.code != number_s:
             other = db.scalar(
                 select(Order).where(Order.code == number_s).where(Order.id != str(order.id))
@@ -581,6 +654,14 @@ def import_one_myob_sale_order(
             tot_f = float(tot) if tot is not None else None
         except (TypeError, ValueError):
             tot_f = None
+        tax_code = _myob_line_tax_code(line)
+        line_gst_rate = _gst_rate_for_myob_line(line, order_gst_rate)
+        up_ex_gst = _amount_ex_gst(
+            up_f, source_prices_include_gst=source_prices_include_gst, gst_rate=line_gst_rate
+        )
+        tot_ex_gst = _amount_ex_gst(
+            tot_f, source_prices_include_gst=source_prices_include_gst, gst_rate=line_gst_rate
+        )
 
         desc = _dec_str(line.get("Description")) or _dec_str(
             (it_d.get("Name") or it_d.get("Number") if it_d else None) or "Line"
@@ -643,8 +724,8 @@ def import_one_myob_sale_order(
             oi.myob_item_name = str(it_d.get("Name") or None) if it_d else None
             oi.import_line_description = desc
             oi.import_ship_quantity = qf
-            oi.import_unit_price = up_f
-            oi.import_line_total = tot_f
+            oi.import_unit_price = up_ex_gst
+            oi.import_line_total = tot_ex_gst
             oi.import_quantity_unit = qu
             oi.import_qty_type = qy_t
             oi.myob_item_sales_unit_raw = sales_raw
@@ -652,6 +733,10 @@ def import_one_myob_sale_order(
             oi.import_requires_job_sheet = bool(
                 (not is_resell) and req_js
             )
+            oi.tax_code = tax_code
+            oi.gst_rate = line_gst_rate
+            oi.source_unit_price_includes_gst = source_prices_include_gst
+            _sync_linked_job_sheet_pricing_from_import_line(db, oi)
             db.add(oi)
             db.flush()
             continue
@@ -664,7 +749,7 @@ def import_one_myob_sale_order(
                 db,
                 myob_item_uid=uid_r,
                 description=desc,
-                unit_price=up_f,
+                unit_price=up_ex_gst,
                 item_json=item_json,
                 catalog_kind=str(resell_catalog_kind),
                 customer_id=str(order.customer_id)
@@ -693,8 +778,8 @@ def import_one_myob_sale_order(
                 oi.resell_description_snapshot = str(rp.description)
                 oi.resell_quantity_value = qf
                 oi.resell_quantity_unit = str(qu or "ea")
-                oi.resell_unit_rate = up_f
-                oi.resell_line_total = tot_f
+                oi.resell_unit_rate = up_ex_gst
+                oi.resell_line_total = tot_ex_gst
                 oi.resell_due_date = None
                 oi.myob_line_type = "Transaction"
                 oi.myob_item_uid = uid_r
@@ -703,13 +788,16 @@ def import_one_myob_sale_order(
                 oi.myob_row_id = r_int
                 oi.import_line_description = desc
                 oi.import_ship_quantity = qf
-                oi.import_unit_price = up_f
-                oi.import_line_total = tot_f
+                oi.import_unit_price = up_ex_gst
+                oi.import_line_total = tot_ex_gst
                 oi.import_quantity_unit = qu
                 oi.import_qty_type = qy_t
                 oi.myob_item_sales_unit_raw = sales_raw
                 oi.myob_item_json = item_json
                 oi.import_requires_job_sheet = False
+                oi.tax_code = tax_code
+                oi.gst_rate = line_gst_rate
+                oi.source_unit_price_includes_gst = source_prices_include_gst
                 db.add(oi)
             else:
                 if _other_order_item_uses_line_index(db, order_id=str(order.id), line_index=idx, exclude_order_item_id=None):
@@ -730,8 +818,8 @@ def import_one_myob_sale_order(
                     resell_description_snapshot=str(rp.description),
                     resell_quantity_value=qf,
                     resell_quantity_unit=str(qu or "ea"),
-                    resell_unit_rate=up_f,
-                    resell_line_total=tot_f,
+                    resell_unit_rate=up_ex_gst,
+                    resell_line_total=tot_ex_gst,
                     resell_due_date=None,
                     myob_line_type="Transaction",
                     myob_item_uid=uid_r,
@@ -740,13 +828,16 @@ def import_one_myob_sale_order(
                     myob_row_id=r_int,
                     import_line_description=desc,
                     import_ship_quantity=qf,
-                    import_unit_price=up_f,
-                    import_line_total=tot_f,
+                    import_unit_price=up_ex_gst,
+                    import_line_total=tot_ex_gst,
                     import_quantity_unit=qu,
                     import_qty_type=qy_t,
                     myob_item_sales_unit_raw=sales_raw,
                     myob_item_json=item_json,
                     import_requires_job_sheet=False,
+                    tax_code=tax_code,
+                    gst_rate=line_gst_rate,
+                    source_unit_price_includes_gst=source_prices_include_gst,
                 )
                 db.add(oi)
             db.flush()
@@ -781,14 +872,18 @@ def import_one_myob_sale_order(
             oi.myob_item_name = str(it_d.get("Name") or None) if it_d else None
             oi.import_line_description = desc
             oi.import_ship_quantity = qf
-            oi.import_unit_price = up_f
-            oi.import_line_total = tot_f
+            oi.import_unit_price = up_ex_gst
+            oi.import_line_total = tot_ex_gst
             oi.import_quantity_unit = qu
             oi.import_qty_type = qy_t
             oi.myob_item_sales_unit_raw = sales_raw
             oi.myob_item_json = item_json if item_json else None
             oi.import_requires_job_sheet = bool(req_js)
             oi.line_kind = "myob_import"
+            oi.tax_code = tax_code
+            oi.gst_rate = line_gst_rate
+            oi.source_unit_price_includes_gst = source_prices_include_gst
+            _sync_linked_job_sheet_pricing_from_import_line(db, oi)
         else:
             if _other_order_item_uses_line_index(db, order_id=str(order.id), line_index=idx, exclude_order_item_id=None):
                 lines_skipped_line_index_conflict += 1
@@ -811,13 +906,16 @@ def import_one_myob_sale_order(
                 import_line_description=desc,
                 myob_row_id=r_int,
                 import_ship_quantity=qf,
-                import_unit_price=up_f,
-                import_line_total=tot_f,
+                import_unit_price=up_ex_gst,
+                import_line_total=tot_ex_gst,
                 import_quantity_unit=qu,
                 import_qty_type=qy_t,
                 myob_item_sales_unit_raw=sales_raw,
                 myob_item_json=item_json if item_json else None,
                 import_requires_job_sheet=bool(req_js),
+                tax_code=tax_code,
+                gst_rate=line_gst_rate,
+                source_unit_price_includes_gst=source_prices_include_gst,
             )
             db.add(oi)
         db.flush()

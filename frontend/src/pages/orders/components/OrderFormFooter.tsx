@@ -172,15 +172,16 @@ export function OrderFormFooter(props: Props) {
       />
     ) : null
 
-  const importControl =
+  const importCompleteButton =
     showStatus && importPending ? (
       <Button
-        variant="outlined"
+        variant="contained"
+        color="warning"
         size="small"
         disabled={!canEdit || importBusy || formBusy}
         onClick={() => void applyImportReview('complete')}
       >
-        {importBusy ? 'Saving…' : 'Import complete'}
+        {importBusy ? 'Saving…' : 'Import Complete'}
       </Button>
     ) : null
 
@@ -201,6 +202,11 @@ export function OrderFormFooter(props: Props) {
           {footerErr}
         </Alert>
       ) : null}
+      {showStatus && importPending ? (
+        <Alert severity="warning" action={importCompleteButton} sx={{ mb: 1.5, alignItems: 'center' }}>
+          Import is still in progress. Review the order, complete all job sheets, then mark "Import Complete".
+        </Alert>
+      ) : null}
       <Stack
         direction="row"
         spacing={2}
@@ -212,7 +218,6 @@ export function OrderFormFooter(props: Props) {
         <Button variant="text" color="inherit" onClick={onCancel}>
           Cancel
         </Button>
-        {importControl}
         <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap">
           {trailingAction}
           {showStatus ? (

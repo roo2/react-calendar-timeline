@@ -21,10 +21,13 @@ from app.integrations.xero.service import (
     create_oauth_state,
     disconnect_xero,
     exchange_authorization_code,
+    import_xero_customer_links,
+    preview_xero_customer_links,
     refresh_tokens,
     set_tenant_id,
-    xero_get_endpoint,
+    unlinked_xero_customer_review,
     xero_configured,
+    xero_get_endpoint,
 )
 
 router = APIRouter(prefix="/api/xero", tags=["xero"])
@@ -61,7 +64,10 @@ def _oauth_callback_response(
 
     with SessionLocal() as db:
         if not consume_oauth_state(db, state):
-            return RedirectResponse(url=_frontend_admin_xero_url(error="invalid_state"), status_code=302)
+            return RedirectResponse(
+                url=_frontend_admin_xero_url(error="invalid_state"),
+                status_code=302,
+            )
         try:
             exchange_authorization_code(db, code=code, redirect_uri=redirect_uri)
         except XeroConfigError as e:
@@ -111,7 +117,11 @@ async def xero_oauth_callback(
 
 
 class XeroTenantBody(BaseModel):
-    tenant_id: str = Field(..., min_length=1, description="Organisation tenantId from GET https://api.xero.com/connections")
+    tenant_id: str = Field(
+        ...,
+        min_length=1,
+        description="Organisation tenantId from GET https://api.xero.com/connections",
+    )
 
 
 @router.post("/tenant", dependencies=[Depends(csrf_protect())])
@@ -129,7 +139,10 @@ async def xero_set_tenant(_identity: SysAdminIdentity, body: XeroTenantBody):
 async def xero_refresh(_identity: SysAdminIdentity):
     del _identity
     if not xero_configured():
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Xero is not configured.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Xero is not configured.",
+        )
     with SessionLocal() as db:
         try:
             did = refresh_tokens(db, log_access_token=False)
@@ -147,7 +160,11 @@ async def xero_disconnect(_identity: SysAdminIdentity):
 
 
 class XeroGetEndpointBody(BaseModel):
-    endpoint: str = Field(..., min_length=1, description="Relative Xero Accounting API endpoint, e.g. /Contacts?page=1")
+    endpoint: str = Field(
+        ...,
+        min_length=1,
+        description="Relative Xero Accounting API endpoint, e.g. /Contacts?page=1",
+    )
 
 
 @router.post("/api-get", dependencies=[Depends(csrf_protect())])
@@ -162,6 +179,41 @@ async def xero_api_get(_identity: SysAdminIdentity, body: XeroGetEndpointBody):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
         except XeroApiError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.get("/customers/link-preview")
+async def xero_customer_link_preview(_identity: SysAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return preview_xero_customer_links(db)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.post("/customers/link-import", dependencies=[Depends(csrf_protect())])
+async def xero_customer_link_import(_identity: SysAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return import_xero_customer_links(db)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.get("/customers/unlinked")
+async def xero_unlinked_customer_review(_identity: SysAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        return unlinked_xero_customer_review(db)
 
 
 class XeroDraftQuoteBody(BaseModel):

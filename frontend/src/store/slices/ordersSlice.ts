@@ -19,6 +19,10 @@ export type OrderRow = {
   myob_order_uid?: string | null
   myob_synced_at?: string | null
   myob_all_job_sheets_entered?: boolean | null
+  gst_rate?: number | null
+  order_subtotal_ex_gst?: number | null
+  order_gst?: number | null
+  order_total_inc_gst?: number | null
   order_total?: number | null
   manufactured_first_product_code?: string | null
   manufactured_other_line_count?: number

@@ -91,6 +91,10 @@ class OrderListItemDTO(BaseModel):
     product_code: Optional[str] = None
     version_number: Optional[int] = None
     item_count: int = 0
+    gst_rate: float = 0.10
+    order_subtotal_ex_gst: Optional[float] = None
+    order_gst: Optional[float] = None
+    order_total_inc_gst: Optional[float] = None
     order_total: Optional[float] = None
     created_at: Optional[str] = None
     order_date: Optional[str] = None  # display instead of created_at when set

@@ -1119,6 +1119,27 @@ def _gantt_roll_segment_count_for_job(session: Session, job: Job, product_versio
 	return max(1, min(_num_rolls_for_job(session, job, product_version), 500))
 
 
+def _extruder_time_per_roll_hours_from_spec(product_version: Optional[ProductVersion], extruder_code: str) -> Optional[float]:
+	spec = (product_version.spec_payload if product_version else {}) or {}
+	if not isinstance(spec, dict):
+		return None
+	actuals = spec.get("production_actuals")
+	if not isinstance(actuals, dict):
+		return None
+	extruders = actuals.get("extruders")
+	if not isinstance(extruders, dict):
+		return None
+	row = extruders.get(str(extruder_code).strip())
+	if not isinstance(row, dict):
+		return None
+	raw = row.get("time_per_roll_hours")
+	try:
+		n = float(raw)
+	except (TypeError, ValueError):
+		return None
+	return n if n > 0 else None
+
+
 def _roll_count_from_spec(spec: dict) -> int:
 	if not isinstance(spec, dict):
 		return 1
@@ -1304,6 +1325,10 @@ def _extrusion_duration_hours_for_extruder(
 	Missing rate card → 100 kg/h default.
 	"""
 	ext = extruder
+	time_per_roll_h = _extruder_time_per_roll_hours_from_spec(product_version, ext.extruder_code)
+	if time_per_roll_h is not None:
+		rolls = max(1, _num_rolls_for_job(session, job, product_version))
+		return max(0.25, time_per_roll_h * rolls)
 	kg_hr = float(ext.average_kg_hr) if ext and ext.average_kg_hr is not None else 100.0
 	kg_hr = max(kg_hr, 1.0)
 	kg = _estimated_extrusion_kg(job, product_version, session)

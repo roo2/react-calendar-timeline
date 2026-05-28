@@ -5,6 +5,7 @@ import { fetchQuoteRatebook } from '../../../store/slices/quotesSlice'
 import {
   coerceQtyTypeForFinishMode,
   computeTotalKgDisplay,
+  cartonQtyModeForSave,
   getOrderQuantityFromJobSheetFields,
   resolvedProductUnitsForOrder,
   resolveNumRollsForPersistence,
@@ -22,6 +23,7 @@ import {
   Link as MuiLink,
   Paper,
   Stack,
+  TextField,
   Typography,
   useMediaQuery,
   useTheme,
@@ -68,6 +70,7 @@ import {
   orderQtyPrefsFromJobSheetAndSpec,
   persistedQtyTypeFromPrefs,
 } from '../../../utils/specOrderDefaults'
+import { getExtruderTimePerRollMinutes, setExtruderTimePerRollMinutes } from '../../../utils/specProductionActuals'
 
 type Mode = 'new' | 'edit'
 
@@ -106,6 +109,7 @@ function ensureSpec(s: any): SpecPayload {
     formulation: { ...d.formulation, ...(src.formulation || {}) },
     printing: { ...d.printing, ...(src.printing || {}) },
     quality_expectations: { ...d.quality_expectations, ...(src.quality_expectations || {}) },
+    production_actuals: { ...d.production_actuals, ...(src.production_actuals || {}) },
     run_requirements: { ...d.run_requirements, ...(src.run_requirements || {}) },
     packaging: { ...d.packaging, ...(src.packaging || {}) },
     tool_requirements: Array.isArray(src.tool_requirements) ? src.tool_requirements : d.tool_requirements,
@@ -157,6 +161,26 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     productionExtruderCode.trim() !== '' ? productionExtruderCode.trim() : null
 
   const qty = useSpecLinkedQuantityFields({ spec, ratebook, extruderCode: extruderCodeForQty })
+
+  useEffect(() => {
+    const sourceUnit = String(loadedJobSheet?.quantity_unit || '').trim().toLowerCase()
+    if (
+      loadedJobSheet?.is_import_draft &&
+      sourceUnit === '1000' &&
+      qty.finishMode === 'Cartons' &&
+      qty.effectiveQtyType === 'units' &&
+      qty.cartonQtyMode !== '1000'
+    ) {
+      qty.setCartonQtyMode('1000')
+    }
+  }, [
+    loadedJobSheet?.is_import_draft,
+    loadedJobSheet?.quantity_unit,
+    qty.finishMode,
+    qty.effectiveQtyType,
+    qty.cartonQtyMode,
+    qty.setCartonQtyMode,
+  ])
 
   useEffect(() => {
     void dispatch(fetchQuoteRatebook())
@@ -287,18 +311,13 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           : ''
     const quRawLower = String(js?.quantity_unit || '').toLowerCase()
 
-    let cartonQtyMode: '1000' | 'ctn' = '1000'
+    let cartonQtyMode: '1000' | 'ctn' = quRawLower === 'cartons' ? 'ctn' : '1000'
     let numCartonsHydrate = ''
-    if (fm === 'Cartons' && qtResolved === 'units') {
-      if (quRawLower === 'cartons') {
-        cartonQtyMode = 'ctn'
-        numCartonsHydrate =
-          js?.quantity_value != null && String(js.quantity_value).trim() !== ''
-            ? String(Math.max(0, Math.round(Number(js.quantity_value))))
-            : ''
-      } else {
-        cartonQtyMode = '1000'
-      }
+    if (quRawLower === 'cartons') {
+      numCartonsHydrate =
+        js?.quantity_value != null && String(js.quantity_value).trim() !== ''
+          ? String(Math.max(0, Math.round(Number(js.quantity_value))))
+          : ''
     }
 
     let totalKgH = ''
@@ -315,8 +334,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       numRollsH = String(nrStored)
       weightPerRollH = wpr
     } else if (qtResolved === 'units') {
-      if (quRawLower === 'cartons' && js?.num_product_units != null) {
-        numUnitsH = String(js.num_product_units)
+      if (quRawLower === 'cartons') {
+        numUnitsH = js?.num_product_units != null ? String(js.num_product_units) : ''
       } else if (quRawLower === '1000' && js?.num_product_units != null) {
         numUnitsH = String(Math.max(0, Math.round(Number(js.num_product_units))))
       } else {
@@ -391,6 +410,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   const effectiveQtyType = qty.effectiveQtyType
   const derivedForDisplay = qty.derivedForDisplay
+  const selectedExtruderTimePerRollMinutes = getExtruderTimePerRollMinutes(spec, productionExtruderCode)
 
   const totalKgNum = Number(qty.totalKg || 0)
   const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
@@ -558,6 +578,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       const bpc = spec.packaging?.bags_per_carton
       const bpcNum = bpc != null ? Number(bpc) : null
       const resolvedProductUnits = resolvedProductUnitsForOrder(numUnitsNum, numCartonsNum, bpcNum)
+      const saveCartonQtyMode = cartonQtyModeForSave(
+        finishMode,
+        effectiveQtyType,
+        qty.cartonQtyMode,
+        loadedJobSheet?.quantity_unit != null ? String(loadedJobSheet.quantity_unit) : null,
+      )
       const oq = getOrderQuantityFromJobSheetFields(
         effectiveQtyType,
         fallbackLegacy,
@@ -566,7 +592,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         persistedRolls,
         finishMode,
         bpcNum,
-        finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+        finishMode === 'Cartons' ? saveCartonQtyMode : undefined,
         numCartonsNum,
       )
 
@@ -576,7 +602,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         weightPerRollNum: persistedWpr ?? weightPerRollNum,
         customerFacingDescription: customerFacingDescriptionFromSpec(spec),
         bagsPerCarton: bpc != null ? Number(bpc) : null,
-        cartonQtyMode: qty.cartonQtyMode,
+        cartonQtyMode: saveCartonQtyMode,
         customerOverproductionHandling: customerOverproductionFromSpec(spec, finishMode),
       })
       specForSave = mergeOrderDefaultsIntoSpec(specForSave, orderDefaultsPatch)
@@ -789,6 +815,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       const bpc = spec.packaging?.bags_per_carton
       const bpcNum = bpc != null ? Number(bpc) : null
       const resolvedProductUnitsSaveAsNew = resolvedProductUnitsForOrder(numUnitsNum, numCartonsNum, bpcNum)
+      const saveCartonQtyMode = cartonQtyModeForSave(
+        qty.finishMode,
+        qty.effectiveQtyType,
+        qty.cartonQtyMode,
+        loadedJobSheet?.quantity_unit != null ? String(loadedJobSheet.quantity_unit) : null,
+      )
       const oq = getOrderQuantityFromJobSheetFields(
         qty.effectiveQtyType,
         fallbackLegacy,
@@ -797,7 +829,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         persistedRolls,
         qty.finishMode,
         bpcNum,
-        qty.finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+        qty.finishMode === 'Cartons' ? saveCartonQtyMode : undefined,
         numCartonsNum,
       )
 
@@ -807,7 +839,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         weightPerRollNum: persistedWpr ?? weightPerRollNum,
         customerFacingDescription: customerFacingDescriptionFromSpec(spec),
         bagsPerCarton: bpc != null ? Number(bpc) : null,
-        cartonQtyMode: qty.cartonQtyMode,
+        cartonQtyMode: saveCartonQtyMode,
         customerOverproductionHandling: customerOverproductionFromSpec(spec, qty.finishMode),
       })
       specForSave = mergeOrderDefaultsIntoSpec(specForSave, orderDefaultsPatch)
@@ -1108,6 +1140,33 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                         setProductionExtruderCode(code)
                         setDirty(true)
                       }}
+                    />
+                    <TextField
+                      label="Time per roll (min)"
+                      type="number"
+                      value={selectedExtruderTimePerRollMinutes ?? ''}
+                      disabled={!productionExtruderCode.trim()}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        const n = raw.trim() === '' ? null : Number(raw)
+                        setSpec((prev: SpecPayload) =>
+                          setExtruderTimePerRollMinutes(
+                            prev,
+                            productionExtruderCode,
+                            n != null && Number.isFinite(n) && n > 0 ? n : null,
+                          ),
+                        )
+                        setSpecDirty(true)
+                        setSpecFieldErrors({})
+                        setDirty(true)
+                      }}
+                      inputProps={{ min: 0, step: 0.01 }}
+                      helperText={
+                        productionExtruderCode.trim()
+                          ? `Optional actual minutes per roll for extruder ${productionExtruderCode.trim()}`
+                          : 'Select an extruder to record time per roll.'
+                      }
+                      sx={{ mt: 2, width: 220, maxWidth: '100%' }}
                     />
                   </Paper>
                   <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>

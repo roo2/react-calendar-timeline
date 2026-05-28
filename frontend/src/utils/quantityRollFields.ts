@@ -37,6 +37,17 @@ export function orderQuantityUnitFromJobSheetQtyType(
   return null
 }
 
+export function cartonQtyModeForSave(
+  finishMode: FinishMode,
+  qtyType: QtyType,
+  currentMode: '1000' | 'ctn',
+  sourceQuantityUnit?: string | null,
+): '1000' | 'ctn' {
+  const sourceUnit = String(sourceQuantityUnit || '').trim().toLowerCase()
+  if (finishMode === 'Cartons' && qtyType === 'units' && sourceUnit === '1000') return '1000'
+  return currentMode
+}
+
 /**
  * Map order line `quantity_unit` → job sheet `qty_type` when saving.
  * Preserves `rolls_units` vs `total_rolls` when the unit stays `rolls`.
@@ -117,6 +128,9 @@ export function buildQuantityObjectForCalculator(
       qty.rolls = Math.round(totalKgNum / weightPerRollNum)
     }
   }
+  if (finishMode === 'Cartons' && numRollsNum > 0) {
+    qty.rolls = numRollsNum
+  }
   if (qtyType === 'rolls_units' && numRollsNum > 0 && unitsPerRollNum > 0) {
     const totalUnits = numRollsNum * unitsPerRollNum
     qty.units = totalUnits
@@ -175,19 +189,7 @@ export function buildQuantityObjectForCalculator(
         qty.total_kg = numUnitsNum * perRollKg
       }
     } else if (finishMode === 'Cartons') {
-      const bpc = opts.bagsPerCarton != null && opts.bagsPerCarton > 0 ? Math.max(1, Math.round(opts.bagsPerCarton)) : 0
-      if (bpc > 0) {
-        const cartons = Math.ceil(numUnitsNum / bpc)
-        const perCartonKg =
-          weightPerRollNum > 0
-            ? weightPerRollNum
-            : opts.rollWeightAvgKg != null && opts.rollWeightAvgKg > 0
-              ? opts.rollWeightAvgKg
-              : 0
-        if (perCartonKg > 0) {
-          qty.total_kg = cartons * perCartonKg
-        }
-      }
+      // Carton roll weight is internal scheduling data only; product mass is derived from product count geometry.
     }
   }
   return qty

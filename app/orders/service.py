@@ -44,6 +44,10 @@ from app.orders.schemas import (
 from app.job_sheets import service as job_sheets_service
 from app.orders.product_line_display import product_code_for_version, product_display_name_for_line
 
+DEFAULT_GST_RATE = 0.10
+_NON_GST_TAX_CODES = frozenset({"N-T", "NT", "FRE", "FREE", "GST FREE", "EXP", "ITS"})
+
+
 def _require_order_editable(o: OrderModel) -> None:
     """Orders may be edited in any status (e.g. dispatched); reserved for future policy hooks."""
     _ = o
@@ -98,6 +102,60 @@ def _normalize_resell_quantity_unit(value: str | None) -> str:
     return s or "ea"
 
 
+def _line_total_ex_gst(oi: OrderItemModel) -> float | None:
+    kind = getattr(oi, "line_kind", None) or "manufactured"
+    if kind == "resell":
+        t = getattr(oi, "resell_line_total", None)
+        return float(t) if t is not None else None
+    if kind == "myob_import":
+        js = getattr(oi, "job_sheet", None)
+        if js is not None and getattr(js, "line_total", None) is not None:
+            return float(js.line_total)
+        t = getattr(oi, "import_line_total", None)
+        return float(t) if t is not None else None
+    js = getattr(oi, "job_sheet", None)
+    if js is not None and getattr(js, "line_total", None) is not None:
+        return float(js.line_total)
+    return None
+
+
+def _line_gst_rate(oi: OrderItemModel, order_gst_rate: float) -> float:
+    tax_code = str(getattr(oi, "tax_code", None) or "").strip().upper()
+    if tax_code in _NON_GST_TAX_CODES:
+        return 0.0
+    rate = getattr(oi, "gst_rate", None)
+    if rate is not None:
+        return max(0.0, float(rate))
+    return max(0.0, float(order_gst_rate or DEFAULT_GST_RATE))
+
+
+def order_tax_totals_from_orm(o: OrderModel) -> dict[str, float | None]:
+    subtotal = 0.0
+    gst = 0.0
+    any_line = False
+    order_gst_rate = float(getattr(o, "gst_rate", None) or DEFAULT_GST_RATE)
+    for oi in getattr(o, "items", None) or []:
+        line_total = _line_total_ex_gst(oi)
+        if line_total is None:
+            continue
+        any_line = True
+        subtotal += line_total
+        gst += line_total * _line_gst_rate(oi, order_gst_rate)
+    if not any_line:
+        return {
+            "gst_rate": order_gst_rate,
+            "order_subtotal_ex_gst": None,
+            "order_gst": None,
+            "order_total_inc_gst": None,
+        }
+    return {
+        "gst_rate": order_gst_rate,
+        "order_subtotal_ex_gst": subtotal,
+        "order_gst": gst,
+        "order_total_inc_gst": subtotal + gst,
+    }
+
+
 def _add_resell_line_core(db, order_id: str, item: CreateResellOrderLineRequest) -> OrderItemModel:
     o = db.get(OrderModel, str(order_id))
     if not o:
@@ -129,6 +187,7 @@ def _add_resell_line_core(db, order_id: str, item: CreateResellOrderLineRequest)
         resell_unit_rate=rate,
         resell_line_total=total,
         resell_due_date=item.due_date,
+        gst_rate=float(getattr(o, "gst_rate", None) or DEFAULT_GST_RATE),
     )
     db.add(line)
     db.flush()
@@ -142,58 +201,12 @@ def _next_job_code(db, order_id: str) -> int:
 
 
 def _order_total_for_filters(o: OrderModel) -> float | None:
-    total = 0.0
-    any_line = False
-    for oi in getattr(o, "items", None) or []:
-        kind = getattr(oi, "line_kind", None) or "manufactured"
-        if kind == "resell":
-            t = getattr(oi, "resell_line_total", None)
-            if t is not None:
-                total += float(t)
-                any_line = True
-            continue
-        if kind == "myob_import":
-            js = getattr(oi, "job_sheet", None)
-            if js is not None and getattr(js, "line_total", None) is not None:
-                total += float(js.line_total)
-                any_line = True
-            elif getattr(oi, "import_line_total", None) is not None:
-                total += float(oi.import_line_total)
-                any_line = True
-            continue
-        js = getattr(oi, "job_sheet", None)
-        if js is not None and getattr(js, "line_total", None) is not None:
-            total += float(js.line_total)
-            any_line = True
-    return total if any_line else None
+    return order_tax_totals_from_orm(o)["order_subtotal_ex_gst"]
 
 
 def order_total_from_orm(o: OrderModel) -> float | None:
-    """Sum line totals for list display / sorting (matches OrderListItemDTO.order_total)."""
-    total = 0.0
-    any_line = False
-    for oi in getattr(o, "items", None) or []:
-        kind = getattr(oi, "line_kind", None) or "manufactured"
-        if kind == "resell":
-            t = getattr(oi, "resell_line_total", None)
-            if t is not None:
-                total += float(t)
-                any_line = True
-            continue
-        if kind == "myob_import":
-            js = getattr(oi, "job_sheet", None)
-            if js is not None and getattr(js, "line_total", None) is not None:
-                total += float(js.line_total)
-                any_line = True
-            elif getattr(oi, "import_line_total", None) is not None:
-                total += float(oi.import_line_total)
-                any_line = True
-            continue
-        js = getattr(oi, "job_sheet", None)
-        if js is not None and getattr(js, "line_total", None) is not None:
-            total += float(js.line_total)
-            any_line = True
-    return total if any_line else None
+    """Sum GST-exclusive line totals for list display / sorting."""
+    return order_tax_totals_from_orm(o)["order_subtotal_ex_gst"]
 
 
 _ORDER_LIST_SORT_FIELDS = frozenset(
@@ -219,7 +232,7 @@ def _apply_order_list_sort(orders: List[OrderModel], sort_by: Optional[str], sor
             c = getattr(o, "customer", None)
             return (str(getattr(c, "name", "") or "").casefold(), oid)
         if key_name == "order_total":
-            t = order_total_from_orm(o)
+            t = order_tax_totals_from_orm(o)["order_total_inc_gst"]
             return (t is None, float(t) if t is not None else 0.0, oid)
         if key_name == "status":
             st = str(getattr(getattr(o, "status", None), "value", getattr(o, "status", "")) or "")
@@ -435,6 +448,7 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
                 job_sheet_id=str(js.id),
                 line_index=i,
                 line_kind="manufactured",
+                gst_rate=float(getattr(order, "gst_rate", None) or DEFAULT_GST_RATE),
             )
             db.add(oi)
 
@@ -589,6 +603,7 @@ def add_order_item(order_id: str, item: CreateOrderItemRequest, *, created_by: s
             job_sheet_id=str(js.id),
             line_index=_next_order_line_index(db, str(o.id)),
             line_kind="manufactured",
+            gst_rate=float(getattr(o, "gst_rate", None) or DEFAULT_GST_RATE),
         )
         db.add(oi)
 

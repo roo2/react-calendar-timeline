@@ -310,7 +310,7 @@ export function OrdersPage() {
                   sortDir={sortDirSafe}
                   onSort={onSortColumn}
                 >
-                  Order total
+                  Total inc GST
                 </SortHeaderCell>
                 <SortHeaderCell column="status" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
                   Status
@@ -349,9 +349,18 @@ export function OrdersPage() {
                     />
                   </TableCell>
                   <TableCell align="right">
-                    {o.order_total != null && Number.isFinite(Number(o.order_total))
-                      ? `$${Number(o.order_total).toFixed(2)}`
-                      : '—'}
+                    {o.order_total_inc_gst != null && Number.isFinite(Number(o.order_total_inc_gst)) ? (
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          ${Number(o.order_total_inc_gst).toFixed(2)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          ex ${Number(o.order_subtotal_ex_gst ?? o.order_total ?? 0).toFixed(2)} · GST ${Number(o.order_gst ?? 0).toFixed(2)}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell>{o.status}</TableCell>
                   <TableCell>

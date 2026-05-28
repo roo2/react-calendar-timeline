@@ -252,6 +252,9 @@ class Order(Base):
     myob_source_invoices_json: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
     # Staff import QA: ``incomplete`` | ``complete``; Dolphin re-import skips line replacement when ``complete``.
     import_review_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    # All persisted order line prices are GST-exclusive. These fields drive order-level GST previews.
+    gst_rate: Mapped[float] = mapped_column(Numeric(9, 6), nullable=False, default=0.10)
+    source_prices_include_gst: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")
@@ -315,6 +318,9 @@ class OrderItem(Base):
     myob_item_sales_unit_raw: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     myob_item_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     import_requires_job_sheet: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    tax_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    gst_rate: Mapped[Optional[float]] = mapped_column(Numeric(9, 6), nullable=True)
+    source_unit_price_includes_gst: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     order: Mapped["Order"] = relationship(back_populates="items")
     job_sheet: Mapped[Optional["JobSheet"]] = relationship(foreign_keys=[job_sheet_id])

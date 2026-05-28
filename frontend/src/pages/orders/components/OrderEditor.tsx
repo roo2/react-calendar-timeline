@@ -61,6 +61,7 @@ type Product = ProductListItem
 type QuantityUnit = 'kg' | 'rolls' | 'cartons' | '1000' | 'ea' | 'meters'
 
 type ResellCatalogKind = 'supply' | 'outsourced_manufacturing'
+const DEFAULT_GST_RATE = 0.1
 
 type MyobImportLineRow = {
   id: string
@@ -79,6 +80,7 @@ type MyobImportLineRow = {
   linked_product_id?: string | null
   job_no?: string | null
   is_import_draft?: boolean
+  gst_rate?: number | null
 }
 
 type OrderLine = {
@@ -108,6 +110,7 @@ type OrderLine = {
   myob_row_id?: number | null
   import_line_description?: string | null
   is_import_draft?: boolean
+  gst_rate?: number | null
   /** Display / merge order (matches server `line_index` when persisted). */
   line_index?: number
 }
@@ -293,6 +296,7 @@ function lineFromApiItem(it: any): OrderLine {
       quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
       rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
       total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
+      gst_rate: it.gst_rate != null && Number.isFinite(Number(it.gst_rate)) ? Number(it.gst_rate) : null,
     }
   }
   let finish = normalizeFinishFromApi(it.finish_mode)
@@ -327,6 +331,7 @@ function lineFromApiItem(it: any): OrderLine {
     quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
     rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
     total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
+    gst_rate: it.gst_rate != null && Number.isFinite(Number(it.gst_rate)) ? Number(it.gst_rate) : null,
   }
 }
 
@@ -402,6 +407,11 @@ function computedLineTotal(it: OrderLine): number | null {
   return q * r
 }
 
+function lineGstRate(rate: number | null | undefined, orderGstRate: number): number {
+  if (rate != null && Number.isFinite(Number(rate))) return Math.max(0, Number(rate))
+  return Math.max(0, Number.isFinite(orderGstRate) ? orderGstRate : DEFAULT_GST_RATE)
+}
+
 function parseOptionalMoney(s: string): number | null {
   const t = (s || '').trim()
   if (t === '') return null
@@ -466,6 +476,7 @@ function myobLinesFromApi(res: { items?: unknown; myob_import_lines?: unknown } 
     linked_product_id: m.linked_product_id != null ? String(m.linked_product_id) : null,
     job_no: m.job_no != null ? String(m.job_no) : null,
     is_import_draft: Boolean(m.is_import_draft),
+    gst_rate: m.gst_rate != null && Number.isFinite(Number(m.gst_rate)) ? Number(m.gst_rate) : null,
   }))
 }
 
@@ -509,6 +520,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [customerPoNumber, setCustomerPoNumber] = useState('')
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [orderGstRate, setOrderGstRate] = useState(DEFAULT_GST_RATE)
   const [items, setItems] = useState<OrderLine[]>(() =>
     (initialDraft?.items || []).map((it, i) => ({
       ...it,
@@ -551,6 +563,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             try {
               const { order: res } = await dispatch(fetchOrder(effectiveOrderId)).unwrap()
               setOrderStatus(String(res?.status || 'draft'))
+              setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
               setInvoiceNumber(String(res?.code ?? ''))
               setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
               setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
@@ -600,13 +613,21 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     customerId && productList.lastCustomerId === customerId && productList.status === 'failed' ? productList.error : null
 
   function applyOrderResponse(
-    res: { status?: string; code?: string; customer_purchase_order_number?: string | null; order_date?: string | null; items?: unknown },
+    res: {
+      status?: string
+      code?: string
+      customer_purchase_order_number?: string | null
+      order_date?: string | null
+      gst_rate?: number | null
+      items?: unknown
+    },
     opts?: { preserveLocalLines?: OrderLine[]; preserveFields?: { rate?: boolean; quantity?: boolean; dueDate?: boolean } },
   ) {
     setOrderStatus(String(res?.status || 'draft'))
     setInvoiceNumber(String(res?.code ?? ''))
     setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
     setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
+    setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
     let nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
     if (opts?.preserveLocalLines?.length) {
       nextItems = reconcileOrderLinesWithLocal(
@@ -824,6 +845,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         setErr(null)
         const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
         setOrderStatus(String(res?.status || ''))
+        setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
         setCustomerId(String(res?.customer_id || ''))
         setCustomerDisplayName(res?.customer_name ? String(res.customer_name) : null)
         setInvoiceNumber(String(res?.code ?? ''))
@@ -1098,11 +1120,21 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     })
   }, [customerId, items, myobImportLines.length, saving])
 
-  const grandTotal = useMemo(() => {
-    const productTotal = items.reduce((sum, it) => sum + (computedLineTotal(it) ?? 0), 0)
-    const myobTotal = myobImportLines.reduce((sum, it) => sum + (it.line_total ?? 0), 0)
-    return productTotal + myobTotal
-  }, [items, myobImportLines])
+  const orderTotals = useMemo(() => {
+    let subtotal = 0
+    let gst = 0
+    for (const it of items) {
+      const total = computedLineTotal(it) ?? 0
+      subtotal += total
+      gst += total * lineGstRate(it.gst_rate, orderGstRate)
+    }
+    for (const it of myobImportLines) {
+      const total = it.line_total ?? 0
+      subtotal += total
+      gst += total * lineGstRate(it.gst_rate, orderGstRate)
+    }
+    return { subtotal, gst, totalIncGst: subtotal + gst }
+  }, [items, myobImportLines, orderGstRate])
 
   const displayItems = useMemo(() => sortOrderLinesByIndex(items), [items])
   const sortedMyobImportLines = useMemo(
@@ -1202,6 +1234,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
       setOrderStatus(String(res?.status || orderStatus))
+      setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
       setInvoiceNumber(String(res?.code ?? ''))
       setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
       setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
@@ -1645,10 +1678,28 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                 </TableRow>
                 <TableRow>
                   <TableCell colSpan={5} align="right" sx={{ fontWeight: 600, py: 1.5, borderBottom: 'none' }}>
-                    Total
+                    Subtotal ex GST
                   </TableCell>
                   <TableCell sx={{ fontWeight: 600, py: 1.5, borderBottom: 'none' }}>
-                    ${grandTotal.toFixed(2)}
+                    ${orderTotals.subtotal.toFixed(2)}
+                  </TableCell>
+                  <TableCell sx={{ borderBottom: 'none' }} />
+                </TableRow>
+                <TableRow>
+                  <TableCell colSpan={5} align="right" sx={{ py: 1, borderBottom: 'none' }}>
+                    GST
+                  </TableCell>
+                  <TableCell sx={{ py: 1, borderBottom: 'none' }}>
+                    ${orderTotals.gst.toFixed(2)}
+                  </TableCell>
+                  <TableCell sx={{ borderBottom: 'none' }} />
+                </TableRow>
+                <TableRow>
+                  <TableCell colSpan={5} align="right" sx={{ fontWeight: 700, py: 1.5, borderBottom: 'none' }}>
+                    Total inc GST
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, py: 1.5, borderBottom: 'none' }}>
+                    ${orderTotals.totalIncGst.toFixed(2)}
                   </TableCell>
                   <TableCell sx={{ borderBottom: 'none' }} />
                 </TableRow>
@@ -1679,6 +1730,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           try {
             const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
             setOrderStatus(String(res?.status || 'draft'))
+            setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
             setImportSource(
               res?.import_source != null && String(res.import_source).trim() ? String(res.import_source) : null,
             )

@@ -103,6 +103,7 @@ export type QuickQuoteInputs = {
   core_type: string | null
   roll_weight_billing?: 'core_included' | 'core_off' | 'core_half_off' | null
   extruder_code?: string | null
+  extruder_time_per_roll_hours?: number | null
   opaque?: boolean
   colour_components?: Array<{ colour_code: string; strength_pct: number | null }>
   additives?: Array<{ additive_code: string; pct: number | null }>
@@ -1190,12 +1191,23 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   let extrusionHours: number | null = null
   let extrusionCost = 0
   const runUpLaneM = extrusionRunUpLaneMultiplier(inputs)
+  const actualTimePerRollHours =
+    inputs.extruder_time_per_roll_hours != null &&
+    Number.isFinite(Number(inputs.extruder_time_per_roll_hours)) &&
+    Number(inputs.extruder_time_per_roll_hours) > 0
+      ? Number(inputs.extruder_time_per_roll_hours)
+      : null
 
   if (inputs.extruder_code && Array.isArray(ratebook.extruders) && derivedTotalKg > 0) {
     const ex = ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))
     const avg = ex?.average_kg_hr != null ? Number(ex.average_kg_hr) : null
     const cph = ex?.cost_per_hr != null ? Number(ex.cost_per_hr) : null
-    if (avg != null && avg > 0 && cph != null && cph >= 0) {
+    if (cph != null && cph >= 0 && actualTimePerRollHours != null && rolls != null && rolls > 0) {
+      const baseHours = actualTimePerRollHours * rolls
+      const extraHours = extrusionExtraMinutes > 0 ? extrusionExtraMinutes / 60 : 0
+      extrusionHours = baseHours + extraHours
+      extrusionCost = extrusionHours * cph
+    } else if (avg != null && avg > 0 && cph != null && cph >= 0) {
       const effectiveKgHr = avg * runUpLaneM
       const baseHours = derivedTotalKg / effectiveKgHr
       const extraHours = extrusionExtraMinutes > 0 ? extrusionExtraMinutes / 60 : 0
@@ -1271,11 +1283,17 @@ export function computeQuickQuotePreview(inputs: QuickQuoteInputs, ratebook: Quo
   // Extrusion waste factors add BOTH:
   // - time (handled above via extrusionExtraMinutes -> extrusionHours)
   // - wasted material (handled here via extrusionWasteKg -> wasteCost)
+  const throughputFromActualRollTime =
+    actualTimePerRollHours != null && rolls != null && rolls > 0 && derivedTotalKg > 0
+      ? derivedTotalKg / (actualTimePerRollHours * rolls)
+      : null
   const throughputBase =
     inputs.extruder_code && Array.isArray(ratebook.extruders)
       ? Number(ratebook.extruders.find((e) => String(e?.extruder_code || '') === String(inputs.extruder_code || ''))?.average_kg_hr || 0)
       : Number(ratebook.extrusion_throughput_kg_per_hr || 0)
-  const throughput = throughputBase * runUpLaneM
+  const throughput = throughputFromActualRollTime != null && throughputFromActualRollTime > 0
+    ? throughputFromActualRollTime
+    : throughputBase * runUpLaneM
   const baseWasteAdderMinutes = (Array.isArray(ratebook.waste_adders) ? ratebook.waste_adders : []).reduce(
     (acc, w) => acc + Number(w?.waste_minutes || 0),
     0,
