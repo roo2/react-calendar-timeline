@@ -255,6 +255,12 @@ class Order(Base):
     # All persisted order line prices are GST-exclusive. These fields drive order-level GST previews.
     gst_rate: Mapped[float] = mapped_column(Numeric(9, 6), nullable=False, default=0.10)
     source_prices_include_gst: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Xero Accounting API invoice created from this order. Used to avoid duplicate exports.
+    xero_invoice_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True, index=True)
+    xero_invoice_number: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    xero_invoice_exported_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     customer: Mapped["Customer"] = relationship(back_populates="orders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="order", foreign_keys="Job.order_id")

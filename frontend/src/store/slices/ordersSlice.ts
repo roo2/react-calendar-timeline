@@ -332,6 +332,26 @@ export const linkMyobImportLine = createAsyncThunk(
   },
 )
 
+export type XeroInvoiceExportResult = {
+  ok: boolean
+  already_exported?: boolean
+  order_id: string
+  xero_invoice_id?: string | null
+  xero_invoice_number?: string | null
+}
+
+export const exportOrderToXeroInvoice = createAsyncThunk(
+  'orders/exportOrderToXeroInvoice',
+  async (orderId: string) => {
+    const res = await apiFetch<XeroInvoiceExportResult>(
+      `/api/xero/orders/${encodeURIComponent(orderId)}/invoice`,
+      { method: 'POST' },
+    )
+    const order = await apiFetch<any>(`/api/orders/${encodeURIComponent(orderId)}`)
+    return { orderId, result: res, order }
+  },
+)
+
 export const addOrderJob = createAsyncThunk(
   'orders/addJob',
   async (payload: { orderId: string; body: { planned_qty: string; allocated_order_units: string | null } }) => {
@@ -401,6 +421,11 @@ const slice = createSlice({
       s.detail.byId[id].status = 'failed'
       s.detail.byId[id].error = a.error.message || 'Failed to load order'
       s.detail.byId[id].order = null
+    })
+
+    b.addCase(exportOrderToXeroInvoice.fulfilled, (s, a) => {
+      const { orderId, order } = a.payload
+      mergeOrderDetail(s, orderId, 'succeeded', null, order)
     })
 
     b.addCase(fetchOrdersBootstrap.pending, (s) => {

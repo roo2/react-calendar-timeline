@@ -204,6 +204,13 @@ def _order_to_list_dto(o) -> OrderListItemDTO:
         myob_synced_at=(
             o.myob_synced_at.isoformat() if getattr(o, "myob_synced_at", None) is not None else None
         ),
+        xero_invoice_id=getattr(o, "xero_invoice_id", None),
+        xero_invoice_number=getattr(o, "xero_invoice_number", None),
+        xero_invoice_exported_at=(
+            o.xero_invoice_exported_at.isoformat()
+            if getattr(o, "xero_invoice_exported_at", None) is not None
+            else None
+        ),
         myob_all_job_sheets_entered=_myob_all_job_sheets_flag(o),
         import_review_status=(
             v

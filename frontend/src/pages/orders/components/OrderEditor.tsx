@@ -47,6 +47,7 @@ import {
   createOrder,
   deleteOrderItem,
   deleteOrderResellItem,
+  exportOrderToXeroInvoice,
   fetchOrder,
   fetchOrdersBootstrap,
   linkMyobImportLine,
@@ -537,6 +538,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const [convertingResellLineId, setConvertingResellLineId] = useState<string | null>(null)
   const [importSource, setImportSource] = useState<string | null>(null)
   const [importReviewStatus, setImportReviewStatus] = useState<'incomplete' | 'complete' | null>(null)
+  const [xeroInvoiceId, setXeroInvoiceId] = useState<string | null>(null)
+  const [xeroInvoiceNumber, setXeroInvoiceNumber] = useState<string | null>(null)
+  const [xeroExporting, setXeroExporting] = useState(false)
+  const [xeroExportMsg, setXeroExportMsg] = useState<string | null>(null)
   /** New-order screen: server draft created when the first manufactured line is added (before “Save draft”). */
   const [draftOrderId, setDraftOrderId] = useState<string | null>(null)
   const effectiveOrderId = orderId || draftOrderId
@@ -619,6 +624,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       customer_purchase_order_number?: string | null
       order_date?: string | null
       gst_rate?: number | null
+      xero_invoice_id?: string | null
+      xero_invoice_number?: string | null
       items?: unknown
     },
     opts?: { preserveLocalLines?: OrderLine[]; preserveFields?: { rate?: boolean; quantity?: boolean; dueDate?: boolean } },
@@ -628,6 +635,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
     setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
     setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
+    setXeroInvoiceId(res?.xero_invoice_id != null && String(res.xero_invoice_id).trim() ? String(res.xero_invoice_id) : null)
+    setXeroInvoiceNumber(
+      res?.xero_invoice_number != null && String(res.xero_invoice_number).trim() ? String(res.xero_invoice_number) : null,
+    )
     let nextItems: OrderLine[] = orderLinesFromApiItems(res?.items)
     if (opts?.preserveLocalLines?.length) {
       nextItems = reconcileOrderLinesWithLocal(
@@ -854,6 +865,10 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         setImportSource(res?.import_source != null && String(res.import_source).trim() ? String(res.import_source) : null)
         const irs = res?.import_review_status
         setImportReviewStatus(irs === 'complete' || irs === 'incomplete' ? irs : null)
+        setXeroInvoiceId(res?.xero_invoice_id != null && String(res.xero_invoice_id).trim() ? String(res.xero_invoice_id) : null)
+        setXeroInvoiceNumber(
+          res?.xero_invoice_number != null && String(res.xero_invoice_number).trim() ? String(res.xero_invoice_number) : null,
+        )
         const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
         setItems(nextItems)
         setMyobImportLines(myobLinesFromApi(res))
@@ -1190,11 +1205,11 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
     }
   }
 
-  async function saveEdits() {
-    if (!orderId) return
+  async function saveEdits(): Promise<boolean> {
+    if (!orderId) return false
     if (items.some((it) => !isValidMoneyField(it.rate))) {
       setErr('Rate must be empty or a valid non-negative number.')
-      return
+      return false
     }
     setErr(null)
     setSaving(true)
@@ -1233,20 +1248,38 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
       await persistResellLineEdits(orderId, dirtyResell)
 
       const { order: res } = await dispatch(fetchOrder(orderId)).unwrap()
-      setOrderStatus(String(res?.status || orderStatus))
-      setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
-      setInvoiceNumber(String(res?.code ?? ''))
-      setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
-      setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
-      const nextItems: OrderLine[] = sortOrderLinesByIndex(orderLinesFromApiItems(res?.items))
-      setItems(nextItems)
-      setMyobImportLines(myobLinesFromApi(res))
-      originalRef.current = { lines: Object.fromEntries(nextItems.map((l) => [l.id, { ...l }])) }
+      applyOrderResponse(res)
       setDirty(false)
+      return true
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save changes')
+      return false
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function exportCurrentOrderToXeroInvoice() {
+    if (mode !== 'edit' || !orderId || xeroExporting) return
+    setErr(null)
+    setXeroExportMsg(null)
+    const saved = await saveEdits()
+    if (!saved) return
+    setXeroExporting(true)
+    try {
+      const { result, order } = await dispatch(exportOrderToXeroInvoice(orderId)).unwrap()
+      applyOrderResponse(order)
+      const invoiceNumber = String(result.xero_invoice_number || '').trim()
+      setXeroExportMsg(
+        result.already_exported
+          ? `This order was already exported to Xero${invoiceNumber ? ` as invoice ${invoiceNumber}` : ''}.`
+          : `Draft Xero invoice created${invoiceNumber ? `: ${invoiceNumber}` : ''}.`,
+      )
+      setDirty(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to export order to Xero invoice')
+    } finally {
+      setXeroExporting(false)
     }
   }
 
@@ -1509,15 +1542,35 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   return (
     <Box onChange={() => setDirty(true)}>
-      <Typography variant="h5" sx={{ mb: 2 }}>
-        {title}
-      </Typography>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+        <Typography variant="h5" sx={{ flex: '1 1 auto' }}>
+          {title}
+        </Typography>
+        {mode === 'edit' && orderId ? (
+          <Button
+            variant="outlined"
+            onClick={() => void exportCurrentOrderToXeroInvoice()}
+            disabled={!canPublish || saving || xeroExporting || !canSaveDraft}
+          >
+            {xeroExporting
+              ? 'Exporting…'
+              : xeroInvoiceId
+                ? `Xero invoice ${xeroInvoiceNumber || 'exported'}`
+                : 'Export to Xero invoice'}
+          </Button>
+        ) : null}
+      </Box>
 
       {(err || bootstrapErr || productListErr) && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {err || bootstrapErr || productListErr}
         </Alert>
       )}
+      {xeroExportMsg ? (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setXeroExportMsg(null)}>
+          {xeroExportMsg}
+        </Alert>
+      ) : null}
 
       <Paper variant="outlined" sx={{ p: 2, width: '100%' }}>
         <Stack spacing={2}>
@@ -1736,6 +1789,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
             )
             const irs = res?.import_review_status
             setImportReviewStatus(irs === 'complete' || irs === 'incomplete' ? irs : null)
+            setXeroInvoiceId(
+              res?.xero_invoice_id != null && String(res.xero_invoice_id).trim() ? String(res.xero_invoice_id) : null,
+            )
+            setXeroInvoiceNumber(
+              res?.xero_invoice_number != null && String(res.xero_invoice_number).trim()
+                ? String(res.xero_invoice_number)
+                : null,
+            )
           } catch {
             /* ignore */
           }

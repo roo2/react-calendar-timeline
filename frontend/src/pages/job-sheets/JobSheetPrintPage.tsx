@@ -2803,7 +2803,11 @@ export function JobSheetPrintPage() {
         }
         .js-grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 8px; }
         .js-extrusion-grid { width: 100%; }
-        .js-print-extrusion-specs { display: flex; gap: 8px; }
+        .js-print-extrusion-specs {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
         .js-grid td, .js-grid th {
           border: 1px solid #000;
           padding: 5px 7px;
@@ -3806,7 +3810,7 @@ export function JobSheetPrintPage() {
           }
         }
         .js-print-inline-block-wrap {
-          width: 50%;
+          width: 100%;
           margin-bottom: 8px;
           box-sizing: border-box;
         }

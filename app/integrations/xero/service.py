@@ -10,18 +10,24 @@ from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 import httpx
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import XERO_SCOPES, settings
 from app.db.models.domain import (
     Customer,
+    JobSheet,
+    MyobIncomeAccount,
+    MyobItemSellingUom,
     Order,
+    OrderItem,
     Product,
     SavedQuote,
     XeroConnection,
     XeroOAuthState,
 )
 from app.db.myob_import_placeholders import MYOB_DRAFT_INTERNAL_CUSTOMER_ID
+from app.orders.product_line_display import product_code_for_version, product_display_name_for_line
+from app.str_norm import strip_trailing_dash_suffix
 
 XERO_AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
@@ -381,6 +387,327 @@ def xero_get_endpoint(db: Session, *, endpoint: str) -> dict[str, Any]:
     """
     url, status_code, payload = _xero_api_get_json(db, endpoint=endpoint)
     return {"request_url": url, "status_code": status_code, "xero": payload}
+
+
+def _xero_api_post_json(
+    db: Session,
+    *,
+    endpoint: str,
+    body: dict[str, Any],
+) -> tuple[str, int, Any]:
+    access = ensure_xero_access_token_for_api(db)
+    row = _singleton(db)
+    tenant = (row.tenant_id or "").strip()
+    if not tenant:
+        raise XeroConfigError("Xero tenant_id is missing.")
+
+    url = _accounting_api_url(endpoint)
+    headers = {
+        "Authorization": f"Bearer {access}",
+        "xero-tenant-id": tenant,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.post(url, headers=headers, json=body)
+
+    try:
+        payload: Any = resp.json()
+    except Exception:
+        payload = resp.text
+
+    if resp.status_code >= 400:
+        raise XeroApiError(f"Xero POST error {resp.status_code}: {payload}")
+
+    return url, resp.status_code, payload
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if out != out:
+        return None
+    return out
+
+
+def _positive_float(value: Any) -> float | None:
+    out = _as_float(value)
+    return out if out is not None and out > 0 else None
+
+
+def _line_gst_rate(oi: OrderItem, fallback: float) -> float:
+    tax_code = str(getattr(oi, "tax_code", None) or "").strip().upper()
+    if tax_code in {"N-T", "NT", "FRE", "FREE", "GST FREE", "EXP", "ITS"}:
+        return 0.0
+    rate = _as_float(getattr(oi, "gst_rate", None))
+    return max(0.0, rate if rate is not None else fallback)
+
+
+def _xero_tax_type_for_gst_rate(rate: float) -> str:
+    return "OUTPUT" if float(rate or 0) > 0 else "EXEMPTOUTPUT"
+
+
+def _myob_income_display_for_order_item(db: Session, oi: OrderItem) -> str | None:
+    raw = getattr(oi, "myob_item_json", None)
+    if isinstance(raw, dict):
+        dolphin = raw.get("_dolphin")
+        if isinstance(dolphin, dict):
+            account_id = str(dolphin.get("income_account_id") or "").strip()
+            if account_id:
+                account = db.get(MyobIncomeAccount, account_id)
+                if account is not None and account.display_id:
+                    return str(account.display_id).strip() or None
+        inc = raw.get("IncomeAccount")
+        if isinstance(inc, dict):
+            uid = str(inc.get("UID") or "").strip()
+            if uid:
+                account = db.get(MyobIncomeAccount, uid)
+                if account is None:
+                    account = db.scalar(
+                        select(MyobIncomeAccount).where(MyobIncomeAccount.myob_account_uid == uid)
+                    )
+                if account is not None and account.display_id:
+                    return str(account.display_id).strip() or None
+
+    item_uid = str(getattr(oi, "myob_item_uid", None) or "").strip()
+    if item_uid:
+        row = db.get(MyobItemSellingUom, item_uid)
+        account_uid = (
+            str(getattr(row, "myob_income_account_uid", None) or "").strip()
+            if row is not None
+            else ""
+        )
+        if account_uid:
+            account = db.get(MyobIncomeAccount, account_uid)
+            if account is not None and account.display_id:
+                return str(account.display_id).strip() or None
+    return None
+
+
+def _manufactured_income_account_code(db: Session, oi: OrderItem) -> str | None:
+    code = _myob_income_display_for_order_item(db, oi)
+    if code:
+        return code
+    # Same default as app.orders.routes for in-house manufactured products.
+    account = db.get(MyobIncomeAccount, "3d453a97-a7e0-4c7f-a0be-fd89ba3f6a46")
+    if account is not None and account.display_id:
+        return str(account.display_id).strip() or None
+    return None
+
+
+def _order_item_description(oi: OrderItem, order_import_source: str | None) -> str:
+    del order_import_source
+    kind = str(getattr(oi, "line_kind", None) or "manufactured")
+    if kind == "resell":
+        raw = (
+            str(getattr(oi, "import_line_description", None) or "").strip()
+            or str(getattr(oi, "resell_description_snapshot", None) or "").strip()
+        )
+        return strip_trailing_dash_suffix(raw) or "Resell line"
+    if kind == "myob_import":
+        return (
+            str(getattr(oi, "import_line_description", None) or "").strip()
+            or str(getattr(oi, "myob_item_name", None) or "").strip()
+            or "Imported line"
+        )
+
+    js = getattr(oi, "job_sheet", None)
+    product = getattr(js, "product", None) if js is not None else None
+    version = getattr(js, "version", None) if js is not None else None
+    if product is not None:
+        code = product_code_for_version(product, version)
+        name = product_display_name_for_line(
+            p=product,
+            pv=version,
+            js=js,
+            import_line_description=getattr(oi, "import_line_description", None),
+        )
+        if code and name:
+            return f"{code} - {name}"
+        return code or name or "Manufactured line"
+    return "Manufactured line"
+
+
+def _order_item_quantity_rate_total(oi: OrderItem) -> tuple[float, float | None, float | None]:
+    kind = str(getattr(oi, "line_kind", None) or "manufactured")
+    if kind == "resell":
+        return (
+            _positive_float(getattr(oi, "resell_quantity_value", None)) or 1.0,
+            _as_float(getattr(oi, "resell_unit_rate", None)),
+            _as_float(getattr(oi, "resell_line_total", None)),
+        )
+    if kind == "myob_import":
+        js = getattr(oi, "job_sheet", None)
+        qty = _positive_float(getattr(js, "quantity_value", None) if js is not None else None)
+        rate = _as_float(getattr(js, "unit_rate", None) if js is not None else None)
+        total = _as_float(getattr(js, "line_total", None) if js is not None else None)
+        if qty is None:
+            qty = _positive_float(getattr(oi, "import_ship_quantity", None))
+        if rate is None:
+            rate = _as_float(getattr(oi, "import_unit_price", None))
+        if total is None:
+            total = _as_float(getattr(oi, "import_line_total", None))
+        return (qty or 1.0, rate, total)
+
+    js = getattr(oi, "job_sheet", None)
+    return (
+        _positive_float(getattr(js, "quantity_value", None) if js is not None else None) or 1.0,
+        _as_float(getattr(js, "unit_rate", None) if js is not None else None),
+        _as_float(getattr(js, "line_total", None) if js is not None else None),
+    )
+
+
+def _order_item_account_code(db: Session, oi: OrderItem) -> str | None:
+    kind = str(getattr(oi, "line_kind", None) or "manufactured")
+    if kind == "resell":
+        rp = getattr(oi, "resell_product", None)
+        account_uid = str(getattr(rp, "myob_income_account_uid", None) or "").strip()
+        if account_uid:
+            account = db.get(MyobIncomeAccount, account_uid)
+            if account is not None and account.display_id:
+                return str(account.display_id).strip() or None
+        return _myob_income_display_for_order_item(db, oi)
+    return _manufactured_income_account_code(db, oi)
+
+
+def _load_order_for_xero_invoice(db: Session, order_id: str) -> Order:
+    order = db.scalars(
+        select(Order)
+        .where(Order.id == str(order_id))
+        .options(joinedload(Order.customer))
+        .options(joinedload(Order.items).joinedload(OrderItem.job_sheet).joinedload(JobSheet.product))
+        .options(joinedload(Order.items).joinedload(OrderItem.job_sheet).joinedload(JobSheet.version))
+        .options(joinedload(Order.items).joinedload(OrderItem.resell_product))
+    ).unique().one_or_none()
+    if order is None:
+        raise XeroConfigError("Order not found.")
+    return order
+
+
+def _extract_xero_invoice(payload: Any) -> dict[str, Any]:
+    rows = payload.get("Invoices") if isinstance(payload, dict) else None
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        return rows[0]
+    if isinstance(payload, dict) and isinstance(payload.get("Invoice"), dict):
+        return payload["Invoice"]
+    return {}
+
+
+def export_order_to_xero_invoice(db: Session, *, order_id: str) -> dict[str, Any]:
+    """
+    Create a DRAFT ACCREC invoice in Xero from a current local order.
+
+    The order's customer must already be linked via customers.xero_contact_id. We store the
+    returned Xero InvoiceID on the order to avoid accidental duplicate exports.
+    """
+    order = _load_order_for_xero_invoice(db, order_id)
+    existing_invoice_id = str(getattr(order, "xero_invoice_id", "") or "").strip()
+    if existing_invoice_id:
+        return {
+            "ok": True,
+            "already_exported": True,
+            "order_id": str(order.id),
+            "xero_invoice_id": existing_invoice_id,
+            "xero_invoice_number": getattr(order, "xero_invoice_number", None),
+        }
+
+    customer = getattr(order, "customer", None)
+    contact_id = str(getattr(customer, "xero_contact_id", "") or "").strip()
+    if not contact_id:
+        raise XeroConfigError(
+            "Order customer has no xero_contact_id. Link this customer to Xero before exporting."
+        )
+    if not _is_uuid(contact_id):
+        raise XeroConfigError("customers.xero_contact_id must be a Xero GUID (ContactID).")
+
+    order_gst_rate = _as_float(getattr(order, "gst_rate", None)) or 0.10
+    line_items: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for oi in sorted(getattr(order, "items", None) or [], key=lambda x: (x.line_index, str(x.id))):
+        if str(getattr(oi, "line_kind", None) or "manufactured") == "myob_import" and bool(
+            getattr(oi, "import_requires_job_sheet", False)
+        ):
+            js = getattr(oi, "job_sheet", None)
+            if js is not None and bool(getattr(js, "is_import_draft", False)):
+                missing.append(f"line {oi.line_index + 1}: job sheet is still an import draft")
+                continue
+
+        qty, rate, total = _order_item_quantity_rate_total(oi)
+        if total is None and rate is None:
+            missing.append(f"line {oi.line_index + 1}: missing price")
+            continue
+        unit_amount = float(total) / qty if total is not None else float(rate or 0.0)
+        account_code = _order_item_account_code(db, oi)
+        if not account_code:
+            missing.append(f"line {oi.line_index + 1}: missing Xero account code")
+            continue
+        line_items.append(
+            {
+                "Description": _order_item_description(oi, getattr(order, "import_source", None)),
+                "Quantity": float(qty),
+                "UnitAmount": round(float(unit_amount), 6),
+                "AccountCode": account_code,
+                "TaxType": _xero_tax_type_for_gst_rate(_line_gst_rate(oi, order_gst_rate)),
+            }
+        )
+
+    if missing:
+        raise XeroConfigError("Cannot export order to Xero invoice: " + "; ".join(missing))
+    if not line_items:
+        raise XeroConfigError("Cannot export an order with no invoiceable lines.")
+
+    invoice_date = getattr(order, "order_date", None) or date.today()
+    invoice_number = str(getattr(order, "code", "") or "").strip()
+    invoice_date_str = (
+        invoice_date.isoformat() if hasattr(invoice_date, "isoformat") else str(invoice_date)
+    )
+    body: dict[str, Any] = {
+        "Type": "ACCREC",
+        "Contact": {"ContactID": contact_id},
+        "Date": invoice_date_str,
+        "DueDate": invoice_date_str,
+        "Status": "DRAFT",
+        "LineAmountTypes": "Exclusive",
+        "LineItems": line_items,
+    }
+    if invoice_number:
+        body["InvoiceNumber"] = invoice_number
+    reference = str(getattr(order, "customer_purchase_order_number", "") or "").strip()
+    if reference:
+        body["Reference"] = reference
+
+    url, status_code, payload = _xero_api_post_json(
+        db,
+        endpoint="/Invoices",
+        body={"Invoices": [body]},
+    )
+    invoice = _extract_xero_invoice(payload)
+    invoice_id = str(invoice.get("InvoiceID") or invoice.get("InvoiceId") or "").strip()
+    if not invoice_id:
+        raise XeroApiError(f"Xero Invoices response did not include an InvoiceID: {payload}")
+
+    order.xero_invoice_id = invoice_id
+    order.xero_invoice_number = (
+        str(invoice.get("InvoiceNumber") or invoice_number or "").strip() or None
+    )
+    order.xero_invoice_exported_at = datetime.now(UTC)
+    db.add(order)
+    db.commit()
+
+    return {
+        "ok": True,
+        "already_exported": False,
+        "order_id": str(order.id),
+        "request_url": url,
+        "status_code": status_code,
+        "xero_invoice_id": invoice_id,
+        "xero_invoice_number": order.xero_invoice_number,
+        "xero": payload,
+    }
 
 
 def _normalize_match_text(value: Any) -> str:

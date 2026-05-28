@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from app.auth.deps import csrf_protect, require_roles
+from app.auth.deps import allow_roles_any, csrf_protect, require_roles
 from app.config import settings
 from app.db.session import SessionLocal
 from app.integrations.xero.service import (
@@ -21,6 +21,7 @@ from app.integrations.xero.service import (
     create_oauth_state,
     disconnect_xero,
     exchange_authorization_code,
+    export_order_to_xero_invoice,
     import_xero_customer_links,
     preview_xero_customer_links,
     refresh_tokens,
@@ -34,6 +35,8 @@ router = APIRouter(prefix="/api/xero", tags=["xero"])
 
 _sys_admin = require_roles("SYS_ADMIN")
 SysAdminIdentity = Annotated[dict, Depends(_sys_admin)]
+_sales_or_admin = allow_roles_any("SALES", "PROD_MANAGER")
+SalesOrAdminIdentity = Annotated[dict, Depends(_sales_or_admin)]
 
 
 def _frontend_admin_xero_url(*, error: str | None = None, ok: bool = False) -> str:
@@ -214,6 +217,20 @@ async def xero_unlinked_customer_review(_identity: SysAdminIdentity):
     del _identity
     with SessionLocal() as db:
         return unlinked_xero_customer_review(db)
+
+
+@router.post("/orders/{order_id}/invoice", dependencies=[Depends(csrf_protect())])
+async def xero_export_order_invoice(order_id: str, _identity: SalesOrAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return export_order_to_xero_invoice(db, order_id=order_id)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
 
 class XeroDraftQuoteBody(BaseModel):

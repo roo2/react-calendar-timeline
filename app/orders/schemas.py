@@ -101,6 +101,9 @@ class OrderListItemDTO(BaseModel):
     import_source: Optional[str] = None
     myob_order_uid: Optional[str] = None
     myob_synced_at: Optional[str] = None
+    xero_invoice_id: Optional[str] = None
+    xero_invoice_number: Optional[str] = None
+    xero_invoice_exported_at: Optional[str] = None
     myob_all_job_sheets_entered: Optional[bool] = None
     # Manufactured-line summary for list-page "Products" text.
     manufactured_first_product_code: Optional[str] = None
