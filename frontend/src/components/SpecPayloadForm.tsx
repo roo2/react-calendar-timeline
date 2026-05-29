@@ -28,7 +28,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
-import { fetchProductSpecBundle, fetchProductSpecInks, fetchProductSpecPlates } from '../store/slices/productSpecSlice'
+import { fetchProductSpecBundle, fetchProductSpecInks } from '../store/slices/productSpecSlice'
 import { DefaultSelectField } from './DefaultSelectField'
 import { defaultRowSx, isDefaultRow } from './DefaultRowTable'
 import {
@@ -41,7 +41,6 @@ import { ResinSelect, type ResinOption } from './ResinSelect'
 import type { ColourOption } from './ColourSelect'
 import type { AdditiveOption } from './AdditiveSelect'
 import { InkSelect, type InkOption } from './InkSelect'
-import { PlateSelect, type PlateOption } from './PlateSelect'
 import { PrintingArtworkUploadSection, type PrintingArtworkFileRow, type PrintingArtworkScope } from './PrintingArtworkUploadSection'
 import { ProductTypeIdentitySection } from './product/ProductTypeIdentitySection'
 import { getSpecOrderDefaults, mergeOrderDefaultsIntoSpec } from '../utils/specOrderDefaults'
@@ -54,6 +53,7 @@ import {
   normalizePrintRegistration,
   PRINT_REGISTRATION_DEFAULT,
   isBottomSealType,
+  inlineMountedSealPrintPositionLabel,
   formatPrintPositionForPrint,
   printPositionHighlight,
   printPositionHighlightSx,
@@ -294,10 +294,10 @@ function getEstimatedUnitsPerPalletHelperText(
     Number.isFinite(estimatedUnitsPerPalletVolume) &&
     estimatedUnitsPerPalletVolume > 0
   ) {
+    const unitLabel = finishModeForLabel === 'Cartons' ? 'Cartons' : 'Rolls'
     return (
       <span>
-        Est. Maximum {finishModeForLabel === 'Rolls' ? 'rolls' : 'cartons'}/pallet:{' '}
-        <b>{Math.round(estimatedUnitsPerPalletVolume)}</b> (Rough estimate based on weight)
+        Est. {unitLabel} per pallet: <b>{Math.round(estimatedUnitsPerPalletVolume)}</b> (max 800kg)
       </span>
     )
   }
@@ -332,13 +332,11 @@ export function SpecPayloadForm(props: {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
   const inksState = useAppSelector((s) => s.productSpec.inks)
-  const platesState = useAppSelector((s) => s.productSpec.plates)
 
   const {
     value,
     onChange,
     fieldErrors,
-    customerId,
     printingSurface = 'full',
     afterDimensionsSlot,
     jobSheetPrintingContext,
@@ -498,6 +496,10 @@ export function SpecPayloadForm(props: {
   const inkPrinterType = printing.method === 'Inline' ? 'inline' : printing.method === 'Uteco' ? 'uteco' : null
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
+  const rollBagRequiresMountedBagOnRoll = finishMode === 'Rolls' && productType === PRODUCT_TYPE.Bag
+  const mountingSealTypeUiValue = rollBagRequiresMountedBagOnRoll
+    ? 'inline_seal'
+    : sealTypeUiValue || 'end'
   const isBagOnRoll = productType === PRODUCT_TYPE.Bag && finishMode === 'Rolls'
   const dimensionsGeometryHighlight = useMemo(
     () => inlinePerforatedHighlight(productType, finishMode, !!run.inline_perforation),
@@ -520,7 +522,6 @@ export function SpecPayloadForm(props: {
   const colours = bundle.colours as ColourOption[]
   const additiveOptions = bundle.additives as AdditiveOption[]
   const inks = inksState.items as InkOption[]
-  const plates = platesState.items as PlateOption[]
 
   const bundleErr = bundle.status === 'failed' ? bundle.error : null
   const resinsErr = bundleErr
@@ -528,7 +529,6 @@ export function SpecPayloadForm(props: {
   const coloursErr = bundleErr
   const additivesErr = bundleErr
   const inksErr = inksState.status === 'failed' ? inksState.error : null
-  const platesErr = platesState.status === 'failed' ? platesState.error : null
 
   const [layflatInput, setLayflatInput] = useState<string | null>(null)
   const resinLdPresetAppliedRef = useRef(false)
@@ -544,10 +544,6 @@ export function SpecPayloadForm(props: {
   useEffect(() => {
     void dispatch(fetchProductSpecInks(inkPrinterType))
   }, [dispatch, inkPrinterType])
-
-  useEffect(() => {
-    void dispatch(fetchProductSpecPlates(customerId || ''))
-  }, [customerId, dispatch])
 
   useEffect(() => {
     if (resinLdPresetAppliedRef.current) return
@@ -929,27 +925,50 @@ export function SpecPayloadForm(props: {
       <MenuItem value="both_sides">Inside and Outside</MenuItem>
     </DefaultSelectField>
   )
-  const sealTypeField = (
-  <DefaultSelectField
-    label="Seal"
-    defaultValue="end"
-    value={sealTypeUiValue || 'end'}
-    fullWidth
-    onChange={(e) =>
-      update((d) => {
-        const v = e.target.value
-        if (!d.run_requirements) (d as any).run_requirements = {}
-        d.run_requirements.seal_type = v ? (v as any) : null
-        if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
-      })
-    }
-  >
-    <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
-    {allowSideSeal ? (
-      <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
-    ) : null}
-    <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
-  </DefaultSelectField>
+  const updateSealType = (value: string) =>
+    update((d) => {
+      if (!d.run_requirements) (d as any).run_requirements = {}
+      if (value === 'inline_seal') {
+        d.run_requirements.inline_seal = true
+        d.run_requirements.seal_type = null
+      } else {
+        d.run_requirements.inline_seal = false
+        d.run_requirements.seal_type = value ? (value as any) : null
+      }
+      if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+    })
+
+  useEffect(() => {
+    const hasInvalidInlineSealValue = sealTypeUiValue === 'inline_seal'
+    if (!rollBagRequiresMountedBagOnRoll && !hasInvalidInlineSealValue && !run.inline_seal) return
+    if (rollBagRequiresMountedBagOnRoll && run.inline_seal && !hasInvalidInlineSealValue) return
+    update((d) => {
+      if (!d.run_requirements) (d as any).run_requirements = {}
+      d.run_requirements.inline_seal = rollBagRequiresMountedBagOnRoll
+      d.run_requirements.seal_type = rollBagRequiresMountedBagOnRoll ? null : hasInvalidInlineSealValue ? 'end' : d.run_requirements.seal_type
+      if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
+    })
+  }, [rollBagRequiresMountedBagOnRoll, run.inline_seal, sealTypeUiValue, update])
+
+  const printingMountingField = (
+    <DefaultSelectField
+      label="Mounting/Seal"
+      defaultValue="end"
+      value={mountingSealTypeUiValue}
+      fullWidth
+      onChange={(e) => updateSealType(rollBagRequiresMountedBagOnRoll ? 'inline_seal' : e.target.value)}
+    >
+      <MenuItem value="inline_seal" disabled={!rollBagRequiresMountedBagOnRoll}>
+        Mounted Bag on Roll
+      </MenuItem>
+      <MenuItem value="end" disabled={rollBagRequiresMountedBagOnRoll}>
+        Mounted Bottom Seal
+      </MenuItem>
+      <MenuItem value="side" disabled={!allowSideSeal || rollBagRequiresMountedBagOnRoll}>
+        Mounted Side Seal
+      </MenuItem>
+      <MenuItem value="none" disabled={rollBagRequiresMountedBagOnRoll}>{formatSealTypeLabel('none', { full: true })}</MenuItem>
+    </DefaultSelectField>
   )
 
   const printPositionEditorRow = (
@@ -1015,11 +1034,11 @@ export function SpecPayloadForm(props: {
               Clear
             </Button>
           </Box>
-          {(inksErr || platesErr) && (
+          {inksErr ? (
             <Alert severity="warning" sx={{ mb: 1 }}>
-              {inksErr || platesErr}
+              {inksErr}
             </Alert>
-          )}
+          ) : null}
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -1055,15 +1074,18 @@ export function SpecPayloadForm(props: {
                     </TableCell>
                     {showPlateColumn ? (
                       <TableCell sx={{ width: '35%' }}>
-                        <PlateSelect
-                          options={plates}
-                          valueCode={r.plate_code}
+                        <TextField
+                          size="small"
+                          fullWidth
                           label={`Plate ${idx + 1}`}
-                          freeSolo={showPlateColumn}
-                          onChangeCode={(nextCode) =>
+                          value={r.plate_code}
+                          onChange={(e) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
-                              d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
+                              d.printing.front_ink_plate[idx] = {
+                                ...(d.printing.front_ink_plate[idx] || {}),
+                                plate_code: e.target.value,
+                              }
                               syncLegacyInkPlateFromPairs(d)
                             })
                           }
@@ -1133,11 +1155,11 @@ export function SpecPayloadForm(props: {
               Clear
             </Button>
           </Box>
-          {(inksErr || platesErr) && (
+          {inksErr ? (
             <Alert severity="warning" sx={{ mb: 1 }}>
-              {inksErr || platesErr}
+              {inksErr}
             </Alert>
-          )}
+          ) : null}
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -1173,15 +1195,18 @@ export function SpecPayloadForm(props: {
                     </TableCell>
                     {showPlateColumn ? (
                       <TableCell sx={{ width: '35%' }}>
-                        <PlateSelect
-                          options={plates}
-                          valueCode={r.plate_code}
+                        <TextField
+                          size="small"
+                          fullWidth
                           label={`Plate ${idx + 1}`}
-                          freeSolo={showPlateColumn}
-                          onChangeCode={(nextCode) =>
+                          value={r.plate_code}
+                          onChange={(e) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
-                              d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
+                              d.printing.back_ink_plate[idx] = {
+                                ...(d.printing.back_ink_plate[idx] || {}),
+                                plate_code: e.target.value,
+                              }
                               syncLegacyInkPlateFromPairs(d)
                             })
                           }
@@ -1272,11 +1297,11 @@ export function SpecPayloadForm(props: {
               Clear
             </Button>
           </Box>
-          {(inksErr || platesErr) && (
+          {inksErr ? (
             <Alert severity="warning" sx={{ mb: 1 }}>
-              {inksErr || platesErr}
+              {inksErr}
             </Alert>
-          )}
+          ) : null}
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -1331,15 +1356,18 @@ export function SpecPayloadForm(props: {
                     </TableCell>
                     {showPlateColumn ? (
                       <TableCell sx={{ minWidth: 160 }}>
-                        <PlateSelect
-                          options={plates}
-                          valueCode={r.plate_code}
+                        <TextField
+                          size="small"
+                          fullWidth
                           label={`Plate ${idx + 1}`}
-                          freeSolo={showPlateColumn}
-                          onChangeCode={(nextCode) =>
+                          value={r.plate_code}
+                          onChange={(e) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
-                              d.printing.front_ink_plate[idx] = { ...(d.printing.front_ink_plate[idx] || {}), plate_code: nextCode }
+                              d.printing.front_ink_plate[idx] = {
+                                ...(d.printing.front_ink_plate[idx] || {}),
+                                plate_code: e.target.value,
+                              }
                               syncLegacyInkPlateFromPairs(d)
                             })
                           }
@@ -1409,11 +1437,11 @@ export function SpecPayloadForm(props: {
               Clear
             </Button>
           </Box>
-          {(inksErr || platesErr) && (
+          {inksErr ? (
             <Alert severity="warning" sx={{ mb: 1 }}>
-              {inksErr || platesErr}
+              {inksErr}
             </Alert>
-          )}
+          ) : null}
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -1468,15 +1496,18 @@ export function SpecPayloadForm(props: {
                     </TableCell>
                     {showPlateColumn ? (
                       <TableCell sx={{ minWidth: 160 }}>
-                        <PlateSelect
-                          options={plates}
-                          valueCode={r.plate_code}
+                        <TextField
+                          size="small"
+                          fullWidth
                           label={`Plate ${idx + 1}`}
-                          freeSolo={showPlateColumn}
-                          onChangeCode={(nextCode) =>
+                          value={r.plate_code}
+                          onChange={(e) =>
                             update((d) => {
                               ensureFixedInkPlateRows(d)
-                              d.printing.back_ink_plate[idx] = { ...(d.printing.back_ink_plate[idx] || {}), plate_code: nextCode }
+                              d.printing.back_ink_plate[idx] = {
+                                ...(d.printing.back_ink_plate[idx] || {}),
+                                plate_code: e.target.value,
+                              }
                               syncLegacyInkPlateFromPairs(d)
                             })
                           }
@@ -1913,27 +1944,7 @@ export function SpecPayloadForm(props: {
             </Stack>
           )}
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-            <DefaultSelectField
-              label="Length Units"
-              defaultValue="mm"
-              value={lengthUnits}
-              onChange={(e) =>
-                update((d) => {
-                  const v = e.target.value as 'mm' | 'M' | 'Continuous'
-                  const nextLengthUnits = finishMode === 'Cartons' && v === 'Continuous' ? 'mm' : v
-                  d.dimensions.length_units = nextLengthUnits
-                  if (nextLengthUnits === 'Continuous') d.dimensions.base_length_mm = null
-                })
-              }
-              disabled={productType === PRODUCT_TYPE.Tube}
-            >
-              <MenuItem value="mm">mm</MenuItem>
-              <MenuItem value="M">M</MenuItem>
-              {productType !== PRODUCT_TYPE.Bag && productType !== PRODUCT_TYPE.Sleeve && finishMode !== 'Cartons' ? (
-                <MenuItem value="Continuous">Continuous</MenuItem>
-              ) : null}
-            </DefaultSelectField>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, minmax(0, 1fr))' }, gap: 2 }}>
             <TextField
               label={
                 lengthUnits === 'Continuous'
@@ -1975,7 +1986,29 @@ export function SpecPayloadForm(props: {
                     : ''
               }
               error={!!errorFor('spec.dimensions.base_length_mm')}
+              sx={{ gridColumn: { xs: '1 / -1', sm: 'span 2' } }}
             />
+            <DefaultSelectField
+              label="Length Units"
+              defaultValue="mm"
+              value={lengthUnits}
+              onChange={(e) =>
+                update((d) => {
+                  const v = e.target.value as 'mm' | 'M' | 'Continuous'
+                  const nextLengthUnits = finishMode === 'Cartons' && v === 'Continuous' ? 'mm' : v
+                  d.dimensions.length_units = nextLengthUnits
+                  if (nextLengthUnits === 'Continuous') d.dimensions.base_length_mm = null
+                })
+              }
+              disabled={productType === PRODUCT_TYPE.Tube}
+              sx={{ gridColumn: { xs: '1 / -1', sm: 'span 1' } }}
+            >
+              <MenuItem value="mm">mm</MenuItem>
+              <MenuItem value="M">M</MenuItem>
+              {productType !== PRODUCT_TYPE.Bag && productType !== PRODUCT_TYPE.Sleeve && finishMode !== 'Cartons' ? (
+                <MenuItem value="Continuous">Continuous</MenuItem>
+              ) : null}
+            </DefaultSelectField>
           </Box>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
@@ -2322,6 +2355,12 @@ export function SpecPayloadForm(props: {
 
               const sealTypeForTreatRow =
                 printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== '' ? sealText : '—'
+              const inlineMountedSealType = inlineMountedSealPrintPositionLabel({
+                finishMode,
+                sealType: sealTypeUiValue,
+                inlineSeal: run.inline_seal,
+              })
+              const printPositionPreview = formatPrintPositionForPrint(printRegistration, printing.print_position_notes)
 
               const previewField = (
                 label: string,
@@ -2417,7 +2456,7 @@ export function SpecPayloadForm(props: {
                   <Box sx={cols3}>
                     {previewField(
                       'Print position',
-                      formatPrintPositionForPrint(printRegistration, printing.print_position_notes),
+                      printPositionPreview,
                       {
                         span: true,
                         strong:
@@ -2429,6 +2468,11 @@ export function SpecPayloadForm(props: {
                         ),
                       },
                     )}
+                    {printing.method === 'Inline'
+                      ? previewField('Mounting/Seal', inlineMountedSealType || '—', {
+                          strong: Boolean(inlineMountedSealType),
+                        })
+                      : null}
                   </Box>
 
                   <Box sx={cols3}>
@@ -2504,7 +2548,7 @@ export function SpecPayloadForm(props: {
                     {previewField('Treat', treatText, {
                       strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
                     })}
-                    {previewField('Seal type', sealTypeForTreatRow, {
+                    {previewField('Mounting/Seal', sealTypeForTreatRow, {
                       strong: !!(printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== ''),
                     })}
                     {printing.method !== 'Inline'
@@ -2701,6 +2745,39 @@ export function SpecPayloadForm(props: {
                       </ToggleButtonGroup>
                     </Box>
 
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: {
+                          xs: '1fr',
+                          sm: printing.method === 'Inline' ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                        },
+                        gap: 2,
+                      }}
+                    >
+                      <TextField
+                        sx={{
+                          gridColumn: {
+                            xs: 'span 1',
+                            sm: printing.method === 'Inline' ? 'span 1' : 'span 2',
+                          },
+                        }}
+                        label="Print description"
+                        value={printing.print_description || ''}
+                        onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
+                        multiline
+                        minRows={2}
+                        fullWidth
+                      />
+                      {printing.method !== 'Inline' ? (
+                        <TextField
+                          label="Bar code"
+                          value={printing.barcode || ''}
+                          onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
+                        />
+                      ) : null}
+                    </Box>
+
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
                       <TextField
                         label="Cylinder (mm)"
@@ -2740,41 +2817,10 @@ export function SpecPayloadForm(props: {
                         helperText="Copies side by side (1–3)."
                       />
                     </Box>
-                    <Box
-                      sx={{
-                        display: 'grid',
-                        marginBottom: 2,
-                        gridTemplateColumns: {
-                          xs: '1fr',
-                          sm: printing.method === 'Inline' ? '1fr' : 'repeat(3, minmax(0, 1fr))',
-                        },
-                        gap: 2,
-                      }}
-                    >
-                      <TextField
-                        sx={{
-                          gridColumn: {
-                            xs: 'span 1',
-                            sm: printing.method === 'Inline' ? 'span 1' : 'span 2',
-                          },
-                        }}
-                        label="Print description"
-                        value={printing.print_description || ''}
-                        onChange={(e) => update((d) => (d.printing.print_description = e.target.value || null))}
-                        multiline
-                        minRows={2}
-                      />
-                      {printing.method !== 'Inline' ? (
-                        <TextField
-                          label="Bar code"
-                          value={printing.barcode || ''}
-                          onChange={(e) => update((d) => (d.printing.barcode = e.target.value || null))}
-                        />
-                      ) : null}
-                    </Box>
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
                       {printingNumColoursField}
                       {printingPrintSideField}
+                      {printingTreatField}
                     </Box>
 
                     {printPositionEditorRow}
@@ -2789,9 +2835,7 @@ export function SpecPayloadForm(props: {
                         gap: 2,
                       }}
                     >
-                      <Box sx={{ width: '100%' }}>{printingTreatField}</Box>
-                      
-                      <Box sx={{ width: '100%' }}>{sealTypeField}</Box>
+                      <Box sx={{ width: '100%' }}>{printingMountingField}</Box>
                       {printing.method !== 'Inline' ? (
                         <DefaultSelectField
                           sx={{ width: '100%' }}
@@ -3157,22 +3201,35 @@ export function SpecPayloadForm(props: {
               <DefaultSelectField
                 label="Seal"
                 defaultValue="end"
-                value={sealTypeUiValue || 'end'}
+                value={mountingSealTypeUiValue}
                 onChange={(e) =>
                   update((d) => {
-                    const v = e.target.value
+                    const v = rollBagRequiresMountedBagOnRoll ? 'inline_seal' : e.target.value
                     if (!d.run_requirements) (d as any).run_requirements = {}
-                    d.run_requirements.seal_type = v ? (v as any) : null
+                    if (v === 'inline_seal') {
+                      d.run_requirements.inline_seal = true
+                      d.run_requirements.seal_type = null
+                    } else {
+                      d.run_requirements.inline_seal = false
+                      d.run_requirements.seal_type = v ? (v as any) : null
+                    }
                     if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
                   })
                 }
                 fullWidth
               >
-                <MenuItem value="end">{formatSealTypeLabel('end', { full: true })}</MenuItem>
+                <MenuItem value="inline_seal" disabled={!rollBagRequiresMountedBagOnRoll}>
+                  {formatSealTypeLabel('inline_seal', { full: true })}
+                </MenuItem>
+                <MenuItem value="end" disabled={rollBagRequiresMountedBagOnRoll}>
+                  {formatSealTypeLabel('end', { full: true })}
+                </MenuItem>
                 {allowSideSeal ? (
                   <MenuItem value="side">{formatSealTypeLabel('side', { full: true })}</MenuItem>
                 ) : null}
-                <MenuItem value="none">{formatSealTypeLabel('none', { full: true })}</MenuItem>
+                <MenuItem value="none" disabled={rollBagRequiresMountedBagOnRoll}>
+                  {formatSealTypeLabel('none', { full: true })}
+                </MenuItem>
               </DefaultSelectField>
             </Box>
             <FormControlLabel
@@ -3518,12 +3575,14 @@ export function SpecPayloadForm(props: {
             disabled
             helperText={
               palletLoadPlanning != null
-                ? `${palletLoadPlanning.unitsPerPallet} ${stockPlanningDerived.unitLower}/pallet${
+                ? `${palletLoadPlanning.unitsPerPallet} ${
+                    finishMode === 'Cartons' ? 'Cartons' : 'Rolls'
+                  } per pallet${
                     palletLoadPlanning.perPalletSource === 'volume_estimate' ? ' (volume est.)' : ''
                   }`
                 : stockPlanningTotalUnits == null
-                  ? `Set order total and ${finishMode === 'Cartons' ? 'cartons' : 'rolls'} per pallet (or volume estimate) to calculate pallets.`
-                  : `Set ${finishMode === 'Cartons' ? 'cartons' : 'rolls'} per pallet or ensure the volume estimate is available to calculate pallets.`
+                  ? `Set order total and ${finishMode === 'Cartons' ? 'Cartons' : 'Rolls'} per pallet (or volume estimate) to calculate pallets.`
+                  : `Set ${finishMode === 'Cartons' ? 'Cartons' : 'Rolls'} per pallet or ensure the volume estimate is available to calculate pallets.`
             }
           />
         </Box>

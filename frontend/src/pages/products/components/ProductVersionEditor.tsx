@@ -77,7 +77,11 @@ import {
   orderQtyPrefsFromJobSheetAndSpec,
   persistedQtyTypeFromPrefs,
 } from '../../../utils/specOrderDefaults'
-import { getExtruderTimePerRollMinutes, setExtruderTimePerRollMinutes } from '../../../utils/specProductionActuals'
+import {
+  formatExtruderTimePerRollMinutes,
+  getExtruderTimePerRollMinutes,
+  setExtruderTimePerRollMinutes,
+} from '../../../utils/specProductionActuals'
 import { ApiError } from '../../../api/client'
 import { parseFastApiValidationDetail } from '../../../api/validation'
 import { isRejectedWithValue } from '@reduxjs/toolkit'
@@ -657,6 +661,9 @@ export function ProductVersionEditor(props: {
   /** Cartons + derived-only total KG (e.g. units driver): same as {@link JobSheetEditor} `onSave`. */
   const totalKgForScheduling = useMemo(() => {
     if (!(jobSheetId || embedded)) return totalKgNum
+    if (finishMode === 'Cartons' && qty.cartonTotalKgIncludingWaste != null && qty.cartonTotalKgIncludingWaste > 0) {
+      return qty.cartonTotalKgIncludingWaste
+    }
     if (
       finishMode === 'Cartons' &&
       !(totalKgNum > 0) &&
@@ -666,7 +673,7 @@ export function ProductVersionEditor(props: {
       return Number(qty.totalKgDisplay)
     }
     return totalKgNum
-  }, [jobSheetId, embedded, finishMode, totalKgNum, qty.totalKgDisplay])
+  }, [jobSheetId, embedded, finishMode, totalKgNum, qty.totalKgDisplay, qty.cartonTotalKgIncludingWaste])
 
   const loadedJobSheet = jobSheetId && jobSheetDetail?.status === 'succeeded' ? jobSheetDetail.data?.job_sheet : undefined
 
@@ -1532,7 +1539,7 @@ export function ProductVersionEditor(props: {
                           <TextField
                             label="Time per roll (min)"
                             type="number"
-                            value={selectedExtruderTimePerRollMinutes ?? ''}
+                            value={formatExtruderTimePerRollMinutes(selectedExtruderTimePerRollMinutes)}
                             disabled={!productionExtruderCode.trim()}
                             onChange={(e) => {
                               const raw = e.target.value

@@ -745,11 +745,12 @@ def _xero_contact_id(raw: dict[str, Any]) -> str:
     return str(raw.get("ContactID") or raw.get("ContactId") or "").strip()
 
 
-def _load_xero_customer_contacts(db: Session, *, max_pages: int = 50) -> list[dict[str, Any]]:
+def _load_xero_contacts_for_customer_linking(
+    db: Session, *, max_pages: int = 50
+) -> list[dict[str, Any]]:
     contacts: list[dict[str, Any]] = []
-    where_q = quote("IsCustomer==true", safe="")
     for page in range(1, max(1, int(max_pages)) + 1):
-        _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts?where={where_q}&page={page}")
+        _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts?page={page}")
         rows = payload.get("Contacts") if isinstance(payload, dict) else None
         if not isinstance(rows, list) or not rows:
             break
@@ -801,13 +802,13 @@ def _customer_review_row(cust: Customer, counts: dict[str, dict[str, int]]) -> d
 
 def preview_xero_customer_links(db: Session) -> dict[str, Any]:
     """
-    Match Xero customer contacts to existing app customers without changing customer details.
+    Match Xero contacts to existing app customers without changing customer details.
 
     The only field the apply step writes is customers.xero_contact_id. Matching is conservative:
     existing links, unique MYOB/Xero account code, unique ABN/tax number, then unique exact name.
     Ambiguous or unmatched contacts are reported for manual review.
     """
-    contacts = _load_xero_customer_contacts(db)
+    contacts = _load_xero_contacts_for_customer_linking(db)
     customer_stmt = select(Customer).where(Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID))
     customers = list(db.scalars(customer_stmt).all())
     linked_by_xero = {
@@ -951,6 +952,13 @@ def unlinked_xero_customer_review(db: Session) -> dict[str, Any]:
         ).all()
     )
     items = [_customer_review_row(c, counts) for c in rows]
+    items.sort(
+        key=lambda r: (
+            -int(r["orders_count"]),
+            -int(r["quotes_count"]),
+            str(r["name"] or "").casefold(),
+        )
+    )
     return {
         "total": len(items),
         "with_orders_count": sum(1 for r in items if int(r["orders_count"]) > 0),

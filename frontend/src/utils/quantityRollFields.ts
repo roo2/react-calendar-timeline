@@ -432,18 +432,19 @@ export function resolveNumRollsForPersistence(
   return Math.max(1, Math.round(numRollsNum) || 1)
 }
 
-/** Persisted weight per roll (kg) when applicable; Carton finish does not store a nominal kg/roll. */
+/** Persisted weight per roll (kg) when applicable. Carton finish derives this from total KG and roll count. */
 export function resolveWeightPerRollForPersistence(
   finishMode: FinishMode,
   qtyType: QtyType,
-  _totalKgNum: number,
+  totalKgNum: number,
   numRollsNum: number,
   weightPerRollNum: number,
   derived: DerivedDisplay,
 ): number | null {
   if (finishMode === 'Cartons') {
     /** Extrusion roll weight (kg per roll of film), not carton mass. */
-    return weightPerRollNum > 0 && Number.isFinite(weightPerRollNum) ? weightPerRollNum : null
+    return cartonsWeightPerRollKg(totalKgNum, numRollsNum) ??
+      (weightPerRollNum > 0 && Number.isFinite(weightPerRollNum) ? weightPerRollNum : null)
   }
   if (qtyType === 'total_rolls') {
     const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll

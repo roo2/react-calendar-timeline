@@ -1,10 +1,12 @@
 import type { ReactElement } from 'react'
 import { useMemo } from 'react'
-import { FormControl, InputLabel, MenuItem, Select, Stack, Typography } from '@mui/material'
+import { Box, FormControl, InputLabel, MenuItem, Select, Stack, Typography } from '@mui/material'
 import type { SpecPayload } from '../SpecPayloadForm'
+import { ReadonlyDisplayField } from '../ReadonlyDisplayField'
 import type { QuoteRatebook } from '../../utils/quoteCalculator'
 import {
   extruderDisableReasonForSpec,
+  extruderDecisionWidthMmFromSpec,
   extruderRowDisableReason,
   type ExtruderDisableReason,
 } from '../../utils/suggestExtruderFromSpec'
@@ -50,71 +52,101 @@ export function ProductionExtruderSelect(props: ProductionExtruderSelectProps): 
     () => (trimmed ? extruderDisableReasonForSpec(trimmed, spec, ratebook) : null),
     [trimmed, spec, ratebook],
   )
+  const selectedUnavailable = selectedDisableReason === 'Unavailable'
 
   const extruders = Array.isArray(ratebook?.extruders) ? ratebook.extruders : []
+  const selectedExtruder = useMemo(
+    () => extruders.find((ex) => String(ex?.extruder_code || '').trim() === trimmed) ?? null,
+    [extruders, trimmed],
+  )
+  const blowUpRatioNumber = useMemo(() => {
+    if (!selectedExtruder) return null
+    const layflatMm = extruderDecisionWidthMmFromSpec(spec)
+    const dieMm = selectedExtruder.die_size_mm != null ? Number(selectedExtruder.die_size_mm) : NaN
+    if (layflatMm == null || !Number.isFinite(layflatMm) || layflatMm <= 0) return null
+    if (!Number.isFinite(dieMm) || dieMm <= 0) return null
+    return layflatMm / dieMm
+  }, [selectedExtruder, spec])
+  const blowUpRatio = blowUpRatioNumber == null ? '' : blowUpRatioNumber.toFixed(2)
+  const blowUpRatioOutOfRange =
+    blowUpRatioNumber != null && (blowUpRatioNumber < 2.8 || blowUpRatioNumber > 4.2)
 
   return (
     <Stack spacing={2}>
-      <FormControl
-        fullWidth
-        size="small"
+      <Box
         sx={{
-          maxWidth: 520,
-          ...(selectedDisableReason
-            ? {
-                bgcolor: 'grey.200',
-                borderRadius: 1,
-                px: 1,
-                py: 0.5,
-                '& .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.500' },
-              }
-            : {}),
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', sm: 'minmax(0, 520px) minmax(120px, 180px)' },
+          gap: 2,
+          alignItems: 'start',
         }}
       >
-        <InputLabel id={labelId}>Extruder</InputLabel>
-        <Select
-          labelId={labelId}
-          label="Extruder"
-          value={trimmed !== '' ? trimmed : ''}
-          onChange={(e) => {
-            const next = String(e.target.value || '').trim()
-            if (next && extruderDisableReasonForSpec(next, spec, ratebook)) return
-            onUserTouched?.()
-            onChange(next)
+        <FormControl
+          fullWidth
+          sx={{
+            ...(selectedUnavailable
+              ? {
+                  bgcolor: 'grey.200',
+                  borderRadius: 1,
+                  px: 1,
+                  py: 0.5,
+                  '& .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.500' },
+                }
+              : {}),
           }}
         >
-          <MenuItem value="">
-            <em>None</em>
-          </MenuItem>
-          {extruders
-            .filter((ex) => ex && String(ex.extruder_code || '').trim())
-            .map((ex) => {
-              const code = String(ex.extruder_code || '').trim()
-              const disableReason = extruderRowDisableReason(ex, spec, ratebook)
-              return (
-                <MenuItem
-                  key={code}
-                  value={code}
-                  disabled={!!disableReason}
-                  sx={
-                    disableReason
-                      ? {
-                          color: 'text.disabled',
-                          opacity: 0.85,
-                          '&.Mui-disabled': { opacity: 0.85 },
-                        }
-                      : undefined
-                  }
-                >
-                  {extruderMenuLabel(ex, disableReason)}
-                </MenuItem>
-              )
-            })}
-        </Select>
-      </FormControl>
-      {selectedDisableReason ? (
+          <InputLabel id={labelId}>Extruder</InputLabel>
+          <Select
+            labelId={labelId}
+            label="Extruder"
+            value={trimmed !== '' ? trimmed : ''}
+            onChange={(e) => {
+              const next = String(e.target.value || '').trim()
+              if (next && extruderDisableReasonForSpec(next, spec, ratebook) === 'Unavailable') return
+              onUserTouched?.()
+              onChange(next)
+            }}
+          >
+            <MenuItem value="">
+              <em>None</em>
+            </MenuItem>
+            {extruders
+              .filter((ex) => ex && String(ex.extruder_code || '').trim())
+              .map((ex) => {
+                const code = String(ex.extruder_code || '').trim()
+                const disableReason = extruderRowDisableReason(ex, spec, ratebook)
+                const unavailable = disableReason === 'Unavailable'
+                return (
+                  <MenuItem
+                    key={code}
+                    value={code}
+                    disabled={unavailable}
+                    sx={
+                      unavailable
+                        ? {
+                            color: 'text.disabled',
+                            opacity: 0.85,
+                            '&.Mui-disabled': { opacity: 0.85 },
+                          }
+                        : undefined
+                    }
+                  >
+                    {extruderMenuLabel(ex, disableReason)}
+                  </MenuItem>
+                )
+              })}
+          </Select>
+        </FormControl>
+        <ReadonlyDisplayField
+          label="Blow-up ratio"
+          value={blowUpRatio}
+          error={blowUpRatioOutOfRange}
+          helperText={blowUpRatioOutOfRange ? 'outside of typical range' : ''}
+        />
+      </Box>
+      {selectedUnavailable ? (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-          Selected extruder is {selectedDisableReason.toLowerCase()} for this product spec. Choose another extruder.
+          Selected extruder is unavailable. Choose another extruder.
         </Typography>
       ) : null}
       {hintLine ? (

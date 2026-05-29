@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import { useDebouncedCallback } from './useDebouncedCallback'
 import type { QuickQuoteInputs, QuoteRatebook } from '../utils/quoteCalculator'
-import { computeDerivedGeometryAndTotals } from '../utils/quoteCalculator'
+import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../utils/quoteCalculator'
 import { parsePositiveKgLoose } from '../utils/quoteToSpec'
 import { buildQuickQuoteInputsFromSpec, type SpecQuantitySlice } from '../utils/specToQuoteInputs'
 import {
@@ -151,6 +151,15 @@ export function useSpecLinkedQuantityFields(opts: {
     }
   }, [ratebook, quickInputs])
 
+  const quickPreviewForQuantity = useMemo(() => {
+    if (!ratebook || !quickInputs) return null
+    try {
+      return computeQuickQuotePreview(quickInputs, ratebook)
+    } catch {
+      return null
+    }
+  }, [ratebook, quickInputs])
+
   const derivedDisplayForQty: DerivedDisplay = derivedForDisplay
     ? {
         derivedTotalKg: derivedForDisplay.derivedTotalKg ?? null,
@@ -207,6 +216,18 @@ export function useSpecLinkedQuantityFields(opts: {
     numUnitsNum,
     derivedDisplayForQty,
   )
+
+  const cartonTotalKgIncludingWaste =
+    finishMode === 'Cartons' &&
+    quickPreviewForQuantity?.total_extruded_kg != null &&
+    Number(quickPreviewForQuantity.total_extruded_kg) > 0 &&
+    Number.isFinite(Number(quickPreviewForQuantity.total_extruded_kg))
+      ? Number(quickPreviewForQuantity.total_extruded_kg)
+      : finishMode === 'Cartons' && totalKgDisplay != null && Number(totalKgDisplay) > 0
+        ? Number(totalKgDisplay)
+        : finishMode === 'Cartons' && totalKgNum > 0
+          ? totalKgNum
+          : null
 
   const unitsDisplay =
     effectiveQtyType === 'units'
@@ -1120,8 +1141,10 @@ export function useSpecLinkedQuantityFields(opts: {
     ratebook,
     derivedForDisplay,
     quickInputs,
+    quickPreviewForQuantity,
     stockPlanningTotalUnits,
     totalKgDisplay,
+    cartonTotalKgIncludingWaste,
     rollsDisplay,
     weightPerRollDisplay,
     unitsDisplay,

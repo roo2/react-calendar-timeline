@@ -4,8 +4,14 @@ import type { JobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanning
 import { JobSheetPrintOrderHeaderFields } from '../pages/job-sheets/components/JobSheetPrintOrderHeaderFields'
 import type { JobSheetPrintOrderHeaderModel } from '../pages/job-sheets/components/jobSheetPrintOrderHeaderModel'
 
-function PreviewInlineRow(props: { label: string; value: string; monospace?: boolean; preWrap?: boolean }) {
-  const { label, value, monospace, preWrap } = props
+function PreviewInlineRow(props: {
+  label: string
+  value: string
+  monospace?: boolean
+  preWrap?: boolean
+  valueStrong?: boolean
+}) {
+  const { label, value, monospace, preWrap, valueStrong = false } = props
   const dash = '—'
   const v = String(value ?? '').trim()
   return (
@@ -26,7 +32,7 @@ function PreviewInlineRow(props: { label: string; value: string; monospace?: boo
         variant="body2"
         sx={{
           fontFamily: monospace ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' : undefined,
-          fontWeight: monospace ? 600 : 400,
+          fontWeight: valueStrong || monospace ? 600 : 400,
           whiteSpace: preWrap ? 'pre-wrap' : undefined,
           wordBreak: 'break-word',
         }}
@@ -176,27 +182,30 @@ export function JobSheetPreviewPanel(props: {
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, pl: 0.25 }}>
               <PreviewInlineRow label="Original order:" value={quoteSummary.orderQuantityLabel || ''} />
-              <PreviewInlineRow label="Extruded meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
+              <PreviewInlineRow label="Ordered Meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
               <PreviewInlineRow
                 label="Order KG (before waste):"
                 value={quoteSummary.productiveKg != null ? `${quoteSummary.productiveKg} kg` : ''}
               />
               <PreviewInlineRow
-                label="Total KG (inc waste):"
-                value={quoteSummary.totalKgIncludingWaste != null ? `${quoteSummary.totalKgIncludingWaste} kg` : ''}
-              />
-              <PreviewInlineRow label="Extrusion time:" value={quoteSummary.extrusionTimeDisplay || ''} />
-              {quoteSummary.wasteBreakdownLines.length > 0 ? (
-                quoteSummary.wasteBreakdownLines.map((line) => (
-                  <PreviewInlineRow key={`${line.label}-${line.value}`} label={line.label} value={line.value} />
-                ))
-              ) : (
-                <PreviewInlineRow label="Waste factors:" value="None" />
-              )}
-              <PreviewInlineRow
                 label="Total waste factor:"
                 value={quoteSummary.estimatedWasteFactorPct ? `${quoteSummary.estimatedWasteFactorPct} of order KG` : ''}
               />
+              <Box sx={{ pl: 2, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                {quoteSummary.wasteBreakdownLines.length > 0 ? (
+                  quoteSummary.wasteBreakdownLines.map((line) => (
+                    <PreviewInlineRow key={`${line.label}-${line.value}`} label={`• ${line.label}`} value={line.value} />
+                  ))
+                ) : (
+                  <PreviewInlineRow label="• Waste factors:" value="None" />
+                )}
+              </Box>
+              <PreviewInlineRow
+                label="Total KG (inc waste):"
+                value={quoteSummary.totalKgIncludingWaste != null ? `${quoteSummary.totalKgIncludingWaste} kg` : ''}
+                valueStrong
+              />
+              <PreviewInlineRow label="Extrusion time:" value={quoteSummary.extrusionTimeDisplay || ''} />
             </Box>
           </>
         ) : null}

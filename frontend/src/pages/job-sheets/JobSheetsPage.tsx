@@ -217,7 +217,7 @@ export function JobSheetsPage() {
             Past job sheets with pricing — use filters to find similar products for quoting.
           </Typography>
         </Box>
-        <Button variant="contained" component={Link} to="/job-sheets/new">
+        <Button variant="contained" component={Link} to="/orders/new">
           New Job Sheet
         </Button>
       </Box>

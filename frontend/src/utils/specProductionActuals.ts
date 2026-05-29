@@ -13,6 +13,14 @@ export function getExtruderTimePerRollMinutes(spec: SpecPayload, extruderCode: s
   return hours != null ? hours * 60 : null
 }
 
+export function formatExtruderTimePerRollMinutes(valueMinutes: number | null | undefined): string {
+  if (valueMinutes == null || !Number.isFinite(Number(valueMinutes))) return ''
+  const n = Number(valueMinutes)
+  if (!(n > 0)) return ''
+  const rounded = Math.round(n * 100) / 100
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, '').replace(/\.$/, '')
+}
+
 export function setExtruderTimePerRollHours(
   spec: SpecPayload,
   extruderCode: string,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Alert,
@@ -50,6 +50,14 @@ type XeroCustomerLinkMatch = {
   will_link: boolean
 }
 
+type XeroUnmatchedContact = {
+  contact_id?: string | null
+  name?: string | null
+  account_code?: string | null
+  tax_number?: string | null
+  reason?: string | null
+}
+
 type XeroCustomerLinkPreview = {
   xero_contacts_count: number
   matched_count: number
@@ -60,7 +68,7 @@ type XeroCustomerLinkPreview = {
   linked_count?: number
   errors?: string[]
   matches: XeroCustomerLinkMatch[]
-  unmatched_xero: Array<Record<string, unknown>>
+  unmatched_xero: XeroUnmatchedContact[]
   conflicts: Array<Record<string, unknown>>
 }
 
@@ -97,10 +105,20 @@ export function XeroAdminPage() {
   const [quoteQty, setQuoteQty] = useState('1')
   const [quoteAmount, setQuoteAmount] = useState('0')
   const [quoteResult, setQuoteResult] = useState<unknown>(null)
-  const [apiEndpoint, setApiEndpoint] = useState('/Contacts?where=IsCustomer==true&page=1')
+  const [apiEndpoint, setApiEndpoint] = useState('/Contacts?page=1')
   const [apiResult, setApiResult] = useState<unknown>(null)
   const [linkPreview, setLinkPreview] = useState<XeroCustomerLinkPreview | null>(null)
   const [unlinkedReview, setUnlinkedReview] = useState<XeroUnlinkedCustomerReview | null>(null)
+
+  const sortedUnlinkedAppCustomers = useMemo(() => {
+    const rows = unlinkedReview?.items || []
+    return [...rows].sort(
+      (a, b) =>
+        b.orders_count - a.orders_count ||
+        b.quotes_count - a.quotes_count ||
+        a.name.localeCompare(b.name),
+    )
+  }, [unlinkedReview?.items])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -400,7 +418,7 @@ export function XeroAdminPage() {
                   Link Xero customers
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  Matches Xero customer contacts to existing app customers and only writes{' '}
+                  Matches all Xero contacts to existing app customers and only writes{' '}
                   <code>xero_contact_id</code>. App customer details are not synced from Xero.
                 </Typography>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
@@ -448,7 +466,7 @@ export function XeroAdminPage() {
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
-                            <TableCell>Xero customer</TableCell>
+                            <TableCell>Xero contact</TableCell>
                             <TableCell>App customer</TableCell>
                             <TableCell>Reason</TableCell>
                             <TableCell>Action</TableCell>
@@ -481,6 +499,53 @@ export function XeroAdminPage() {
                         Showing first 50 matched rows.
                       </Typography>
                     ) : null}
+                    {linkPreview.unmatched_xero.length > 0 ? (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle2" gutterBottom>
+                          Unmatched Xero contacts
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                          These contacts did not have a safe unique match in the app. They are not linked by
+                          “Apply safe links”.
+                        </Typography>
+                        <Paper variant="outlined" sx={{ maxHeight: 320, overflow: 'auto' }}>
+                          <Table size="small" stickyHeader>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Xero contact</TableCell>
+                                <TableCell>Account code</TableCell>
+                                <TableCell>Tax number</TableCell>
+                                <TableCell>Reason</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {linkPreview.unmatched_xero.slice(0, 100).map((row, idx) => {
+                                const contactId = String(row.contact_id || '').trim()
+                                const name = String(row.name || '').trim()
+                                return (
+                                  <TableRow key={contactId || `${name}-${idx}`} hover>
+                                    <TableCell>
+                                      <Typography variant="body2">{name || '—'}</Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {contactId || 'No contact ID'}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>{row.account_code || '—'}</TableCell>
+                                    <TableCell>{row.tax_number || '—'}</TableCell>
+                                    <TableCell>{row.reason || '—'}</TableCell>
+                                  </TableRow>
+                                )
+                              })}
+                            </TableBody>
+                          </Table>
+                        </Paper>
+                        {linkPreview.unmatched_xero.length > 100 ? (
+                          <Typography variant="caption" color="text.secondary">
+                            Showing first 100 unmatched Xero contacts.
+                          </Typography>
+                        ) : null}
+                      </Box>
+                    ) : null}
                   </Box>
                 ) : null}
 
@@ -504,7 +569,7 @@ export function XeroAdminPage() {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {unlinkedReview.items.map((row) => (
+                          {sortedUnlinkedAppCustomers.map((row) => (
                             <TableRow key={row.id} hover>
                               <TableCell>{row.name}</TableCell>
                               <TableCell>{row.myob_display_id || '—'}</TableCell>
@@ -537,7 +602,7 @@ export function XeroAdminPage() {
                     label="Endpoint"
                     value={apiEndpoint}
                     onChange={(e) => setApiEndpoint(e.target.value)}
-                    helperText="Examples: /Contacts?where=IsCustomer==true&page=1, /Contacts/{ContactID}, /Accounts"
+                    helperText="Examples: /Contacts?page=1, /Contacts/{ContactID}, /Accounts"
                     fullWidth
                   />
                   <Button

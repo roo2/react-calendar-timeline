@@ -111,6 +111,7 @@ import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
 import { derivedInlineSeal, formatSealTypeLabel, inlinePerforatedHighlight } from '../../utils/specCompat'
 import {
   formatPrintPositionForPrint,
+  inlineMountedSealPrintPositionLabel,
   isBottomSealType,
   normalizePrintRegistration,
   printPositionHighlight,
@@ -438,8 +439,9 @@ type JobSheetPrintExtrusionQuantitiesModel = {
   highlightOrderedM: boolean
   highlightOrderedKg: boolean
   mPerRollFormatted: string
-  /** KG/roll including core mass (extrusion spec line). */
+  /** KG/roll for the extrusion spec line. Rolls finish includes core mass where applicable. */
   kgPerRollWithCoreFormatted: string
+  kgPerRollIncludesCoreNote: boolean
   coreWeightIncludedKg: number | null
   extruderOutputRollCount: number
 }
@@ -621,24 +623,15 @@ function JobSheetPrintPrintingFormField(props: {
   label: string
   children: ReactNode
   positionHighlight?: PrintPositionHighlight
+  valueClassName?: string
 }): ReactNode {
   const hl = jobSheetPrintPositionHighlightClass(props.positionHighlight ?? 'none')
+  const valueClassName = [hl, props.valueClassName].filter(Boolean).join(' ')
   return (
     <div className="js-print-form-field">
       <span className="js-print-form-k">{props.label}</span>
-      <div className={`js-print-form-v${hl ? ` ${hl}` : ''}`}>{props.children}</div>
+      <div className={`js-print-form-v${valueClassName ? ` ${valueClassName}` : ''}`}>{props.children}</div>
     </div>
-  )
-}
-
-function JobSheetPrintArtworkFileList(props: { names: string[] }): ReactNode {
-  if (!props.names.length) return <>—</>
-  return (
-    <ul className="js-print-artwork-file-list">
-      {props.names.map((name) => (
-        <li key={name}>{name}</li>
-      ))}
-    </ul>
   )
 }
 
@@ -765,9 +758,11 @@ function JobSheetPrintInlinePrintingBlock(props: {
     printDescription: string
     numColours: string
     printSide: string
+    printSideHighlight: boolean
     printPosition: string
     printPositionHighlight: PrintPositionHighlight
-    artworkPdfNames: string[]
+    sealTypeLabel: string
+    sealTypeHighlight: boolean
     frontRows: Array<{ ink: string; plate: string; colourText: string }>
     backRows: Array<{ ink: string; plate: string; colourText: string }>
     legacyInkPlate: string | null
@@ -793,16 +788,22 @@ function JobSheetPrintInlinePrintingBlock(props: {
         </div>
         <div className="js-print-form-row-2">
           <JobSheetPrintPrintingFormField label="No. colours">{valueOrDash(p.numColours)}</JobSheetPrintPrintingFormField>
-          <JobSheetPrintPrintingFormField label="Print side">{valueOrDash(p.printSide)}</JobSheetPrintPrintingFormField>
+          <JobSheetPrintPrintingFormField
+            label="Print side"
+            valueClassName={printHlValueClass(p.printSideHighlight && 'js-yellow')}
+          >
+            {valueOrDash(p.printSide)}
+          </JobSheetPrintPrintingFormField>
         </div>
         <JobSheetPrintPrintingFormField label="Print position" positionHighlight={p.printPositionHighlight}>
           {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
         </JobSheetPrintPrintingFormField>
-        {p.artworkPdfNames.length > 0 ? (
-          <JobSheetPrintPrintingFormField label="Artwork files">
-            <JobSheetPrintArtworkFileList names={p.artworkPdfNames} />
-          </JobSheetPrintPrintingFormField>
-        ) : null}
+        <JobSheetPrintPrintingFormField
+          label="Mounting/Seal"
+          valueClassName={printHlValueClass(p.sealTypeHighlight && 'js-yellow')}
+        >
+          {p.sealTypeLabel || '—'}
+        </JobSheetPrintPrintingFormField>
         {showFrontPrint? (
           <div>
             <span className="js-print-form-k">Front print</span>
@@ -854,14 +855,15 @@ function JobSheetPrintUtecoPage(props: {
     platesAcross: string
     numColours: string
     printSide: string
+    printSideHighlight: boolean
     totalMeters: string
     printPosition: string
     printPositionHighlight: PrintPositionHighlight
     filmTypeSupplied: string
     finishedBagSize: string
     sealTypeLabel: string
+    sealTypeHighlight: boolean
     eyeSpotLabel: string
-    artworkPdfNames: string[]
     deckColours: Array<{ deck: number; colourText: string; inkCode: string }>
   }
 }): ReactNode {
@@ -880,7 +882,12 @@ function JobSheetPrintUtecoPage(props: {
           <JobSheetPrintUtecoField label="Colours">
             {u.numColours.trim() ? `(${u.numColours.trim()})` : emDash}
           </JobSheetPrintUtecoField>
-          <JobSheetPrintUtecoField label="Side(s)">{u.printSide.trim() ? u.printSide : blankLine}</JobSheetPrintUtecoField>
+          <JobSheetPrintUtecoField
+            label="Side(s)"
+            valueClass={printHlValueClass(u.printSideHighlight && 'js-yellow')}
+          >
+            {u.printSide.trim() ? u.printSide : blankLine}
+          </JobSheetPrintUtecoField>
         </div>
         <JobSheetPrintUtecoField label="Total meters">{u.totalMeters || blankLine}</JobSheetPrintUtecoField>
         <JobSheetPrintUtecoField
@@ -889,11 +896,6 @@ function JobSheetPrintUtecoPage(props: {
         >
           <span className="js-print-pre">{u.printPosition.trim() ? u.printPosition : blankLine}</span>
         </JobSheetPrintUtecoField>
-        {u.artworkPdfNames.length > 0 ? (
-          <JobSheetPrintUtecoField label="Artwork files">
-            <JobSheetPrintArtworkFileList names={u.artworkPdfNames} />
-          </JobSheetPrintUtecoField>
-        ) : null}
       </div>
 
       <div className="js-print-uteco-card">
@@ -948,7 +950,12 @@ function JobSheetPrintUtecoPage(props: {
             </table>
           </div>
           <div className="js-print-uteco-col js-print-uteco-col-right">
-            <JobSheetPrintUtecoField label="Seal type">{u.sealTypeLabel}</JobSheetPrintUtecoField>
+        <JobSheetPrintUtecoField
+          label="Seal type"
+          valueClass={printHlValueClass(u.sealTypeHighlight && 'js-yellow')}
+        >
+          {u.sealTypeLabel}
+        </JobSheetPrintUtecoField>
             <JobSheetPrintUtecoField label="Eye spot">{u.eyeSpotLabel}</JobSheetPrintUtecoField>
           </div>
         </div>
@@ -1084,7 +1091,7 @@ type JobSheetPrintConversionModel = {
  * cannot be set to custom job titles from the app (dialog-only); chunking + repeat
  * title blocks are used instead.
  */
-const EXTRUDER_OUTPUT_ROWS_FIRST_PAGE = 12
+const EXTRUDER_OUTPUT_ROWS_FIRST_PAGE = 20
 const EXTRUDER_OUTPUT_ROWS_PER_CONTINUATION_PAGE = 40
 
 function chunkExtruderRollIndices(rollCount: number): number[][] {
@@ -2184,6 +2191,16 @@ export function JobSheetPrintPage() {
 
     const printRegNorm = normalizePrintRegistration(printing?.print_registration)
     const printPositionCombined = formatPrintPositionForPrint(printRegNorm, printing?.print_position_notes)
+    const inlineMountedSealType = inlineMountedSealPrintPositionLabel({
+      finishMode,
+      sealType: run?.seal_type ?? printing?.seal_type,
+      inlineSeal: run?.inline_seal,
+    })
+    const printSideHighlight = (() => {
+      const side = String(printing?.side ?? 'front').trim().toLowerCase()
+      return side !== '' && side !== 'front'
+    })()
+    const inlineMountedSideSealHighlight = inlineMountedSealType === 'Mounted Side Seal'
     const printPositionHighlightKind = printPositionHighlight(printRegNorm, printing?.print_position_notes)
 
     const printingLayout = {
@@ -2193,9 +2210,12 @@ export function JobSheetPrintPage() {
       barcode: s(printing?.barcode),
       numColours: s(printing?.num_colours ?? spec?.num_colours),
       printSide: formatPrintSide(printing?.side),
+      printSideHighlight,
       treatLine: treat,
       printPosition: printPositionCombined,
       printPositionHighlight: printPositionHighlightKind,
+      sealTypeLabel: inlineMountedSealType,
+      sealTypeHighlight: inlineMountedSideSealHighlight,
       filmSupplied: formatJobSheetFilmSuppliedFromSpec(specTyped),
       finishedBagSize: formatJobSheetFinishedBagSizeFromSpec(specTyped),
       artworkRefs: artworkRefs.length ? artworkRefs.map((x) => String(x).trim()).join('; ') : '',
@@ -2326,6 +2346,7 @@ export function JobSheetPrintPage() {
     }
 
     const sealTypeLabelUteco = formatSealTypeLabel(run?.seal_type ?? printing?.seal_type) || '—'
+    const sealTypeHighlightUteco = String(run?.seal_type ?? printing?.seal_type ?? '').trim().toLowerCase() === 'side'
     const eyeSpotLabelUteco = formatEyeSpot(printing?.eye_spot) || '—'
 
     const deckColoursUteco = buildUtecoDeckColourRows(
@@ -2351,14 +2372,15 @@ export function JobSheetPrintPage() {
       platesAcross: printingLayout.platesAcross,
       numColours: printingLayout.numColours,
       printSide: printingLayout.printSide,
+      printSideHighlight: printingLayout.printSideHighlight,
       totalMeters: utecoTotalMeters,
       printPosition: printingLayout.printPosition,
       printPositionHighlight: printingLayout.printPositionHighlight,
       filmTypeSupplied: utecoFilmTypeSupplied,
       finishedBagSize: utecoFinishedBagSize,
       sealTypeLabel: sealTypeLabelUteco,
+      sealTypeHighlight: sealTypeHighlightUteco,
       eyeSpotLabel: eyeSpotLabelUteco,
-      artworkPdfNames,
       deckColours: deckColoursUteco,
     }
 
@@ -2445,18 +2467,9 @@ export function JobSheetPrintPage() {
               : null
           const kprNum =
             finishNorm === 'cartons'
-              ? kprFromPreview != null
-                ? kprFromPreview
-                : extrusionRollWeightKgForCount != null
-                  ? extrusionRollWeightKgForCount
-                  : weightPerRoll != null && weightPerRoll > 0
-                    ? weightPerRoll
-                    : orderedKgNum != null &&
-                        orderedKgNum > 0 &&
-                        extruderOutputRollCount > 0 &&
-                        Number.isFinite(orderedKgNum / extruderOutputRollCount)
-                      ? orderedKgNum / extruderOutputRollCount
-                      : null
+              ? totalKgIncludingWasteNum != null && totalKgIncludingWasteNum > 0 && extruderOutputRollCount > 0
+                ? totalKgIncludingWasteNum / extruderOutputRollCount
+                : null
               : kprFromPreview != null
                 ? kprFromPreview
                 : weightPerRoll != null && weightPerRoll > 0
@@ -2469,18 +2482,41 @@ export function JobSheetPrintPage() {
             Number.isFinite(Number(quotePreviewForWaste.m_per_roll))
               ? Number(quotePreviewForWaste.m_per_roll)
               : null
+          const explicitMprFromQuantity =
+            qtySliceForPrint?.metersPerRoll != null &&
+            Number(qtySliceForPrint.metersPerRoll) > 0 &&
+            Number.isFinite(Number(qtySliceForPrint.metersPerRoll))
+              ? Number(qtySliceForPrint.metersPerRoll)
+              : null
+          const productiveKgPerMeterForCartonPrint =
+            finishNorm === 'cartons' &&
+            productivePlasticKg != null &&
+            productivePlasticKg > 0 &&
+            totalMNum != null &&
+            totalMNum > 0 &&
+            Number.isFinite(productivePlasticKg / totalMNum)
+              ? productivePlasticKg / totalMNum
+              : null
           const mprNum =
-            derivedMPerRoll != null && derivedMPerRoll > 0 && Number.isFinite(derivedMPerRoll)
-              ? derivedMPerRoll
-              : mprFromPreview != null
-                ? mprFromPreview
-                : finishNorm === 'cartons' &&
-                    totalMNum != null &&
+            finishNorm === 'cartons'
+              ? kprNum != null &&
+                kprNum > 0 &&
+                productiveKgPerMeterForCartonPrint != null &&
+                productiveKgPerMeterForCartonPrint > 0
+                ? kprNum / productiveKgPerMeterForCartonPrint
+                : totalMNum != null &&
                     totalMNum > 0 &&
                     extruderOutputRollCount > 0 &&
                     Number.isFinite(totalMNum / extruderOutputRollCount)
                   ? totalMNum / extruderOutputRollCount
                   : null
+              : explicitMprFromQuantity != null
+                ? explicitMprFromQuantity
+                : derivedMPerRoll != null && derivedMPerRoll > 0 && Number.isFinite(derivedMPerRoll)
+                  ? derivedMPerRoll
+                  : mprFromPreview != null
+                    ? mprFromPreview
+                    : null
           const mPerRollPrint =
             mprNum != null && mprNum > 0 ? `${formatExtrusionQty(mprNum)}m` : ''
           const mPerRollFormatted = mPerRollPrint ? `${mPerRollPrint}/roll` : ''
@@ -2498,11 +2534,14 @@ export function JobSheetPrintPage() {
           }
 
           const billingSlugForKpr = resolveRollWeightBillingSlug(rwbRaw)
-          const kprWithCoreNum = kgPerRollWithCoreWeight(kprNum, {
-            billingSlug: billingSlugForKpr,
-            totalCoreKg: coreKgNum,
-            rollCount: extruderOutputRollCount,
-          })
+          const kprWithCoreNum =
+            finishNorm === 'cartons'
+              ? kprNum
+              : kgPerRollWithCoreWeight(kprNum, {
+                  billingSlug: billingSlugForKpr,
+                  totalCoreKg: coreKgNum,
+                  rollCount: extruderOutputRollCount,
+                })
           const kgPerRollWithCoreFormatted = formatKgPerRoll(kprWithCoreNum)
           const coreTypeStrForBilling = String(packaging?.core_type ?? spec?.core_type ?? '').trim()
           const coreKpmForBilling = (() => {
@@ -2529,6 +2568,7 @@ export function JobSheetPrintPage() {
             highlightOrderedKg,
             mPerRollFormatted,
             kgPerRollWithCoreFormatted,
+            kgPerRollIncludesCoreNote: finishNorm !== 'cartons',
             extruderOutputRollCount,
             coreWeightIncludedKg,
           }
@@ -2888,7 +2928,7 @@ export function JobSheetPrintPage() {
         .js-blue { background: #b4d7ff !important;}
         .js-perf-bg { background: #dff1ff !important;}
         .js-hl-value {
-          display: inline;
+          // display: inline-block;
           padding: 2px 5px;
           box-decoration-break: clone;
           -webkit-box-decoration-break: clone;
@@ -3810,15 +3850,30 @@ export function JobSheetPrintPage() {
         }
         .js-print-inline-block-wrap {
           width: 100%;
-          margin-bottom: 8px;
+          margin-bottom: 6px;
           box-sizing: border-box;
+        }
+        .js-print-inline-block-wrap .js-print-printing-form {
+          padding: 6px 8px 8px;
+        }
+        .js-print-inline-block-wrap .js-print-printing-form-title {
+          margin: -6px -8px 6px -8px;
+          padding: 3px 8px;
+        }
+        .js-print-inline-block-wrap .js-print-form-field {
+          margin-bottom: 6px;
+        }
+        .js-print-inline-block-wrap .js-print-form-row-2,
+        .js-print-inline-block-wrap .js-print-form-row-3 {
+          gap: 8px;
+          margin-bottom: 6px;
         }
         .js-print-inline-ink-table {
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
           font-size: 12px;
-          padding-top: 10px;
+          padding-top: 6px;
         }
         .js-print-inline-ink-table th,
         .js-print-inline-ink-table td {
@@ -3948,7 +4003,6 @@ export function JobSheetPrintPage() {
           print-color-adjust: exact;
         }
         .js-print-table-shipping {
-          margin-top: 14px;
           table-layout:auto;
         }
         .js-ship-overproduction {
@@ -4129,7 +4183,7 @@ export function JobSheetPrintPage() {
                       >
                         {kgPerRollWithCoreDisplay}
                       </b>
-                      {kgPerRollWithCoreDisplay !== '-' ? (
+                      {qty.kgPerRollIncludesCoreNote && kgPerRollWithCoreDisplay !== '-' ? (
                         <span className="js-extrusion-spec-label"> (with core)</span>
                       ) : null}
                     </div>

@@ -150,7 +150,7 @@ export function persistedQtyTypeFromPrefs(
   return 'units'
 }
 
-/** Extrusion roll count for QC table (cartons: kg ÷ roll weight; rolls: scheduling roll count). */
+/** Extrusion roll count for QC table (cartons/rolls: scheduling roll count; legacy fallback derives from kg ÷ roll weight). */
 export function extrusionRollCountForPrint(opts: {
   finishMode: FinishMode
   totalKg: number | null
@@ -159,10 +159,11 @@ export function extrusionRollCountForPrint(opts: {
 }): number {
   const sched = opts.schedulingRollCount != null && opts.schedulingRollCount > 0 ? opts.schedulingRollCount : null
   if (opts.finishMode === 'Cartons') {
+    if (sched != null) return Math.max(1, Math.round(sched))
     const tk = opts.totalKg != null && opts.totalKg > 0 ? opts.totalKg : null
     const wpr = opts.weightPerRollKg != null && opts.weightPerRollKg > 0 ? opts.weightPerRollKg : null
     if (tk != null && wpr != null) return Math.max(1, Math.ceil(tk / wpr))
-    return sched ?? 5
+    return 5
   }
   return sched != null && sched > 0 ? sched : 5
 }

@@ -70,7 +70,11 @@ import {
   orderQtyPrefsFromJobSheetAndSpec,
   persistedQtyTypeFromPrefs,
 } from '../../../utils/specOrderDefaults'
-import { getExtruderTimePerRollMinutes, setExtruderTimePerRollMinutes } from '../../../utils/specProductionActuals'
+import {
+  formatExtruderTimePerRollMinutes,
+  getExtruderTimePerRollMinutes,
+  setExtruderTimePerRollMinutes,
+} from '../../../utils/specProductionActuals'
 
 type Mode = 'new' | 'edit'
 
@@ -191,7 +195,20 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
 
   useEffect(() => {
     lastJobDetailDataRef.current = null
-  }, [jobSheetId])
+    if (mode !== 'edit') return
+    setSaveMsg(null)
+    setSaveErr(null)
+    setSpecDirty(false)
+    setSpecFieldErrors({})
+    setProductId('')
+    setProductInfo(null)
+    setSpec(makeDefaultSpec())
+    setProductionExtruderCode('')
+    setProductionStatus('planned')
+    setProductionStartedLocal('')
+    setProductionFinishedLocal('')
+    loadedOrderDefaultsRef.current = getSpecOrderDefaults(makeDefaultSpec())
+  }, [mode, jobSheetId])
 
   useEffect(() => {
     if (mode !== 'edit' || !jobSheetId) return
@@ -534,9 +551,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       return false
     }
     const totalKgForScheduling =
-      finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
-        ? Number(totalKgDisplay)
-        : totalKgNum
+      finishMode === 'Cartons' && qty.cartonTotalKgIncludingWaste != null && qty.cartonTotalKgIncludingWaste > 0
+        ? qty.cartonTotalKgIncludingWaste
+        : finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
+          ? Number(totalKgDisplay)
+          : totalKgNum
     const qtyErr = validateJobSheetQuantityInputs(
       finishMode,
       effectiveQtyType,
@@ -766,9 +785,14 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       return false
     }
     const totalKgForScheduling =
-      qty.finishMode === 'Cartons' && !(Number(qty.totalKg || 0) > 0) && qty.totalKgDisplay != null && Number(qty.totalKgDisplay) > 0
-        ? Number(qty.totalKgDisplay)
-        : Number(qty.totalKg || 0)
+      qty.finishMode === 'Cartons' && qty.cartonTotalKgIncludingWaste != null && qty.cartonTotalKgIncludingWaste > 0
+        ? qty.cartonTotalKgIncludingWaste
+        : qty.finishMode === 'Cartons' &&
+            !(Number(qty.totalKg || 0) > 0) &&
+            qty.totalKgDisplay != null &&
+            Number(qty.totalKgDisplay) > 0
+          ? Number(qty.totalKgDisplay)
+          : Number(qty.totalKg || 0)
     const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
     const weightPerRollNum = Number(qty.weightPerRoll || 0)
     const numUnitsNum = Math.max(0, Math.round(Number(qty.numUnits || 0)))
@@ -1144,7 +1168,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                     <TextField
                       label="Time per roll (min)"
                       type="number"
-                      value={selectedExtruderTimePerRollMinutes ?? ''}
+                      value={formatExtruderTimePerRollMinutes(selectedExtruderTimePerRollMinutes)}
                       disabled={!productionExtruderCode.trim()}
                       onChange={(e) => {
                         const raw = e.target.value

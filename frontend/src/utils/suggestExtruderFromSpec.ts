@@ -25,18 +25,17 @@ export function extruderCodeIsBroken(
   return extruderIsBroken(row)
 }
 
-export type ExtruderDisableReason = 'Unavailable' | 'Incompatible'
+export type ExtruderDisableReason = 'Unavailable'
 
-/** Why an extruder cannot be chosen for this spec, or `null` if it is selectable. */
+/** Why an extruder cannot be chosen, or `null` if it is selectable. */
 export function extruderDisableReasonForSpec(
   extruderCode: string,
-  spec: SpecPayload,
+  _spec: SpecPayload,
   ratebook: QuoteRatebook | null | undefined,
 ): ExtruderDisableReason | null {
   const code = String(extruderCode || '').trim()
   if (!code) return null
   if (extruderCodeIsBroken(code, ratebook)) return 'Unavailable'
-  if (!extruderCodeFitsSpecWidth(code, spec, ratebook)) return 'Incompatible'
   return null
 }
 
@@ -51,13 +50,12 @@ export function extruderCodeIsSelectableForSpec(
 /** Disable reason for a ratebook row in the extruder dropdown. */
 export function extruderRowDisableReason(
   ex: { extruder_code?: string | null; is_broken?: boolean | null },
-  spec: SpecPayload,
-  ratebook: QuoteRatebook | null | undefined,
+  _spec: SpecPayload,
+  _ratebook: QuoteRatebook | null | undefined,
 ): ExtruderDisableReason | null {
   const code = String(ex?.extruder_code || '').trim()
   if (!code) return null
   if (extruderIsBroken(ex)) return 'Unavailable'
-  if (!extruderCodeFitsSpecWidth(code, spec, ratebook)) return 'Incompatible'
   return null
 }
 

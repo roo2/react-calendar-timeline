@@ -50,10 +50,13 @@ export function rollCylinderEnvelopeM3FromWebRoll(opts: {
 /**
  * Rough guide: usable pallet volume = pallet_volume_m³ × packing factor (admin settings);
  * each unit (roll or carton) occupies mass ÷ blend density. Not a true 3D packing fit.
+ * Also capped at 800kg gross product weight per pallet.
  *
  * Rolls: effective per-roll volume is max(solid polymer kg ÷ density, optional winding cylinder floor)
  * so bad quantity splits cannot imply "thousands of featherweight rolls" from polymer volume alone.
  */
+const MAX_PALLET_PRODUCT_WEIGHT_KG = 800
+
 export function estimateUnitsPerPalletVolumeHeuristic(opts: {
   ratebook: QuoteRatebook | null | undefined
   finishMode: 'rolls' | 'cartons'
@@ -94,7 +97,9 @@ export function estimateUnitsPerPalletVolumeHeuristic(opts: {
   const partVolM3 = floor != null ? Math.max(solidVolM3, floor) : solidVolM3
   if (!Number.isFinite(partVolM3) || partVolM3 <= 0) return null
   const usable = vol * pf
-  const est = Math.floor(usable / partVolM3)
+  const byVolume = Math.floor(usable / partVolM3)
+  const byWeight = Math.floor(MAX_PALLET_PRODUCT_WEIGHT_KG / kgOne)
+  const est = Math.min(byVolume, byWeight)
   return est > 0 ? est : null
 }
 

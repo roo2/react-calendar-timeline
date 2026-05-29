@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Alert, Box, Button, LinearProgress, List, ListItem, ListItemText, Typography } from '@mui/material'
 import { ApiError, apiFetch, uploadPrintingArtworkPdf } from '../api/client'
 
@@ -51,9 +51,24 @@ export function PrintingArtworkUploadSection(props: {
   const { scope, disabled, files, onChangeFiles } = props
   const inputRef = useRef<HTMLInputElement | null>(null)
   const dragDepthRef = useRef(0)
+  const scopeKey = useMemo(() => {
+    if (!scope) return ''
+    if (scope.kind === 'job_sheet') return `job_sheet:${scope.jobSheetId}`
+    return `product_version:${scope.productId}:${scope.versionId}`
+  }, [scope])
+  const scopeKeyRef = useRef(scopeKey)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+
+  useEffect(() => {
+    scopeKeyRef.current = scopeKey
+    dragDepthRef.current = 0
+    setBusy(false)
+    setMsg(null)
+    setDragOver(false)
+    if (inputRef.current) inputRef.current.value = ''
+  }, [scopeKey])
 
   if (!scope) {
     return (
@@ -70,14 +85,20 @@ export function PrintingArtworkUploadSection(props: {
   const activeScope: PrintingArtworkScope = scope
   const dropDisabled = Boolean(disabled) || busy
 
-  async function uploadOne(f: File, accumulated: PrintingArtworkFileRow[]): Promise<PrintingArtworkFileRow[]> {
-    const res = await uploadPrintingArtworkPdf(uploadPath(activeScope), f)
+  async function uploadOne(
+    uploadScope: PrintingArtworkScope,
+    f: File,
+    accumulated: PrintingArtworkFileRow[],
+  ): Promise<PrintingArtworkFileRow[]> {
+    const res = await uploadPrintingArtworkPdf(uploadPath(uploadScope), f)
     const row = res?.file
     if (!row?.id || !row?.filename) throw new Error('Unexpected response from server')
     return [...accumulated, { id: row.id, filename: row.filename, byte_size: row.byte_size ?? null }]
   }
 
   async function uploadFiles(incoming: File[], opts?: { skippedNonPdf?: number }) {
+    const uploadScope = activeScope
+    const uploadScopeKey = scopeKey
     setMsg(null)
     if (!incoming.length) {
       setMsg('Please drop PDF files only.')
@@ -88,13 +109,16 @@ export function PrintingArtworkUploadSection(props: {
     let uploadErr: string | null = null
     try {
       for (const f of incoming) {
-        accumulated = await uploadOne(f, accumulated)
+        accumulated = await uploadOne(uploadScope, f, accumulated)
+        if (scopeKeyRef.current !== uploadScopeKey) return
         onChangeFiles(accumulated)
       }
     } catch (e: unknown) {
+      if (scopeKeyRef.current !== uploadScopeKey) return
       uploadErr = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Upload failed'
       setMsg(uploadErr)
     } finally {
+      if (scopeKeyRef.current !== uploadScopeKey) return
       setBusy(false)
       if (inputRef.current) inputRef.current.value = ''
       const skipped = opts?.skippedNonPdf ?? 0

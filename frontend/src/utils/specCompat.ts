@@ -30,6 +30,7 @@ export function inlinePerforatedHighlight(
 export function formatSealTypeLabel(slug: unknown, opts?: { full?: boolean }): string {
   const x = String(slug ?? '').trim().toLowerCase()
   if (x === '') return ''
+  if (x === 'inline_seal') return 'Bag on Roll'
   if (x === 'side') return opts?.full ? 'Side Seal' : 'Side'
   if (x === 'end') return opts?.full ? 'Bottom Seal' : 'Bottom'
   if (x === 'none') return 'None'

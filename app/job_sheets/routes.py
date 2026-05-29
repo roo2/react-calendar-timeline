@@ -400,11 +400,11 @@ async def create_job_sheet(payload: JobSheetCreateRequest, identity=Depends(curr
         full = service.get_job_sheet(job_sheet_id)
         assert full is not None
         order_map = _order_info_for_job_sheets([str(full.id)])
-        prod_map = service.production_job_status_by_job_sheet_ids([str(full.id)])
+        snap_map = service.production_job_snapshots_by_job_sheet_ids([str(full.id)])
         return {
             "ok": True,
             "job_sheet": _to_summary(
-                full, order_map.get(str(full.id)), production_status=prod_map.get(str(full.id))
+                full, order_map.get(str(full.id)), production_snapshot=snap_map.get(str(full.id))
             ).model_dump(),
         }
     except DomainError as e:

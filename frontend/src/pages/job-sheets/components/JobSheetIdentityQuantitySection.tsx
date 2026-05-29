@@ -320,7 +320,12 @@ export function JobSheetIdentityQuantitySection(props: JobSheetIdentityQuantityS
           helperText={invoiceNo?.trim() ? undefined : 'No order linked yet'}
         />
 
-        <TextField label="Job code" value={jobCode ? String(jobCode) : ''} InputProps={{ readOnly: true }} />
+        <TextField
+          label="Job code"
+          value={jobCode ? String(jobCode) : ''}
+          disabled
+          InputProps={{ readOnly: true }}
+        />
 
         <TextField
           label="Order Date"

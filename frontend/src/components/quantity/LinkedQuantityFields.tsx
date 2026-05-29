@@ -11,26 +11,48 @@ import {
   type Theme,
 } from '@mui/material'
 import type { SpecLinkedQuantityBind } from '../../hooks/useSpecLinkedQuantityFields'
+import { ReadonlyDisplayField } from '../ReadonlyDisplayField'
 
 type LinkedQty = SpecLinkedQuantityBind
 
 /** Extrusion roll weight for Cartons finish — job sheet / product order defaults quantity UI. */
 export function CartonRollWeightField({ qty, sx }: { qty: LinkedQty; sx?: SxProps<Theme> }) {
-  const { finishMode, weightPerRoll, setWeightPerRoll } = qty
+  const { finishMode, numRolls, setNumRolls, cartonTotalKgIncludingWaste, formatKgDisplay } = qty
   if (finishMode !== 'Cartons') return null
+  const rollCount = Math.max(0, Math.round(Number(numRolls || 0)))
+  const rollWeightKg =
+    cartonTotalKgIncludingWaste != null &&
+    cartonTotalKgIncludingWaste > 0 &&
+    rollCount > 0 &&
+    Number.isFinite(cartonTotalKgIncludingWaste / rollCount)
+      ? cartonTotalKgIncludingWaste / rollCount
+      : null
   return (
     <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-      <TextField
-        label="Roll weight (kg)"
-        type="number"
-        inputProps={{ min: 0, step: 'any' }}
-        value={weightPerRoll}
-        onChange={(e) => setWeightPerRoll(e.target.value)}
-        fullWidth
-        sx={sx}
-        required
-        helperText="Choose maximum safe roll weight for uteco and conversion"
-      />
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 2 }}>
+        <ReadonlyDisplayField
+          label="Total KG (inc waste)"
+          value={cartonTotalKgIncludingWaste != null ? formatKgDisplay(cartonTotalKgIncludingWaste) : ''}
+          sx={sx}
+        />
+        <TextField
+          label="No. of Rolls"
+          type="number"
+          inputProps={{ min: 1, step: 1 }}
+          value={numRolls}
+          onChange={(e) => setNumRolls(e.target.value)}
+          fullWidth
+          sx={sx}
+          required
+          helperText="Internal extrusion rolls for uteco and conversion"
+        />
+        <ReadonlyDisplayField
+          label="Roll weight (kg)"
+          value={rollWeightKg != null ? formatKgDisplay(rollWeightKg) : ''}
+          sx={sx}
+          helperText="Derived from total KG including waste ÷ rolls"
+        />
+      </Box>
     </Box>
   )
 }
@@ -161,10 +183,10 @@ export function LinkedQuantityFields(props: {
       </Typography>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2, mt: 2 }}>
-        <TextField label="Total Meters (derived)" value={totalMetersReadonly} disabled />
+        <TextField label="Ordered Meters" value={totalMetersReadonly} disabled />
 
         <TextField
-          label="Total KG"
+          label="Ordered KG"
           type="number"
           inputProps={{ min: 0, step: 'any' }}
           value={
