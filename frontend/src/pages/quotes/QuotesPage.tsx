@@ -53,6 +53,7 @@ import {
   computeAppliedExtrusionWasteFactors,
   computeDerivedGeometryAndTotals,
   computeLayflatWidthMm,
+  computePlasticKgPerLinearM,
   computePrintingUnavailableReason,
   computeQuickQuotePreview,
   computeMaterialsMoqDenomKg,
@@ -248,11 +249,16 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const prevDiscreteUnitsRollsKpuRef = useRef<number | undefined>(undefined)
   /** Latest Total KG string for effect comparisons without listing `totalKg` in dependency arrays (avoids sync loops). */
   const totalKgStrRef = useRef('')
+  const continuousRollModeRef = useRef(false)
 
   // Quantity (values shared across qty types; qtyType controls which fields are editable vs computed)
   /** Default Bag on Rolls (discrete): ROLL = `rolls_units` so MOQ can scale roll count from bags/roll like CTN. */
   const [qtyType, setQtyType] = useState<QtyType>('rolls_units')
-  const [totalKg, setTotalKg] = useState('')
+  const [totalKg, setTotalKgState] = useState('')
+  const setTotalKg = useCallback((next: string | ((prev: string) => string)) => {
+    if (continuousRollModeRef.current) return
+    setTotalKgState(next)
+  }, [])
   const [numRolls, setNumRolls] = useState('')
   const [weightPerRoll, setWeightPerRoll] = useState('')
   const [numUnits, setNumUnits] = useState('')
@@ -440,7 +446,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       else if (p.quantity?.total_kg != null && Number(p.quantity.total_kg) > 0)
         totalKgHydrate = String(p.quantity.total_kg)
     }
-    if (totalKgHydrate != null) setTotalKg(totalKgHydrate)
+      if (totalKgHydrate != null) setTotalKgState(totalKgHydrate)
     const wprHydrated =
       p.weightPerRoll ??
       (p as { weight_per_roll_kg?: string | number }).weight_per_roll_kg ??
@@ -580,6 +586,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
   const effectiveLengthUnits: 'mm' | 'm' | 'continuous' =
     isTubeProduct && finishMode === 'Rolls' ? 'continuous' : lengthUnits
   const isContinuousLength = effectiveLengthUnits === 'continuous'
+  continuousRollModeRef.current = isContinuousLength && finishMode === 'Rolls'
   const baseLengthMm = isContinuousLength ? 0 : Math.round(toMm(length, effectiveLengthUnits === 'm' ? 'm' : 'mm'))
   const widthMmNum = Math.round(Number(widthMm || 0))
   const ufilmLeftWidthMmNum = Math.round(Number(ufilmLeftWidthMm || 0))
@@ -697,7 +704,9 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
     if (qtyType === 'units') qty.units = numUnitsNum
     if (qtyType === 'kg') {
       qty.total_kg = totalKgNum
-      if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
+      if (isContinuousLength && finishMode === 'Rolls' && numRollsNum > 0) {
+        qty.rolls = numRollsNum
+      } else if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
         qty.rolls = Math.round(totalKgNum / weightPerRollNum)
       }
     }
@@ -1292,6 +1301,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       ? totalKgNum
       : qtyType === 'units'
         ? (() => {
+            if (isContinuousLength && storedTotalKgForDisplay != null) return storedTotalKgForDisplay
+            if (isContinuousLength) return null
             const d = derivedForDisplay?.derivedTotalKg
             const dOk = d != null && Number.isFinite(Number(d)) && Number(d) > 0
             // Cartons (1000 or CTN): don't replace explicit mass from KG mode with geometry-derived kg once
@@ -1318,6 +1329,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           })()
       : qtyType === 'rolls_units'
         ? (() => {
+            if (isContinuousLength && storedTotalKgForDisplay != null) return storedTotalKgForDisplay
+            if (isContinuousLength) return null
             const d = derivedForDisplay?.derivedTotalKg
             if (d != null && Number.isFinite(Number(d)) && Number(d) > 0) return Number(d)
             return storedTotalKgForDisplay ?? null
@@ -1325,9 +1338,8 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         : qtyType === 'total_rolls'
           ? isContinuousLength
             ? (() => {
-                const d = derivedForDisplay?.derivedTotalKg
-                if (d != null && Number.isFinite(Number(d)) && Number(d) > 0) return Number(d)
-                return storedTotalKgForDisplay ?? null
+                if (storedTotalKgForDisplay != null) return storedTotalKgForDisplay
+                return null
               })()
             : (() => {
                 const implied =
@@ -1376,41 +1388,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
               : numRollsNum
       : null
   const rollsDisplay = finishMode === 'Rolls' ? rollsCountForRollsDisplay : null
-
-  /**
-   * Roll count for syncing Total KG when weight or metres/roll change on continuous web (same idea as Roll qty:
-   * explicit rolls, or KG from total÷weight, or total products = one roll per counted unit).
-   */
-  const continuousRollCountForTotalKgSync = useCallback((): number | null => {
-    if (!(isContinuousLength && finishMode === 'Rolls')) return null
-    if (qtyMode === 'roll') return numRollsNum > 0 ? numRollsNum : null
-    if (qtyMode === 'kg') {
-      if (totalKgNum > 0 && weightPerRollNum > 0) {
-        const r = Math.round(totalKgNum / weightPerRollNum)
-        if (r > 0) return r
-      }
-      const pr = quickPreview?.rolls != null ? Number(quickPreview.rolls) : NaN
-      if (Number.isFinite(pr) && pr > 0) return Math.round(pr)
-      if (numRollsNum > 0) return numRollsNum
-      return null
-    }
-    if (qtyMode === 'units') {
-      if (numUnitsNum > 0) return numUnitsNum
-      if (rollsDisplay != null && Number(rollsDisplay) > 0) return Math.round(Number(rollsDisplay))
-      return null
-    }
-    return null
-  }, [
-    isContinuousLength,
-    finishMode,
-    qtyMode,
-    numRollsNum,
-    totalKgNum,
-    weightPerRollNum,
-    numUnitsNum,
-    quickPreview?.rolls,
-    rollsDisplay,
-  ])
 
   const derivedDisplayForQty: DerivedDisplay = derivedForDisplay
     ? {
@@ -2070,6 +2047,62 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       return 0
     }
   }, [canHaveGusset, derivedGeometry, flagGusset, gussetReturnMmNum, isLRFilm, productType, runUp, showRunUp, ufilmLeftWidthMmNum, ufilmRightWidthMmNum, widthMmNum])
+
+  const billableCoreKgPerRoll = useMemo(() => {
+    if (
+      finishMode !== 'Rolls' ||
+      rollWeightBilling === 'core_off' ||
+      !coreType ||
+      !(layflatWidthMm > 0)
+    ) {
+      return 0
+    }
+    const core = ratebook?.cores?.[coreType]
+    const kgPerMeter = Number(core?.kg_per_meter || 0)
+    if (!(kgPerMeter > 0)) return 0
+    const frac = rollWeightBilling === 'core_half_off' ? 0.5 : 1
+    return (layflatWidthMm / 1000) * kgPerMeter * frac
+  }, [coreType, finishMode, layflatWidthMm, ratebook?.cores, rollWeightBilling])
+
+  const plasticKgPerMeterForRollCalc = useMemo(() => {
+    const totalM =
+      derivedForDisplay?.derivedTotalM != null && Number.isFinite(Number(derivedForDisplay.derivedTotalM))
+        ? Number(derivedForDisplay.derivedTotalM)
+        : null
+    const plasticKg =
+      derivedForDisplay?.derivedTotalKg != null && Number.isFinite(Number(derivedForDisplay.derivedTotalKg))
+        ? Number(derivedForDisplay.derivedTotalKg)
+        : null
+    if (totalM != null && totalM > 0 && plasticKg != null && plasticKg > 0) return plasticKg / totalM
+    if (ratebook && calcPayload) {
+      try {
+        const kgPerM = computePlasticKgPerLinearM(calcPayload, ratebook)
+        if (Number.isFinite(kgPerM) && kgPerM > 0) return kgPerM
+      } catch {
+        // Fall through to null when geometry/material inputs are incomplete.
+      }
+    }
+    return null
+  }, [calcPayload, derivedForDisplay?.derivedTotalKg, derivedForDisplay?.derivedTotalM, ratebook])
+
+  const billedKgPerRollFromMeters = useCallback(
+    (mpr: number): number | null => {
+      if (!(mpr > 0) || plasticKgPerMeterForRollCalc == null || !(plasticKgPerMeterForRollCalc > 0)) return null
+      const wpr = mpr * plasticKgPerMeterForRollCalc + billableCoreKgPerRoll
+      return Number.isFinite(wpr) && wpr > 0 ? wpr : null
+    },
+    [billableCoreKgPerRoll, plasticKgPerMeterForRollCalc],
+  )
+
+  const metersPerRollFromBilledKg = useCallback(
+    (wpr: number): number | null => {
+      if (!(wpr > 0) || plasticKgPerMeterForRollCalc == null || !(plasticKgPerMeterForRollCalc > 0)) return null
+      const plasticKg = Math.max(0, wpr - billableCoreKgPerRoll)
+      const mpr = plasticKg / plasticKgPerMeterForRollCalc
+      return Number.isFinite(mpr) && mpr > 0 ? mpr : null
+    },
+    [billableCoreKgPerRoll, plasticKgPerMeterForRollCalc],
+  )
 
   const extruderDecisionWidthMm = useMemo(() => {
     // For U-Film, use the middle width as the "decision width" (per SpecPayloadForm behavior).
@@ -3584,7 +3617,7 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                       totalKgEditable
                         ? (e) => {
                             setQuoteUsesMoqOnly(false)
-                            setTotalKg(e.target.value)
+                            setTotalKgState(e.target.value)
                           }
                         : undefined
                     }
@@ -3691,25 +3724,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                             setQtyType('total_rolls')
                             const nextWpr = Number(e.target.value || 0)
                             if (isContinuousLength) {
-                              const totalM =
-                                quickPreview?.totals_m != null && Number.isFinite(Number(quickPreview.totals_m))
-                                  ? Number(quickPreview.totals_m)
-                                  : null
-                              const totalKgSnap =
-                                quickPreview?.totals_kg != null && Number.isFinite(Number(quickPreview.totals_kg))
-                                  ? Number(quickPreview.totals_kg)
-                                  : null
-                              const kgPerM =
-                                totalM != null && totalM > 0 && totalKgSnap != null && totalKgSnap > 0
-                                  ? totalKgSnap / totalM
-                                  : null
-                              if (kgPerM != null && Number.isFinite(kgPerM) && kgPerM > 0 && nextWpr > 0) {
-                                const mpr = nextWpr / kgPerM
-                                if (Number.isFinite(mpr) && mpr > 0) setMetersPerRoll(roundTo2Decimals(String(mpr)))
-                              }
-                              const rcRoll = continuousRollCountForTotalKgSync()
-                              if (rcRoll != null && rcRoll > 0 && nextWpr > 0) {
-                                setTotalKg(formatKgDisplay(nextWpr * rcRoll))
+                              const mpr = metersPerRollFromBilledKg(nextWpr)
+                              if (mpr != null) setMetersPerRoll(roundTo2Decimals(String(mpr)))
+                              if (totalKgNum > 0 && nextWpr > 0) {
+                                const nextRolls = Math.max(1, Math.round(totalKgNum / nextWpr))
+                                setNumRolls(String(nextRolls))
                               }
                             } else if (finishMode === 'Rolls' && numRollsNum > 0 && nextWpr > 0) {
                               setTotalKg(formatKgDisplay(numRollsNum * nextWpr))
@@ -3722,25 +3741,11 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                               setQuoteUsesMoqOnly(false)
                               setWeightPerRoll(e.target.value)
                               const nextWpr = Number(e.target.value || 0)
-                              const totalM =
-                                quickPreview?.totals_m != null && Number.isFinite(Number(quickPreview.totals_m))
-                                  ? Number(quickPreview.totals_m)
-                                  : null
-                              const totalKgSnap =
-                                quickPreview?.totals_kg != null && Number.isFinite(Number(quickPreview.totals_kg))
-                                  ? Number(quickPreview.totals_kg)
-                                  : null
-                              const kgPerM =
-                                totalM != null && totalM > 0 && totalKgSnap != null && totalKgSnap > 0
-                                  ? totalKgSnap / totalM
-                                  : null
-                              if (kgPerM != null && Number.isFinite(kgPerM) && kgPerM > 0 && nextWpr > 0) {
-                                const mpr = nextWpr / kgPerM
-                                if (Number.isFinite(mpr) && mpr > 0) setMetersPerRoll(roundTo2Decimals(String(mpr)))
-                              }
-                              const rcKgUnits = continuousRollCountForTotalKgSync()
-                              if (rcKgUnits != null && rcKgUnits > 0 && nextWpr > 0) {
-                                setTotalKg(formatKgDisplay(nextWpr * rcKgUnits))
+                              const mpr = metersPerRollFromBilledKg(nextWpr)
+                              if (mpr != null) setMetersPerRoll(roundTo2Decimals(String(mpr)))
+                              if (qtyMode === 'kg' && totalKgNum > 0 && nextWpr > 0) {
+                                const nextRolls = Math.max(1, Math.round(totalKgNum / nextWpr))
+                                setNumRolls(String(nextRolls))
                               }
                             }
                           : weightPerRollEditable
@@ -3904,26 +3909,12 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
                         const raw = e.target.value
                         setMetersPerRoll(raw)
                         const mpr = Number(raw || 0)
-                        const totalM =
-                          quickPreview?.totals_m != null && Number.isFinite(Number(quickPreview.totals_m))
-                            ? Number(quickPreview.totals_m)
-                            : null
-                        const totalKgSnap =
-                          quickPreview?.totals_kg != null && Number.isFinite(Number(quickPreview.totals_kg))
-                            ? Number(quickPreview.totals_kg)
-                            : null
-                        const kgPerM =
-                          totalM != null && totalM > 0 && totalKgSnap != null && totalKgSnap > 0
-                            ? totalKgSnap / totalM
-                            : null
-                        if (kgPerM != null && Number.isFinite(kgPerM) && kgPerM > 0 && mpr > 0) {
-                          const wpr = mpr * kgPerM
-                          if (Number.isFinite(wpr) && wpr > 0) {
-                            setWeightPerRoll(roundTo2Decimals(String(wpr)))
-                            const rcM = continuousRollCountForTotalKgSync()
-                            if (rcM != null && rcM > 0) {
-                              setTotalKg(formatKgDisplay(wpr * rcM))
-                            }
+                        const wpr = billedKgPerRollFromMeters(mpr)
+                        if (wpr != null) {
+                          setWeightPerRoll(roundTo2Decimals(String(wpr)))
+                          if (totalKgNum > 0) {
+                            const nextRolls = Math.max(1, Math.round(totalKgNum / wpr))
+                            setNumRolls(String(nextRolls))
                           }
                         }
                       }}

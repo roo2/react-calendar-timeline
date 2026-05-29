@@ -549,6 +549,31 @@ export function computeLayflatWidthMm(spec: {
   return computeLayflatMm(spec)
 }
 
+export function computePlasticKgPerLinearM(inputs: QuickQuoteInputs, ratebook: QuoteRatebook): number {
+  const layflatMassMm = computeLayflatMmForMass({
+    product_type: inputs.product_type,
+    geometry: inputs.geometry,
+    base_width_mm: inputs.base_width_mm,
+    gusset_mm: inputs.gusset_mm,
+    ufilm_left_width_mm: inputs.ufilm_left_width_mm,
+    ufilm_right_width_mm: inputs.ufilm_right_width_mm,
+  })
+  const blendIn =
+    Array.isArray(inputs.blend) && inputs.blend.length ? inputs.blend : inputs.resin_code ? [{ resin_code: inputs.resin_code, pct: 100 }] : []
+  const blend = blendIn
+    .map((c) => {
+      const code = String((c as any).resin_code || '').trim()
+      const pct = Number((c as any).pct || 0)
+      const r = ratebook.resins?.[code]
+      const density = r?.density != null ? Number(r.density) * 1_000_000 : 920
+      return { resin_code: code, pct, density }
+    })
+    .filter((c) => c.resin_code && c.pct > 0)
+  const density = blendDensity(blend)
+  const effectiveThickness = effectiveThicknessUm(Number(inputs.thickness_um || 0), inputs.trim_pct)
+  return density * umToM(effectiveThickness) * mmToM(layflatMassMm)
+}
+
 /**
  * For continuous-length products (tube on roll, etc.), treat one "product length" as the web length
  * that carries one roll's (or one carton's) billed mass: refKg / kgPerLinearM. Used instead of a
@@ -833,11 +858,36 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   const kgPerM2 = density * thicknessM
   const kgPerLinearM = kgPerM2 * mmToM(layflatMassMm)
 
+  const billableCoreKgForRolls = (rollCount: number | null): number => {
+    if (
+      inputs.finish_mode !== 'Rolls' ||
+      !inputs.core_type ||
+      rollCount == null ||
+      rollCount <= 0 ||
+      layflatMassMm <= 0 ||
+      !inputs.roll_weight_billing ||
+      inputs.roll_weight_billing === 'core_off'
+    ) {
+      return 0
+    }
+    const core = ratebook.cores?.[inputs.core_type]
+    if (!core || !(Number(core.kg_per_meter || 0) > 0)) return 0
+    const frac = inputs.roll_weight_billing === 'core_half_off' ? 0.5 : 1
+    return rollCount * mmToM(layflatMassMm) * Number(core.kg_per_meter || 0) * frac
+  }
+
+  // If quoting by billed KG in Rolls mode, plastic produced is lower when core billing includes core weight.
+  const billableCoreKgFromInputRolls = billableCoreKgForRolls(rolls)
+  let totalKgReqPlastic: number | null = totalKgReq
+  if (totalKgReq != null && billableCoreKgFromInputRolls > 0) {
+    totalKgReqPlastic = Math.max(0, totalKgReq - billableCoreKgFromInputRolls)
+  }
+
   // Continuous length: one "unit" of product length = web length that holds one roll/carton billed mass
   // (e.g. 20kg roll → metres = 20 / kgPerLinearM), not a fixed 1m stub.
   let effectiveLenM: number
   if (inputs.continuous_roll) {
-    const refKg = referenceMassKgForContinuousProduct(inputs, totalKgReq, totalMReq, rolls, unitsIn, kgPerLinearM)
+    const refKg = referenceMassKgForContinuousProduct(inputs, totalKgReqPlastic, totalMReq, rolls, unitsIn, kgPerLinearM)
     if (refKg != null && refKg > 0 && kgPerLinearM > 0) {
       effectiveLenM = refKg / kgPerLinearM
     } else {
@@ -848,29 +898,6 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   }
   const areaPerUnitM2 = effectiveLenM * mmToM(layflatMassMm)
   const kgPerUnit = areaPerUnitM2 * kgPerM2
-
-  // If quoting by total KG in Rolls mode, adjust "plastic produced" by core billing.
-  // The input total_kg is treated as the billed weight; plastic weight is reduced by core weight
-  // when billing includes the core (fully or partially).
-  let totalKgReqPlastic: number | null = totalKgReq
-  if (
-    inputs.finish_mode === 'Rolls' &&
-    totalKgReq != null &&
-    inputs.core_type &&
-    rolls != null &&
-    rolls > 0 &&
-    layflatMassMm > 0 &&
-    inputs.roll_weight_billing &&
-    inputs.roll_weight_billing !== 'core_off'
-  ) {
-    const core = ratebook.cores?.[inputs.core_type]
-    if (core && Number(core.kg_per_meter || 0) > 0) {
-      const coreMeters = rolls * mmToM(layflatMassMm)
-      const coreKg = coreMeters * Number(core.kg_per_meter || 0)
-      const frac = inputs.roll_weight_billing === 'core_half_off' ? 0.5 : 1
-      totalKgReqPlastic = Math.max(0, totalKgReq - frac * coreKg)
-    }
-  }
 
   // Trim lowers effective gauge (see `effectiveThicknessUm`); metres are not scaled by trim %.
   let derivedTotalKg: number
@@ -922,6 +949,7 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
       ? Math.max(1, Math.round(trimmedTotalKg / nominalWpr))
       : null
   const rollsEffective = rolls != null && rolls > 0 ? rolls : rollsInferred
+  const billableCoreKg = billableCoreKgForRolls(rollsEffective)
 
   const canComputeKgPerRoll = rollsEffective != null && rollsEffective > 0 && trimmedTotalKg > 0
   const kgPerRoll = canComputeKgPerRoll ? trimmedTotalKg / rollsEffective : null
@@ -931,12 +959,10 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
   // Billed / scale weight (e.g. rolls with core included): customer total_kg includes core; plastic mass is lower.
   // Costs use trimmedTotalKg (plastic); quotes should show and price per kg using billedTotalsKg.
   let billedTotalsKg: number
-  if (unitsIn != null && kgPerUnit > 0) {
-    billedTotalsKg = trimmedTotalKg
-  } else if (totalKgReq != null && totalKgReq > 0 && totalKgReqPlastic != null && totalKgReqPlastic > 0) {
+  if (totalKgReq != null && totalKgReq > 0 && totalKgReqPlastic != null && totalKgReqPlastic > 0 && billableCoreKgFromInputRolls > 0) {
     billedTotalsKg = totalKgReq * (trimmedTotalKg / totalKgReqPlastic)
   } else {
-    billedTotalsKg = trimmedTotalKg
+    billedTotalsKg = trimmedTotalKg + billableCoreKg
   }
   const billedKgPerRoll =
     rollsEffective != null && rollsEffective > 0 && billedTotalsKg > 0 ? billedTotalsKg / rollsEffective : null

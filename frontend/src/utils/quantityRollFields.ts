@@ -124,7 +124,9 @@ export function buildQuantityObjectForCalculator(
   if (qtyType === 'units') qty.units = numUnitsNum
   if (qtyType === 'kg') {
     qty.total_kg = totalKgNum
-    if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
+    if (opts?.continuousLength && finishMode === 'Rolls' && numRollsNum > 0) {
+      qty.rolls = numRollsNum
+    } else if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
       qty.rolls = Math.round(totalKgNum / weightPerRollNum)
     }
   }
@@ -294,7 +296,9 @@ export function computeWeightPerRollDisplay(
    * leftover nominal weight from other qty modes.
    */
   if (qtyType === 'total_rolls' && continuousWebTotalRolls && numRollsNum > 0) {
-    const mass = derived?.derivedTotalKg
+    const mass = derived?.billedKgPerRoll != null && Number.isFinite(Number(derived.billedKgPerRoll)) && Number(derived.billedKgPerRoll) > 0
+      ? Number(derived.billedKgPerRoll) * numRollsNum
+      : derived?.derivedTotalKg
     if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
       return Number(mass) / numRollsNum
     }

@@ -190,7 +190,9 @@ export function LinkedQuantityFields(props: {
           type="number"
           inputProps={{ min: 0, step: 'any' }}
           value={
-            totalKgEditable
+            isContinuousLength && finishMode === 'Rolls'
+              ? totalKg
+              : totalKgEditable
               ? totalKg
               : haveDriverForTotalKg && totalKgDisplay != null
                 ? formatKgDisplay(totalKgDisplay)
@@ -301,9 +303,9 @@ export function LinkedQuantityFields(props: {
                         const mpr = nextWpr / kgPerMFromDerived
                         if (Number.isFinite(mpr) && mpr > 0) setMetersPerRoll(roundTo2Decimals(String(mpr)))
                       }
-                      const rcRoll = continuousRollCountForTotalKgSync()
-                      if (rcRoll != null && rcRoll > 0 && nextWpr > 0) {
-                        setTotalKg(formatKgDisplay(nextWpr * rcRoll))
+                      const tk = Number(totalKg || 0)
+                      if (tk > 0 && nextWpr > 0) {
+                        setNumRolls(String(Math.max(1, Math.round(tk / nextWpr))))
                       }
                     } else if (finishMode === 'Rolls' && numRollsNumLocal > 0 && nextWpr > 0) {
                       const nr = numRollsNumLocal
@@ -320,9 +322,9 @@ export function LinkedQuantityFields(props: {
                         const mpr = nextWpr / kgPerMFromDerived
                         if (Number.isFinite(mpr) && mpr > 0) setMetersPerRoll(roundTo2Decimals(String(mpr)))
                       }
-                      const rcKgUnits = continuousRollCountForTotalKgSync()
-                      if (rcKgUnits != null && rcKgUnits > 0 && nextWpr > 0) {
-                        setTotalKg(formatKgDisplay(nextWpr * rcKgUnits))
+                      const tk = Number(totalKg || 0)
+                      if (tk > 0 && nextWpr > 0) {
+                        setNumRolls(String(Math.max(1, Math.round(tk / nextWpr))))
                       }
                     }
                   : weightPerRollEditable
