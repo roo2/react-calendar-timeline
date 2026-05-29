@@ -91,7 +91,6 @@ export type QuickQuoteInputs = {
   base_length_mm: number
   continuous_roll: boolean
   inline_perforation?: boolean
-  inline_seal?: boolean
   hole_punched?: boolean
   gusset_mm: number | null
   trim_pct: number | null
@@ -1030,7 +1029,8 @@ export function computeAppliedExtrusionWasteFactors(inputs: QuickQuoteInputs, ra
   const isNonStandardBlend = blendCode !== '' && blendCode !== 'LD'
   const isNonStandardResinOrColour = hasAnyColour || hasAnyAdditives || isNonStandardBlend
   const hasPrinting = String(inputs.print_method || 'None') !== 'None' && Number(inputs.num_colours || 0) > 0
-  const hasAnyComplexConversion = !!inputs.inline_perforation || !!inputs.inline_seal || !!inputs.hole_punched
+  const hasMountedBagOnRoll = String(inputs.product_type || '').trim() === 'Bag' && inputs.finish_mode === 'Rolls'
+  const hasAnyComplexConversion = !!inputs.inline_perforation || hasMountedBagOnRoll || !!inputs.hole_punched
   const hasComplexSetup = hasPrinting || hasAnyComplexConversion
 
   const out: AppliedExtrusionWasteFactor[] = []

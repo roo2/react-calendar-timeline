@@ -579,7 +579,6 @@ def _spec_from_row_for_promotion(row: dict[str, Any], *, fallback_qty_unit: str 
             "treat_inside_outside": "none",
             "inline_perforation": False,
             "hole_punched": False,
-            "inline_seal": False,
             "notes": None,
         },
         "packaging": {

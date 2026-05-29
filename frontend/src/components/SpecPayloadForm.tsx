@@ -49,14 +49,11 @@ import { computeJobSheetPalletLoadPlanning } from '../utils/jobSheetPalletPlanni
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 import { formatSealTypeLabel, inlinePerforatedHighlight } from '../utils/specCompat'
 import {
-  isRegisteredPrint,
   normalizePrintRegistration,
   PRINT_REGISTRATION_DEFAULT,
   isBottomSealType,
   inlineMountedSealPrintPositionLabel,
   formatPrintPositionForPrint,
-  printPositionHighlight,
-  printPositionHighlightSx,
 } from '../utils/printRegistration'
 import {
   conversionFieldsForPackingMode,
@@ -113,50 +110,11 @@ export type JobSheetPrintingContext = {
   totalMetersLabel: string
 }
 
-function intOrDash(n: unknown): string {
-  if (n == null || n === '') return '—'
-  const x = typeof n === 'number' ? n : Number(String(n).trim())
-  return Number.isFinite(x) && x > 0 ? String(Math.round(x)) : '—'
-}
-
 function resinLabelForBlendSummary(options: ResinOption[], code: string | null | undefined): string {
   const c = String(code ?? '').trim()
   if (!c) return '—'
   const o = options.find((r) => r.resin_code === c)
   return o ? `${o.name} (${c})` : c
-}
-
-/** Film supplied line from dimensions (e.g. "400mm 75µm L/F"). */
-function formatJobSheetFilmSupplied(spec: SpecPayload): string {
-  const dims = spec?.dimensions || {}
-  const w = dims.base_width_mm
-  const um = dims.thickness_um
-  if (w == null || um == null) return '—'
-  const geom = String(dims.geometry || '')
-  const productType = String(spec?.identity?.product_type ?? '')
-  const gusset = Number(dims.gusset_mm || 0) > 0
-  const geoTag =
-    geom === 'Gusset' || geom === 'BottomGusset' || gusset
-      ? 'G'
-      : geom === 'CentreFold'
-        ? 'C/F'
-        : geom === 'Sheet' || productType === 'Sheet'
-          ? 'SWS'
-          : 'L/F'
-  return `${intOrDash(w)}mm ${intOrDash(um)}µm ${geoTag}`
-}
-
-/** Finished bag size from dimensions (width × length × gauge when present). */
-function formatJobSheetFinishedBagSize(spec: SpecPayload): string {
-  const dims = spec?.dimensions || {}
-  const w = dims.base_width_mm
-  const l = dims.base_length_mm
-  const um = dims.thickness_um
-  if (w == null) return '—'
-  const parts = [`${intOrDash(w)}mm`]
-  if (l != null) parts.push(`${intOrDash(l)}mm`)
-  if (um != null) parts.push(`${intOrDash(um)}µm`)
-  return parts.join(' × ')
 }
 
 function clampPlateLayoutInt(raw: string): number | null {
@@ -242,7 +200,6 @@ export function makeDefaultSpec(): SpecPayload {
       inline_punch_holes_across: null,
       inline_punch_holes_along: null,
       inline_punch_hole_position_description: null,
-      inline_seal: false,
       notes: null,
       seal_type: null,
       conversion: {
@@ -420,8 +377,6 @@ export function SpecPayloadForm(props: {
   /** Prefer `run_requirements.seal_type`; fall back to legacy `printing.seal_type` until re-saved. */
   const sealTypeUiValue = String((run as { seal_type?: string | null }).seal_type ?? (printing as { seal_type?: string | null }).seal_type ?? '')
 
-  const filmSuppliedReadonly = useMemo(() => formatJobSheetFilmSupplied(spec), [spec])
-  const finishedBagSizeReadonly = useMemo(() => formatJobSheetFinishedBagSize(spec), [spec])
   const generatedProductCodePlaceholder = useMemo(() => {
     try {
       const c = computeProductCodeFromSpec(spec).trim()
@@ -455,7 +410,6 @@ export function SpecPayloadForm(props: {
 
   const printingEnabled = printing.method && printing.method !== 'None'
   const printRegistration = normalizePrintRegistration(printing.print_registration)
-  const printRegistered = isRegisteredPrint(printRegistration)
   const finishMode = identity.finish_mode || 'Rolls'
   const convPrintPositionDetailsVisible = finishMode === 'Cartons' && !!printingEnabled
   const convPrintPositionDetailsEnabled =
@@ -496,9 +450,9 @@ export function SpecPayloadForm(props: {
   const inkPrinterType = printing.method === 'Inline' ? 'inline' : printing.method === 'Uteco' ? 'uteco' : null
 
   const productType: ProductType = (identity.product_type as ProductType) || PRODUCT_TYPE.Bag
-  const rollBagRequiresMountedBagOnRoll = finishMode === 'Rolls' && productType === PRODUCT_TYPE.Bag
+  const rollBagRequiresMountedBagOnRoll = productType === PRODUCT_TYPE.Bag && finishMode === 'Rolls'
   const mountingSealTypeUiValue = rollBagRequiresMountedBagOnRoll
-    ? 'inline_seal'
+    ? 'mounted_bag_on_roll'
     : sealTypeUiValue || 'end'
   const isBagOnRoll = productType === PRODUCT_TYPE.Bag && finishMode === 'Rolls'
   const dimensionsGeometryHighlight = useMemo(
@@ -928,27 +882,24 @@ export function SpecPayloadForm(props: {
   const updateSealType = (value: string) =>
     update((d) => {
       if (!d.run_requirements) (d as any).run_requirements = {}
-      if (value === 'inline_seal') {
-        d.run_requirements.inline_seal = true
+      if (value === 'mounted_bag_on_roll') {
         d.run_requirements.seal_type = null
       } else {
-        d.run_requirements.inline_seal = false
         d.run_requirements.seal_type = value ? (value as any) : null
       }
       if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
     })
 
   useEffect(() => {
-    const hasInvalidInlineSealValue = sealTypeUiValue === 'inline_seal'
-    if (!rollBagRequiresMountedBagOnRoll && !hasInvalidInlineSealValue && !run.inline_seal) return
-    if (rollBagRequiresMountedBagOnRoll && run.inline_seal && !hasInvalidInlineSealValue) return
+    const hasInvalidMountedBagOnRollValue = sealTypeUiValue === 'mounted_bag_on_roll'
+    if (!rollBagRequiresMountedBagOnRoll && !hasInvalidMountedBagOnRollValue) return
+    if (rollBagRequiresMountedBagOnRoll && !sealTypeUiValue) return
     update((d) => {
       if (!d.run_requirements) (d as any).run_requirements = {}
-      d.run_requirements.inline_seal = rollBagRequiresMountedBagOnRoll
-      d.run_requirements.seal_type = rollBagRequiresMountedBagOnRoll ? null : hasInvalidInlineSealValue ? 'end' : d.run_requirements.seal_type
+      d.run_requirements.seal_type = rollBagRequiresMountedBagOnRoll ? null : hasInvalidMountedBagOnRollValue ? 'end' : d.run_requirements.seal_type
       if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
     })
-  }, [rollBagRequiresMountedBagOnRoll, run.inline_seal, sealTypeUiValue, update])
+  }, [rollBagRequiresMountedBagOnRoll, sealTypeUiValue, update])
 
   const printingMountingField = (
     <DefaultSelectField
@@ -956,9 +907,9 @@ export function SpecPayloadForm(props: {
       defaultValue="end"
       value={mountingSealTypeUiValue}
       fullWidth
-      onChange={(e) => updateSealType(rollBagRequiresMountedBagOnRoll ? 'inline_seal' : e.target.value)}
+      onChange={(e) => updateSealType(rollBagRequiresMountedBagOnRoll ? 'mounted_bag_on_roll' : e.target.value)}
     >
-      <MenuItem value="inline_seal" disabled={!rollBagRequiresMountedBagOnRoll}>
+      <MenuItem value="mounted_bag_on_roll" disabled={!rollBagRequiresMountedBagOnRoll}>
         Mounted Bag on Roll
       </MenuItem>
       <MenuItem value="end" disabled={rollBagRequiresMountedBagOnRoll}>
@@ -975,8 +926,9 @@ export function SpecPayloadForm(props: {
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: { xs: '1fr', sm: 'minmax(0, 1fr) minmax(0, 2fr)' },
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, minmax(0, 1fr))' },
         gap: 2,
+        alignItems: 'start',
       }}
     >
       <DefaultSelectField
@@ -1001,12 +953,25 @@ export function SpecPayloadForm(props: {
         multiline
         minRows={1}
         placeholder="e.g. 50 mm from bottom seal"
-        helperText={
-          printRegistered && String(printing.print_position_notes || '').trim() === ''
-            ? 'Add distance or position when print is registered.'
-            : ' '
-        }
       />
+      {printingMountingField}
+      {printing.method !== 'Inline' ? (
+        <DefaultSelectField
+          sx={{ width: '100%' }}
+          label="Eye spot"
+          defaultValue="no"
+          value={printing.eye_spot || 'no'}
+          onChange={(e) =>
+            update((d) => {
+              const v = e.target.value
+              d.printing.eye_spot = v ? (v as any) : null
+            })
+          }
+        >
+          <MenuItem value="yes">Yes</MenuItem>
+          <MenuItem value="no">No</MenuItem>
+        </DefaultSelectField>
+      ) : null}
     </Box>
   )
 
@@ -2329,7 +2294,6 @@ export function SpecPayloadForm(props: {
                       : run.treat_inside_outside === 'none' || !run.treat_inside_outside
                         ? '—'
                         : String(run.treat_inside_outside)
-              const sealText = formatSealTypeLabel(sealTypeUiValue) || sealTypeUiValue
               const rowFilter = (pairs: unknown) =>
                 (Array.isArray(pairs) ? pairs : [])
                   .map((r: { ink_code?: unknown; plate_code?: unknown; ink_text?: unknown }) => ({
@@ -2353,12 +2317,10 @@ export function SpecPayloadForm(props: {
                   : ''
               const mono = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' as const
 
-              const sealTypeForTreatRow =
-                printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== '' ? sealText : '—'
               const inlineMountedSealType = inlineMountedSealPrintPositionLabel({
                 finishMode,
                 sealType: sealTypeUiValue,
-                inlineSeal: run.inline_seal,
+                productType,
               })
               const printPositionPreview = formatPrintPositionForPrint(printRegistration, printing.print_position_notes)
 
@@ -2370,7 +2332,6 @@ export function SpecPayloadForm(props: {
                   strong?: boolean
                   preWrap?: boolean
                   monospace?: boolean
-                  positionHighlight?: ReturnType<typeof printPositionHighlight>
                 },
               ) => (
                 <Box
@@ -2391,14 +2352,10 @@ export function SpecPayloadForm(props: {
                     component="div"
                     variant="body2"
                     sx={{
-                      fontWeight: opts?.strong ? 600 : 400,
+                      fontWeight: 400,
                       whiteSpace: opts?.preWrap ? 'pre-wrap' : undefined,
                       wordBreak: 'break-word',
                       fontFamily: opts?.monospace ? mono : undefined,
-                      px: opts?.positionHighlight && opts.positionHighlight !== 'none' ? 0.5 : 0,
-                      py: opts?.positionHighlight && opts.positionHighlight !== 'none' ? 0.25 : 0,
-                      borderRadius: opts?.positionHighlight && opts.positionHighlight !== 'none' ? 0.5 : 0,
-                      ...printPositionHighlightSx(opts?.positionHighlight ?? 'none'),
                     }}
                   >
                     {value === '' || value == null ? '—' : value}
@@ -2409,13 +2366,6 @@ export function SpecPayloadForm(props: {
               const cols3 = {
                 display: 'grid',
                 gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
-                columnGap: 2,
-                alignItems: 'start',
-              } as const
-
-              const cols2 = {
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
                 columnGap: 2,
                 alignItems: 'start',
               } as const
@@ -2450,47 +2400,13 @@ export function SpecPayloadForm(props: {
                       { strong: printing.num_colours != null && String(printing.num_colours).trim() !== '' },
                     )}
                     {previewField('Print side', printSideText, { strong: (printing.side || '') !== '' })}
-                    {emptyGridSlot}
-                  </Box>
-
-                  <Box sx={cols3}>
-                    {previewField(
-                      'Print position',
-                      printPositionPreview,
-                      {
-                        span: true,
-                        strong:
-                          printPositionHighlight(printRegistration, printing.print_position_notes) !== 'none',
-                        preWrap: true,
-                        positionHighlight: printPositionHighlight(
-                          printRegistration,
-                          printing.print_position_notes,
-                        ),
-                      },
-                    )}
-                    {printing.method === 'Inline'
-                      ? previewField('Mounting/Seal', inlineMountedSealType || '—', {
-                          strong: Boolean(inlineMountedSealType),
-                        })
-                      : null}
-                  </Box>
-
-                  <Box sx={cols3}>
-                    {previewField('Film type supplied', filmSuppliedReadonly || '—', {
-                      strong: !!filmSuppliedReadonly,
-                      preWrap: true,
+                    {previewField('Treat', treatText, {
+                      strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
                     })}
-                    {previewField('Finished bag size', finishedBagSizeReadonly || '—', {
-                      strong: !!finishedBagSizeReadonly,
-                      preWrap: true,
-                    })}
-                    {finishMode === 'Cartons' && sealTypeUiValue
-                      ? previewField('Seal', sealText, { strong: true })
-                      : emptyGridSlot}
                   </Box>
 
                   {showCylinderPlateRow ? (
-                    <Box sx={cols2}>
+                    <Box sx={cols3}>
                        { previewField(
                           'Cylinder (mm)',
                           printing.cylinder_size_mm != null && Number(printing.cylinder_size_mm) > 0
@@ -2503,12 +2419,30 @@ export function SpecPayloadForm(props: {
                         )
                       }
                       {plateAroundAcross
-                        ? previewField('Plate layout (around × across)', plateAroundAcross, { strong: true })
-                        : printing.method === 'Uteco'
-                          ? previewField('Plate layout (around × across)', '—', {})
+                        ? previewField('Plate layout', plateAroundAcross, { strong: true })
                           : emptyGridSlot}
                     </Box>
                   ) : null}
+                  <Box sx={cols3}>
+                    {previewField(
+                      'Print position',
+                      printPositionPreview,
+                      {
+                        preWrap: true,
+                      }
+                    )}
+                    {
+                       previewField('Mounting/Seal', inlineMountedSealType || '—', {
+                          strong: Boolean(inlineMountedSealType),
+                        })
+                      }
+
+                    {printing.method !== 'Inline'
+                      ? previewField('Eye spot', eyeSpotText, { strong: printing.eye_spot === 'yes' })
+                      : emptyGridSlot}
+                    {printing.method === 'Inline' ? emptyGridSlot : null}
+                  </Box>
+
 
                   {(printing.method !== 'Inline' &&
                     printing.barcode != null &&
@@ -2543,18 +2477,6 @@ export function SpecPayloadForm(props: {
                       {emptyGridSlot}
                     </Box>
                   ) : null}
-
-                  <Box sx={cols3}>
-                    {previewField('Treat', treatText, {
-                      strong: !!(run.treat_inside_outside && String(run.treat_inside_outside).toLowerCase() !== 'none'),
-                    })}
-                    {previewField('Mounting/Seal', sealTypeForTreatRow, {
-                      strong: !!(printing.method === 'Uteco' && String(sealTypeUiValue || '').trim() !== ''),
-                    })}
-                    {printing.method !== 'Inline'
-                      ? previewField('Eye spot', eyeSpotText, { strong: printing.eye_spot === 'yes' })
-                      : emptyGridSlot}
-                  </Box>
 
                   {(() => {
                     if (!frontInks.length && !backInks.length) return null
@@ -2825,35 +2747,6 @@ export function SpecPayloadForm(props: {
 
                     {printPositionEditorRow}
 
-                    <Box
-                      sx={{
-                        display: 'grid',
-                        gridTemplateColumns: {
-                          xs: '1fr',
-                          sm: printing.method === 'Inline' ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))',
-                        },
-                        gap: 2,
-                      }}
-                    >
-                      <Box sx={{ width: '100%' }}>{printingMountingField}</Box>
-                      {printing.method !== 'Inline' ? (
-                        <DefaultSelectField
-                          sx={{ width: '100%' }}
-                          label="Eye spot"
-                          defaultValue="no"
-                          value={printing.eye_spot || 'no'}
-                          onChange={(e) =>
-                            update((d) => {
-                              const v = e.target.value
-                              d.printing.eye_spot = v ? (v as any) : null
-                            })
-                          }
-                        >
-                          <MenuItem value="yes">Yes</MenuItem>
-                          <MenuItem value="no">No</MenuItem>
-                        </DefaultSelectField>
-                      ) : null}
-                    </Box>
 
                     {jobSheetPrintingInkTables}
 
@@ -3204,13 +3097,11 @@ export function SpecPayloadForm(props: {
                 value={mountingSealTypeUiValue}
                 onChange={(e) =>
                   update((d) => {
-                    const v = rollBagRequiresMountedBagOnRoll ? 'inline_seal' : e.target.value
+                    const v = rollBagRequiresMountedBagOnRoll ? 'mounted_bag_on_roll' : e.target.value
                     if (!d.run_requirements) (d as any).run_requirements = {}
-                    if (v === 'inline_seal') {
-                      d.run_requirements.inline_seal = true
+                    if (v === 'mounted_bag_on_roll') {
                       d.run_requirements.seal_type = null
                     } else {
-                      d.run_requirements.inline_seal = false
                       d.run_requirements.seal_type = v ? (v as any) : null
                     }
                     if (d.printing) (d.printing as { seal_type?: string | null }).seal_type = null
@@ -3218,8 +3109,8 @@ export function SpecPayloadForm(props: {
                 }
                 fullWidth
               >
-                <MenuItem value="inline_seal" disabled={!rollBagRequiresMountedBagOnRoll}>
-                  {formatSealTypeLabel('inline_seal', { full: true })}
+                <MenuItem value="mounted_bag_on_roll" disabled={!rollBagRequiresMountedBagOnRoll}>
+                  {'Mounted Bag on Roll'}
                 </MenuItem>
                 <MenuItem value="end" disabled={rollBagRequiresMountedBagOnRoll}>
                   {formatSealTypeLabel('end', { full: true })}
@@ -3261,7 +3152,7 @@ export function SpecPayloadForm(props: {
               multiline
               minRows={1}
               disabled={!convPrintPositionDetailsEnabled}
-              placeholder="e.g. 50 mm from bottom seal"
+              placeholder="e.g. 50 mm from seal"
             />
           ) : null}
 

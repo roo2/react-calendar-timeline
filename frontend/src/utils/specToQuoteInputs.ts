@@ -10,7 +10,7 @@ import {
   type QuoteRatebook,
 } from './quoteCalculator'
 import { buildQuantityObjectForCalculator, type FinishMode, type QtyType } from './quantityRollFields'
-import { derivedInlineSeal, productTypeCanHaveGusset } from './specCompat'
+import { productTypeCanHaveGusset } from './specCompat'
 import { isLeftRightWidthFilmProductType } from './filmProductTypes'
 import { productSummaryPunchedChecked } from './punchHoleSpec'
 import { getExtruderTimePerRollHours } from './specProductionActuals'
@@ -206,7 +206,6 @@ export function buildQuickQuoteInputsFromSpec(
     base_length_mm: baseLengthMm,
     continuous_roll: continuousRoll,
     inline_perforation: !!run.inline_perforation,
-    inline_seal: derivedInlineSeal(productType, finishMode),
     hole_punched: punched,
     gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
     trim_pct: trimPct,

@@ -108,7 +108,7 @@ import {
 import { jobSheetDescriptionWithPackagingTail } from '../../utils/quoteQuantityDescriptors'
 import { buildJobSheetPrintHeaderSummaryLine } from '../../utils/jobSheetPrintHeaderSummary'
 import { fmtCount, fmtQtyNumber } from '../../utils/quoteFormat'
-import { derivedInlineSeal, formatSealTypeLabel, inlinePerforatedHighlight } from '../../utils/specCompat'
+import { formatSealTypeLabel, inlinePerforatedHighlight, isMountedBagOnRoll } from '../../utils/specCompat'
 import {
   formatPrintPositionForPrint,
   inlineMountedSealPrintPositionLabel,
@@ -263,7 +263,7 @@ function buildExtrusionRunFlags(input: {
   treat: string
   treatHighlight: 'inside' | 'outside' | 'both' | ''
   shrink: boolean
-  inlineSeal: boolean
+  mountedBagOnRoll: boolean
   inlinePerforated: boolean
   inlinePunched: boolean
   inlinePunchPrint: InlinePunchPrintLines | null
@@ -300,8 +300,8 @@ function buildExtrusionRunFlags(input: {
   if (input.shrink) {
     flags.push({ key: 'shrink', label: 'Shrink', value: 'Yes', valueClassName: hl })
   }
-  if (input.inlineSeal) {
-    flags.push({ key: 'inlineSeal', label: 'Inline Seal', value: 'Yes', valueClassName: hl })
+  if (input.mountedBagOnRoll) {
+    flags.push({ key: 'mountedBagOnRoll', label: 'Mounted Bag on Roll', value: 'Yes', valueClassName: hl })
   }
   if (input.inlinePerforated) {
     flags.push({ key: 'inlinePerf', label: 'Inline perf', value: 'Yes', valueClassName: hl })
@@ -795,15 +795,17 @@ function JobSheetPrintInlinePrintingBlock(props: {
             {valueOrDash(p.printSide)}
           </JobSheetPrintPrintingFormField>
         </div>
-        <JobSheetPrintPrintingFormField label="Print position" positionHighlight={p.printPositionHighlight}>
-          {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
-        </JobSheetPrintPrintingFormField>
-        <JobSheetPrintPrintingFormField
-          label="Mounting/Seal"
-          valueClassName={printHlValueClass(p.sealTypeHighlight && 'js-yellow')}
-        >
-          {p.sealTypeLabel || '—'}
-        </JobSheetPrintPrintingFormField>
+        <div className="js-print-form-row-2">
+          <JobSheetPrintPrintingFormField label="Print position" positionHighlight={p.printPositionHighlight}>
+            {p.printPosition ? <span className="js-print-pre">{p.printPosition}</span> : '—'}
+          </JobSheetPrintPrintingFormField>
+          <JobSheetPrintPrintingFormField
+            label="Mounting/Seal"
+            valueClassName={printHlValueClass(p.sealTypeHighlight && 'js-yellow')}
+          >
+            {p.sealTypeLabel || '—'}
+          </JobSheetPrintPrintingFormField>
+        </div>
         {showFrontPrint? (
           <div>
             <span className="js-print-form-k">Front print</span>
@@ -1833,7 +1835,7 @@ export function JobSheetPrintPage() {
     const runUpLine = displayRunUp(run?.run_up ?? spec?.run_up)
     const coresLine = s(packaging?.core_type ?? spec?.core_type)
     const shrink = !!run?.shrink
-    const inlineSeal = derivedInlineSeal(String(productType || ''), String(finishMode || ''))
+    const mountedBagOnRoll = isMountedBagOnRoll(String(productType || ''), String(finishMode || ''))
     const inlinePerforated = !!run?.inline_perforation
     const titleHighlight = inlinePerforatedHighlight(productType, finishMode, inlinePerforated)
     const runRecord = (run || {}) as Record<string, unknown>
@@ -2194,7 +2196,7 @@ export function JobSheetPrintPage() {
     const inlineMountedSealType = inlineMountedSealPrintPositionLabel({
       finishMode,
       sealType: run?.seal_type ?? printing?.seal_type,
-      inlineSeal: run?.inline_seal,
+      productType,
     })
     const printSideHighlight = (() => {
       const side = String(printing?.side ?? 'front').trim().toLowerCase()
@@ -2345,7 +2347,7 @@ export function JobSheetPrintPage() {
       utecoFinishedBagSize = `${Math.round(Number(bagWUteco))}mm x ${Math.round(Number(bagLUteco))}mm`
     }
 
-    const sealTypeLabelUteco = formatSealTypeLabel(run?.seal_type ?? printing?.seal_type) || '—'
+    const sealTypeLabelUteco = mountedBagOnRoll ? 'Mounted Bag on Roll' : formatSealTypeLabel(run?.seal_type ?? printing?.seal_type) || '—'
     const sealTypeHighlightUteco = String(run?.seal_type ?? printing?.seal_type ?? '').trim().toLowerCase() === 'side'
     const eyeSpotLabelUteco = formatEyeSpot(printing?.eye_spot) || '—'
 
@@ -2618,7 +2620,7 @@ export function JobSheetPrintPage() {
         treat,
         treatHighlight,
         shrink,
-        inlineSeal,
+        mountedBagOnRoll,
         inlinePerforated,
         inlinePunched: holePunched,
         inlinePunchPrint,

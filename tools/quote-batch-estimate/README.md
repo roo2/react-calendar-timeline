@@ -52,7 +52,7 @@ The CLI maps each row to a minimal `SpecPayload` + quantity slice, then calls `b
 | `core_type` | optional | Defaults to `7mm` |
 | `roll_weight_billing` | optional | `core_off` (default), `core_included`, `core_half_off` |
 | `bags_per_carton` | Cartons | Integer |
-| `inline_perforation`, `inline_seal`, `hole_punched` | optional | `true`/`1` or false |
+| `inline_perforation`, `hole_punched` | optional | `true`/`1` or false |
 | `trim_pct` | optional | Yield trim % |
 | `print_side` | optional | Passed through to spec (`front` default) |
 | `existing_quote_price` | optional | Prior / invoice total (number or `$30,163.56`). Echoed in output. **`price_delta_pct`** = `(final_price − existing) / existing × 100` with a `%` suffix in the CSV (empty if existing is zero or missing). Alias: `existing_price`. |

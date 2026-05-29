@@ -344,7 +344,6 @@ class RunRequirementsSpec(BaseModel):
     inline_punch_holes_across: Optional[int] = Field(None, ge=0)
     inline_punch_holes_along: Optional[int] = Field(None, ge=0)
     inline_punch_hole_position_description: Optional[str] = None
-    inline_seal: Optional[bool] = False
     notes: Optional[str] = None
     # Seal for conversion (job sheet); distinct from ``printing.seal_type`` when migrating.
     seal_type: Optional[Literal["end", "side", "none"]] = None

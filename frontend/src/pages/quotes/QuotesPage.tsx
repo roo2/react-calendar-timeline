@@ -43,7 +43,7 @@ import type { ColourOption } from '../../components/ColourSelect'
 import type { AdditiveOption } from '../../components/AdditiveSelect'
 import { MaterialsColoursAndAdditives } from '../../components/MaterialsColoursAndAdditives'
 import { DefaultSelectField } from '../../components/DefaultSelectField'
-import { derivedInlineSeal, productTypeCanHaveGusset } from '../../utils/specCompat'
+import { productTypeCanHaveGusset } from '../../utils/specCompat'
 import { isJFilmProductType, isLeftRightWidthFilmProductType, isUFilmProductType } from '../../utils/filmProductTypes'
 import type { DerivedDisplay, QtyType } from '../../utils/quantityRollFields'
 import { computeWeightPerRollDisplay, qtyTypeFromPersisted } from '../../utils/quantityRollFields'
@@ -826,7 +826,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
           base_length_mm: baseLengthMm,
           continuous_roll: isContinuousLength,
           inline_perforation: flagPerforated,
-          inline_seal: derivedInlineSeal(productType, finishMode),
           hole_punched: flagPunched,
           gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
           trim_pct: null,
@@ -868,7 +867,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
         base_length_mm: baseLengthMm,
         continuous_roll: isContinuousLength,
         inline_perforation: flagPerforated,
-        inline_seal: derivedInlineSeal(productType, finishMode),
         hole_punched: flagPunched,
         gusset_mm: canHaveGusset && flagGusset ? gussetReturnMmNum : null,
         trim_pct: null,
@@ -950,7 +948,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       additives: additivesList,
 
       inline_perforation: flagPerforated,
-      inline_seal: derivedInlineSeal(productType, finishMode),
       hole_punched: flagPunched,
 
       print_method: printMethod,
@@ -2123,7 +2120,6 @@ export function QuotesPage({ quoteId, initialData }: QuotesPageProps = {}) {
       base_length_mm: Number(calcPayload.base_length_mm || 0),
       continuous_roll: !!calcPayload.continuous_roll,
       inline_perforation: !!calcPayload.inline_perforation,
-      inline_seal: !!calcPayload.inline_seal,
       hole_punched: !!calcPayload.hole_punched,
       gusset_mm: calcPayload.gusset_mm != null ? Number(calcPayload.gusset_mm) : null,
       trim_pct: calcPayload.trim_pct != null ? Number(calcPayload.trim_pct) : null,

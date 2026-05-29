@@ -46,11 +46,12 @@ export function formatPrintPositionForPrint(registration: unknown, positionNotes
 export function inlineMountedSealPrintPositionLabel(opts: {
   finishMode: unknown
   sealType: unknown
-  inlineSeal?: unknown
+  productType?: unknown
 }): string {
   const finish = String(opts.finishMode ?? '').trim().toLowerCase()
   const seal = String(opts.sealType ?? 'end').trim().toLowerCase()
-  if (finish === 'rolls' && (opts.inlineSeal === true || seal === 'inline_seal')) return 'Mounted Bag on Roll'
+  const product = String(opts.productType ?? '').trim().toLowerCase()
+  if (finish === 'rolls' && product === 'bag') return 'Mounted Bag on Roll'
   if (finish !== 'cartons') return ''
   if (seal === 'side') return 'Mounted Side Seal'
   if (seal === '' || seal === 'end') return 'Mounted Bottom Seal'
