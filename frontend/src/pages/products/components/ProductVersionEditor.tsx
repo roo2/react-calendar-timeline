@@ -19,6 +19,7 @@ import {
   useTheme,
 } from '@mui/material'
 import { FormErrorAlert } from '../../../components/FormErrorAlert'
+import { useJobSheetPrintShortcut } from '../../../components/JobSheetPrintActionButton'
 import {
   clearCreateErrors,
   clearNewVersionErrors,
@@ -329,6 +330,7 @@ export function ProductVersionEditor(props: {
   const [deletingProduct, setDeletingProduct] = useState(false)
   const [savingEmbeddedJob, setSavingEmbeddedJob] = useState(false)
   const [savingAsNew, setSavingAsNew] = useState(false)
+  const [embeddedCreatedJobSheetId, setEmbeddedCreatedJobSheetId] = useState<string | null>(null)
 
   const [customerId, setCustomerId] = useState('')
   const [dueDate, setDueDate] = useState('')
@@ -428,6 +430,7 @@ export function ProductVersionEditor(props: {
     setDueDate('')
     setOrderDate('')
     setProductionExtruderCode('')
+    setEmbeddedCreatedJobSheetId(null)
     extruderUserTouchedRef.current = false
     setJobSaveErr(null)
     const emb = embeddedNewJobSheetFlow
@@ -907,6 +910,13 @@ export function ProductVersionEditor(props: {
     window.open(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`, '_blank', 'noopener,noreferrer')
   }
 
+  async function onPrintEmbeddedNewJobSheet(): Promise<void> {
+    if (!embeddedNewJobSheetFlow || busy) return
+    const jsid = await createEmbeddedJobSheet({ closeAfterCreate: false })
+    if (!jsid) return
+    window.open(`/job-sheets/${encodeURIComponent(jsid)}/print`, '_blank', 'noopener,noreferrer')
+  }
+
   async function persistProductWithoutClose(): Promise<boolean> {
     if (!productId || embedded) return false
     setJobSaveErr(null)
@@ -1071,149 +1081,188 @@ export function ProductVersionEditor(props: {
     }
   }
 
+  async function createEmbeddedJobSheet(options: { closeAfterCreate: boolean }): Promise<string | null> {
+    const flow = embeddedNewJobSheetFlow
+    if (!flow) return null
+    setJobSaveErr(null)
+    void dispatch(clearCreateErrors())
+    if (embeddedCreatedJobSheetId) {
+      const body = buildJobSheetUpdateBody()
+      if (!body) return null
+      setSavingEmbeddedJob(true)
+      try {
+        await dispatch(updateJobSheet({ jobSheetId: embeddedCreatedJobSheetId, body })).unwrap()
+        await dispatch(fetchJobSheet(embeddedCreatedJobSheetId)).unwrap()
+        setDirty(false)
+        if (options.closeAfterCreate) flow.onFinished()
+        return embeddedCreatedJobSheetId
+      } catch (e: unknown) {
+        if (isRejectedWithValue(e)) {
+          const p = e.payload as UpsertError
+          setJobSaveErr(p.message || 'Failed to save job sheet')
+        } else if (e instanceof ApiError && e.body?.detail != null) {
+          const { messages } = parseFastApiValidationDetail(e.body.detail)
+          setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+        } else {
+          setJobSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
+        }
+        return null
+      } finally {
+        setSavingEmbeddedJob(false)
+      }
+    }
+    if (!flow.orderId && !options.closeAfterCreate) {
+      setJobSaveErr('Save the order before printing this new job sheet.')
+      return null
+    }
+    const code = getDisplayProductCodeFromSpec(spec).trim()
+    if (!code) {
+      setJobSaveErr(
+        'Customer-facing product code is empty. Set a customer-facing product code or complete dimensions and product type.',
+      )
+      return null
+    }
+    const missing: string[] = []
+    if (!customerId) missing.push('Customer')
+    if (missing.length > 0) {
+      setJobSaveErr(`Missing required fields: ${missing.join(', ')}`)
+      return null
+    }
+    const qtyErr = validateJobSheetQuantityInputs(
+      finishMode,
+      effectiveQtyType,
+      totalKgForScheduling,
+      numUnitsNum,
+      numRollsNum,
+      finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
+      unitsPerRollNum,
+    )
+    if (qtyErr) {
+      setJobSaveErr(qtyErr)
+      return null
+    }
+    setSavingEmbeddedJob(true)
+    try {
+      const createRes = await dispatch(
+        createProduct({ data: { customer_id: flow.customerId, code, spec } }),
+      ).unwrap()
+      const createdPid = String(createRes?.product?.id || '')
+      if (!createdPid) throw new Error('Product was created but no id was returned')
+
+      const { data: pres } = await dispatch(fetchProduct(createdPid)).unwrap()
+      const createdProduct = pres?.product as { code?: string; description?: string | null } | undefined
+
+      await dispatch(fetchProducts({ customer_id: flow.customerId })).unwrap()
+
+      const persistedRolls = resolveNumRollsForPersistence(
+        finishMode,
+        effectiveQtyType,
+        totalKgNum,
+        numRollsNum,
+        weightPerRollNum,
+        derivedDisplay,
+      )
+      const persistedWpr = resolveWeightPerRollForPersistence(
+        finishMode,
+        effectiveQtyType,
+        totalKgForScheduling,
+        numRollsNum,
+        weightPerRollNum,
+        derivedDisplay,
+      )
+      const bpc = spec.packaging?.bags_per_carton
+      const bpcNum = bpc != null ? Number(bpc) : null
+      const oq = getOrderQuantityFromJobSheetFields(
+        effectiveQtyType,
+        1,
+        totalKgForScheduling,
+        numUnitsNum,
+        persistedRolls,
+        finishMode,
+        bpcNum,
+        finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+        numCartonsNum,
+      )
+
+      let createdJobSheetId: string | null = null
+      if (flow.orderId) {
+        await dispatch(
+          addOrderItem({
+            orderId: flow.orderId,
+            body: {
+              product_id: createdPid,
+              due_date: dueDate || null,
+              quantity_unit: oq.quantity_unit,
+              quantity_value: oq.quantity_value,
+            },
+          }),
+        ).unwrap()
+        const { order: res } = await dispatch(fetchOrder(flow.orderId)).unwrap()
+        const items = Array.isArray(res?.items) ? res.items : []
+        const line = [...items].reverse().find((it: any) => String(it.product_id) === createdPid)
+        const jsid = line?.job_sheet_id != null ? String(line.job_sheet_id) : ''
+        if (!jsid) throw new Error('Job sheet was not created for the new line')
+        await dispatch(
+          updateJobSheet({
+            jobSheetId: jsid,
+            body: {
+              due_date: dueDate || null,
+              order_date: orderDate || null,
+              quantity_value: oq.quantity_value,
+              quantity_unit: oq.quantity_unit,
+              qty_type: effectiveQtyType,
+              num_product_units:
+                effectiveQtyType === 'units'
+                  ? numUnitsNum
+                  : derivedDisplay?.units != null
+                    ? Math.round(Number(derivedDisplay.units))
+                    : null,
+              weight_per_roll_kg: persistedWpr,
+              num_rolls: persistedRolls,
+              spec,
+              production_extruder_code: productionExtruderCode.trim() || null,
+            },
+          }),
+        ).unwrap()
+        createdJobSheetId = jsid
+        setEmbeddedCreatedJobSheetId(jsid)
+      } else {
+        flow.onNewDraftLine?.({
+          product_id: createdPid,
+          product_code: String(createdProduct?.code || code),
+          product_name: (createdProduct?.description as string | null | undefined) ?? null,
+          due_date: dueDate,
+          quantity_unit: oq.quantity_unit,
+          quantity_value: oq.quantity_value,
+          finish_mode: finishMode,
+        })
+      }
+
+      setDirty(false)
+      if (options.closeAfterCreate) flow.onFinished()
+      return createdJobSheetId
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as UpsertError
+        setJobSaveErr(p.message || 'Failed to create product')
+      } else if (e instanceof ApiError && e.body?.detail != null) {
+        const { messages } = parseFastApiValidationDetail(e.body.detail)
+        setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
+      } else {
+        setJobSaveErr(e instanceof Error ? e.message : 'Failed to create product')
+      }
+      return null
+    } finally {
+      setSavingEmbeddedJob(false)
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!canSubmit) return
 
     if (embeddedNewJobSheetFlow) {
-      const flow = embeddedNewJobSheetFlow
-      setJobSaveErr(null)
-      void dispatch(clearCreateErrors())
-      const code = getDisplayProductCodeFromSpec(spec).trim()
-      if (!code) {
-        setJobSaveErr(
-          'Customer-facing product code is empty. Set a customer-facing product code or complete dimensions and product type.',
-        )
-        return
-      }
-      const missing: string[] = []
-      if (!customerId) missing.push('Customer')
-      if (missing.length > 0) {
-        setJobSaveErr(`Missing required fields: ${missing.join(', ')}`)
-        return
-      }
-      const qtyErr = validateJobSheetQuantityInputs(
-        finishMode,
-        effectiveQtyType,
-        totalKgForScheduling,
-        numUnitsNum,
-        numRollsNum,
-        finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
-        unitsPerRollNum,
-      )
-      if (qtyErr) {
-        setJobSaveErr(qtyErr)
-        return
-      }
-      setSavingEmbeddedJob(true)
-      try {
-        const createRes = await dispatch(
-          createProduct({ data: { customer_id: flow.customerId, code, spec } }),
-        ).unwrap()
-        const createdPid = String(createRes?.product?.id || '')
-        if (!createdPid) throw new Error('Product was created but no id was returned')
-
-        const { data: pres } = await dispatch(fetchProduct(createdPid)).unwrap()
-        const createdProduct = pres?.product as { code?: string; description?: string | null } | undefined
-
-        await dispatch(fetchProducts({ customer_id: flow.customerId })).unwrap()
-
-        const persistedRolls = resolveNumRollsForPersistence(
-          finishMode,
-          effectiveQtyType,
-          totalKgNum,
-          numRollsNum,
-          weightPerRollNum,
-          derivedDisplay,
-        )
-        const persistedWpr = resolveWeightPerRollForPersistence(
-          finishMode,
-          effectiveQtyType,
-          totalKgForScheduling,
-          numRollsNum,
-          weightPerRollNum,
-          derivedDisplay,
-        )
-        const bpc = spec.packaging?.bags_per_carton
-        const bpcNum = bpc != null ? Number(bpc) : null
-        const oq = getOrderQuantityFromJobSheetFields(
-          effectiveQtyType,
-          1,
-          totalKgForScheduling,
-          numUnitsNum,
-          persistedRolls,
-          finishMode,
-          bpcNum,
-          finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
-          numCartonsNum,
-        )
-
-        if (flow.orderMode === 'edit' && flow.orderId) {
-          await dispatch(
-            addOrderItem({
-              orderId: flow.orderId,
-              body: {
-                product_id: createdPid,
-                due_date: dueDate || null,
-                quantity_unit: oq.quantity_unit,
-                quantity_value: oq.quantity_value,
-              },
-            }),
-          ).unwrap()
-          const { order: res } = await dispatch(fetchOrder(flow.orderId)).unwrap()
-          const items = Array.isArray(res?.items) ? res.items : []
-          const line = [...items].reverse().find((it: any) => String(it.product_id) === createdPid)
-          const jsid = line?.job_sheet_id != null ? String(line.job_sheet_id) : ''
-          if (!jsid) throw new Error('Job sheet was not created for the new line')
-          await dispatch(
-            updateJobSheet({
-              jobSheetId: jsid,
-              body: {
-                due_date: dueDate || null,
-                order_date: orderDate || null,
-                quantity_value: oq.quantity_value,
-                quantity_unit: oq.quantity_unit,
-                qty_type: effectiveQtyType,
-                num_product_units:
-                  effectiveQtyType === 'units'
-                    ? numUnitsNum
-                    : derivedDisplay?.units != null
-                      ? Math.round(Number(derivedDisplay.units))
-                      : null,
-                weight_per_roll_kg: persistedWpr,
-                num_rolls: persistedRolls,
-                spec,
-                production_extruder_code: productionExtruderCode.trim() || null,
-              },
-            }),
-          ).unwrap()
-        } else {
-          flow.onNewDraftLine?.({
-            product_id: createdPid,
-            product_code: String(createdProduct?.code || code),
-            product_name: (createdProduct?.description as string | null | undefined) ?? null,
-            due_date: dueDate,
-            quantity_unit: oq.quantity_unit,
-            quantity_value: oq.quantity_value,
-            finish_mode: finishMode,
-          })
-        }
-
-        setDirty(false)
-        flow.onFinished()
-      } catch (e: unknown) {
-        if (isRejectedWithValue(e)) {
-          const p = e.payload as UpsertError
-          setJobSaveErr(p.message || 'Failed to create product')
-        } else if (e instanceof ApiError && e.body?.detail != null) {
-          const { messages } = parseFastApiValidationDetail(e.body.detail)
-          setJobSaveErr(messages.length > 0 ? messages.join(' · ') : e.message)
-        } else {
-          setJobSaveErr(e instanceof Error ? e.message : 'Failed to create product')
-        }
-      } finally {
-        setSavingEmbeddedJob(false)
-      }
+      await createEmbeddedJobSheet({ closeAfterCreate: true })
       return
     }
 
@@ -1308,6 +1357,12 @@ export function ProductVersionEditor(props: {
       versionDetailEntry.status === 'loading' ||
       versionDetailEntry.status === 'idle')
 
+  const busy = saving || savingEmbeddedJob || savingAsNew || createSaving || deletingProduct
+
+  const printDisabled = !canSubmit || busy
+  const modalPrintHandler = embedded ? onPrintEmbeddedNewJobSheet : onPrintJobSheetFromModal
+  useJobSheetPrintShortcut( !printDisabled, modalPrintHandler)
+
   if (loadErr && !data && !embedded) {
     return (
       <Stack spacing={2}>
@@ -1330,8 +1385,6 @@ export function ProductVersionEditor(props: {
   if (waitingForVersion || waitingForJobSheet) return <p>Loading…</p>
   if (!embedded && !specReady) return <p>Loading…</p>
 
-  const busy = saving || savingEmbeddedJob || savingAsNew || createSaving || deletingProduct
-
   const canSaveAsNewProduct = canEnableSaveAsNewProduct({
     productVersionCount: (data?.versions || []).length,
     editingVersionNumber,
@@ -1340,8 +1393,6 @@ export function ProductVersionEditor(props: {
     isAddingProductVersion: Boolean(!versionId && !jobSheetId && !embedded && productId),
   })
   const saveAsNewDisabled = !canSubmit || busy || !canSaveAsNewProduct
-  const showPrintInModal = Boolean(jobSheetId && !embedded)
-  const printDisabled = !canSubmit || busy
 
   const resolvedSubmitLabel =
     submitLabel ||
@@ -1412,9 +1463,9 @@ export function ProductVersionEditor(props: {
                       submitDisabled={!canSubmit || busy}
                       submitSaving={busy && !savingAsNew}
                       submitLabel={resolvedSubmitLabel}
-                      showPrint={showPrintInModal}
+                      showPrint={true}
                       printDisabled={printDisabled}
-                      onPrint={onPrintJobSheetFromModal}
+                      onPrint={modalPrintHandler}
                     />
                   }
                   customerId={customerId}
@@ -1704,9 +1755,9 @@ export function ProductVersionEditor(props: {
                   submitDisabled={!canSubmit || busy}
                   submitSaving={busy && !savingAsNew}
                   submitLabel={resolvedSubmitLabel}
-                  showPrint={showPrintInModal}
+                  showPrint={true}
                   printDisabled={printDisabled}
-                  onPrint={onPrintJobSheetFromModal}
+                  onPrint={modalPrintHandler}
                 />
               </Box>
             </Stack>

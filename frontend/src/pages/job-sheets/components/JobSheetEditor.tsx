@@ -15,7 +15,6 @@ import {
   type FinishMode,
   type QtyType,
 } from '../../../utils/quantityRollFields'
-import PrintIcon from '@mui/icons-material/Print'
 import {
   Alert,
   Box,
@@ -38,6 +37,7 @@ import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '.
 import { createJobSheet, fetchJobSheet, saveJobSheetAsNewProduct, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
 import { SaveAsNewProductButton, SaveFormButton } from '../../../components/SaveActionButtons'
+import { JobSheetPrintActionButton, useJobSheetPrintShortcut } from '../../../components/JobSheetPrintActionButton'
 import { JobSheetLivePreview } from '../../../components/JobSheetLivePreview'
 import { hideMyobProductPlaceholderText } from '../../../utils/jobSheetPreviewText'
 import { useJobSheetLivePreviewProps } from '../../../hooks/useJobSheetLivePreviewProps'
@@ -538,7 +538,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     loadedJobSheet,
   ])
 
-  async function onSave(): Promise<boolean> {
+  async function onSave(options?: { navigateAfterCreate?: boolean }): Promise<string | null> {
     setSaveMsg(null)
     setSaveErr(null)
     setSpecFieldErrors({})
@@ -548,7 +548,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (!productId) missing.push('Product')
     if (missing.length > 0) {
       setSaveErr(`Missing required fields: ${missing.join(', ')}`)
-      return false
+      return null
     }
     const totalKgForScheduling =
       finishMode === 'Cartons' && qty.cartonTotalKgIncludingWaste != null && qty.cartonTotalKgIncludingWaste > 0
@@ -567,9 +567,9 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     )
     if (qtyErr) {
       setSaveErr(qtyErr)
-      return false
+      return null
     }
-    if (savingJobSheet) return false
+    if (savingJobSheet) return null
 
     const sendProdDates = productionStatusShowsDatetimeFields(productionStatus)
     let specForSave = sanitizeSpecFormulationMixes(JSON.parse(JSON.stringify(spec)) as SpecPayload)
@@ -633,7 +633,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         if (!code) {
           setSaveErr('Complete the product spec so a product code is generated before saving.')
           setSavingJobSheet(false)
-          return false
+          return null
         }
         dispatch(clearCreateErrors())
         try {
@@ -672,7 +672,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             setSaveErr(e instanceof Error ? e.message : 'Failed to create product')
           }
           setSavingJobSheet(false)
-        return false
+          return null
         }
       }
 
@@ -710,8 +710,8 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         if (res?.job_sheet?.order_date) setOrderDate(String(res.job_sheet.order_date).slice(0, 10))
         setSaveMsg('Saved job sheet.')
         setDirty(false)
-        if (id) nav(returnTo || `/job-sheets/${encodeURIComponent(id)}/edit`)
-        return true
+        if (id && options?.navigateAfterCreate !== false) nav(returnTo || `/job-sheets/${encodeURIComponent(id)}/edit`)
+        return id ? String(id) : null
       } else {
         if (!jobSheetId) throw new Error('Missing job sheet id')
         const body: Record<string, unknown> = {
@@ -749,7 +749,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
           loadedOrderDefaultsRef.current = getSpecOrderDefaults(specForSave)
         }
         await dispatch(fetchJobSheet(jobSheetId)).unwrap()
-        return true
+        return jobSheetId
       }
     } catch (e: unknown) {
       if (isRejectedWithValue(e)) {
@@ -764,7 +764,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         setSpecFieldErrors({})
         setSaveErr(e instanceof Error ? e.message : 'Failed to save job sheet')
       }
-      return false
+      return null
     } finally {
       setSavingJobSheet(false)
     }
@@ -940,30 +940,24 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     if (savingJobSheet) return false
     if (mode !== 'edit' || !jobSheetId) return true
     // Persist latest edits before opening the printable job sheet (Print button / shortcut).
-    return await onSave()
+    return Boolean(await onSave())
   }
 
   async function onPrintJobSheet(): Promise<void> {
-    if (savingJobSheet || !jobSheetId) return
+    if (savingJobSheet) return
+    if (mode === 'new') {
+      const savedId = await onSave({ navigateAfterCreate: false })
+      if (!savedId) return
+      nav(`/job-sheets/${encodeURIComponent(savedId)}/print`)
+      return
+    }
+    if (!jobSheetId) return
     const ok = await onBeforeOpenPrintPreview()
     if (!ok) return
     nav(`/job-sheets/${encodeURIComponent(jobSheetId)}/print`)
   }
 
-  const onPrintJobSheetRef = useRef(onPrintJobSheet)
-  onPrintJobSheetRef.current = onPrintJobSheet
-
-  useEffect(() => {
-    if (mode !== 'edit' || !jobSheetId) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'p' && e.key !== 'P') return
-      if (!e.metaKey && !e.ctrlKey) return
-      e.preventDefault()
-      void onPrintJobSheetRef.current()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [mode, jobSheetId])
+  useJobSheetPrintShortcut(true, onPrintJobSheet)
 
   const disableIdentity = mode === 'edit'
   /** Quantity is always edited in the Product Spec area (embedded paper), not in the header card. */
@@ -1021,23 +1015,12 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         ) : null}
         <SaveFormButton
           variant="outlined"
-          onClick={onSave}
+          onClick={() => void onSave()}
           disabled={savingJobSheet || savingAsNew}
           saving={savingJobSheet}
           label={mode === 'new' ? 'Save job sheet' : 'Save'}
         />
-        {mode === 'edit' && jobSheetId ? (
-          <Button
-            variant="contained"
-            color="primary"
-            type="button"
-            onClick={() => void onPrintJobSheet()}
-            disabled={savingJobSheet || savingAsNew}
-            startIcon={<PrintIcon />}
-          >
-            Print
-          </Button>
-        ) : null}
+        <JobSheetPrintActionButton onPrint={onPrintJobSheet} disabled={savingJobSheet || savingAsNew} />
       </>
     )
   }

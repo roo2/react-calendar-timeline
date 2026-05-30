@@ -687,55 +687,61 @@ export function SpecPayloadForm(props: {
     return String(mm)
   }, [dimensions.base_length_mm, lengthUnits])
 
-  function onProductTypeChange(nextTypeRaw: string) {
+  function applyProductTypeSideEffects(d: SpecPayload, nextType: ProductType) {
+    d.identity.product_type = nextType
+
+    // Run-up only supported for Centerfold (2up) and Sheet (2up/4up/6up).
+    const nextRunUp = d.run_requirements?.run_up || 'none'
+    const allowed =
+      nextType === PRODUCT_TYPE.Centerfold
+        ? new Set(['none', '1up', '2up'])
+        : nextType === PRODUCT_TYPE.Sheet
+          ? new Set(['none', '2up', '4up', '6up'])
+          : new Set(['none'])
+    if (!allowed.has(String(nextRunUp))) d.run_requirements.run_up = 'none'
+
+    // Centerfold implies CentreFold geometry and no gusset.
+    if (nextType === PRODUCT_TYPE.Centerfold) {
+      d.dimensions.geometry = 'CentreFold'
+      d.dimensions.gusset_mm = null
+    } else if (nextType === PRODUCT_TYPE.Sheet) {
+      // Sheet uses its own geometry (single wound sheet / SWS).
+      d.dimensions.geometry = 'Sheet'
+      d.dimensions.gusset_mm = null
+    } else if (d.dimensions.geometry === 'CentreFold' || d.dimensions.geometry === 'Sheet') {
+      // Leaving centerfold/sheet for another product type.
+      d.dimensions.geometry = 'Flat'
+    }
+
+    // Gusset only allowed for Bag/Tube.
+    const allowGusset = nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Tube
+    if (!allowGusset && nextType !== PRODUCT_TYPE.Sheet && nextType !== PRODUCT_TYPE.Centerfold) {
+      d.dimensions.geometry = 'Flat'
+      d.dimensions.gusset_mm = null
+    }
+
+    // Tubes are always rolls in our simplified UI (continuous length; no discrete length).
+    if (nextType === PRODUCT_TYPE.Tube) {
+      d.identity.finish_mode = 'Rolls'
+      d.packaging.pack_mode = 'Rolls'
+      d.dimensions.base_length_mm = null
+      d.dimensions.length_units = 'Continuous'
+    }
+
+    // Continuous length is not available for Bag or Sleeve.
+    if (nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Sleeve) {
+      if (d.dimensions.length_units === 'Continuous') d.dimensions.length_units = 'mm'
+    }
+  }
+
+  function onProductTypeChange(nextTypeRaw: string, nextFinishRaw?: string) {
     const nextType = nextTypeRaw as ProductType
     update((d) => {
-      d.identity.product_type = nextType
-
-      // Run-up only supported for Centerfold (2up) and Sheet (2up/4up/6up).
-      const nextRunUp = d.run_requirements?.run_up || 'none'
-      const allowed =
-        nextType === PRODUCT_TYPE.Centerfold
-          ? new Set(['none', '1up', '2up'])
-          : nextType === PRODUCT_TYPE.Sheet
-            ? new Set(['none', '2up', '4up', '6up'])
-            : new Set(['none'])
-      if (!allowed.has(String(nextRunUp))) d.run_requirements.run_up = 'none'
-
-      // Centerfold implies CentreFold geometry and no gusset.
-      if (nextType === PRODUCT_TYPE.Centerfold) {
-        d.dimensions.geometry = 'CentreFold'
-        d.dimensions.gusset_mm = null
-        return
-      }
-
-      // Sheet uses its own geometry (single wound sheet / SWS).
-      if (nextType === PRODUCT_TYPE.Sheet) {
-        d.dimensions.geometry = 'Sheet'
-        d.dimensions.gusset_mm = null
-      } else if (d.dimensions.geometry === 'CentreFold' || d.dimensions.geometry === 'Sheet') {
-        // Leaving centerfold/sheet for another product type.
-        d.dimensions.geometry = 'Flat'
-      }
-
-      // Gusset only allowed for Bag/Tube.
-      const allowGusset = nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Tube
-      if (!allowGusset && nextType !== PRODUCT_TYPE.Sheet) {
-        d.dimensions.geometry = 'Flat'
-        d.dimensions.gusset_mm = null
-      }
-
-      // Tubes are always rolls in our simplified UI (continuous length; no discrete length).
-      if (nextType === PRODUCT_TYPE.Tube) {
-        d.identity.finish_mode = 'Rolls'
-        d.packaging.pack_mode = 'Rolls'
-        d.dimensions.base_length_mm = null
-        d.dimensions.length_units = 'Continuous'
-      }
-
-      // Continuous length is not available for Bag or Sleeve.
-      if (nextType === PRODUCT_TYPE.Bag || nextType === PRODUCT_TYPE.Sleeve) {
-        if (d.dimensions.length_units === 'Continuous') d.dimensions.length_units = 'mm'
+      applyProductTypeSideEffects(d, nextType)
+      if (nextFinishRaw) {
+        const nextFinish = nextType === PRODUCT_TYPE.Tube ? 'Rolls' : nextFinishRaw === 'Cartons' ? 'Cartons' : 'Rolls'
+        d.identity.finish_mode = nextFinish
+        d.packaging.pack_mode = nextFinish
       }
     })
   }
@@ -1570,12 +1576,6 @@ export function SpecPayloadForm(props: {
           productType={identity.product_type || PRODUCT_TYPE.Bag}
           onProductTypeChange={onProductTypeChange}
           finishMode={identity.finish_mode || 'Rolls'}
-          onFinishModeChange={(v) =>
-            update((d) => {
-              d.identity.finish_mode = v
-              d.packaging.pack_mode = v
-            })
-          }
           isTubeProduct={isTubeProduct}
           notes={run.notes || ''}
           onNotesChange={(raw) => update((d) => (d.run_requirements.notes = raw.trim() === '' ? null : raw))}

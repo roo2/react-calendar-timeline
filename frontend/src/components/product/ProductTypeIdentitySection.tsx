@@ -1,4 +1,4 @@
-import { Box, MenuItem, TextField, Typography } from '@mui/material'
+import { Box, ListSubheader, MenuItem, TextField, Typography } from '@mui/material'
 import { DefaultSelectField } from '../DefaultSelectField'
 import { PRODUCT_TYPE, PRODUCT_TYPES, productTypeLabel } from '../../utils/productTypes'
 
@@ -12,9 +12,8 @@ export type ProductTypeIdentitySectionProps = {
   customerCodeError?: boolean
   customerCodeHelperText?: string
   productType: string
-  onProductTypeChange: (value: string) => void
+  onProductTypeChange: (productType: string, finishMode?: string) => void
   finishMode: string
-  onFinishModeChange: (value: string) => void
   isTubeProduct?: boolean
   notes: string
   onNotesChange: (value: string) => void
@@ -38,12 +37,25 @@ export function ProductTypeIdentitySection(props: ProductTypeIdentitySectionProp
     productType,
     onProductTypeChange,
     finishMode,
-    onFinishModeChange,
     isTubeProduct = false,
     notes,
     onNotesChange,
     notesError,
   } = props
+
+  const combinedValue = `${productType || PRODUCT_TYPE.Bag}::${finishMode || 'Rolls'}`
+  const rollOptions = PRODUCT_TYPES.map((pt) => ({
+      finishMode: 'Rolls',
+      value: `${pt}::Rolls`,
+      label: `${productTypeLabel(pt)} on Roll`,
+      disabled: false,
+  }))
+  const cartonOptions = PRODUCT_TYPES.map((pt) => ({
+      finishMode: 'Cartons',
+      value: `${pt}::Cartons`,
+      label: `${productTypeLabel(pt)} in Carton`,
+      disabled: pt === PRODUCT_TYPE.Tube,
+  }))
 
   return (
     <Box>
@@ -85,29 +97,32 @@ export function ProductTypeIdentitySection(props: ProductTypeIdentitySectionProp
 
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
         <DefaultSelectField
-          label="Product Type"
-          defaultValue={PRODUCT_TYPE.Bag}
-          value={productType || PRODUCT_TYPE.Bag}
-          onChange={(e) => onProductTypeChange(e.target.value)}
+          label="Product / Finish"
+          defaultValue={`${PRODUCT_TYPE.Bag}::Rolls`}
+          value={combinedValue}
+          onChange={(e) => {
+            const [nextProductType, nextFinishMode] = String(e.target.value).split('::')
+            onProductTypeChange(nextProductType || PRODUCT_TYPE.Bag, nextFinishMode || 'Rolls')
+          }}
         >
-          {PRODUCT_TYPES.map((v) => (
-            <MenuItem key={v} value={v}>
-              {productTypeLabel(v)}
+          <ListSubheader>On Roll</ListSubheader>
+          {rollOptions.map((option) => (
+            <MenuItem key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </MenuItem>
+          ))}
+          <ListSubheader>In Carton</ListSubheader>
+          {cartonOptions.map((option) => (
+            <MenuItem key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
             </MenuItem>
           ))}
         </DefaultSelectField>
-
-        <DefaultSelectField
-          label="Finish Mode"
-          defaultValue="Rolls"
-          value={finishMode || 'Rolls'}
-          onChange={(e) => onFinishModeChange(e.target.value)}
-        >
-          <MenuItem value="Rolls">Rolls</MenuItem>
-          <MenuItem value="Cartons" disabled={isTubeProduct}>
-            Cartons
-          </MenuItem>
-        </DefaultSelectField>
+        {isTubeProduct ? (
+          <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+            Tube products are always set up as rolls with continuous length.
+          </Typography>
+        ) : null}
       </Box>
 
       <Box sx={{ mt: 2 }}>
