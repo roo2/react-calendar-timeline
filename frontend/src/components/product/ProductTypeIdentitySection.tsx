@@ -45,16 +45,14 @@ export function ProductTypeIdentitySection(props: ProductTypeIdentitySectionProp
 
   const combinedValue = `${productType || PRODUCT_TYPE.Bag}::${finishMode || 'Rolls'}`
   const rollOptions = PRODUCT_TYPES.map((pt) => ({
-      finishMode: 'Rolls',
-      value: `${pt}::Rolls`,
-      label: `${productTypeLabel(pt)} on Roll`,
-      disabled: false,
+    finishMode: 'Rolls',
+    value: `${pt}::Rolls`,
+    label: `${productTypeLabel(pt)} on Roll`,
   }))
-  const cartonOptions = PRODUCT_TYPES.map((pt) => ({
-      finishMode: 'Cartons',
-      value: `${pt}::Cartons`,
-      label: `${productTypeLabel(pt)} in Carton`,
-      disabled: pt === PRODUCT_TYPE.Tube,
+  const cartonOptions = PRODUCT_TYPES.filter((pt) => pt !== PRODUCT_TYPE.Tube).map((pt) => ({
+    finishMode: 'Cartons',
+    value: `${pt}::Cartons`,
+    label: `${productTypeLabel(pt)} in Carton`,
   }))
 
   return (
@@ -107,13 +105,13 @@ export function ProductTypeIdentitySection(props: ProductTypeIdentitySectionProp
         >
           <ListSubheader>On Roll</ListSubheader>
           {rollOptions.map((option) => (
-            <MenuItem key={option.value} value={option.value} disabled={option.disabled}>
+            <MenuItem key={option.value} value={option.value}>
               {option.label}
             </MenuItem>
           ))}
           <ListSubheader>In Carton</ListSubheader>
           {cartonOptions.map((option) => (
-            <MenuItem key={option.value} value={option.value} disabled={option.disabled}>
+            <MenuItem key={option.value} value={option.value}>
               {option.label}
             </MenuItem>
           ))}
