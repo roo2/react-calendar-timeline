@@ -741,6 +741,11 @@ async def show_order(order_id: str):
                     "quantity_value": float(js.quantity_value),
                     "quantity_unit": js.quantity_unit,
                     "qty_type": str(getattr(js, "qty_type", None) or "") or None,
+                    "weight_per_roll_kg": (
+                        float(js.weight_per_roll_kg)
+                        if getattr(js, "weight_per_roll_kg", None) is not None
+                        else None
+                    ),
                     "rate": float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None,
                     "total_price": float(js.line_total) if getattr(js, "line_total", None) is not None else None,
                     "income_account_display_id": id_disp,

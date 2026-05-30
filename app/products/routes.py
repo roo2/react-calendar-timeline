@@ -66,6 +66,7 @@ def _product_summary(p) -> dict:
 
     identity = spec.get("identity") if isinstance(spec, dict) else None
     packaging = spec.get("packaging") if isinstance(spec, dict) else None
+    order_defaults = spec.get("order_defaults") if isinstance(spec, dict) else None
     product_type = identity.get("product_type") if isinstance(identity, dict) else None
     finish_mode = identity.get("finish_mode") if isinstance(identity, dict) else None
     pack_mode = packaging.get("pack_mode") if isinstance(packaging, dict) else None
@@ -87,6 +88,7 @@ def _product_summary(p) -> dict:
         "production_extruder_code": getattr(p, "production_extruder_code", None),
         "die_size": getattr(p, "die_size", None),
         "default_qty_type": getattr(p, "default_qty_type", None),
+        "order_defaults": order_defaults if isinstance(order_defaults, dict) else None,
         "last_order_defaults": getattr(p, "_last_order_defaults", None),
     }
 

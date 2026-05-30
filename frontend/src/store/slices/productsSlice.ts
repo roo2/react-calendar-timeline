@@ -54,6 +54,12 @@ export type ProductListItem = {
   pack_mode?: string | null
   /** Preferred qty_type for repeat orders (from product row). */
   default_qty_type?: string | null
+  /** Product-level repeat-order defaults from the active version spec. */
+  order_defaults?: {
+    qty_type?: string | null
+    quantity_unit?: string | null
+    weight_per_roll_kg?: number | null
+  } | null
   /** Latest job sheet qty/rate for this customer + product when listing with customer_id. */
   last_order_defaults?: {
     quantity_value?: number | null

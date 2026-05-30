@@ -95,6 +95,8 @@ type OrderLine = {
   quantity_value: string
   /** Job sheet quantity mode; both roll modes use `rolls` on the order line. */
   qty_type?: string
+  /** Product-level repeat-order roll weight, copied into the generated job sheet. */
+  weight_per_roll_kg?: number | null
   rate: string
   total_price: string
   /** From product spec (list or order item); drives which units are offered. */
@@ -330,6 +332,10 @@ function lineFromApiItem(it: any): OrderLine {
     quantity_unit,
     ...(qt ? { qty_type: qt } : {}),
     quantity_value: it.quantity_value != null ? String(it.quantity_value) : '1',
+    weight_per_roll_kg:
+      it.weight_per_roll_kg != null && Number.isFinite(Number(it.weight_per_roll_kg))
+        ? Number(it.weight_per_roll_kg)
+        : null,
     rate: it.rate != null && Number.isFinite(Number(it.rate)) ? String(it.rate) : '',
     total_price: it.total_price != null && Number.isFinite(Number(it.total_price)) ? String(it.total_price) : '',
     gst_rate: it.gst_rate != null && Number.isFinite(Number(it.gst_rate)) ? Number(it.gst_rate) : null,
@@ -362,7 +368,13 @@ function unitChoices(
 
 function buildProductOrderItemBody(
   productId: string,
-  lineDefaults: { quantity_unit: QuantityUnit; quantity_value: string; rate: string; qty_type?: string },
+  lineDefaults: {
+    quantity_unit: QuantityUnit
+    quantity_value: string
+    rate: string
+    qty_type?: string
+    weight_per_roll_kg?: number
+  },
 ) {
   const qv = Number(lineDefaults.quantity_value || '1')
   const qt = jobSheetQtyTypeForOrderUnit(lineDefaults.quantity_unit, lineDefaults.qty_type)
@@ -373,6 +385,9 @@ function buildProductOrderItemBody(
     quantity_unit: lineDefaults.quantity_unit,
     quantity_value: qv,
     ...(rate != null ? { rate } : {}),
+    ...(lineDefaults.weight_per_roll_kg != null && lineDefaults.weight_per_roll_kg > 0
+      ? { weight_per_roll_kg: lineDefaults.weight_per_roll_kg }
+      : {}),
     ...buildOrderToJobSheetQuantityExtras(lineDefaults.quantity_unit, qv, qt),
   }
 }
@@ -389,6 +404,9 @@ function buildProductOrderItemBodyFromLine(it: OrderLine) {
     quantity_value: qv,
     ...(rate != null ? { rate } : {}),
     ...(totalPrice != null ? { total_price: totalPrice } : {}),
+    ...(it.weight_per_roll_kg != null && Number(it.weight_per_roll_kg) > 0
+      ? { weight_per_roll_kg: Number(it.weight_per_roll_kg) }
+      : {}),
     ...buildOrderToJobSheetQuantityExtras(it.quantity_unit, qv, qt),
   }
 }
@@ -597,6 +615,7 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
                   finish_mode: args.finish_mode,
                   quantity_unit: args.quantity_unit,
                   quantity_value: String(args.quantity_value),
+                  weight_per_roll_kg: args.weight_per_roll_kg ?? null,
                   rate: '',
                   total_price: '',
                   line_index: nextLineIndex(prev),

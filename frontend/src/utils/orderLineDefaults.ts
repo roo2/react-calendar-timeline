@@ -10,6 +10,7 @@ export type ProductLastOrderDefaults = {
   quantity_value?: number | null
   quantity_unit?: string | null
   qty_type?: string | null
+  weight_per_roll_kg?: number | null
   rate?: number | null
 }
 
@@ -47,11 +48,26 @@ export function buildOrderLineDefaultsFromProduct(p: ProductListItem): {
   quantity_value: string
   rate: string
   qty_type?: string
+  weight_per_roll_kg?: number
 } {
   const fm = finishModeForProduct(p)
   const finishForQty: 'Rolls' | 'Cartons' = fm === 'Cartons' ? 'Cartons' : 'Rolls'
   const allowed = unitChoices(fm)
+  const specDefaults = p.order_defaults
   const last = p.last_order_defaults as ProductLastOrderDefaults | null | undefined
+  const specWpr =
+    specDefaults?.weight_per_roll_kg != null &&
+    Number.isFinite(Number(specDefaults.weight_per_roll_kg)) &&
+    Number(specDefaults.weight_per_roll_kg) > 0
+      ? Number(specDefaults.weight_per_roll_kg)
+      : null
+  const lastWpr =
+    last?.weight_per_roll_kg != null &&
+    Number.isFinite(Number(last.weight_per_roll_kg)) &&
+    Number(last.weight_per_roll_kg) > 0
+      ? Number(last.weight_per_roll_kg)
+      : null
+  const weight_per_roll_kg = specWpr ?? lastWpr ?? undefined
 
   if (last) {
     const lastQt = (last.qty_type || '').trim()
@@ -65,16 +81,16 @@ export function buildOrderLineDefaultsFromProduct(p: ProductListItem): {
         : '1'
     const rate = last.rate != null && Number.isFinite(Number(last.rate)) && Number(last.rate) >= 0 ? String(last.rate) : ''
     const qt = jobSheetQtyTypeForOrderUnit(unit, lastQt || undefined)
-    return { quantity_unit: unit, quantity_value: qv, rate, ...(qt ? { qty_type: qt } : {}) }
+    return { quantity_unit: unit, quantity_value: qv, rate, ...(qt ? { qty_type: qt } : {}), ...(weight_per_roll_kg ? { weight_per_roll_kg } : {}) }
   }
 
-  const dqt = (p.default_qty_type || '').trim()
+  const dqt = (specDefaults?.qty_type || p.default_qty_type || '').trim()
   if (dqt) {
     const fromType = orderQuantityUnitFromJobSheetQtyType(dqt, finishForQty)
     const unit = fromType && allowed.includes(fromType) ? fromType : allowed[0]
     const qt = jobSheetQtyTypeForOrderUnit(unit, dqt)
-    return { quantity_unit: unit, quantity_value: '1', rate: '', ...(qt ? { qty_type: qt } : {}) }
+    return { quantity_unit: unit, quantity_value: '1', rate: '', ...(qt ? { qty_type: qt } : {}), ...(weight_per_roll_kg ? { weight_per_roll_kg } : {}) }
   }
 
-  return { quantity_unit: allowed[0] ?? 'kg', quantity_value: '1', rate: '' }
+  return { quantity_unit: allowed[0] ?? 'kg', quantity_value: '1', rate: '', ...(weight_per_roll_kg ? { weight_per_roll_kg } : {}) }
 }

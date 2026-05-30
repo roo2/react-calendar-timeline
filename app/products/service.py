@@ -723,10 +723,16 @@ def _last_order_defaults_by_product_id(db: Session, customer_id: str, product_id
         if pid in out:
             continue
         rate = float(js.unit_rate) if getattr(js, "unit_rate", None) is not None else None
+        weight_per_roll = (
+            float(js.weight_per_roll_kg)
+            if getattr(js, "weight_per_roll_kg", None) is not None
+            else None
+        )
         out[pid] = {
             "quantity_value": float(js.quantity_value),
             "quantity_unit": str(js.quantity_unit),
             "qty_type": str(getattr(js, "qty_type", None) or ""),
+            "weight_per_roll_kg": weight_per_roll,
             "rate": rate,
         }
     return out

@@ -133,6 +133,7 @@ export type EmbeddedNewJobSheetFlow = {
     due_date: string
     quantity_unit: 'kg' | 'rolls' | 'cartons' | '1000'
     quantity_value: number
+    weight_per_roll_kg?: number | null
     finish_mode: 'Rolls' | 'Cartons' | null
   }) => void
 }
@@ -1141,10 +1142,49 @@ export function ProductVersionEditor(props: {
       setJobSaveErr(qtyErr)
       return null
     }
+    const persistedRolls = resolveNumRollsForPersistence(
+      finishMode,
+      effectiveQtyType,
+      totalKgNum,
+      numRollsNum,
+      weightPerRollNum,
+      derivedDisplay,
+    )
+    const persistedWpr = resolveWeightPerRollForPersistence(
+      finishMode,
+      effectiveQtyType,
+      totalKgForScheduling,
+      numRollsNum,
+      weightPerRollNum,
+      derivedDisplay,
+    )
+    const bpc = spec.packaging?.bags_per_carton
+    const bpcNum = bpc != null ? Number(bpc) : null
+    const oq = getOrderQuantityFromJobSheetFields(
+      effectiveQtyType,
+      1,
+      totalKgForScheduling,
+      numUnitsNum,
+      persistedRolls,
+      finishMode,
+      bpcNum,
+      finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
+      numCartonsNum,
+    )
+    const orderDefaultsPatch = buildOrderDefaultsFromEditor({
+      effectiveQtyType,
+      finishMode,
+      weightPerRollNum: persistedWpr ?? weightPerRollNum,
+      customerFacingDescription: customerFacingDescriptionFromSpec(spec),
+      bagsPerCarton: bpcNum,
+      cartonQtyMode: qty.cartonQtyMode,
+      customerOverproductionHandling: customerOverproductionFromSpec(spec, finishMode),
+    })
+    const specWithOrderDefaults = mergeOrderDefaultsIntoSpec(spec, orderDefaultsPatch)
     setSavingEmbeddedJob(true)
     try {
       const createRes = await dispatch(
-        createProduct({ data: { customer_id: flow.customerId, code, spec } }),
+        createProduct({ data: { customer_id: flow.customerId, code, spec: specWithOrderDefaults } }),
       ).unwrap()
       const createdPid = String(createRes?.product?.id || '')
       if (!createdPid) throw new Error('Product was created but no id was returned')
@@ -1153,36 +1193,6 @@ export function ProductVersionEditor(props: {
       const createdProduct = pres?.product as { code?: string; description?: string | null } | undefined
 
       await dispatch(fetchProducts({ customer_id: flow.customerId })).unwrap()
-
-      const persistedRolls = resolveNumRollsForPersistence(
-        finishMode,
-        effectiveQtyType,
-        totalKgNum,
-        numRollsNum,
-        weightPerRollNum,
-        derivedDisplay,
-      )
-      const persistedWpr = resolveWeightPerRollForPersistence(
-        finishMode,
-        effectiveQtyType,
-        totalKgForScheduling,
-        numRollsNum,
-        weightPerRollNum,
-        derivedDisplay,
-      )
-      const bpc = spec.packaging?.bags_per_carton
-      const bpcNum = bpc != null ? Number(bpc) : null
-      const oq = getOrderQuantityFromJobSheetFields(
-        effectiveQtyType,
-        1,
-        totalKgForScheduling,
-        numUnitsNum,
-        persistedRolls,
-        finishMode,
-        bpcNum,
-        finishMode === 'Cartons' ? qty.cartonQtyMode : undefined,
-        numCartonsNum,
-      )
 
       let createdJobSheetId: string | null = null
       if (flow.orderId) {
@@ -1219,7 +1229,7 @@ export function ProductVersionEditor(props: {
                     : null,
               weight_per_roll_kg: persistedWpr,
               num_rolls: persistedRolls,
-              spec,
+              spec: specWithOrderDefaults,
               production_extruder_code: productionExtruderCode.trim() || null,
             },
           }),
@@ -1234,6 +1244,7 @@ export function ProductVersionEditor(props: {
           due_date: dueDate,
           quantity_unit: oq.quantity_unit,
           quantity_value: oq.quantity_value,
+          weight_per_roll_kg: persistedWpr ?? null,
           finish_mode: finishMode,
         })
       }
