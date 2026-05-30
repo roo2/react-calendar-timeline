@@ -1,5 +1,5 @@
 import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
-import { isMountedBagOnRoll } from '../utils/specCompat'
+import { PRODUCT_TYPE } from '../utils/productTypes'
 import { runUpNumericalFromSlug } from '../utils/runUpNumerical'
 import { collectQualityFlagIds } from '../utils/qualityFlagLabels'
 import { productSummaryPunchedChecked, ventedEnabledFromConv } from '../utils/punchHoleSpec'
@@ -157,7 +157,7 @@ export function ProductVersionSummary(props: { spec: any }) {
     gussetOn ? 'Gusset' : null,
     printed ? 'Printed' : null,
     spec?.run_requirements?.inline_perforation ? 'Perforated' : null,
-    isMountedBagOnRoll(spec?.identity?.product_type, spec?.identity?.finish_mode) ? 'Sealed' : null,
+    spec?.identity?.product_type === PRODUCT_TYPE.Bag ? 'Sealed' : null,
     punched ? 'Punched' : null,
     vented ? 'Vented' : null,
   ].filter(Boolean)

@@ -623,8 +623,60 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               ])
             }
           : undefined,
+      ensureOrderForEmbeddedJobSheet: async (args) => {
+        setErr(null)
+        try {
+          const qt = jobSheetQtyTypeForOrderUnit(args.quantity_unit, args.qty_type)
+          const body = {
+            product_id: args.product_id,
+            due_date: args.due_date || null,
+            quantity_unit: args.quantity_unit,
+            quantity_value: args.quantity_value,
+            ...(args.weight_per_roll_kg != null && args.weight_per_roll_kg > 0
+              ? { weight_per_roll_kg: args.weight_per_roll_kg }
+              : {}),
+            ...buildOrderToJobSheetQuantityExtras(args.quantity_unit, args.quantity_value, qt),
+          }
+
+          if (effectiveOrderId) {
+            return { orderId: effectiveOrderId, lineAlreadyAdded: false }
+          }
+
+          const productLines = items.filter((it) => it.line_kind !== 'resell')
+          const resellLines = items.filter((it) => it.line_kind === 'resell')
+          const res = await dispatch(
+            createOrder({
+              customer_id: customerId,
+              status: 'draft',
+              ...(invoiceNumber.trim() ? { invoice_number: invoiceNumber.trim() } : {}),
+              ...(customerPoNumber.trim() ? { customer_purchase_order_number: customerPoNumber.trim() } : {}),
+              ...(orderDate ? { order_date: orderDate } : {}),
+              items: [...productLines.map((it) => buildProductOrderItemBodyFromLine(it)), body],
+              ...(resellLines.length ? { resell_items: buildResellItemsPayloadFromLines(resellLines) } : {}),
+            }),
+          ).unwrap()
+          const oid = String(res.order_id)
+          setDraftOrderId(oid)
+          const { order: full } = await dispatch(fetchOrder(oid)).unwrap()
+          applyOrderResponse(full)
+          setDirty(true)
+          return { orderId: oid, lineAlreadyAdded: true }
+        } catch (e) {
+          return { error: e instanceof Error ? e.message : 'Failed to save order' }
+        }
+      },
     }
-  }, [newJobSheetOpen, customerId, mode, effectiveOrderId, orderDate, customerPoNumber, dispatch])
+  }, [
+    newJobSheetOpen,
+    customerId,
+    mode,
+    effectiveOrderId,
+    orderDate,
+    customerPoNumber,
+    invoiceNumber,
+    items,
+    dispatch,
+  ])
 
   const prevCustomerId = useRef<string>(initialDraft?.customerId || '')
 

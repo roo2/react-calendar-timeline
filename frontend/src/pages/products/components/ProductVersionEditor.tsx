@@ -116,6 +116,18 @@ function defaultDueDateStr(): string {
 /** `productId` sentinel for order-page “New job sheet” embedded editor (no product fetch until after create). */
 export const EMBEDDED_NEW_JOB_SHEET_PRODUCT_ID = '__embedded_new_job_sheet__'
 
+export type EmbeddedJobSheetDraftLineArgs = {
+  product_id: string
+  product_code: string
+  product_name?: string | null
+  due_date: string
+  quantity_unit: 'kg' | 'rolls' | 'cartons' | '1000'
+  quantity_value: number
+  weight_per_roll_kg?: number | null
+  finish_mode: 'Rolls' | 'Cartons' | null
+  qty_type?: string
+}
+
 export type EmbeddedNewJobSheetFlow = {
   customerId: string
   orderMode: 'new' | 'edit'
@@ -126,16 +138,11 @@ export type EmbeddedNewJobSheetFlow = {
   onCancel: () => void
   onFinished: () => void
   /** Draft new order only: append a local line with quantities from the job sheet editor. */
-  onNewDraftLine?: (args: {
-    product_id: string
-    product_code: string
-    product_name?: string | null
-    due_date: string
-    quantity_unit: 'kg' | 'rolls' | 'cartons' | '1000'
-    quantity_value: number
-    weight_per_roll_kg?: number | null
-    finish_mode: 'Rolls' | 'Cartons' | null
-  }) => void
+  onNewDraftLine?: (args: EmbeddedJobSheetDraftLineArgs) => void
+  /** Create or update the parent order so a job sheet can be persisted (e.g. before print). */
+  ensureOrderForEmbeddedJobSheet?: (
+    args: EmbeddedJobSheetDraftLineArgs,
+  ) => Promise<{ orderId: string; lineAlreadyAdded?: boolean } | { error: string } | null>
 }
 
 function inferQtyTypeFromUnit(u: string | undefined): QtyType {
@@ -1112,7 +1119,7 @@ export function ProductVersionEditor(props: {
         setSavingEmbeddedJob(false)
       }
     }
-    if (!flow.orderId && !options.closeAfterCreate) {
+    if (!flow.orderId && !options.closeAfterCreate && !flow.ensureOrderForEmbeddedJobSheet) {
       setJobSaveErr('Save the order before printing this new job sheet.')
       return null
     }
@@ -1194,20 +1201,50 @@ export function ProductVersionEditor(props: {
 
       await dispatch(fetchProducts({ customer_id: flow.customerId })).unwrap()
 
+      const draftLineArgs: EmbeddedJobSheetDraftLineArgs = {
+        product_id: createdPid,
+        product_code: String(createdProduct?.code || code),
+        product_name: (createdProduct?.description as string | null | undefined) ?? null,
+        due_date: dueDate,
+        quantity_unit: oq.quantity_unit,
+        quantity_value: oq.quantity_value,
+        weight_per_roll_kg: persistedWpr ?? null,
+        finish_mode: finishMode,
+        qty_type: effectiveQtyType,
+      }
+
       let createdJobSheetId: string | null = null
-      if (flow.orderId) {
-        await dispatch(
-          addOrderItem({
-            orderId: flow.orderId,
-            body: {
-              product_id: createdPid,
-              due_date: dueDate || null,
-              quantity_unit: oq.quantity_unit,
-              quantity_value: oq.quantity_value,
-            },
-          }),
-        ).unwrap()
-        const { order: res } = await dispatch(fetchOrder(flow.orderId)).unwrap()
+      let resolvedOrderId = flow.orderId ?? null
+      let lineAlreadyAdded = false
+      if (!resolvedOrderId && !options.closeAfterCreate) {
+        const ensured = await flow.ensureOrderForEmbeddedJobSheet?.(draftLineArgs)
+        if (!ensured) {
+          setJobSaveErr('Failed to save order before printing.')
+          return null
+        }
+        if ('error' in ensured) {
+          setJobSaveErr(ensured.error)
+          return null
+        }
+        resolvedOrderId = ensured.orderId
+        lineAlreadyAdded = ensured.lineAlreadyAdded ?? false
+      }
+
+      if (resolvedOrderId) {
+        if (!lineAlreadyAdded) {
+          await dispatch(
+            addOrderItem({
+              orderId: resolvedOrderId,
+              body: {
+                product_id: createdPid,
+                due_date: dueDate || null,
+                quantity_unit: oq.quantity_unit,
+                quantity_value: oq.quantity_value,
+              },
+            }),
+          ).unwrap()
+        }
+        const { order: res } = await dispatch(fetchOrder(resolvedOrderId)).unwrap()
         const items = Array.isArray(res?.items) ? res.items : []
         const line = [...items].reverse().find((it: any) => String(it.product_id) === createdPid)
         const jsid = line?.job_sheet_id != null ? String(line.job_sheet_id) : ''
@@ -1237,16 +1274,7 @@ export function ProductVersionEditor(props: {
         createdJobSheetId = jsid
         setEmbeddedCreatedJobSheetId(jsid)
       } else {
-        flow.onNewDraftLine?.({
-          product_id: createdPid,
-          product_code: String(createdProduct?.code || code),
-          product_name: (createdProduct?.description as string | null | undefined) ?? null,
-          due_date: dueDate,
-          quantity_unit: oq.quantity_unit,
-          quantity_value: oq.quantity_value,
-          weight_per_roll_kg: persistedWpr ?? null,
-          finish_mode: finishMode,
-        })
+        flow.onNewDraftLine?.(draftLineArgs)
       }
 
       setDirty(false)

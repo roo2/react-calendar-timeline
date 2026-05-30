@@ -14,7 +14,6 @@ export type ProductTypeIdentitySectionProps = {
   productType: string
   onProductTypeChange: (productType: string, finishMode?: string) => void
   finishMode: string
-  isTubeProduct?: boolean
   notes: string
   onNotesChange: (value: string) => void
   notesError?: string
@@ -37,7 +36,6 @@ export function ProductTypeIdentitySection(props: ProductTypeIdentitySectionProp
     productType,
     onProductTypeChange,
     finishMode,
-    isTubeProduct = false,
     notes,
     onNotesChange,
     notesError,
@@ -116,11 +114,6 @@ export function ProductTypeIdentitySection(props: ProductTypeIdentitySectionProp
             </MenuItem>
           ))}
         </DefaultSelectField>
-        {isTubeProduct ? (
-          <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
-            Tube products are always set up as rolls with continuous length.
-          </Typography>
-        ) : null}
       </Box>
 
       <Box sx={{ mt: 2 }}>

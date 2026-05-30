@@ -460,6 +460,7 @@ export function SpecPayloadForm(props: {
     [productType, finishMode, run.inline_perforation],
   )
   const isBagInCarton = productType === PRODUCT_TYPE.Bag && finishMode === 'Cartons'
+  const isSealedProduct = productType === PRODUCT_TYPE.Bag
   const isTubeProduct = productType === PRODUCT_TYPE.Tube
   const canHaveGusset = productType === PRODUCT_TYPE.Bag || productType === PRODUCT_TYPE.Tube
   const isUFilm = productType === PRODUCT_TYPE.UFilm
@@ -1576,7 +1577,6 @@ export function SpecPayloadForm(props: {
           productType={identity.product_type || PRODUCT_TYPE.Bag}
           onProductTypeChange={onProductTypeChange}
           finishMode={identity.finish_mode || 'Rolls'}
-          isTubeProduct={isTubeProduct}
           notes={run.notes || ''}
           onNotesChange={(raw) => update((d) => (d.run_requirements.notes = raw.trim() === '' ? null : raw))}
           notesError={errorFor('spec.run_requirements.notes')}
@@ -1654,6 +1654,10 @@ export function SpecPayloadForm(props: {
               />
             }
             label="Printed"
+          />
+          <FormControlLabel
+            control={<Checkbox checked={isSealedProduct} disabled />}
+            label="Sealed"
           />
           <FormControlLabel
             control={
