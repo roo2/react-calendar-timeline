@@ -302,6 +302,7 @@ function buildExtrusionRunFlags(input: {
   }
   if (input.mountedBagOnRoll) {
     flags.push({ key: 'mountedBagOnRoll', label: 'Mounted Bag on Roll', value: 'Yes', valueClassName: hl })
+    flags.push({ key: 'inlineSeal', label: 'Inline Seal', value: 'Yes', valueClassName: hl })
   }
   if (input.inlinePerforated) {
     flags.push({ key: 'inlinePerf', label: 'Inline perf', value: 'Yes', valueClassName: hl })

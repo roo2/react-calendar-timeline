@@ -710,11 +710,31 @@ def export_order_to_xero_invoice(db: Session, *, order_id: str) -> dict[str, Any
     }
 
 
+# Legacy imported app customers were stored with names trimmed to 25 characters.
+IMPORTED_CUSTOMER_NAME_MAX_LEN = 25
+
+
 def _normalize_match_text(value: Any) -> str:
     s = str(value or "").casefold()
     s = re.sub(r"&", " and ", s)
     s = re.sub(r"[^a-z0-9]+", " ", s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def _imported_customer_name_key(value: Any) -> str:
+    """Normalized key for app customers whose stored name is at most 25 characters."""
+    raw = str(value or "").strip()
+    if not raw or len(raw) > IMPORTED_CUSTOMER_NAME_MAX_LEN:
+        return ""
+    return _normalize_match_text(raw)
+
+
+def _xero_imported_name_lookup_key(value: Any) -> str:
+    """Compare Xero's full name using the same 25-character prefix used on import."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return _normalize_match_text(raw[:IMPORTED_CUSTOMER_NAME_MAX_LEN])
 
 
 def _normalize_account_code(value: Any) -> str:
@@ -805,7 +825,8 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
     Match Xero contacts to existing app customers without changing customer details.
 
     The only field the apply step writes is customers.xero_contact_id. Matching is conservative:
-    existing links, unique MYOB/Xero account code, unique ABN/tax number, then unique exact name.
+    existing links, unique MYOB/Xero account code, unique ABN/tax number, unique exact name,
+    then unique 25-character imported-name prefix match for legacy trimmed app customer names.
     Ambiguous or unmatched contacts are reported for manual review.
     """
     contacts = _load_xero_contacts_for_customer_linking(db)
@@ -819,6 +840,7 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
     by_myob_display = _unique_index(customers, lambda c: _normalize_account_code(c.myob_display_id))
     by_abn = _unique_index(customers, lambda c: _normalize_tax_number(c.abn))
     by_name = _unique_index(customers, lambda c: _normalize_match_text(c.name))
+    by_imported_name = _unique_index(customers, _imported_customer_name_key)
 
     claimed_customer_ids: set[str] = set()
     matches: list[dict[str, Any]] = []
@@ -841,6 +863,7 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
                 ("myob_display_id", by_myob_display.get(_normalize_account_code(account_code))),
                 ("abn", by_abn.get(_normalize_tax_number(tax_number))),
                 ("name", by_name.get(_normalize_match_text(name))),
+                ("name_prefix_25", by_imported_name.get(_xero_imported_name_lookup_key(name))),
             ):
                 if candidate is not None:
                     match = candidate
