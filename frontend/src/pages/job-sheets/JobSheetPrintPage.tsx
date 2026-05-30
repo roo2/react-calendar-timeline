@@ -1004,6 +1004,8 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
           <td>
             <span>{ship.orderUnitsForPallets || '—'}</span>
             {ship.overproductionAcceptLabel.trim() ? (
+             <>
+              <span>, </span>
               <span
                 className={
                   ship.overproductionHighlightClass
@@ -1013,7 +1015,7 @@ function JobSheetPrintShippingDetailsTable(props: { ship: JobSheetPrintShippingM
               >
                 {ship.overproductionAcceptLabel}
               </span>
-            ) : null}
+              </>) : null}
           </td>
           <th>Pallets required</th>
           <td>{ship.palletsRequired || '—'}</td>

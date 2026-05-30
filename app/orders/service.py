@@ -58,6 +58,27 @@ def _new_order_code() -> str:
     return f"ORD-{uuid.uuid4().hex[:8].upper()}"
 
 
+def _order_code_exists(db, code: str, *, exclude_order_id: str | None = None) -> bool:
+    stmt = select(OrderModel.id).where(OrderModel.code == code)
+    if exclude_order_id:
+        stmt = stmt.where(OrderModel.id != str(exclude_order_id))
+    return db.scalar(stmt) is not None
+
+
+def _requested_order_code_or_new(db, invoice_number: str | None) -> str:
+    requested = str(invoice_number or "").strip()
+    if requested:
+        code = requested[:32]
+        if _order_code_exists(db, code):
+            raise DomainError(f'Order number "{code}" already exists. Choose a different order number.')
+        return code
+    for _ in range(5):
+        code = _new_order_code()
+        if not _order_code_exists(db, code):
+            return code
+    raise DomainError("Could not generate a unique order number. Please try again.")
+
+
 def _ensure_customer_exists(db, customer_id: str) -> None:
     try:
         uuid.UUID(str(customer_id))
@@ -400,6 +421,8 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
 
         _ensure_customer_exists(db, customer_id)
 
+        code = _requested_order_code_or_new(db, payload.invoice_number)
+
         created_job_sheets = []
         for it in payload.items:
             due_dt = None
@@ -419,9 +442,6 @@ def create_order(payload: CreateOrderRequest, *, created_by: str) -> OrderModel:
             )
             created_job_sheets.append(js)
 
-        code = _new_order_code()
-        if payload.invoice_number and str(payload.invoice_number).strip():
-            code = str(payload.invoice_number).strip()[:32]
         order_date = None
         if payload.order_date is not None:
             order_date = payload.order_date
@@ -524,7 +544,11 @@ def update_order(order_id: str, payload: UpdateOrderRequest) -> OrderModel:
             _require_order_editable(o)
         if "invoice_number" in updates:
             code = str(payload.invoice_number or "").strip()
-            o.code = code[:32] if code else o.code
+            if code:
+                next_code = code[:32]
+                if next_code != o.code and _order_code_exists(db, next_code, exclude_order_id=str(o.id)):
+                    raise DomainError(f'Order number "{next_code}" already exists. Choose a different order number.')
+                o.code = next_code
         if "customer_purchase_order_number" in updates:
             cpo = str(payload.customer_purchase_order_number or "").strip()
             o.customer_purchase_order_number = cpo[:128] if cpo else None

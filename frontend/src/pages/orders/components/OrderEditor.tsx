@@ -1152,6 +1152,8 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   }, [items, myobImportLines, orderGstRate])
 
   const displayItems = useMemo(() => sortOrderLinesByIndex(items), [items])
+  const orderNumberError =
+    err != null && /order number/i.test(err) && /already exists/i.test(err) ? err : null
   const sortedMyobImportLines = useMemo(
     () => [...myobImportLines].sort((a, b) => (a.line_index || 0) - (b.line_index || 0)),
     [myobImportLines],
@@ -1589,12 +1591,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
             <Stack spacing={2}>
               <TextField
-                label="Invoice Number"
+                label="Order Number"
                 value={invoiceNumber}
-                onChange={(e) => { setInvoiceNumber(e.target.value); setDirty(true) }}
+                onChange={(e) => { setInvoiceNumber(e.target.value); setDirty(true); if (orderNumberError) setErr(null) }}
                 disabled={orderLocked}
                 placeholder={mode === 'new' ? 'Leave blank to auto-generate' : undefined}
                 inputProps={{ maxLength: 32 }}
+                error={Boolean(orderNumberError)}
+                helperText={orderNumberError || undefined}
               />
               <TextField
                 label="Customer PO Number"

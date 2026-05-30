@@ -233,7 +233,7 @@ export function OrdersPage() {
               },
             }}
           >
-            <TextField size="small" label="Invoice Number" value={filters.invoiceNumber} onChange={(e) => setFilter('invoiceNumber', e.target.value)} />
+            <TextField size="small" label="Order Number" value={filters.invoiceNumber} onChange={(e) => setFilter('invoiceNumber', e.target.value)} />
             <TextField size="small" label="Customer PO" value={filters.customerPo} onChange={(e) => setFilter('customerPo', e.target.value)} />
             <TextField size="small" label="Customer" value={filters.customer} onChange={(e) => setFilter('customer', e.target.value)} />
             <FormControl size="small" fullWidth>
@@ -294,7 +294,7 @@ export function OrdersPage() {
             <TableHead>
               <TableRow>
                 <SortHeaderCell column="invoice" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
-                  Invoice Number
+                  Order Number
                 </SortHeaderCell>
                 <SortHeaderCell column="customer_po" sortBy={filters.sortBy} sortDir={sortDirSafe} onSort={onSortColumn}>
                   Customer PO
