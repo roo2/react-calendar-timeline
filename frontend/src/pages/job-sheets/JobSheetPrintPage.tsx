@@ -92,7 +92,13 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchJobSheet } from '../../store/slices/jobSheetsSlice'
 import { fetchProductSpecBundle } from '../../store/slices/productSpecSlice'
 import { fetchQuoteRatebook } from '../../store/slices/quotesSlice'
-import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../../utils/quoteCalculator'
+import {
+  computeDerivedGeometryAndTotals,
+  computeQuickQuotePreview,
+  formatTargetGaugeDisplay,
+  resolveTargetGaugeUmForSpec,
+  type QuickQuoteInputs,
+} from '../../utils/quoteCalculator'
 import { buildSpecQuantitySliceFromPersistedJobSheet } from '../../utils/jobSheetQuantityFromApi'
 import {
   buildQuickQuoteInputsFromSpec,
@@ -311,14 +317,6 @@ function buildExtrusionRunFlags(input: {
       key: 'widthTol',
       label: 'Width tolerance',
       value: input.widthToleranceDisplay,
-      valueClassName: hl,
-    })
-  }
-  if (input.gaugeTrimExplicit && String(input.gaugeTrimDisplay ?? '').trim()) {
-    flags.push({
-      key: 'trim',
-      label: 'Trim',
-      value: input.gaugeTrimDisplay,
       valueClassName: hl,
     })
   }
@@ -1872,20 +1870,22 @@ export function JobSheetPrintPage() {
     let geoDerived: ReturnType<typeof computeDerivedGeometryAndTotals> | null = null
     let quotePreviewForWaste: ReturnType<typeof computeQuickQuotePreview> | null = null
     let qtySliceForPrint: SpecQuantitySlice | null = null
+    let quickInputsForPrint: QuickQuoteInputs | null = null
     if (rb && spec && typeof spec === 'object') {
       try {
         qtySliceForPrint = buildSpecQuantitySliceFromPersistedJobSheet(js as Record<string, unknown>, spec as SpecPayload)
-        const quick = buildQuickQuoteInputsFromSpec(spec as SpecPayload, qtySliceForPrint, {
+        quickInputsForPrint = buildQuickQuoteInputsFromSpec(spec as SpecPayload, qtySliceForPrint, {
           ratebook: rb,
           extruderCode: productionExtruderCode,
         })
-        geoDerived = computeDerivedGeometryAndTotals(quick, rb)
+        geoDerived = computeDerivedGeometryAndTotals(quickInputsForPrint, rb)
         if (productionExtruderCode) {
-          quotePreviewForWaste = computeQuickQuotePreview(quick, rb)
+          quotePreviewForWaste = computeQuickQuotePreview(quickInputsForPrint, rb)
         }
       } catch {
         geoDerived = null
         quotePreviewForWaste = null
+        quickInputsForPrint = null
       }
     }
 
@@ -1915,6 +1915,14 @@ export function JobSheetPrintPage() {
       geoDerived != null && geoDerived.mPerRoll != null && geoDerived.mPerRoll > 0 && Number.isFinite(geoDerived.mPerRoll)
         ? geoDerived.mPerRoll
         : null
+    const orderedGaugeNum = gaugeLine !== '' && Number.isFinite(Number(gaugeLine)) ? Number(gaugeLine) : null
+    const targetGaugeResolved = resolveTargetGaugeUmForSpec(
+      orderedGaugeNum,
+      geoDerived,
+      quickInputsForPrint,
+      rb,
+    )
+    const targetGaugeDisplay = formatTargetGaugeDisplay(orderedGaugeNum, targetGaugeResolved, { unitSuffix: 'µm' })
 
     const finishNorm = String(finishMode || '').trim().toLowerCase()
     const inlinePunchPrint = holePunched ? formatPunchPrintLines(runRecord, INLINE_PUNCH_FIELDS) : null
@@ -2616,6 +2624,7 @@ export function JobSheetPrintPage() {
         widthToleranceHighlight,
         lengthToleranceHighlight,
         gaugeLine,
+        targetGaugeDisplay,
         gaugeTrimDisplay,
         gaugeTrimExplicit,
         slit,
@@ -3021,6 +3030,26 @@ export function JobSheetPrintPage() {
         }
         .js-extrusion-run-flags--run-requirements {
           justify-content: flex-start;
+        }
+        .js-extrusion-run-flags--dimensions {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          column-gap: 1.25em;
+          row-gap: 8px;
+          justify-content: stretch;
+        }
+        .js-extrusion-run-flag--dimensions-leading {
+          justify-self: start;
+          min-width: 0;
+        }
+        .js-extrusion-run-flag--dimensions-trailing {
+          justify-self: end;
+        }
+        .js-extrusion-dim-target {
+          display: inline-flex;
+          align-items: baseline;
+          gap: 0;
         }
         .js-extrusion-run-flag {
           display: inline-flex;
@@ -4091,8 +4120,8 @@ export function JobSheetPrintPage() {
               </tr>
               <tr>
                 <td colSpan={6} className="js-extrusion-spec-line" aria-label="Extrusion dimensions">
-                  <div className="js-extrusion-run-flags">
-                    <div className="js-extrusion-run-flag">
+                  <div className="js-extrusion-run-flags js-extrusion-run-flags--dimensions">
+                    <div className="js-extrusion-run-flag js-extrusion-run-flag--dimensions-leading">
                       <span className="js-extrusion-spec-label">Dimensions:</span>{' '}
                       <span className="js-extrusion-dim-inline">
                         <span>{e.widthPrimarySingle ?? '-'}</span>
@@ -4121,8 +4150,15 @@ export function JobSheetPrintPage() {
                         <span>{e.gaugeLine || '-'}</span>
                         <span className="js-dim-primary-unit">µm</span>
                       </span>
+                      {e.targetGaugeDisplay ? (
+                        <span className="js-extrusion-dim-target">
+                          <span className="js-extrusion-spec-label">(</span>
+                          <b className={printHlValueClass('js-yellow')}>{e.targetGaugeDisplay}</b>
+                          <span className="js-extrusion-spec-label"> target)</span>
+                        </span>
+                      ) : null}
                     </div>
-                    <div className="js-extrusion-run-flag">
+                    <div className="js-extrusion-run-flag js-extrusion-run-flag--dimensions-trailing">
                       <span className="js-extrusion-spec-label">Number of rolls: </span>
                       <b>{qty.extruderOutputRollCount > 0 ? fmtCount(qty.extruderOutputRollCount) : '-'}</b>
                     </div>

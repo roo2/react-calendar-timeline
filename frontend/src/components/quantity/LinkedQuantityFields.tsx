@@ -1,8 +1,10 @@
 import {
   Box,
+  Checkbox,
   FormControl,
   FormControlLabel,
   FormLabel,
+  MenuItem,
   Radio,
   RadioGroup,
   TextField,
@@ -62,10 +64,23 @@ export function LinkedQuantityFields(props: {
   /** Used when finish mode is Cartons and qty mode isn't KG — bound to product spec `bags_per_carton`. */
   bagsPerCartonStr: string
   onBagsPerCartonChange: (raw: string) => void
+  rollWeightBilling?: 'core_included' | 'core_off' | 'core_half_off' | string | null
+  onRollWeightBillingChange?: (value: 'core_included' | 'core_off' | 'core_half_off') => void
+  trimGaugeChecked?: boolean
+  onTrimGaugeCheckedChange?: (checked: boolean) => void
   /** When true, omit carton roll weight here (parent renders {@link CartonRollWeightField} separately). */
   hideCartonRollWeight?: boolean
 }) {
-  const { qty, bagsPerCartonStr, onBagsPerCartonChange, hideCartonRollWeight = false } = props
+  const {
+    qty,
+    bagsPerCartonStr,
+    onBagsPerCartonChange,
+    rollWeightBilling = 'core_off',
+    onRollWeightBillingChange,
+    trimGaugeChecked = false,
+    onTrimGaugeCheckedChange,
+    hideCartonRollWeight = false,
+  } = props
 
   const {
     finishMode,
@@ -121,6 +136,20 @@ export function LinkedQuantityFields(props: {
   const unitsPerRollNum = Math.max(0, Math.round(Number(unitsPerRoll || 0)))
   const weightPerRollNum = Number(weightPerRoll || 0)
   const numRollsNumLocal = Math.max(0, Math.round(Number(numRolls || 0)))
+  const rollWeightBillingSlug =
+    rollWeightBilling === 'core_included' || rollWeightBilling === 'core_half_off' ? rollWeightBilling : 'core_off'
+  const weightPerRollLabel =
+    rollWeightBillingSlug === 'core_included'
+      ? 'Weight per Roll (kg, gross)'
+      : rollWeightBillingSlug === 'core_half_off'
+        ? 'Weight per Roll (kg, inc half core)'
+        : 'Weight per Roll (kg, net)'
+  const orderedProductsLabel = `Total ${productUnitLabel} (ordered)`
+  const targetProductsLabel = `Total ${productUnitLabel} (target)`
+  const targetUnitsDisplay =
+    derivedForDisplay?.targetUnits != null && Number.isFinite(Number(derivedForDisplay.targetUnits))
+      ? String(Math.round(Number(derivedForDisplay.targetUnits)))
+      : ''
 
   const kgPerMFromDerived =
     derivedForDisplay?.derivedTotalM != null &&
@@ -182,7 +211,14 @@ export function LinkedQuantityFields(props: {
         geometry and ratebook data allow it.
       </Typography>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2, mt: 2 }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' },
+          gap: 2,
+          mt: 2,
+        }}
+      >
         <TextField label="Ordered Meters" value={totalMetersReadonly} disabled />
 
         <TextField
@@ -190,9 +226,7 @@ export function LinkedQuantityFields(props: {
           type="number"
           inputProps={{ min: 0, step: 'any' }}
           value={
-            isContinuousLength && finishMode === 'Rolls'
-              ? totalKg
-              : totalKgEditable
+            totalKgEditable
               ? totalKg
               : haveDriverForTotalKg && totalKgDisplay != null
                 ? formatKgDisplay(totalKgDisplay)
@@ -269,8 +303,22 @@ export function LinkedQuantityFields(props: {
           />
         )}
 
+        {finishMode === 'Rolls' ? (
+          <TextField
+            select
+            label="Roll weight billing"
+            value={rollWeightBillingSlug}
+            onChange={(e) => onRollWeightBillingChange?.(e.target.value as 'core_included' | 'core_off' | 'core_half_off')}
+            disabled={!onRollWeightBillingChange}
+          >
+            <MenuItem value="core_off">Exclude core</MenuItem>
+            <MenuItem value="core_half_off">Half core</MenuItem>
+            <MenuItem value="core_included">Include core</MenuItem>
+          </TextField>
+        ) : null}
+
         <TextField
-          label={finishMode === 'Cartons' ? 'Weight per Carton (kg)' : 'Weight per Roll (kg)'}
+          label={finishMode === 'Cartons' ? 'Weight per Carton (kg)' : weightPerRollLabel}
           type="number"
           inputProps={{ min: 0, step: 'any' }}
           value={
@@ -322,9 +370,13 @@ export function LinkedQuantityFields(props: {
                         const mpr = nextWpr / kgPerMFromDerived
                         if (Number.isFinite(mpr) && mpr > 0) setMetersPerRoll(roundTo2Decimals(String(mpr)))
                       }
-                      const tk = Number(totalKg || 0)
-                      if (tk > 0 && nextWpr > 0) {
-                        setNumRolls(String(Math.max(1, Math.round(tk / nextWpr))))
+                      if (effectiveQtyType === 'kg' && numRollsNumLocal > 0 && nextWpr > 0) {
+                        setTotalKg(formatKgDisplay(numRollsNumLocal * nextWpr))
+                      } else {
+                        const tk = Number(totalKg || 0)
+                        if (tk > 0 && nextWpr > 0) {
+                          setNumRolls(String(Math.max(1, Math.round(tk / nextWpr))))
+                        }
                       }
                     }
                   : weightPerRollEditable
@@ -334,7 +386,6 @@ export function LinkedQuantityFields(props: {
                         if (finishMode === 'Rolls' && effectiveQtyType === 'kg' && !isContinuousLength && ratebook) {
                           const w = Number(raw)
                           const kpu = derivedForDisplay?.kgPerUnit
-                          const tk = Number(totalKg || 0)
                           if (
                             raw.trim() !== '' &&
                             Number.isFinite(w) &&
@@ -345,8 +396,8 @@ export function LinkedQuantityFields(props: {
                           ) {
                             setUnitsPerRoll(String(Math.max(1, Math.round(w / Number(kpu)))))
                           }
-                          if (raw.trim() !== '' && Number.isFinite(w) && w > 0 && tk > 0) {
-                            setNumRolls(String(Math.max(1, Math.round(tk / w))))
+                          if (raw.trim() !== '' && Number.isFinite(w) && w > 0 && numRollsNumLocal > 0) {
+                            setTotalKg(formatKgDisplay(numRollsNumLocal * w))
                           }
                         }
                       }
@@ -400,6 +451,19 @@ export function LinkedQuantityFields(props: {
                     if (
                       finishMode === 'Rolls' &&
                       !isContinuousLength &&
+                      effectiveQtyType === 'kg' &&
+                      r > 0 &&
+                      weightPerRollNum > 0
+                    ) {
+                      setTotalKg(formatKgDisplay(r * weightPerRollNum))
+                      const kpu = derivedForDisplay?.kgPerUnit
+                      if (kpu != null && Number.isFinite(Number(kpu)) && Number(kpu) > 0) {
+                        setNumUnits(String(Math.max(0, Math.round((r * weightPerRollNum) / Number(kpu)))))
+                      }
+                    }
+                    if (
+                      finishMode === 'Rolls' &&
+                      !isContinuousLength &&
                       effectiveQtyType === 'total_rolls' &&
                       unitsPerRollNum > 0 &&
                       r > 0 &&
@@ -422,10 +486,9 @@ export function LinkedQuantityFields(props: {
         />
 
         <TextField
-          label="Total products"
+          label={finishMode === 'Cartons' ? orderedProductsLabel : 'Total products'}
           type="number"
           inputProps={{ min: 0, step: 1 }}
-          sx={finishMode === 'Cartons' ? { gridColumn: '1 / -1' } : undefined}
           value={
             unitsEditable && !(finishMode === 'Cartons' && qtyMode === 'ctn')
               ? numUnits
@@ -452,6 +515,23 @@ export function LinkedQuantityFields(props: {
           }
           disabled={!unitsEditable || (finishMode === 'Cartons' && qtyMode === 'ctn')}
         />
+
+        {finishMode === 'Cartons' ? (
+          <>
+            <FormControlLabel
+              sx={{ m: 0, minHeight: 56, alignItems: 'center' }}
+              control={
+                <Checkbox
+                  checked={trimGaugeChecked}
+                  onChange={(e) => onTrimGaugeCheckedChange?.(e.target.checked)}
+                  disabled={!onTrimGaugeCheckedChange}
+                />
+              }
+              label="Trim 5% Gauge"
+            />
+            <ReadonlyDisplayField label={targetProductsLabel} value={targetUnitsDisplay} />
+          </>
+        ) : null}
 
         {finishMode === 'Rolls' && isContinuousLength ? (
           <TextField

@@ -184,7 +184,7 @@ export function JobSheetPreviewPanel(props: {
               <PreviewInlineRow label="Original order:" value={quoteSummary.orderQuantityLabel || ''} />
               <PreviewInlineRow label="Ordered Meters:" value={quoteSummary.extrudedMeters ? quoteSummary.extrudedMeters : ''} />
               <PreviewInlineRow
-                label="Order KG (before waste):"
+                label="Net KG (before waste):"
                 value={quoteSummary.productiveKg != null ? `${quoteSummary.productiveKg} kg` : ''}
               />
               <PreviewInlineRow

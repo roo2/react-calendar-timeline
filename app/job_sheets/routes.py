@@ -420,6 +420,9 @@ async def get_job_sheet(job_sheet_id: str):
     snap_map = service.production_job_snapshots_by_job_sheet_ids([str(js.id)])
     order_info = order_map.get(str(js.id))
     spec = getattr(getattr(js, "version", None), "spec_payload", None) or {}
+    product_id = str(getattr(js, "product_id", "") or "").strip()
+    if product_id:
+        spec = printing_artwork_service.merge_product_artwork_files_into_spec(spec, product_id=product_id)
     myob_desc: str | None = None
     with SessionLocal() as db:
         oi = (

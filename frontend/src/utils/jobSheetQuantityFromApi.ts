@@ -63,7 +63,12 @@ function parseQtyStrings(js: Record<string, unknown> | null | undefined, spec: S
 
   if (qtResolved === 'kg') {
     totalKgH = String(js?.quantity_value ?? '')
-    numUnitsH = ''
+    // Rolls + KG still saves discrete product count for web-length geometry (roll-weight billing gauge).
+    if (js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))) {
+      numUnitsH = String(Math.max(0, Math.round(Number(js.num_product_units))))
+    } else {
+      numUnitsH = ''
+    }
     unitsPerRollH = ''
     numRollsH = String(nrStored)
     weightPerRollH = wpr
@@ -114,11 +119,70 @@ function parseQtyStrings(js: Record<string, unknown> | null | undefined, spec: S
   }
 }
 
+/**
+ * Fill gaps in persisted job sheet quantity before calculator/print (weight/roll, bags/roll).
+ * Roll-weight billing target gauge needs billed weight/roll and a consistent roll count.
+ */
+export function enrichSpecQuantitySliceForPrint(
+  slice: SpecQuantitySlice,
+  js: Record<string, unknown> | null | undefined,
+  spec: SpecPayload,
+): SpecQuantitySlice {
+  const prefs = orderQtyPrefsFromJobSheetAndSpec(js, spec)
+  let numUnits = slice.numUnits
+  if (!(numUnits > 0) && js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))) {
+    numUnits = Math.max(0, Math.round(Number(js.num_product_units)))
+  }
+
+  let weightPerRoll = slice.weightPerRoll
+  if (!(weightPerRoll > 0) && prefs.weight_per_roll_kg != null && prefs.weight_per_roll_kg > 0) {
+    weightPerRoll = prefs.weight_per_roll_kg
+  }
+  if (!(weightPerRoll > 0)) {
+    const jsWpr = js?.weight_per_roll_kg != null ? Number(js.weight_per_roll_kg) : NaN
+    if (Number.isFinite(jsWpr) && jsWpr > 0) weightPerRoll = jsWpr
+  }
+
+  let unitsPerRoll = slice.unitsPerRoll
+  if ((unitsPerRoll == null || unitsPerRoll <= 0) && numUnits > 0) {
+    const npu =
+      js?.num_product_units != null && Number.isFinite(Number(js.num_product_units))
+        ? Math.max(0, Math.round(Number(js.num_product_units)))
+        : numUnits
+    const nr =
+      slice.numRolls > 0
+        ? slice.numRolls
+        : js?.num_rolls != null && Number.isFinite(Number(js.num_rolls))
+          ? Math.max(1, Math.round(Number(js.num_rolls)))
+          : 0
+    if (npu > 0 && nr > 0) unitsPerRoll = Math.max(1, Math.round(npu / nr))
+  }
+
+  let numRolls = slice.numRolls
+  if (slice.qtyType === 'units' && slice.numUnits > 0 && unitsPerRoll != null && unitsPerRoll > 0) {
+    numRolls = Math.max(1, Math.ceil(slice.numUnits / unitsPerRoll))
+  } else if (!(numRolls > 0) && js?.num_rolls != null && Number.isFinite(Number(js.num_rolls))) {
+    numRolls = Math.max(1, Math.round(Number(js.num_rolls)))
+  }
+
+  if (!(weightPerRoll > 0) && slice.qtyType === 'kg' && slice.totalKg > 0 && numRolls > 0) {
+    weightPerRoll = slice.totalKg / numRolls
+  }
+
+  return {
+    ...slice,
+    numUnits,
+    weightPerRoll,
+    unitsPerRoll: unitsPerRoll != null && unitsPerRoll > 0 ? unitsPerRoll : slice.unitsPerRoll,
+    numRolls,
+  }
+}
+
 export function buildSpecQuantitySliceFromPersistedJobSheet(
   js: Record<string, unknown> | null | undefined,
   spec: SpecPayload,
 ): SpecQuantitySlice {
-  return parseQtyStrings(js, spec)
+  return enrichSpecQuantitySliceForPrint(parseQtyStrings(js, spec), js, spec)
 }
 
 /**

@@ -314,6 +314,138 @@ export function effectiveThicknessUm(nominalUm: number, trimPct: number | null |
   return g * f
 }
 
+/** Format target gauge when it differs from ordered gauge (empty string when unchanged). */
+export function formatTargetGaugeDisplay(
+  orderedUm: number | null | undefined,
+  effectiveUm: number | null | undefined,
+  opts?: { unitSuffix?: string },
+): string {
+  const ordered =
+    orderedUm != null && Number.isFinite(Number(orderedUm)) && Number(orderedUm) > 0 ? Number(orderedUm) : null
+  const target =
+    effectiveUm != null && Number.isFinite(Number(effectiveUm)) && Number(effectiveUm) > 0 ? Number(effectiveUm) : null
+  if (ordered == null || target == null) return ''
+  if (Math.abs(target - ordered) < 0.005) return ''
+  const core = Number.isInteger(target) ? String(Math.round(target)) : target.toFixed(2)
+  const suffix = opts?.unitSuffix ?? ''
+  return `${core}${suffix}`
+}
+
+/**
+ * Target gauge for UI/print: prefer calculator `effectiveThicknessUm`, then Cartons trim fallback,
+ * then an explicit roll-weight billing pass when persisted qty omitted weight/roll drivers.
+ */
+export function resolveTargetGaugeUmForSpec(
+  orderedUm: number | null | undefined,
+  derived: ReturnType<typeof computeDerivedGeometryAndTotals> | null | undefined,
+  inputs: QuickQuoteInputs | null | undefined,
+  ratebook: QuoteRatebook | null | undefined,
+): number | null {
+  const ordered =
+    orderedUm != null && Number.isFinite(Number(orderedUm)) && Number(orderedUm) > 0 ? Number(orderedUm) : null
+  if (ordered == null) return null
+
+  const fromCalc =
+    derived?.effectiveThicknessUm != null &&
+    Number.isFinite(Number(derived.effectiveThicknessUm)) &&
+    Number(derived.effectiveThicknessUm) > 0
+      ? Number(derived.effectiveThicknessUm)
+      : null
+  if (fromCalc != null && Math.abs(fromCalc - ordered) >= 0.005) return fromCalc
+
+  const trimPct = inputs?.finish_mode === 'Cartons' ? inputs.trim_pct : null
+  if (trimPct != null && Number(trimPct) > 0) {
+    const trimOnly = effectiveThicknessUm(ordered, trimPct)
+    if (Math.abs(trimOnly - ordered) >= 0.005) return trimOnly
+  }
+
+  if (!inputs || !ratebook || !derived) return fromCalc
+
+  const billing = inputs.roll_weight_billing
+  if (inputs.finish_mode !== 'Rolls' || !billing || billing === 'core_off') return fromCalc
+
+  const layflatMassMm = derived.layflatMassMm
+  if (layflatMassMm == null || !(Number(layflatMassMm) > 0)) return fromCalc
+
+  const coreKgPerRoll = coreKgPerRollForBilling(inputs, ratebook, Number(layflatMassMm))
+  if (!(coreKgPerRoll > 0)) return fromCalc
+
+  const nominalWpr = toNum(inputs.nominal_weight_per_roll_kg)
+  if (nominalWpr == null || !(nominalWpr > 0)) return fromCalc
+
+  const rolls =
+    derived.rolls != null && derived.rolls > 0
+      ? derived.rolls
+      : toNum((inputs.quantity as { rolls?: unknown })?.rolls)
+  const totalM =
+    derived.derivedTotalM > 0 ? derived.derivedTotalM : toNum((inputs.quantity as { total_m?: unknown })?.total_m)
+  const mPerRoll =
+    derived.mPerRoll != null && derived.mPerRoll > 0
+      ? derived.mPerRoll
+      : rolls != null && rolls > 0 && totalM != null && totalM > 0
+        ? totalM / rolls
+        : null
+  if (mPerRoll == null || !(mPerRoll > 0)) return fromCalc
+
+  const kgPerLinearMUntrimmed =
+    Number(derived.density || 0) > 0
+      ? Number(derived.density) * umToM(ordered) * mmToM(Number(layflatMassMm))
+      : null
+  if (kgPerLinearMUntrimmed == null || !(kgPerLinearMUntrimmed > 0)) return fromCalc
+
+  const plasticKgPerRollTarget = Math.max(0, nominalWpr - coreKgPerRoll)
+  const factor = rollWeightBillingGaugeFactor(plasticKgPerRollTarget, mPerRoll, kgPerLinearMUntrimmed)
+  if (factor == null || factor >= 1) return fromCalc
+
+  return ordered * factor
+}
+
+export function trimTargetUnits(orderedUnits: number | null | undefined, trimPct: number | null | undefined): number | null {
+  const u = orderedUnits != null && Number.isFinite(Number(orderedUnits)) ? Math.max(0, Math.round(Number(orderedUnits))) : null
+  const p = trimPct != null && Number.isFinite(Number(trimPct)) ? Number(trimPct) : null
+  if (u == null || u <= 0) return null
+  if (p == null || p <= 0) return u
+  return Math.round(u * (1 + p / 100))
+}
+
+/** Core mass included in billed roll weight (per roll), before web length is applied. */
+export function coreKgPerRollForBilling(
+  inputs: Pick<QuickQuoteInputs, 'finish_mode' | 'core_type' | 'roll_weight_billing'>,
+  ratebook: QuoteRatebook,
+  layflatMassMm: number,
+): number {
+  if (
+    inputs.finish_mode !== 'Rolls' ||
+    !inputs.core_type ||
+    layflatMassMm <= 0 ||
+    !inputs.roll_weight_billing ||
+    inputs.roll_weight_billing === 'core_off'
+  ) {
+    return 0
+  }
+  const core = ratebook.cores?.[inputs.core_type]
+  if (!core || !(Number(core.kg_per_meter || 0) > 0)) return 0
+  const frac = inputs.roll_weight_billing === 'core_half_off' ? 0.5 : 1
+  return mmToM(layflatMassMm) * Number(core.kg_per_meter || 0) * frac
+}
+
+/**
+ * Roll-weight billing (include / half core) lowers effective gauge like trim — same product length,
+ * less plastic kg. Returns multiplier on trim-adjusted thickness (0.01–1).
+ */
+export function rollWeightBillingGaugeFactor(
+  plasticKgPerRollTarget: number | null,
+  mPerRoll: number | null,
+  kgPerLinearMNominal: number,
+): number | null {
+  if (plasticKgPerRollTarget == null || !(plasticKgPerRollTarget > 0)) return null
+  if (mPerRoll == null || !(mPerRoll > 0)) return null
+  if (!(kgPerLinearMNominal > 0)) return null
+  const geoPlasticPerRoll = mPerRoll * kgPerLinearMNominal
+  if (!(geoPlasticPerRoll > 0)) return null
+  return clamp(plasticKgPerRollTarget / geoPlasticPerRoll, 0.01, 1)
+}
+
 function toNum(v: unknown): number | null {
   if (v == null) return null
   if (typeof v === 'number') return Number.isFinite(v) ? v : null
@@ -853,43 +985,49 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
 
   const density = blendDensity(blend)
   const nominalThicknessUm = Number(inputs.thickness_um || 0)
-  const effectiveThickness = effectiveThicknessUm(nominalThicknessUm, inputs.trim_pct)
-  const thicknessM = umToM(effectiveThickness)
-  const kgPerM2 = density * thicknessM
-  const kgPerLinearM = kgPerM2 * mmToM(layflatMassMm)
+  const trimPctForGauge = inputs.finish_mode === 'Cartons' ? inputs.trim_pct : null
+  const effectiveThicknessTrimOnly = effectiveThicknessUm(nominalThicknessUm, trimPctForGauge)
+  const thicknessMTrimOnly = umToM(effectiveThicknessTrimOnly)
+  const kgPerM2Nominal = density * thicknessMTrimOnly
+  const kgPerLinearMNominal = kgPerM2Nominal * mmToM(layflatMassMm)
+  /** Spec gauge without trim — used to lock web metres; trim and roll-weight billing only adjust kg/m for mass. */
+  const kgPerLinearMUntrimmed = density * umToM(nominalThicknessUm) * mmToM(layflatMassMm)
+
+  const coreKgPerRoll = coreKgPerRollForBilling(inputs, ratebook, layflatMassMm)
 
   const billableCoreKgForRolls = (rollCount: number | null): number => {
-    if (
-      inputs.finish_mode !== 'Rolls' ||
-      !inputs.core_type ||
-      rollCount == null ||
-      rollCount <= 0 ||
-      layflatMassMm <= 0 ||
-      !inputs.roll_weight_billing ||
-      inputs.roll_weight_billing === 'core_off'
-    ) {
-      return 0
-    }
-    const core = ratebook.cores?.[inputs.core_type]
-    if (!core || !(Number(core.kg_per_meter || 0) > 0)) return 0
-    const frac = inputs.roll_weight_billing === 'core_half_off' ? 0.5 : 1
-    return rollCount * mmToM(layflatMassMm) * Number(core.kg_per_meter || 0) * frac
+    if (rollCount == null || rollCount <= 0 || coreKgPerRoll <= 0) return 0
+    return rollCount * coreKgPerRoll
   }
 
-  // If quoting by billed KG in Rolls mode, plastic produced is lower when core billing includes core weight.
-  const billableCoreKgFromInputRolls = billableCoreKgForRolls(rolls)
-  let totalKgReqPlastic: number | null = totalKgReq
-  if (totalKgReq != null && billableCoreKgFromInputRolls > 0) {
-    totalKgReqPlastic = Math.max(0, totalKgReq - billableCoreKgFromInputRolls)
-  }
+  const billingActive =
+    inputs.finish_mode === 'Rolls' &&
+    !!inputs.roll_weight_billing &&
+    inputs.roll_weight_billing !== 'core_off' &&
+    coreKgPerRoll > 0
 
-  // Continuous length: one "unit" of product length = web length that holds one roll/carton billed mass
-  // (e.g. 20kg roll → metres = 20 / kgPerLinearM), not a fixed 1m stub.
+  const hasGeometryLengthDriver =
+    (totalMReq != null && totalMReq > 0) ||
+    (unitsIn != null && !inputs.continuous_roll && mmToM(unitLengthMm || 0) > 0)
+
+  const targetUnits =
+    inputs.finish_mode === 'Cartons' && unitsIn != null
+      ? trimTargetUnits(unitsIn, trimPctForGauge)
+      : unitsIn
+
+  // Continuous length: one "unit" of product length = web length that holds one roll/carton billed mass.
   let effectiveLenM: number
   if (inputs.continuous_roll) {
-    const refKg = referenceMassKgForContinuousProduct(inputs, totalKgReqPlastic, totalMReq, rolls, unitsIn, kgPerLinearM)
-    if (refKg != null && refKg > 0 && kgPerLinearM > 0) {
-      effectiveLenM = refKg / kgPerLinearM
+    const refKg = referenceMassKgForContinuousProduct(
+      inputs,
+      totalKgReq,
+      totalMReq,
+      rolls,
+      unitsIn,
+      kgPerLinearMNominal,
+    )
+    if (refKg != null && refKg > 0 && kgPerLinearMNominal > 0) {
+      effectiveLenM = refKg / kgPerLinearMNominal
     } else {
       effectiveLenM = 1
     }
@@ -897,78 +1035,138 @@ export function computeDerivedGeometryAndTotals(inputs: QuickQuoteInputs, ratebo
     effectiveLenM = mmToM(unitLengthMm || 0)
   }
   const areaPerUnitM2 = effectiveLenM * mmToM(layflatMassMm)
-  const kgPerUnit = areaPerUnitM2 * kgPerM2
+  const kgPerUnitNominal = areaPerUnitM2 * kgPerM2Nominal
 
-  // Trim lowers effective gauge (see `effectiveThicknessUm`); metres are not scaled by trim %.
-  let derivedTotalKg: number
+  // Web metres from product count or explicit total_m. Trim and roll-weight billing adjust gauge, not length.
   let derivedTotalM: number
-
-  if (unitsIn != null && kgPerUnit > 0) {
-    derivedTotalKg = kgPerUnit * unitsIn
-    derivedTotalM =
-      !inputs.continuous_roll && effectiveLenM > 0
-        ? unitsIn * effectiveLenM
-        : kgPerLinearM > 0
-          ? derivedTotalKg / kgPerLinearM
-          : 0
+  if (targetUnits != null && !inputs.continuous_roll && effectiveLenM > 0) {
+    derivedTotalM = targetUnits * effectiveLenM
+  } else if (totalMReq != null && totalMReq > 0) {
+    derivedTotalM = totalMReq
   } else {
-    derivedTotalKg =
-      totalKgReqPlastic != null
-        ? totalKgReqPlastic
-        : totalMReq != null && kgPerLinearM > 0
-          ? totalMReq * kgPerLinearM
-          : 0
-    derivedTotalM = totalMReq != null ? totalMReq : derivedTotalKg > 0 && kgPerLinearM > 0 ? derivedTotalKg / kgPerLinearM : 0
+    derivedTotalM = 0
   }
 
-  const trimmedTotalKg = derivedTotalKg
+  const rollsForMetres = rolls != null && rolls > 0 ? rolls : null
 
-  const webLengthM = derivedTotalM
+  let derivedTotalKgTrimOnly: number
+  if (targetUnits != null && kgPerUnitNominal > 0) {
+    derivedTotalKgTrimOnly = kgPerUnitNominal * targetUnits
+  } else if (totalKgReq != null) {
+    derivedTotalKgTrimOnly = totalKgReq
+  } else if (totalMReq != null && kgPerLinearMNominal > 0) {
+    derivedTotalKgTrimOnly = totalMReq * kgPerLinearMNominal
+  } else {
+    derivedTotalKgTrimOnly = 0
+  }
 
-  // Derive units from total kg whenever we have kgPerUnit (so "No. of product_type" can be shown for any finish mode).
-  // Continuous roll on Rolls: countable unit is the roll (total products = number of rolls).
+  if (derivedTotalM <= 0 && inputs.continuous_roll && derivedTotalKgTrimOnly > 0 && kgPerLinearMUntrimmed > 0) {
+    derivedTotalM = derivedTotalKgTrimOnly / kgPerLinearMUntrimmed
+  } else if (derivedTotalM <= 0 && totalKgReq != null && kgPerLinearMUntrimmed > 0 && !hasGeometryLengthDriver) {
+    const rollsForCore =
+      rollsForMetres ??
+      (inputs.finish_mode === 'Rolls' && totalKgReq > 0 && toNum(inputs.nominal_weight_per_roll_kg) != null
+        ? Math.max(1, Math.round(totalKgReq / toNum(inputs.nominal_weight_per_roll_kg)!))
+        : null)
+    const plasticKg =
+      billingActive && rollsForCore != null
+        ? Math.max(0, totalKgReq - billableCoreKgForRolls(rollsForCore))
+        : totalKgReq
+    // Legacy kg-only: derive metres from untrimmed kg/m so trim/core billing do not shrink web length.
+    derivedTotalM = plasticKg / kgPerLinearMUntrimmed
+  }
+
   const units =
     unitsIn != null
       ? unitsIn
       : inputs.continuous_roll && inputs.finish_mode === 'Rolls' && rolls != null && rolls > 0
         ? rolls
-        : !inputs.continuous_roll && kgPerUnit > 0 && trimmedTotalKg > 0
-          ? Math.max(0, Math.round(trimmedTotalKg / kgPerUnit))
+        : !inputs.continuous_roll && kgPerUnitNominal > 0 && derivedTotalKgTrimOnly > 0
+          ? Math.max(0, Math.round(derivedTotalKgTrimOnly / kgPerUnitNominal))
           : null
 
-  // When quantity is entered as total products (e.g. Qty Type "1000") without `quantity.rolls`, infer roll count
-  // from plastic kg ÷ nominal kg/roll so per-roll preview rows ($/roll, kg/roll) match the form weight/roll.
   const nominalWpr = toNum(inputs.nominal_weight_per_roll_kg)
   const rollsInferred =
     rolls == null &&
     inputs.finish_mode === 'Rolls' &&
     !inputs.continuous_roll &&
-    trimmedTotalKg > 0 &&
+    derivedTotalKgTrimOnly > 0 &&
     nominalWpr != null &&
     nominalWpr > 0
-      ? Math.max(1, Math.round(trimmedTotalKg / nominalWpr))
+      ? Math.max(1, Math.round(derivedTotalKgTrimOnly / nominalWpr))
       : null
   const rollsEffective = rolls != null && rolls > 0 ? rolls : rollsInferred
-  const billableCoreKg = billableCoreKgForRolls(rollsEffective)
 
+  const mPerRollNominal =
+    rollsEffective != null && rollsEffective > 0 && derivedTotalM > 0 ? derivedTotalM / rollsEffective : null
+
+  let plasticKgPerRollTarget: number | null = null
+  if (billingActive) {
+    if (nominalWpr != null && nominalWpr > 0) {
+      plasticKgPerRollTarget = Math.max(0, nominalWpr - coreKgPerRoll)
+    } else if (totalKgReq != null && rollsEffective != null && rollsEffective > 0) {
+      plasticKgPerRollTarget = Math.max(0, totalKgReq / rollsEffective - coreKgPerRoll)
+    }
+  }
+
+  const coreGaugeFactor = rollWeightBillingGaugeFactor(
+    plasticKgPerRollTarget,
+    mPerRollNominal,
+    kgPerLinearMUntrimmed,
+  )
+
+  const effectiveThickness =
+    coreGaugeFactor != null && coreGaugeFactor < 1
+      ? effectiveThicknessTrimOnly * coreGaugeFactor
+      : effectiveThicknessTrimOnly
+  const thicknessM = umToM(effectiveThickness)
+  const kgPerM2 = density * thicknessM
+  const kgPerLinearM = kgPerM2 * mmToM(layflatMassMm)
+  const kgPerUnit = areaPerUnitM2 * kgPerM2
+
+  let derivedTotalKg: number
+  if (derivedTotalM > 0 && kgPerLinearM > 0) {
+    derivedTotalKg = derivedTotalM * kgPerLinearM
+  } else if (unitsIn != null && kgPerUnit > 0) {
+    derivedTotalKg = unitsIn * kgPerUnit
+  } else if (totalMReq != null && kgPerLinearM > 0) {
+    derivedTotalKg = totalMReq * kgPerLinearM
+  } else if (
+    billingActive &&
+    plasticKgPerRollTarget != null &&
+    rollsEffective != null &&
+    rollsEffective > 0
+  ) {
+    derivedTotalKg = plasticKgPerRollTarget * rollsEffective
+  } else if (totalKgReq != null && billingActive) {
+    derivedTotalKg = Math.max(0, totalKgReq - billableCoreKgForRolls(rollsEffective))
+  } else if (totalKgReq != null) {
+    derivedTotalKg = totalKgReq
+  } else {
+    derivedTotalKg = 0
+  }
+
+  if (derivedTotalM <= 0 && derivedTotalKg > 0 && kgPerLinearMUntrimmed > 0 && !hasGeometryLengthDriver) {
+    derivedTotalM = derivedTotalKg / kgPerLinearMUntrimmed
+  }
+
+  const trimmedTotalKg = derivedTotalKg
+  const webLengthM = derivedTotalM
+
+  const billableCoreKg = billableCoreKgForRolls(rollsEffective)
   const canComputeKgPerRoll = rollsEffective != null && rollsEffective > 0 && trimmedTotalKg > 0
   const kgPerRoll = canComputeKgPerRoll ? trimmedTotalKg / rollsEffective : null
-  const canComputeMPerRoll = canComputeKgPerRoll && kgPerLinearM > 0 && derivedTotalM > 0
+  const canComputeMPerRoll = canComputeKgPerRoll && derivedTotalM > 0
   const mPerRoll = canComputeMPerRoll ? derivedTotalM / rollsEffective! : null
 
-  // Billed / scale weight (e.g. rolls with core included): customer total_kg includes core; plastic mass is lower.
-  // Costs use trimmedTotalKg (plastic); quotes should show and price per kg using billedTotalsKg.
-  let billedTotalsKg: number
-  if (totalKgReq != null && totalKgReq > 0 && totalKgReqPlastic != null && totalKgReqPlastic > 0 && billableCoreKgFromInputRolls > 0) {
-    billedTotalsKg = totalKgReq * (trimmedTotalKg / totalKgReqPlastic)
-  } else {
-    billedTotalsKg = trimmedTotalKg + billableCoreKg
-  }
+  // Billed kg includes core mass on rolls; plastic kg is `trimmedTotalKg` (gauge-reduced when billing active).
+  const billedTotalsKg = trimmedTotalKg + billableCoreKg
   const billedKgPerRoll =
     rollsEffective != null && rollsEffective > 0 && billedTotalsKg > 0 ? billedTotalsKg / rollsEffective : null
 
   return {
     units,
+    targetUnits,
     rolls: rollsEffective,
     layflatMm: layflatMmExtrusion,
     /** Layflat for kg/m and per-roll core length (single-lane product strip); see `layflatMm` for die width incl. run-up. */

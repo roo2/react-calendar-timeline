@@ -36,6 +36,7 @@ import type { UpsertError } from '../../../store/slices/productsSlice'
 import { clearCreateErrors, createProduct, fetchProduct, fetchProducts } from '../../../store/slices/productsSlice'
 import { createJobSheet, fetchJobSheet, saveJobSheetAsNewProduct, updateJobSheet } from '../../../store/slices/jobSheetsSlice'
 import { computeProductDescriptionFromSpec, getDisplayProductCodeFromSpec } from '../../../utils/productDescription'
+import { resolvePrintingArtworkScope } from '../../../utils/printingArtworkScope'
 import { SaveAsNewProductButton, SaveFormButton } from '../../../components/SaveActionButtons'
 import { JobSheetPrintActionButton, useJobSheetPrintShortcut } from '../../../components/JobSheetPrintActionButton'
 import { JobSheetLivePreview } from '../../../components/JobSheetLivePreview'
@@ -125,9 +126,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const dispatch = useAppDispatch()
   const nav = useNavigate()
 
+  const [productId, setProductId] = useState(() => (mode === 'new' ? NEW_PRODUCT_DRAFT_VALUE : ''))
 
   const createState = useAppSelector((s) => s.products.create)
   const jobSheetDetail = useAppSelector((s) => (jobSheetId ? s.jobSheets.detail.byId[jobSheetId] : undefined))
+  const productDetail = useAppSelector((s) => (productId ? s.products.detail.byId[productId] : undefined))
   const loadedJobSheet = mode === 'edit' && jobSheetId ? jobSheetDetail?.data?.job_sheet : undefined
   const { setDirty } = useUnsavedChanges()
   const [savingJobSheet, setSavingJobSheet] = useState(false)
@@ -144,7 +147,6 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const dueDateInputRef = useRef<HTMLInputElement | null>(null)
   const orderDateInputRef = useRef<HTMLInputElement | null>(null)
 
-  const [productId, setProductId] = useState(() => (mode === 'new' ? NEW_PRODUCT_DRAFT_VALUE : ''))
   const [productInfo, setProductInfo] = useState<ProductSummary | null>(null)
   const [spec, setSpec] = useState<SpecPayload>(() => makeDefaultSpec())
   /** Edit: when true, PUT includes `spec` so the server creates a new product version (same as before). */
@@ -189,6 +191,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   useEffect(() => {
     void dispatch(fetchQuoteRatebook())
   }, [dispatch])
+
+  useEffect(() => {
+    if (mode !== 'edit' || !productId) return
+    void dispatch(fetchProduct(productId))
+  }, [mode, productId, dispatch])
 
   /** Re-hydrate when fetch returns a new detail payload (same id, fresher object). */
   const lastJobDetailDataRef = useRef<unknown>(null)
@@ -439,8 +446,10 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
   const derivedDisplay = derivedForDisplay
     ? {
         derivedTotalKg: derivedForDisplay.derivedTotalKg ?? null,
+        billedTotalsKg: derivedForDisplay.billedTotalsKg ?? null,
         units: derivedForDisplay.units ?? null,
         kgPerRoll: derivedForDisplay.kgPerRoll ?? null,
+        billedKgPerRoll: derivedForDisplay.billedKgPerRoll ?? null,
       }
     : null
 
@@ -538,6 +547,20 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
     loadedJobSheet,
   ])
 
+  const printingArtworkScope = useMemo(
+    () =>
+      resolvePrintingArtworkScope({
+        jobSheetId: mode === 'edit' ? jobSheetId : null,
+        productId,
+        jobSheetProductId: loadedJobSheet?.product_id != null ? String(loadedJobSheet.product_id) : null,
+        activeVersionId:
+          productDetail?.data?.product?.active_version_id != null
+            ? String(productDetail.data.product.active_version_id)
+            : null,
+      }),
+    [mode, jobSheetId, productId, loadedJobSheet?.product_id, productDetail?.data?.product?.active_version_id],
+  )
+
   async function onSave(options?: { navigateAfterCreate?: boolean }): Promise<string | null> {
     setSaveMsg(null)
     setSaveErr(null)
@@ -555,7 +578,16 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         ? qty.cartonTotalKgIncludingWaste
         : finishMode === 'Cartons' && !(totalKgNum > 0) && totalKgDisplay != null && Number(totalKgDisplay) > 0
           ? Number(totalKgDisplay)
-          : totalKgNum
+          : finishMode === 'Rolls' &&
+              !(totalKgNum > 0) &&
+              derivedForDisplay?.derivedTotalKg != null &&
+              Number(derivedForDisplay.derivedTotalKg) > 0
+            ? Number(derivedForDisplay.derivedTotalKg)
+            : totalKgNum
+    const totalKgForBilling =
+      totalKgDisplay != null && Number(totalKgDisplay) > 0 && Number.isFinite(Number(totalKgDisplay))
+        ? Number(totalKgDisplay)
+        : totalKgForScheduling
     const qtyErr = validateJobSheetQuantityInputs(
       finishMode,
       effectiveQtyType,
@@ -592,6 +624,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         numRollsNum,
         weightPerRollNum,
         derivedDisplay,
+        { rollWeightBillingAdjustsGauge: qty.rollWeightBillingAdjustsGauge },
       )
       const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
       const bpc = spec.packaging?.bags_per_carton
@@ -606,7 +639,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       const oq = getOrderQuantityFromJobSheetFields(
         effectiveQtyType,
         fallbackLegacy,
-        totalKgForScheduling,
+        totalKgForBilling,
         numUnitsNum,
         persistedRolls,
         finishMode,
@@ -784,6 +817,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       setSaveErr(`Missing required fields: ${missing.join(', ')}`)
       return false
     }
+    const derivedForDisplay = qty.derivedForDisplay
     const totalKgForScheduling =
       qty.finishMode === 'Cartons' && qty.cartonTotalKgIncludingWaste != null && qty.cartonTotalKgIncludingWaste > 0
         ? qty.cartonTotalKgIncludingWaste
@@ -792,11 +826,19 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             qty.totalKgDisplay != null &&
             Number(qty.totalKgDisplay) > 0
           ? Number(qty.totalKgDisplay)
-          : Number(qty.totalKg || 0)
+          : qty.finishMode === 'Rolls' &&
+              !(Number(qty.totalKg || 0) > 0) &&
+              derivedForDisplay?.derivedTotalKg != null &&
+              Number(derivedForDisplay.derivedTotalKg) > 0
+            ? Number(derivedForDisplay.derivedTotalKg)
+            : Number(qty.totalKg || 0)
+    const totalKgForBilling =
+      qty.totalKgDisplay != null && Number(qty.totalKgDisplay) > 0 && Number.isFinite(Number(qty.totalKgDisplay))
+        ? Number(qty.totalKgDisplay)
+        : totalKgForScheduling
     const numRollsNum = Math.max(0, Math.round(Number(qty.numRolls || 0)))
     const weightPerRollNum = Number(qty.weightPerRoll || 0)
     const numUnitsNum = Math.max(0, Math.round(Number(qty.numUnits || 0)))
-    const derivedForDisplay = qty.derivedForDisplay
     const qtyErr = validateJobSheetQuantityInputs(
       qty.finishMode,
       qty.effectiveQtyType,
@@ -834,6 +876,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
         numRollsNum,
         weightPerRollNum,
         derivedForDisplay,
+        { rollWeightBillingAdjustsGauge: qty.rollWeightBillingAdjustsGauge },
       )
       const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
       const bpc = spec.packaging?.bags_per_carton
@@ -848,7 +891,7 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
       const oq = getOrderQuantityFromJobSheetFields(
         qty.effectiveQtyType,
         fallbackLegacy,
-        totalKgForScheduling,
+        totalKgForBilling,
         numUnitsNum,
         persistedRolls,
         qty.finishMode,
@@ -1104,10 +1147,11 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
             <SpecPayloadForm
               customerId={customerId || undefined}
               printingSurface="job_sheet_summary"
-              printingArtworkScope={mode === 'edit' && jobSheetId ? { kind: 'job_sheet', jobSheetId } : null}
+              printingArtworkScope={printingArtworkScope}
               jobSheetPrintingContext={jobSheetPrintingContext}
               estimatedUnitsPerPalletVolume={estimatedUnitsPerPalletVolume}
               stockPlanningTotalUnits={stockPlanningTotalUnits}
+              targetGaugeUm={qty.derivedForDisplay?.effectiveThicknessUm ?? null}
               customerFacingDescription={customerFacingDescriptionFromSpec(spec)}
               onCustomerFacingDescriptionChange={(raw) => {
                 setSpec((prev: SpecPayload) =>
@@ -1204,6 +1248,32 @@ export function JobSheetEditor(props: { mode: Mode; jobSheetId?: string; returnT
                       qty={qty}
                       hideCartonRollWeight={finishMode === 'Cartons'}
                       bagsPerCartonStr={bagsPerCartonStr}
+                      rollWeightBilling={spec.identity?.roll_weight_billing || 'core_off'}
+                      onRollWeightBillingChange={(value) => {
+                        setSpec((prev: SpecPayload) => ({
+                          ...prev,
+                          identity: {
+                            ...prev.identity,
+                            roll_weight_billing: value,
+                            trim_pct: null,
+                          },
+                        }))
+                        if (mode === 'edit') setSpecDirty(true)
+                        setDirty(true)
+                      }}
+                      trimGaugeChecked={Number(spec.identity?.trim_pct || 0) === 5}
+                      onTrimGaugeCheckedChange={(checked) => {
+                        setSpec((prev: SpecPayload) => ({
+                          ...prev,
+                          identity: {
+                            ...prev.identity,
+                            trim_pct: checked ? 5 : null,
+                            roll_weight_billing: 'core_off',
+                          },
+                        }))
+                        if (mode === 'edit') setSpecDirty(true)
+                        setDirty(true)
+                      }}
                       onBagsPerCartonChange={(raw) => {
                         setSpec((prev: SpecPayload) => ({
                           ...prev,

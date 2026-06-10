@@ -123,11 +123,29 @@ export function buildQuantityObjectForCalculator(
   const qty: { units?: number; total_kg?: number; total_m?: number; rolls?: number } = {}
   if (qtyType === 'units') qty.units = numUnitsNum
   if (qtyType === 'kg') {
-    qty.total_kg = totalKgNum
+    if (finishMode === 'Rolls' && numRollsNum > 0 && weightPerRollNum > 0) {
+      qty.total_kg = numRollsNum * weightPerRollNum
+      qty.rolls = numRollsNum
+    } else {
+      qty.total_kg = totalKgNum
+    }
     if (opts?.continuousLength && finishMode === 'Rolls' && numRollsNum > 0) {
       qty.rolls = numRollsNum
-    } else if (finishMode === 'Rolls' && totalKgNum > 0 && weightPerRollNum > 0) {
+    } else if (finishMode === 'Rolls' && qty.rolls == null && totalKgNum > 0 && weightPerRollNum > 0) {
       qty.rolls = Math.round(totalKgNum / weightPerRollNum)
+    }
+    if (
+      finishMode === 'Rolls' &&
+      !opts?.continuousLength &&
+      baseLengthMm > 0 &&
+      qty.rolls != null &&
+      qty.rolls > 0 &&
+      unitsPerRollNum > 0
+    ) {
+      qty.total_m = (qty.rolls * unitsPerRollNum * baseLengthMm) / 1000
+    }
+    if (numUnitsNum > 0 && baseLengthMm > 0 && !(qty.total_m != null && qty.total_m > 0)) {
+      qty.total_m = (numUnitsNum * baseLengthMm) / 1000
     }
   }
   if (finishMode === 'Cartons' && numRollsNum > 0) {
@@ -164,6 +182,14 @@ export function buildQuantityObjectForCalculator(
     } else {
       qty.rolls = numRollsNum
     }
+    if (
+      !opts?.continuousLength &&
+      baseLengthMm > 0 &&
+      unitsPerRollNum > 0 &&
+      !(qty.total_m != null && qty.total_m > 0)
+    ) {
+      qty.total_m = (numRollsNum * unitsPerRollNum * baseLengthMm) / 1000
+    }
   } else if (
     finishMode === 'Rolls' &&
     qtyType !== 'kg' &&
@@ -198,9 +224,9 @@ export function buildQuantityObjectForCalculator(
 }
 
 export function getFieldEditability(finishMode: FinishMode, qtyType: QtyType) {
-  const totalKgEditable = qtyType === 'kg'
+  const totalKgEditable = qtyType === 'kg' && finishMode !== 'Rolls'
   const unitsEditable = qtyType === 'units'
-  const rollsEditable = finishMode === 'Rolls' && (qtyType === 'total_rolls' || qtyType === 'rolls_units')
+  const rollsEditable = finishMode === 'Rolls' && (qtyType === 'kg' || qtyType === 'total_rolls' || qtyType === 'rolls_units')
   const weightPerRollEditable =
     finishMode === 'Rolls' &&
     (qtyType === 'total_rolls' || qtyType === 'units' || qtyType === 'kg')
@@ -217,7 +243,9 @@ export function getFieldEditability(finishMode: FinishMode, qtyType: QtyType) {
 
 export type DerivedDisplay = {
   derivedTotalKg: number | null
+  billedTotalsKg?: number | null
   units: number | null
+  targetUnits?: number | null
   kgPerRoll: number | null
   /** When set (e.g. core billing), matches quote preview / `computeQuickQuotePreview().kg_per_roll`. */
   billedKgPerRoll?: number | null
@@ -233,6 +261,9 @@ export function computeRollsDisplay(
   derived: DerivedDisplay,
 ): number | null {
   if (finishMode === 'Rolls') {
+    if (qtyType === 'kg' && numRollsNum > 0) {
+      return numRollsNum
+    }
     if (qtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0) {
       return Math.round(totalKgNum / weightPerRollNum)
     }
@@ -252,10 +283,15 @@ export function computeTotalKgDisplay(
   _numUnitsNum: number,
   derived: DerivedDisplay,
 ): number | null {
-  if (qtyType === 'kg') return totalKgNum
-  if (qtyType === 'units' || qtyType === 'rolls_units') return derived?.derivedTotalKg ?? null
+  const billedKg =
+    derived?.billedTotalsKg != null && Number.isFinite(Number(derived.billedTotalsKg)) && Number(derived.billedTotalsKg) > 0
+      ? Number(derived.billedTotalsKg)
+      : null
+  if (qtyType === 'kg' && numRollsNum > 0 && weightPerRollNum > 0) return numRollsNum * weightPerRollNum
+  if (qtyType === 'kg') return billedKg ?? totalKgNum
+  if (qtyType === 'units' || qtyType === 'rolls_units') return billedKg ?? derived?.derivedTotalKg ?? null
   if (qtyType === 'total_rolls') {
-    return numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : null
+    return numRollsNum > 0 && weightPerRollNum > 0 ? numRollsNum * weightPerRollNum : billedKg
   }
   return null
 }
@@ -268,12 +304,21 @@ export function computeWeightPerRollDisplay(
   derived: DerivedDisplay,
   /** Continuous web + total rolls: kg/roll follows billed job mass from metres/roll (ignore stale stored weight). */
   continuousWebTotalRolls?: boolean,
+  opts?: { rollWeightBillingAdjustsGauge?: boolean },
 ): number | null {
+  /**
+   * Include/half-core billing fixes nominal gross kg/roll — do not replace it with gauge-reduced derived mass
+   * (that caused target gauge to compound downward on each save for ROLL / 1000 qty types).
+   */
+  if (opts?.rollWeightBillingAdjustsGauge && weightPerRollNum > 0) {
+    return weightPerRollNum
+  }
+
   /**
    * Rolls × bags/roll: job kg ÷ rolls must track geometry when bags/roll (or roll count) changes.
    * A stale `weightPerRoll` value carried from KG / total rolls must not mask the live derived mass.
    */
-  if (qtyType === 'rolls_units' && numRollsNum > 0) {
+  if (!opts?.rollWeightBillingAdjustsGauge && qtyType === 'rolls_units' && numRollsNum > 0) {
     const mass = derived?.derivedTotalKg
     if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
       return Number(mass) / numRollsNum
@@ -284,7 +329,13 @@ export function computeWeightPerRollDisplay(
    * Qty "1000" (units) + discrete rolls: job kg ÷ roll count when rolls come from bags/roll × total products
    * (caller passes roll count as `numRollsNum`). Must precede the stale nominal-weight early return.
    */
-  if (qtyType === 'units' && finishMode === 'Rolls' && !continuousWebTotalRolls && numRollsNum > 0) {
+  if (
+    !opts?.rollWeightBillingAdjustsGauge &&
+    qtyType === 'units' &&
+    finishMode === 'Rolls' &&
+    !continuousWebTotalRolls &&
+    numRollsNum > 0
+  ) {
     const mass = derived?.derivedTotalKg
     if (mass != null && Number.isFinite(Number(mass)) && Number(mass) > 0) {
       return Number(mass) / numRollsNum
@@ -444,11 +495,15 @@ export function resolveWeightPerRollForPersistence(
   numRollsNum: number,
   weightPerRollNum: number,
   derived: DerivedDisplay,
+  opts?: { rollWeightBillingAdjustsGauge?: boolean },
 ): number | null {
   if (finishMode === 'Cartons') {
     /** Extrusion roll weight (kg per roll of film), not carton mass. */
     return cartonsWeightPerRollKg(totalKgNum, numRollsNum) ??
       (weightPerRollNum > 0 && Number.isFinite(weightPerRollNum) ? weightPerRollNum : null)
+  }
+  if (opts?.rollWeightBillingAdjustsGauge) {
+    return weightPerRollNum > 0 && Number.isFinite(weightPerRollNum) ? weightPerRollNum : null
   }
   if (qtyType === 'total_rolls') {
     const w = derived?.billedKgPerRoll ?? derived?.kgPerRoll

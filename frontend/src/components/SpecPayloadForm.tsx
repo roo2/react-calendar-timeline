@@ -27,6 +27,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material'
+import { effectiveThicknessUm, formatTargetGaugeDisplay } from '../utils/quoteCalculator'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { fetchProductSpecBundle, fetchProductSpecInks } from '../store/slices/productSpecSlice'
 import { DefaultSelectField } from './DefaultSelectField'
@@ -285,6 +286,8 @@ export function SpecPayloadForm(props: {
   estimatedUnitsPerPalletVolume?: number | null
   /** When set (job sheet), total order cartons/rolls for pallet planning. */
   stockPlanningTotalUnits?: number | null
+  /** Read-only effective gauge after trim / roll-weight billing, supplied by the quantity calculator when available. */
+  targetGaugeUm?: number | null
 }) {
   const dispatch = useAppDispatch()
   const bundle = useAppSelector((s) => s.productSpec.bundle)
@@ -303,6 +306,7 @@ export function SpecPayloadForm(props: {
     customerFacingDescriptionPlaceholder: customerFacingDescriptionPlaceholderProp,
     estimatedUnitsPerPalletVolume,
     stockPlanningTotalUnits = null,
+    targetGaugeUm = null,
   } = props
   const [printingDetailsOpen, setPrintingDetailsOpen] = useState(false)
 
@@ -411,6 +415,23 @@ export function SpecPayloadForm(props: {
   const printingEnabled = printing.method && printing.method !== 'None'
   const printRegistration = normalizePrintRegistration(printing.print_registration)
   const finishMode = identity.finish_mode || 'Rolls'
+  const orderedGaugeUm =
+    dimensions.thickness_um != null && Number.isFinite(Number(dimensions.thickness_um)) && Number(dimensions.thickness_um) > 0
+      ? Number(dimensions.thickness_um)
+      : null
+  const targetGaugeFromCalculator =
+    targetGaugeUm != null && Number.isFinite(Number(targetGaugeUm)) && Number(targetGaugeUm) > 0
+      ? Number(targetGaugeUm)
+      : null
+  const targetGaugeFallback =
+    targetGaugeFromCalculator == null &&
+    finishMode === 'Cartons' &&
+    Number(identity.trim_pct || 0) > 0 &&
+    orderedGaugeUm != null
+      ? effectiveThicknessUm(orderedGaugeUm, Number(identity.trim_pct))
+      : null
+  const targetGaugeResolved = targetGaugeFromCalculator ?? targetGaugeFallback
+  const targetGaugeDisplay = formatTargetGaugeDisplay(orderedGaugeUm, targetGaugeResolved)
   const convPrintPositionDetailsVisible = finishMode === 'Cartons' && !!printingEnabled
   const convPrintPositionDetailsEnabled =
     convPrintPositionDetailsVisible && isBottomSealType(sealTypeUiValue)
@@ -743,6 +764,8 @@ export function SpecPayloadForm(props: {
         const nextFinish = nextType === PRODUCT_TYPE.Tube ? 'Rolls' : nextFinishRaw === 'Cartons' ? 'Cartons' : 'Rolls'
         d.identity.finish_mode = nextFinish
         d.packaging.pack_mode = nextFinish
+        if (nextFinish === 'Rolls') d.identity.trim_pct = null
+        else d.identity.roll_weight_billing = 'core_off'
       }
     })
   }
@@ -771,11 +794,22 @@ export function SpecPayloadForm(props: {
     update((d) => {
       d.identity.finish_mode = 'Rolls'
       d.packaging.pack_mode = 'Rolls'
+      d.identity.trim_pct = null
       d.dimensions.length_units = 'Continuous'
       d.dimensions.base_length_mm = null
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- enforce tube finish-mode constraint
   }, [isTubeProduct, finishMode])
+
+  useEffect(() => {
+    if (finishMode !== 'Rolls') return
+    if (identity.trim_pct == null && identity.roll_weight_billing) return
+    update((d) => {
+      d.identity.trim_pct = null
+      if (!d.identity.roll_weight_billing) d.identity.roll_weight_billing = 'core_off'
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- normalize legacy trim on roll specs
+  }, [finishMode, identity.trim_pct, identity.roll_weight_billing])
 
   /** Printed jobs: default Treat to outside; never override an explicit inside (or outside) choice. */
   const treatInsideOutside = run.treat_inside_outside
@@ -1980,9 +2014,9 @@ export function SpecPayloadForm(props: {
             </DefaultSelectField>
           </Box>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
             <TextField
-              label="Thickness/Gauge (µm)"
+              label="Thickness/Gauge (µm, ordered)"
               type="number"
               inputProps={{ min: 1, step: 1 }}
               value={dimensions.thickness_um == null || dimensions.thickness_um === 0 ? '' : dimensions.thickness_um}
@@ -1990,6 +2024,13 @@ export function SpecPayloadForm(props: {
               required
               error={!!errorFor('spec.dimensions.thickness_um')}
               helperText={errorFor('spec.dimensions.thickness_um') || ''}
+            />
+            <TextField
+              label="Thickness/Gauge (µm, target)"
+              value={targetGaugeDisplay}
+              disabled
+              InputProps={{ readOnly: true }}
+              helperText={targetGaugeDisplay ? 'After trim / roll weight billing' : 'Same as ordered gauge'}
             />
           </Box>
         </Stack>
@@ -2853,18 +2894,7 @@ export function SpecPayloadForm(props: {
               </MenuItem>
             ))}
           </DefaultSelectField>
-          {finishMode === 'Rolls' ? (
-            <DefaultSelectField
-              label="Roll weight billing"
-              defaultValue="core_off"
-              value={identity.roll_weight_billing || 'core_off'}
-              onChange={(e) => update((d) => (d.identity.roll_weight_billing = e.target.value))}
-            >
-              <MenuItem value="core_included">Include core</MenuItem>
-              <MenuItem value="core_off">Exclude core</MenuItem>
-              <MenuItem value="core_half_off">Half core</MenuItem>
-            </DefaultSelectField>
-          ) : printingSurface === 'job_sheet_summary' ? null : (
+          {finishMode === 'Rolls' ? null : printingSurface === 'job_sheet_summary' ? null : (
             <TextField
               label={`${quality.productUnitLabel} per Carton`}
               type="number"
@@ -2888,22 +2918,6 @@ export function SpecPayloadForm(props: {
         </Box>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2, mt: 2 }}>
-          <TextField
-            label="Trim (%)"
-            type="number"
-            inputProps={{ min: 0, step: 0.1 }}
-            value={identity.trim_pct ?? ''}
-            onChange={(e) =>
-              update((d) => {
-                d.identity.trim_pct = e.target.value === '' ? null : parseFloat(e.target.value)
-              })
-            }
-            error={!!errorFor('spec.identity.trim_pct')}
-            helperText={
-              errorFor('spec.identity.trim_pct') ||
-              'Reduces effective gauge for kg calculations; total metres stay the same (e.g. 100 µm + 1% trim → 99 µm).'
-            }
-          />
           <TextField
             label="Tolerance (mm)"
             type="number"

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.domain import Job, JobSheet, OrderItem
-from app.db.models.rate_cards import PrintingPricingTier, Resin
+from app.db.models.rate_cards import Core, PrintingPricingTier, Resin
 
 if TYPE_CHECKING:
     from app.db.models.domain import ProductVersion
@@ -141,6 +141,59 @@ def thickness_um_from_spec(spec: dict) -> float:
 		return 0.0
 
 
+def trim_factor_from_spec(spec: dict) -> Optional[float]:
+	"""Multiplier on nominal gauge (1 − trim%/100), not on web metres."""
+	identity = spec.get("identity") or {}
+	try:
+		tp = identity.get("trim_pct")
+		if tp is None:
+			return None
+		p = float(tp)
+		if p <= 0:
+			return None
+		return _clamp(1.0 - p / 100.0, 0.01, 1.0)
+	except (TypeError, ValueError):
+		return None
+
+
+def _roll_weight_billing_slug(spec: dict) -> str:
+	identity = spec.get("identity") or {}
+	pack = spec.get("packaging") or {}
+	raw = (
+		identity.get("roll_weight_billing")
+		or spec.get("roll_weight_billing")
+		or pack.get("core_policy")
+	)
+	x = str(raw or "core_off").strip().lower().replace("-", "_").replace(" ", "_")
+	if x in ("core_half_off", "half_core", "half"):
+		return "core_half_off"
+	if x in ("core_off", "exclude_core", "exclude", "without_core", "no_core"):
+		return "core_off"
+	if x in ("core_included", "include_core", "include", "with_core"):
+		return "core_included"
+	return "core_off"
+
+
+def core_kg_per_roll_for_billing(session: Session, spec: dict) -> float:
+	identity = spec.get("identity") or {}
+	pack = spec.get("packaging") or {}
+	if str(identity.get("finish_mode") or "") != "Rolls":
+		return 0.0
+	if _roll_weight_billing_slug(spec) == "core_off":
+		return 0.0
+	core_type = pack.get("core_type")
+	if core_type is None or str(core_type).strip().lower() in ("", "none"):
+		return 0.0
+	core = session.get(Core, str(core_type).strip())
+	if core is None or float(core.kg_per_meter or 0) <= 0:
+		return 0.0
+	layflat_mm = layflat_mm_mass_from_spec(spec)
+	if layflat_mm <= 0:
+		return 0.0
+	frac = 0.5 if _roll_weight_billing_slug(spec) == "core_half_off" else 1.0
+	return _mm_to_m(layflat_mm) * float(core.kg_per_meter) * frac
+
+
 def effective_thickness_um_from_spec(spec: dict) -> float:
 	"""Nominal gauge reduced by trim % for polymer mass; metres are not scaled by trim."""
 	nominal = thickness_um_from_spec(spec)
@@ -179,24 +232,13 @@ def blend_density_kg_m3(session: Session, spec: dict) -> float:
 	return float(sum(x["density"] * (x["pct"] / 100.0) for x in rows))
 
 
-def trim_factor_from_spec(spec: dict) -> Optional[float]:
-	"""Multiplier on nominal gauge (1 − trim%/100), not on web metres."""
-	identity = spec.get("identity") or {}
-	try:
-		tp = identity.get("trim_pct")
-		if tp is None:
-			return None
-		p = float(tp)
-		if p <= 0:
-			return None
-		return _clamp(1.0 - p / 100.0, 0.01, 1.0)
-	except (TypeError, ValueError):
-		return None
-
-
 def quantity_object_from_job_sheet(spec: dict, js: JobSheet) -> dict[str, Any]:
 	"""Mirror ``buildQuantityObjectForCalculator`` inputs from persisted job sheet rows."""
-	finish = str((spec.get("identity") or {}).get("finish_mode") or "Rolls")
+	identity = spec.get("identity") or {}
+	finish = str(identity.get("finish_mode") or "Rolls")
+	pt = str(identity.get("product_type") or "")
+	dims = spec.get("dimensions") or {}
+	pack = spec.get("packaging") or {}
 	qty_type = str(js.qty_type or "kg")
 	qv = float(js.quantity_value or 0)
 	num_rolls = max(1, int(js.num_rolls or 1))
@@ -204,27 +246,61 @@ def quantity_object_from_job_sheet(spec: dict, js: JobSheet) -> dict[str, Any]:
 	num_units = float(js.num_product_units if js.num_product_units is not None else 0)
 	if qty_type == "units" and num_units <= 0:
 		num_units = qv
-	dims = spec.get("dimensions") or {}
 	try:
 		base_length_mm = float(dims.get("base_length_mm") or 0)
 	except (TypeError, ValueError):
 		base_length_mm = 0.0
+	length_units = str(dims.get("length_units") or "mm").lower()
+	continuous = finish == "Rolls" and (pt == "Tube" or length_units in ("continuous",))
+	try:
+		units_per_roll = float(pack.get("bags_per_roll") or pack.get("units_per_roll") or 0)
+	except (TypeError, ValueError):
+		units_per_roll = 0.0
 	out: dict[str, Any] = {}
 	if qty_type == "units":
 		u = int(round(num_units)) if num_units > 0 else None
 		if u is not None:
 			out["units"] = u
 	elif qty_type == "kg":
-		if qv > 0:
+		if finish == "Rolls" and num_rolls > 0 and wpr > 0:
+			out["total_kg"] = num_rolls * wpr
+			out["rolls"] = num_rolls
+		elif qv > 0:
 			out["total_kg"] = qv
-		if finish == "Rolls" and qv > 0 and wpr > 0:
+		if finish == "Rolls" and "rolls" not in out and qv > 0 and wpr > 0:
 			out["rolls"] = max(1, round(qv / wpr))
+		if (
+			finish == "Rolls"
+			and not continuous
+			and base_length_mm > 0
+			and out.get("rolls")
+			and units_per_roll > 0
+		):
+			out["total_m"] = (int(out["rolls"]) * units_per_roll * base_length_mm) / 1000.0
 	elif qty_type == "total_rolls":
 		rolls = int(qv) if qv > 0 else num_rolls
 		if rolls > 0 and wpr > 0:
 			out["total_kg"] = rolls * wpr
 			out["rolls"] = rolls
-	if finish == "Rolls" and num_rolls > 0 and qty_type not in ("total_rolls",):
+		elif rolls > 0:
+			out["rolls"] = rolls
+		if (
+			not continuous
+			and base_length_mm > 0
+			and units_per_roll > 0
+			and rolls > 0
+			and not (out.get("total_m") and float(out["total_m"]) > 0)
+		):
+			out["total_m"] = (rolls * units_per_roll * base_length_mm) / 1000.0
+	elif qty_type == "rolls_units":
+		rolls = int(qv) if qv > 0 else num_rolls
+		if rolls > 0 and units_per_roll > 0:
+			total_units = rolls * units_per_roll
+			out["units"] = int(round(total_units))
+			out["rolls"] = rolls
+			if base_length_mm > 0:
+				out["total_m"] = (total_units * base_length_mm) / 1000.0
+	if finish == "Rolls" and num_rolls > 0 and qty_type not in ("total_rolls", "rolls_units"):
 		if "rolls" not in out:
 			out["rolls"] = num_rolls
 	if qty_type == "units" and num_units > 0 and base_length_mm > 0:
@@ -253,9 +329,13 @@ def web_length_meters_from_spec_and_quantity(session: Session, spec: dict, qty: 
 		effective_len_m = _mm_to_m(unit_length_mm) if unit_length_mm > 0 else 0.0
 
 	thickness_um = effective_thickness_um_from_spec(spec)
+	nominal_thickness_um = thickness_um_from_spec(spec)
 	density = blend_density_kg_m3(session, spec)
 	thickness_m = _um_to_m(thickness_um)
 	kg_per_m2 = density * thickness_m
+	kg_per_linear_m_untrimmed = (
+		density * _um_to_m(nominal_thickness_um) * _mm_to_m(layflat_mm) if layflat_mm > 0 else 0.0
+	)
 	area_per_unit_m2 = effective_len_m * _mm_to_m(layflat_mm) if layflat_mm > 0 and effective_len_m > 0 else 0.0
 	kg_per_unit = area_per_unit_m2 * kg_per_m2
 	kg_per_linear_m = kg_per_m2 * _mm_to_m(layflat_mm) if layflat_mm > 0 else 0.0
@@ -267,17 +347,24 @@ def web_length_meters_from_spec_and_quantity(session: Session, spec: dict, qty: 
 	units_in_i = int(units_in) if units_in is not None and float(units_in) > 0 else None
 	total_kg_n = float(total_kg_req) if total_kg_req is not None and float(total_kg_req) > 0 else None
 	total_m_n = float(total_m_req) if total_m_req is not None and float(total_m_req) > 0 else None
+	trim_factor = trim_factor_from_spec(spec)
+	target_units_i = units_in_i
+	if finish == "Cartons" and units_in_i is not None and trim_factor is not None and trim_factor > 0:
+		target_units_i = int(round(units_in_i * (1.0 + (1.0 - trim_factor))))
 
-	if units_in_i is not None and kg_per_unit > 0:
-		usable_kg = kg_per_unit * units_in_i
-		derived_total_kg = usable_kg
-		derived_total_m = (derived_total_kg / kg_per_linear_m) if kg_per_linear_m > 0 else 0.0
+	if target_units_i is not None and not continuous and effective_len_m > 0:
+		derived_total_m = float(target_units_i) * effective_len_m
+	elif total_m_n is not None:
+		derived_total_m = total_m_n
+	elif target_units_i is not None and kg_per_unit > 0 and kg_per_linear_m > 0:
+		derived_total_m = float(target_units_i) * effective_len_m if effective_len_m > 0 else (kg_per_unit * target_units_i) / kg_per_linear_m
 	else:
 		derived_total_kg = total_kg_n if total_kg_n is not None else 0.0
 		if total_m_n is not None:
 			derived_total_m = total_m_n
-		elif derived_total_kg > 0 and kg_per_linear_m > 0:
-			derived_total_m = derived_total_kg / kg_per_linear_m
+		elif derived_total_kg > 0 and kg_per_linear_m_untrimmed > 0:
+			# Legacy kg-only: untrimmed kg/m so trim does not shrink scheduled web length.
+			derived_total_m = derived_total_kg / kg_per_linear_m_untrimmed
 		else:
 			derived_total_m = 0.0
 

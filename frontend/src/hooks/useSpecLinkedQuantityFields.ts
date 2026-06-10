@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SpecPayload } from '../components/SpecPayloadForm'
 import { useDebouncedCallback } from './useDebouncedCallback'
 import type { QuickQuoteInputs, QuoteRatebook } from '../utils/quoteCalculator'
-import { computeDerivedGeometryAndTotals, computeQuickQuotePreview } from '../utils/quoteCalculator'
+import {
+  computeDerivedGeometryAndTotals,
+  computePlasticKgPerLinearM,
+  computeQuickQuotePreview,
+  coreKgPerRollForBilling,
+} from '../utils/quoteCalculator'
 import { parsePositiveKgLoose } from '../utils/quoteToSpec'
 import { buildQuickQuoteInputsFromSpec, type SpecQuantitySlice } from '../utils/specToQuoteInputs'
 import {
@@ -81,7 +86,7 @@ export function useSpecLinkedQuantityFields(opts: {
 
   const totalKgStrRef = useRef('')
   const prevCartonKgMassDriversRef = useRef<{ tk: number; cartonKg: number } | null>(null)
-  const prevRollsKgMassDriversRef = useRef<{ tk: number; wpr: number } | null>(null)
+  const prevRollsKgMassDriversRef = useRef<{ rolls: number; wpr: number } | null>(null)
   const prevDiscreteUnitsRollsKpuRef = useRef<number | undefined>(undefined)
 
   const qtyTypeCarrySnapRef = useRef({
@@ -151,6 +156,15 @@ export function useSpecLinkedQuantityFields(opts: {
     }
   }, [ratebook, quickInputs])
 
+  const rollWeightBillingAdjustsGauge = useMemo(() => {
+    if (finishMode !== 'Rolls' || !ratebook || !quickInputs) return false
+    const billing = quickInputs.roll_weight_billing
+    if (!billing || billing === 'core_off') return false
+    const layflatMassMm = derivedForDisplay?.layflatMassMm
+    if (layflatMassMm == null || !(Number(layflatMassMm) > 0)) return false
+    return coreKgPerRollForBilling(quickInputs, ratebook, Number(layflatMassMm)) > 0
+  }, [finishMode, ratebook, quickInputs, derivedForDisplay?.layflatMassMm])
+
   const quickPreviewForQuantity = useMemo(() => {
     if (!ratebook || !quickInputs) return null
     try {
@@ -163,7 +177,9 @@ export function useSpecLinkedQuantityFields(opts: {
   const derivedDisplayForQty: DerivedDisplay = derivedForDisplay
     ? {
         derivedTotalKg: derivedForDisplay.derivedTotalKg ?? null,
+        billedTotalsKg: derivedForDisplay.billedTotalsKg ?? null,
         units: derivedForDisplay.units ?? null,
+        targetUnits: derivedForDisplay.targetUnits ?? null,
         kgPerRoll: derivedForDisplay.kgPerRoll ?? null,
         billedKgPerRoll: derivedForDisplay.billedKgPerRoll ?? null,
       }
@@ -182,6 +198,8 @@ export function useSpecLinkedQuantityFields(opts: {
     finishMode === 'Rolls'
       ? isContinuousLength && effectiveQtyType === 'units' && numUnitsNum > 0
         ? numUnitsNum
+        : effectiveQtyType === 'kg' && numRollsNum > 0
+          ? numRollsNum
         : effectiveQtyType === 'kg' && totalKgNum > 0 && weightPerRollNum > 0
           ? Math.round(totalKgNum / weightPerRollNum)
           : discreteUnitsRollsFromBags != null
@@ -206,6 +224,7 @@ export function useSpecLinkedQuantityFields(opts: {
     weightPerRollNum,
     derivedDisplayForQty,
     isContinuousLength && effectiveQtyType === 'total_rolls',
+    { rollWeightBillingAdjustsGauge },
   )
 
   const totalKgDisplay = computeTotalKgDisplay(
@@ -349,9 +368,9 @@ export function useSpecLinkedQuantityFields(opts: {
     rollsDisplay,
   ])
 
-  const totalKgEditable = effectiveQtyType === 'kg'
+  const totalKgEditable = effectiveQtyType === 'kg' && finishMode !== 'Rolls'
   const unitsEditable = effectiveQtyType === 'units'
-  const rollsEditable = finishMode === 'Rolls' && (effectiveQtyType === 'total_rolls' || effectiveQtyType === 'rolls_units')
+  const rollsEditable = finishMode === 'Rolls' && (effectiveQtyType === 'kg' || effectiveQtyType === 'total_rolls' || effectiveQtyType === 'rolls_units')
   const weightPerRollEditable =
     (finishMode === 'Rolls' &&
       (effectiveQtyType === 'kg' ||
@@ -512,23 +531,24 @@ export function useSpecLinkedQuantityFields(opts: {
       prevRollsKgMassDriversRef.current = null
       return
     }
-    if (!(totalKgNum > 0 && weightPerRollNum > 0)) {
+    if (!(numRollsNum > 0 && weightPerRollNum > 0)) {
       prevRollsKgMassDriversRef.current = null
       return
     }
-    const cur = { tk: totalKgNum, wpr: weightPerRollNum }
+    const cur = { rolls: numRollsNum, wpr: weightPerRollNum }
     const prev = prevRollsKgMassDriversRef.current
     prevRollsKgMassDriversRef.current = cur
     if (prev == null) return
-    if (prev.tk === cur.tk && prev.wpr === cur.wpr) return
-    const nr = Math.max(1, Math.round(cur.tk / cur.wpr))
-    if (numRolls !== String(nr)) setNumRolls(String(nr))
+    if (prev.rolls === cur.rolls && prev.wpr === cur.wpr) return
+    const total = cur.rolls * cur.wpr
+    const nextTotal = formatKgDisplay(total)
+    if (!kgDisplayStringsCloseEnough(totalKg, nextTotal)) setTotalKg(nextTotal)
     const kpu = derivedForDisplay?.kgPerUnit
     if (kpu != null && Number.isFinite(Number(kpu)) && Number(kpu) > 0) {
-      const nu = Math.max(0, Math.round(cur.tk / Number(kpu)))
+      const nu = Math.max(0, Math.round(total / Number(kpu)))
       if (numUnits !== String(nu)) setNumUnits(String(nu))
     }
-  }, [syncDerivedQuantity, finishMode, effectiveQtyType, isContinuousLength, totalKgNum, weightPerRollNum, numRolls, numUnits, derivedForDisplay?.kgPerUnit])
+  }, [syncDerivedQuantity, finishMode, effectiveQtyType, isContinuousLength, numRollsNum, weightPerRollNum, totalKg, numUnits, derivedForDisplay?.kgPerUnit])
 
   const qtyCascadeCtxRef = useRef({
     finishMode,
@@ -540,12 +560,34 @@ export function useSpecLinkedQuantityFields(opts: {
     numCartonsNum,
     unitsPerRollNum,
     numRollsNum,
+    rollWeightBillingAdjustsGauge: false,
     derivedKpu: null as number | null,
+    derivedKpuOrdered: null as number | null,
   })
   const numUnitsForCascadeRef = useRef(numUnitsNum)
   const lastNumUnitsRawRef = useRef('')
   const lastUnitsPerRollRawRef = useRef('')
   const lastBagsPerCartonRawRef = useRef('')
+
+  const derivedKpuForCascade =
+    derivedForDisplay?.kgPerUnit != null &&
+    Number.isFinite(Number(derivedForDisplay.kgPerUnit)) &&
+    Number(derivedForDisplay.kgPerUnit) > 0
+      ? Number(derivedForDisplay.kgPerUnit)
+      : null
+  /**
+   * kg/unit at the ORDERED gauge (back out the roll-weight-billing reduction). Used as the nominal weight/roll
+   * driver so editing bags/roll updates weight/roll without compounding the gauge reduction across recomputes.
+   */
+  const derivedKpuOrderedForCascade = (() => {
+    if (derivedKpuForCascade == null) return null
+    const nom = derivedForDisplay?.nominalThicknessUm
+    const eff = derivedForDisplay?.effectiveThicknessUm
+    if (nom != null && Number(nom) > 0 && eff != null && Number(eff) > 0) {
+      return (derivedKpuForCascade * Number(nom)) / Number(eff)
+    }
+    return derivedKpuForCascade
+  })()
 
   qtyCascadeCtxRef.current = {
     finishMode,
@@ -557,12 +599,9 @@ export function useSpecLinkedQuantityFields(opts: {
     numCartonsNum,
     unitsPerRollNum,
     numRollsNum,
-    derivedKpu:
-      derivedForDisplay?.kgPerUnit != null &&
-      Number.isFinite(Number(derivedForDisplay.kgPerUnit)) &&
-      Number(derivedForDisplay.kgPerUnit) > 0
-        ? Number(derivedForDisplay.kgPerUnit)
-        : null,
+    rollWeightBillingAdjustsGauge,
+    derivedKpu: derivedKpuForCascade,
+    derivedKpuOrdered: derivedKpuOrderedForCascade,
   }
   numUnitsForCascadeRef.current = numUnitsNum
 
@@ -582,8 +621,11 @@ export function useSpecLinkedQuantityFields(opts: {
       const kpu = s.derivedKpu
       if (u > 0 && kpu != null && kpu > 0) setTotalKg(formatKgDisplay(u * kpu))
       if (u > 0 && bags > 0) setNumRolls(String(Math.max(1, Math.ceil(u / bags))))
-      if (u > 0 && bags > 0 && kpu != null && kpu > 0) {
-        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+      // Roll-weight billing: nominal weight/roll uses ordered-gauge kg/unit (invariant to the reduction) so it
+      // tracks bags/roll without compounding the gauge factor on each recompute.
+      const kpuForWeight = s.rollWeightBillingAdjustsGauge ? s.derivedKpuOrdered : kpu
+      if (u > 0 && bags > 0 && kpuForWeight != null && kpuForWeight > 0) {
+        setWeightPerRoll(roundTo2Decimals(String(bags * kpuForWeight)))
       }
     }
   }, QTY_FIELD_DEBOUNCE_MS)
@@ -600,7 +642,7 @@ export function useSpecLinkedQuantityFields(opts: {
       if (bags > 0 && rolls > 0 && kpu != null && kpu > 0) {
         setNumUnits(String(rolls * bags))
         setTotalKg(formatKgDisplay(rolls * bags * kpu))
-        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+        if (!s.rollWeightBillingAdjustsGauge) setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
       }
     }
     if (s.finishMode === 'Rolls' && !s.isContinuousLength && s.qtyType === 'rolls_units' && s.ratebook) {
@@ -610,7 +652,7 @@ export function useSpecLinkedQuantityFields(opts: {
       if (bags > 0 && rolls > 0 && kpu != null && kpu > 0) {
         setNumUnits(String(rolls * bags))
         setTotalKg(formatKgDisplay(rolls * bags * kpu))
-        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+        if (!s.rollWeightBillingAdjustsGauge) setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
       }
     }
     if (s.finishMode === 'Rolls' && !s.isContinuousLength && s.qtyType === 'units' && s.ratebook) {
@@ -619,7 +661,11 @@ export function useSpecLinkedQuantityFields(opts: {
       if (bags > 0 && uProducts > 0 && kpu != null && kpu > 0) {
         const rolls = Math.max(1, Math.ceil(uProducts / bags))
         setNumRolls(String(rolls))
-        setWeightPerRoll(roundTo2Decimals(String(bags * kpu)))
+        // Roll-weight billing: ordered-gauge kg/unit keeps weight/roll responsive to bags/roll without compounding.
+        const kpuForWeight = s.rollWeightBillingAdjustsGauge ? s.derivedKpuOrdered : kpu
+        if (kpuForWeight != null && kpuForWeight > 0) {
+          setWeightPerRoll(roundTo2Decimals(String(bags * kpuForWeight)))
+        }
         setTotalKg(formatKgDisplay(uProducts * kpu))
       }
     }
@@ -820,6 +866,8 @@ export function useSpecLinkedQuantityFields(opts: {
         return
       }
 
+      prevDiscreteUnitsRollsKpuRef.current = undefined
+
       if (nextQtyType === 'units') {
         if (finishMode === 'Cartons' && nextCartonQtyMode === 'ctn') {
           let cartons =
@@ -917,6 +965,7 @@ export function useSpecLinkedQuantityFields(opts: {
       }
       if (!isContinuousLength) {
         if (
+          !rollWeightBillingAdjustsGauge &&
           (weightPerRoll == null || String(weightPerRoll).trim() === '') &&
           weightPerRollDisplay != null &&
           Number.isFinite(Number(weightPerRollDisplay))
@@ -939,6 +988,7 @@ export function useSpecLinkedQuantityFields(opts: {
     rollsDisplay,
     productsPerRollDerived,
     weightPerRollDisplay,
+    rollWeightBillingAdjustsGauge,
   ])
 
   /** After hydrate (or when ratebook geometry arrives), derive meters/roll from stored weight/roll. */
@@ -953,27 +1003,20 @@ export function useSpecLinkedQuantityFields(opts: {
       return
     }
 
+    if (rollWeightBillingAdjustsGauge) return
+
     const wprStored = weightPerRollNum > 0 ? weightPerRollNum : null
     const wprFromDisplay =
       weightPerRollDisplay != null && Number.isFinite(Number(weightPerRollDisplay)) && Number(weightPerRollDisplay) > 0
         ? Number(weightPerRollDisplay)
         : null
     const wpr = wprStored ?? wprFromDisplay
-    if (wpr == null || !(wpr > 0)) return
+    if (wpr == null || !(wpr > 0) || !ratebook || !quickInputs) return
 
-    const totalM = derivedForDisplay?.derivedTotalM
-    const totalKg = derivedForDisplay?.derivedTotalKg
-    const kgPerM =
-      totalM != null &&
-      Number(totalM) > 0 &&
-      totalKg != null &&
-      Number(totalKg) > 0 &&
-      Number.isFinite(Number(totalKg) / Number(totalM))
-        ? Number(totalKg) / Number(totalM)
-        : null
-    if (kgPerM == null || !(kgPerM > 0)) return
+    const nominalKgPerM = computePlasticKgPerLinearM(quickInputs, ratebook)
+    if (!(nominalKgPerM > 0)) return
 
-    const mpr = wpr / kgPerM
+    const mpr = wpr / nominalKgPerM
     if (Number.isFinite(mpr) && mpr > 0) {
       setMetersPerRoll(roundTo2Decimals(String(mpr)))
     }
@@ -984,9 +1027,10 @@ export function useSpecLinkedQuantityFields(opts: {
     metersPerRoll,
     weightPerRollNum,
     weightPerRollDisplay,
+    rollWeightBillingAdjustsGauge,
+    ratebook,
+    quickInputs,
     derivedForDisplay?.mPerRoll,
-    derivedForDisplay?.derivedTotalM,
-    derivedForDisplay?.derivedTotalKg,
   ])
 
   useEffect(() => {
@@ -1034,8 +1078,15 @@ export function useSpecLinkedQuantityFields(opts: {
     if (!(Number.isFinite(implied) && implied > 0)) return
     const next = roundTo2Decimals(String(implied))
     if (String(weightPerRoll).trim() === next) return
-    setWeightPerRoll(next)
-  }, [syncDerivedQuantity, effectiveQtyType, weightPerRoll, numRollsNum, derivedForDisplay?.derivedTotalKg])
+    if (!rollWeightBillingAdjustsGauge) setWeightPerRoll(next)
+  }, [
+    syncDerivedQuantity,
+    effectiveQtyType,
+    weightPerRoll,
+    numRollsNum,
+    derivedForDisplay?.derivedTotalKg,
+    rollWeightBillingAdjustsGauge,
+  ])
 
   useEffect(() => {
     if (!syncDerivedQuantity) return
@@ -1056,6 +1107,25 @@ export function useSpecLinkedQuantityFields(opts: {
       prevDiscreteUnitsRollsKpuRef.current = undefined
       return
     }
+    // Roll-weight billing ties gauge to billed weight/roll and roll count — resyncing rolls/kg here
+    // fights the calculator and caused update-depth overflows when switching to "1000 (total …)".
+    if (rollWeightBillingAdjustsGauge) {
+      prevDiscreteUnitsRollsKpuRef.current = derivedForDisplay?.kgPerUnit ?? undefined
+      // Keep nominal weight/roll tracking the ORDERED gauge so the target gauge live-updates when gauge changes.
+      // Ordered-gauge kg/unit is invariant to the billing reduction, so this converges in one step (no compounding/loop);
+      // the equality guard stops the effect re-firing after its own setState.
+      if (
+        unitsPerRollNum > 0 &&
+        derivedKpuOrderedForCascade != null &&
+        derivedKpuOrderedForCascade > 0
+      ) {
+        const nextWpr = roundTo2Decimals(String(unitsPerRollNum * derivedKpuOrderedForCascade))
+        if (weightPerRoll !== nextWpr && !kgDisplayStringsCloseEnough(weightPerRoll, nextWpr)) {
+          setWeightPerRoll(nextWpr)
+        }
+      }
+      return
+    }
     if (numUnitsNum <= 0) return
     const kpu = derivedForDisplay?.kgPerUnit
     if (kpu == null || !Number.isFinite(Number(kpu)) || Number(kpu) <= 0) return
@@ -1074,16 +1144,18 @@ export function useSpecLinkedQuantityFields(opts: {
       const nextWpr = roundTo2Decimals(String(unitsPerRollNum * kpuNum))
       if (weightPerRoll !== nextWpr) setWeightPerRoll(nextWpr)
     }
-  }, [syncDerivedQuantity, effectiveQtyType, finishMode, isContinuousLength, numUnitsNum, unitsPerRollNum, derivedForDisplay?.kgPerUnit])
-
-  useEffect(() => {
-    if (!syncDerivedQuantity) return
-    if (effectiveQtyType !== 'rolls_units') return
-    const w = derivedForDisplay?.billedKgPerRoll ?? derivedForDisplay?.kgPerRoll
-    if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) {
-      setWeightPerRoll(roundTo2Decimals(String(w)))
-    }
-  }, [syncDerivedQuantity, effectiveQtyType, derivedForDisplay?.billedKgPerRoll, derivedForDisplay?.kgPerRoll])
+  }, [
+    syncDerivedQuantity,
+    effectiveQtyType,
+    finishMode,
+    isContinuousLength,
+    numUnitsNum,
+    unitsPerRollNum,
+    derivedForDisplay?.kgPerUnit,
+    derivedKpuOrderedForCascade,
+    rollWeightBillingAdjustsGauge,
+    weightPerRoll,
+  ])
 
   const hydrate = useCallback((h: SpecLinkedQuantityHydrate) => {
     if (h.qtyType != null) setQtyType(h.qtyType)
@@ -1168,5 +1240,6 @@ export function useSpecLinkedQuantityFields(opts: {
     continuousRollCountForTotalKgSync,
     formatKgDisplay,
     roundTo2Decimals,
+    rollWeightBillingAdjustsGauge,
   }
 }

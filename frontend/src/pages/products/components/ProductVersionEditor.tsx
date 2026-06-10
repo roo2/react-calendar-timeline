@@ -5,7 +5,7 @@ import { can } from '../../../auth/permissions'
 import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { makeDefaultSpec, SpecPayloadForm, type SpecPayload } from '../../../components/SpecPayloadForm'
-import type { PrintingArtworkScope } from '../../../components/PrintingArtworkUploadSection'
+import { resolvePrintingArtworkScope } from '../../../utils/printingArtworkScope'
 import {
   Alert,
   Box,
@@ -663,6 +663,7 @@ export function ProductVersionEditor(props: {
   const derivedDisplay = qty.derivedForDisplay
     ? {
         derivedTotalKg: qty.derivedForDisplay.derivedTotalKg ?? null,
+        billedTotalsKg: qty.derivedForDisplay.billedTotalsKg ?? null,
         units: qty.derivedForDisplay.units ?? null,
         kgPerRoll: qty.derivedForDisplay.kgPerRoll ?? null,
         billedKgPerRoll: qty.derivedForDisplay.billedKgPerRoll ?? null,
@@ -683,8 +684,20 @@ export function ProductVersionEditor(props: {
     ) {
       return Number(qty.totalKgDisplay)
     }
+    if (
+      finishMode === 'Rolls' &&
+      !(totalKgNum > 0) &&
+      derivedDisplay?.derivedTotalKg != null &&
+      Number(derivedDisplay.derivedTotalKg) > 0
+    ) {
+      return Number(derivedDisplay.derivedTotalKg)
+    }
     return totalKgNum
-  }, [jobSheetId, embedded, finishMode, totalKgNum, qty.totalKgDisplay, qty.cartonTotalKgIncludingWaste])
+  }, [jobSheetId, embedded, finishMode, totalKgNum, qty.totalKgDisplay, qty.cartonTotalKgIncludingWaste, derivedDisplay?.derivedTotalKg])
+  const totalKgForBilling =
+    qty.totalKgDisplay != null && Number(qty.totalKgDisplay) > 0 && Number.isFinite(Number(qty.totalKgDisplay))
+      ? Number(qty.totalKgDisplay)
+      : totalKgForScheduling
 
   const loadedJobSheet = jobSheetId && jobSheetDetail?.status === 'succeeded' ? jobSheetDetail.data?.job_sheet : undefined
 
@@ -790,7 +803,7 @@ export function ProductVersionEditor(props: {
     const qtyErr = validateJobSheetQuantityInputs(
       finishMode,
       effectiveQtyType,
-      totalKgForScheduling,
+      totalKgForBilling,
       numUnitsNum,
       numRollsNum,
       finishMode === 'Cartons' ? (cartonsWeightPerRollKg(totalKgForScheduling, numRollsNum) ?? 0) : weightPerRollNum,
@@ -811,10 +824,11 @@ export function ProductVersionEditor(props: {
     const persistedWpr = resolveWeightPerRollForPersistence(
       finishMode,
       effectiveQtyType,
-      totalKgForScheduling,
+      totalKgForBilling,
       numRollsNum,
       weightPerRollNum,
       derivedDisplay,
+      { rollWeightBillingAdjustsGauge: qty.rollWeightBillingAdjustsGauge },
     )
     const fallbackLegacy = Number(loadedJobSheet?.quantity_value) > 0 ? Number(loadedJobSheet?.quantity_value) : 1
     const bpc = spec.packaging?.bags_per_carton
@@ -1164,6 +1178,7 @@ export function ProductVersionEditor(props: {
       numRollsNum,
       weightPerRollNum,
       derivedDisplay,
+      { rollWeightBillingAdjustsGauge: qty.rollWeightBillingAdjustsGauge },
     )
     const bpc = spec.packaging?.bags_per_carton
     const bpcNum = bpc != null ? Number(bpc) : null
@@ -1364,13 +1379,25 @@ export function ProductVersionEditor(props: {
     return { ...fieldErrors, ...createFieldErrors }
   }, [embedded, fieldErrors, createFieldErrors])
 
-  const printingArtworkScope = useMemo<PrintingArtworkScope | null>(() => {
-    if (jobSheetId) return { kind: 'job_sheet', jobSheetId }
-    if (embedded) return null
-    const vid = versionId || data?.product?.active_version_id
-    if (productId && vid) return { kind: 'product_version', productId, versionId: String(vid) }
-    return null
-  }, [jobSheetId, embedded, versionId, data?.product?.active_version_id, productId])
+  const printingArtworkScope = useMemo(
+    () =>
+      resolvePrintingArtworkScope({
+        embedded,
+        jobSheetId,
+        productId,
+        jobSheetProductId: loadedJobSheet?.product_id != null ? String(loadedJobSheet.product_id) : null,
+        versionId,
+        activeVersionId: data?.product?.active_version_id != null ? String(data.product.active_version_id) : null,
+      }),
+    [
+      embedded,
+      jobSheetId,
+      productId,
+      loadedJobSheet?.product_id,
+      versionId,
+      data?.product?.active_version_id,
+    ],
+  )
 
   const editingVersionNumber = useMemo(() => {
     if (!versionId) return null
@@ -1606,6 +1633,7 @@ export function ProductVersionEditor(props: {
                     }}
                     customerFacingDescriptionPlaceholder={previewDescription}
                     stockPlanningTotalUnits={jobSheetId || embedded ? stockPlanningTotalUnits : null}
+                    targetGaugeUm={qty.derivedForDisplay?.effectiveThicknessUm ?? null}
                     afterDimensionsSlot={
                       <>
                         <Paper variant="outlined" sx={{ p: 2 }}>
@@ -1681,6 +1709,32 @@ export function ProductVersionEditor(props: {
                             qty={qty}
                             hideCartonRollWeight={qty.finishMode === 'Cartons'}
                             bagsPerCartonStr={bagsPerCartonStr}
+                            rollWeightBilling={spec.identity?.roll_weight_billing || 'core_off'}
+                            onRollWeightBillingChange={(value) => {
+                              setSpec((prev: SpecPayload) => ({
+                                ...prev,
+                                identity: {
+                                  ...prev.identity,
+                                  roll_weight_billing: value,
+                                  trim_pct: null,
+                                },
+                              }))
+                              setDirty(true)
+                              setJobSaveErr(null)
+                            }}
+                            trimGaugeChecked={Number(spec.identity?.trim_pct || 0) === 5}
+                            onTrimGaugeCheckedChange={(checked) => {
+                              setSpec((prev: SpecPayload) => ({
+                                ...prev,
+                                identity: {
+                                  ...prev.identity,
+                                  trim_pct: checked ? 5 : null,
+                                  roll_weight_billing: 'core_off',
+                                },
+                              }))
+                              setDirty(true)
+                              setJobSaveErr(null)
+                            }}
                             onBagsPerCartonChange={(raw) => {
                               setSpec((prev: SpecPayload) => ({
                                 ...prev,
@@ -1739,6 +1793,7 @@ export function ProductVersionEditor(props: {
                     printingSurface="full"
                     printingArtworkScope={printingArtworkScope}
                     customerFacingDescriptionPlaceholder={previewDescription}
+                    targetGaugeUm={qty.derivedForDisplay?.effectiveThicknessUm ?? null}
                   />
                   <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                     <Typography variant="h6" sx={{ mb: 2 }}>
@@ -1752,6 +1807,30 @@ export function ProductVersionEditor(props: {
                       qty={qty}
                       hideCartonRollWeight={qty.finishMode === 'Cartons'}
                       bagsPerCartonStr={bagsPerCartonStr}
+                      rollWeightBilling={spec.identity?.roll_weight_billing || 'core_off'}
+                      onRollWeightBillingChange={(value) => {
+                        setSpec((prev: SpecPayload) => ({
+                          ...prev,
+                          identity: {
+                            ...prev.identity,
+                            roll_weight_billing: value,
+                            trim_pct: null,
+                          },
+                        }))
+                        setDirty(true)
+                      }}
+                      trimGaugeChecked={Number(spec.identity?.trim_pct || 0) === 5}
+                      onTrimGaugeCheckedChange={(checked) => {
+                        setSpec((prev: SpecPayload) => ({
+                          ...prev,
+                          identity: {
+                            ...prev.identity,
+                            trim_pct: checked ? 5 : null,
+                            roll_weight_billing: 'core_off',
+                          },
+                        }))
+                        setDirty(true)
+                      }}
                       onBagsPerCartonChange={(raw) => {
                         setSpec((prev: SpecPayload) => ({
                           ...prev,

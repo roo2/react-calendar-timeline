@@ -2,9 +2,8 @@
  * Extrusion job sheet: resin / colour / additive blend mass breakdown for print.
  *
  * Formulation percentages can sum above 100% (colours and additives on top of a 100% resin
- * blend). Productive plastic kg matches the quote calculator's `derivedTotalKg` (trim;
- * roll-weight billing subtracts core mass for `core_included` / `core_half_off` while
- * `totals_kg` stays billed). Extrusion waste (downtime + default order %) is
+ * blend). Productive plastic kg matches the quote calculator's `derivedTotalKg` (trim and
+ * roll-weight billing reduce effective gauge; web metres stay fixed). Extrusion waste (downtime + default order %) is
  * allocated proportionally; total column = productive + waste share = extruded mass.
  */
 
@@ -116,7 +115,7 @@ export function formatBlendKgCell(n: number | null, opts?: { withSuffix?: boolea
 }
 
 /**
- * @param productivePlasticKg Quote `derivedTotalKg` — film plastic required (after trim & core billing).
+ * @param productivePlasticKg Quote `derivedTotalKg` — film plastic required (after trim & roll-weight billing gauge).
  * @param extrusionWasteKg Sum of extrusion downtime waste + default order % waste.
  * @param totalExtrudedKg `derivedTotalKg + extrusionWasteKg` when available.
  */

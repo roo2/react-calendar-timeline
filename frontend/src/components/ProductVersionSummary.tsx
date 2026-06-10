@@ -370,7 +370,9 @@ export function ProductVersionSummary(props: { spec: any }) {
                   ? (spec?.packaging?.bags_per_carton ?? '-')
                   : (spec?.identity?.roll_weight_billing || '-'),
             },
-            { k: 'Trim (%)', v: spec?.identity?.trim_pct ?? '-' },
+            ...(finishMode === 'Cartons'
+              ? [{ k: 'Trim 5% Gauge', v: Number(spec?.identity?.trim_pct || 0) === 5 ? 'Yes' : 'No' }]
+              : []),
             { k: 'Tolerance (mm)', v: spec?.dimensions?.width_tolerance_mm ?? '-' },
             { k: 'Run up', v: formatRunUp(spec?.run_requirements?.run_up) },
             { k: 'Slit', v: spec?.run_requirements?.slit || '-' },

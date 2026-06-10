@@ -77,7 +77,7 @@ export function PrintingArtworkUploadSection(props: {
           Artwork (PDF)
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Save the job sheet (or use a saved product version) before attaching artwork PDFs.
+          Save the product (or create the job sheet on an order) before attaching artwork PDFs.
         </Typography>
       </Box>
     )
@@ -202,7 +202,7 @@ export function PrintingArtworkUploadSection(props: {
         Artwork (PDF)
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-        Files are stored in S3. Save the spec (job sheet or product version) so attachment metadata is persisted.
+        Files are stored on the product spec (S3) and shared across job sheets for this product.
       </Typography>
 
       {msg ? (

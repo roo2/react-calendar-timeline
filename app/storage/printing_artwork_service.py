@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import copy
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.db.models.domain import Product
+from app.db.session import SessionLocal
 from app.exceptions import DomainError
 from app.job_sheets import service as job_sheets_service
 from app.products import service as products_service
@@ -82,47 +85,88 @@ def _find_artwork_file(spec: dict, file_id: str) -> dict | None:
     return None
 
 
-def upload_job_sheet_printing_pdf(*, job_sheet_id: str, filename: str, data: bytes) -> dict:
-    bucket = require_storage()
-    assert_pdf_bytes(data)
+def _product_artwork_target(*, product_id: str) -> tuple[str, str]:
+    """Resolve product id + active version id for shared printing artwork."""
+    try:
+        pid = str(uuid.UUID(str(product_id)))
+    except Exception as e:
+        raise DomainError("Invalid product id") from e
+    with SessionLocal() as db:
+        product = db.get(Product, pid)
+        if not product:
+            raise DomainError("Product not found")
+        active_vid = getattr(product, "active_version_id", None)
+        if not active_vid:
+            raise DomainError("Product has no active version")
+        return pid, str(active_vid)
+
+
+def _product_artwork_target_for_job_sheet(job_sheet_id: str) -> tuple[str, str]:
     js = job_sheets_service.get_job_sheet(job_sheet_id)
     if not js:
         raise DomainError("Job sheet not found")
+    pid = str(getattr(js, "product_id", "") or "").strip()
+    if not pid:
+        raise DomainError("Job sheet has no product")
+    return _product_artwork_target(product_id=pid)
+
+
+def merge_product_artwork_files_into_spec(spec: Any, *, product_id: str) -> dict:
+    """
+    Merge ``printing.artwork_files`` from the product's active version into ``spec``
+    so job sheets share artwork metadata across orders.
+    """
+    if not isinstance(spec, dict):
+        return {}
     try:
-        jid = str(uuid.UUID(str(job_sheet_id)))
-    except Exception as e:
-        raise DomainError("Invalid job_sheet_id") from e
-    fid = str(uuid.uuid4())
-    key = object_key_job_sheet(str(jid), fid)
-    meta = {"id": fid, "filename": sanitize_filename(filename), "byte_size": len(data)}
-    put_pdf(bucket=bucket, key=key, body=data, original_filename=meta["filename"])
-    try:
-        job_sheets_service.append_printing_artwork_file_to_job_sheet_version(
-            str(jid),
-            file_id=fid,
-            filename=meta["filename"],
-            byte_size=meta["byte_size"],
-        )
+        pid, active_vid = _product_artwork_target(product_id=product_id)
     except DomainError:
-        try:
-            delete_object(bucket=bucket, key=key)
-        except Exception:
-            pass
-        raise
-    return meta
+        return copy.deepcopy(spec)
+    active = products_service.get_version(active_vid)
+    active_spec = getattr(active, "spec_payload", None) if active else None
+    if not isinstance(active_spec, dict):
+        return copy.deepcopy(spec)
+    active_files = _artwork_files(_printing_dict(active_spec))
+    if not active_files:
+        return copy.deepcopy(spec)
+    out = copy.deepcopy(spec)
+    printing = _printing_dict(out)
+    if not isinstance(out.get("printing"), dict):
+        out["printing"] = printing
+    files = _artwork_files(printing)
+    by_id = {str(it.get("id")): it for it in files if it.get("id")}
+    for it in active_files:
+        by_id[str(it.get("id"))] = it
+    printing["artwork_files"] = list(by_id.values())
+    out["printing"] = printing
+    return out
+
+
+def upload_job_sheet_printing_pdf(*, job_sheet_id: str, filename: str, data: bytes) -> dict:
+    pid, vid = _product_artwork_target_for_job_sheet(job_sheet_id)
+    return upload_product_printing_pdf(
+        product_id=pid,
+        version_id=vid,
+        filename=filename,
+        data=data,
+    )
 
 
 def presign_job_sheet_printing_pdf(*, job_sheet_id: str, file_id: str) -> str:
     bucket = require_storage()
+    pid, vid = _product_artwork_target_for_job_sheet(job_sheet_id)
+    v = products_service.get_version(vid)
+    spec = getattr(v, "spec_payload", None) if v else None
+    if isinstance(spec, dict) and _find_artwork_file(spec, file_id):
+        return presign_product_printing_pdf(product_id=pid, version_id=vid, file_id=file_id)
+
+    # Legacy: artwork uploaded before product-level storage used job-sheet S3 keys.
     js = job_sheets_service.get_job_sheet(job_sheet_id)
     if not js:
         raise DomainError("Job sheet not found")
-    v = getattr(js, "version", None)
-    spec = getattr(v, "spec_payload", None) if v else None
-    if not isinstance(spec, dict):
-        raise DomainError("Job sheet has no spec")
-    row = _find_artwork_file(spec, file_id)
-    if not row:
+    linked = getattr(js, "version", None)
+    linked_spec = getattr(linked, "spec_payload", None) if linked else None
+    if not isinstance(linked_spec, dict) or not _find_artwork_file(linked_spec, file_id):
         raise DomainError("Artwork file not found on this job sheet")
     try:
         jid = str(uuid.UUID(str(job_sheet_id)))
@@ -135,15 +179,20 @@ def presign_job_sheet_printing_pdf(*, job_sheet_id: str, file_id: str) -> str:
 
 def delete_job_sheet_printing_pdf(*, job_sheet_id: str, file_id: str) -> None:
     bucket = require_storage()
+    pid, vid = _product_artwork_target_for_job_sheet(job_sheet_id)
+    v = products_service.get_version(vid)
+    spec = getattr(v, "spec_payload", None) if v else None
+    if isinstance(spec, dict) and _find_artwork_file(spec, file_id):
+        delete_product_printing_pdf(product_id=pid, version_id=vid, file_id=file_id)
+        return
+
+    # Legacy job-sheet-scoped artwork.
     js = job_sheets_service.get_job_sheet(job_sheet_id)
     if not js:
         raise DomainError("Job sheet not found")
-    v = getattr(js, "version", None)
-    spec = getattr(v, "spec_payload", None) if v else None
-    if not isinstance(spec, dict):
-        raise DomainError("Job sheet has no spec")
-    row = _find_artwork_file(spec, file_id)
-    if not row:
+    linked = getattr(js, "version", None)
+    linked_spec = getattr(linked, "spec_payload", None) if linked else None
+    if not isinstance(linked_spec, dict) or not _find_artwork_file(linked_spec, file_id):
         raise DomainError("Artwork file not found on this job sheet")
     try:
         jid = str(uuid.UUID(str(job_sheet_id)))
