@@ -3260,8 +3260,8 @@ export function JobSheetPrintPage() {
         .js-resin-blend-table tr:first-child > td {
           border-top: none;
         }
-        .js-resin-blend-table tr:last-child > th,
-        .js-resin-blend-table tr:last-child > td {
+        .js-resin-blend-table tbody tr:last-child > th,
+        .js-resin-blend-table tbody tr:last-child > td {
           border-bottom: none;
         }
         .js-resin-blend-table th:first-child,
