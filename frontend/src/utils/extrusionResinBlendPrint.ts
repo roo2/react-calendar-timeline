@@ -31,6 +31,12 @@ export type ExtrusionResinBlendPrintRow = ExtrusionResinBlendComponent & {
   totalKg: number | null
 }
 
+/** Abbreviated waste breakdown line for the print blend table (mirrors the job sheet side-panel breakdown). */
+export type ExtrusionResinBlendWasteLine = {
+  label: string
+  kg: number
+}
+
 export type ExtrusionResinBlendPrintTable = {
   caption: string
   variant: 'ld' | 'preset' | 'custom'
@@ -39,6 +45,8 @@ export type ExtrusionResinBlendPrintTable = {
   totalProductiveKg: number | null
   totalWasteKg: number | null
   totalExtrudedKg: number | null
+  /** Setup / Default / Conversion waste split for the single rowspan waste cell (null when unavailable). */
+  wasteBreakdown: ExtrusionResinBlendWasteLine[] | null
 }
 
 function roundKg(n: number): number {
@@ -127,12 +135,20 @@ export function buildExtrusionResinBlendPrintTable(
     productivePlasticKg: number | null
     extrusionWasteKg: number | null
     totalExtrudedKg: number | null
+    wasteBreakdown?: ExtrusionResinBlendWasteLine[] | null
   },
 ): ExtrusionResinBlendPrintTable | null {
   if (!components.length) return null
 
   const totalPct = components.reduce((s, c) => s + (Number.isFinite(c.pct) ? c.pct : 0), 0)
   if (totalPct <= 0) return null
+
+  const wasteBreakdown =
+    opts.wasteBreakdown && opts.wasteBreakdown.length > 0
+      ? opts.wasteBreakdown
+          .filter((l) => Number.isFinite(l.kg) && l.kg > 0)
+          .map((l) => ({ label: l.label, kg: roundKg(l.kg) }))
+      : null
 
   const plasticKg =
     opts.productivePlasticKg != null && opts.productivePlasticKg > 0 && Number.isFinite(opts.productivePlasticKg)
@@ -148,6 +164,7 @@ export function buildExtrusionResinBlendPrintTable(
       totalProductiveKg: null,
       totalWasteKg: null,
       totalExtrudedKg: null,
+      wasteBreakdown: wasteBreakdown && wasteBreakdown.length > 0 ? wasteBreakdown : null,
     }
   }
 
@@ -181,5 +198,6 @@ export function buildExtrusionResinBlendPrintTable(
     totalProductiveKg: roundKg(plasticKg),
     totalWasteKg: roundKg(wasteTotal),
     totalExtrudedKg: roundKg(extrudedTotal),
+    wasteBreakdown: wasteBreakdown && wasteBreakdown.length > 0 ? wasteBreakdown : null,
   }
 }

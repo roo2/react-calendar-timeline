@@ -472,7 +472,7 @@ function JobSheetPrintResinBlendTable(props: { table: ExtrusionResinBlendPrintTa
             </tr>
           </thead>
           <tbody>
-            {table.rows.map((row) => (
+            {table.rows.map((row, rowIndex) => (
               <tr key={row.key}>
                 <td
                   className={`js-resin-blend-col-resin${row.bgHex ? ' js-resin-blend-col-resin--hl' : ''}`}
@@ -489,7 +489,22 @@ function JobSheetPrintResinBlendTable(props: { table: ExtrusionResinBlendPrintTa
                 </td>
                 <td className="js-resin-blend-col-pct">{formatBlendPct(row.pct)}</td>
                 <td className="js-resin-blend-col-kg">{formatBlendKgCell(row.kg)}</td>
-                <td className="js-resin-blend-col-waste">{formatBlendKgCell(row.wasteKg)}</td>
+                {rowIndex === 0 ? (
+                  <td className="js-resin-blend-col-waste js-resin-blend-col-waste--breakdown" rowSpan={table.rows.length}>
+                    {table.wasteBreakdown && table.wasteBreakdown.length > 0 ? (
+                      <ul className="js-resin-blend-waste-list">
+                        {table.wasteBreakdown.map((line) => (
+                          <li key={line.label}>
+                            <span className="js-resin-blend-waste-label">{line.label}:</span>{' '}
+                            {formatBlendKgCell(line.kg, { withSuffix: true })}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      formatBlendKgCell(table.totalWasteKg, { withSuffix: true })
+                    )}
+                  </td>
+                ) : null}
                 <td className="js-resin-blend-col-total">{formatBlendKgCell(row.totalKg, { withSuffix: true })}</td>
               </tr>
             ))}
@@ -2135,12 +2150,25 @@ export function JobSheetPrintPage() {
         : null
     const extrusionWasteKgForBlend =
       wasteKg != null && wasteKg >= 0 && Number.isFinite(wasteKg) ? wasteKg : null
+    /** Abbreviated waste split for the blend table (mirrors side-panel: Setup / Default / Conversion). */
+    const wasteBreakdownForBlend = (() => {
+      if (!quotePreviewForWaste) return null
+      const lines: { label: string; kg: number }[] = []
+      const downtime = n(quotePreviewForWaste.waste_kg_downtime)
+      if (downtime != null && downtime > 0) lines.push({ label: 'Setup', kg: downtime })
+      const orderPct = n(quotePreviewForWaste.waste_kg_order_pct)
+      if (orderPct != null && orderPct > 0) lines.push({ label: 'Default', kg: orderPct })
+      const conversionPct = n(quotePreviewForWaste.waste_kg_conversion_pct)
+      if (conversionPct != null && conversionPct > 0) lines.push({ label: 'Conversion', kg: conversionPct })
+      return lines.length > 0 ? lines : null
+    })()
     const resinBlendTable = buildExtrusionResinBlendPrintTable(resinBlendComponents, {
       caption: blendCaption,
       variant: blendVariant,
       productivePlasticKg,
       extrusionWasteKg: extrusionWasteKgForBlend,
       totalExtrudedKg: totalKgIncludingWasteNum,
+      wasteBreakdown: wasteBreakdownForBlend,
     })
 
     let resinBlendFallbackLine: string | null = null
@@ -3278,6 +3306,24 @@ export function JobSheetPrintPage() {
         }
         .js-resin-blend-table tr.js-resin-blend-total-row td.js-resin-blend-col-total {
           background: #fff566;
+        }
+        .js-resin-blend-table td.js-resin-blend-col-waste--breakdown {
+          text-align: left;
+          white-space: normal;
+          vertical-align: top;
+        }
+        .js-resin-blend-table .js-resin-blend-waste-list {
+          margin: 0;
+          padding: 0;
+          list-style: none;
+        }
+        .js-resin-blend-table .js-resin-blend-waste-list li {
+          margin: 0;
+          padding: 0;
+          white-space: nowrap;
+        }
+        .js-resin-blend-table .js-resin-blend-waste-label {
+          font-weight: var(--js-print-fw-label);
         }
 
         .js-printing-wrap {
