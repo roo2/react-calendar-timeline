@@ -93,7 +93,7 @@ def _next_job_seq(db, customer_id: str) -> int:
 
 
 def _new_draft_order_code() -> str:
-    return f"ORD-{uuid.uuid4().hex[:8].upper()}"
+    return uuid.uuid4().hex[:8].upper()
 
 
 def _norm_job_sheet_extruder(v: Optional[str]) -> Optional[str]:

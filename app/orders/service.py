@@ -55,7 +55,7 @@ def _require_order_editable(o: OrderModel) -> None:
 
 
 def _new_order_code() -> str:
-    return f"ORD-{uuid.uuid4().hex[:8].upper()}"
+    return uuid.uuid4().hex[:8].upper()
 
 
 def _order_code_exists(db, code: str, *, exclude_order_id: str | None = None) -> bool:
@@ -496,7 +496,7 @@ def get_detail(order_id: str) -> Optional[OrderModel]:
             .options(joinedload(OrderModel.jobs))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.job_sheet))
             .options(joinedload(OrderModel.items).joinedload(OrderItemModel.resell_product))
-            .options(joinedload(OrderModel.customer))
+            .options(joinedload(OrderModel.customer).joinedload(Customer.brand))
             .where(OrderModel.id == str(order_id))
         )
         return db.execute(stmt).unique().scalars().first()

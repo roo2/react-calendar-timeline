@@ -8,6 +8,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -26,6 +27,7 @@ import {
 import { CustomerSearchAutocomplete } from '../../../components/CustomerSearchAutocomplete'
 import { ProductSearchAutocomplete } from '../../../components/ProductSearchAutocomplete'
 import { buildOrderLineDefaultsFromProduct } from '../../../utils/orderLineDefaults'
+import { formatDefaultDeliveryAddress } from '../../../utils/customerDeliveryAddress'
 import {
   buildOrderToJobSheetQuantityExtras,
   jobSheetQtyTypeForOrderUnit,
@@ -55,6 +57,7 @@ import {
   patchOrderResellItem,
 } from '../../../store/slices/ordersSlice'
 import { updateJobSheet } from '../../../store/slices/jobSheetsSlice'
+import { fetchCustomer } from '../../../store/slices/customersSlice'
 
 type Mode = 'new' | 'edit'
 
@@ -519,6 +522,9 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   const [err, setErr] = useState<string | null>(null)
   const [customerDisplayName, setCustomerDisplayName] = useState<string | null>(null)
+  const [orderCustomerBrandName, setOrderCustomerBrandName] = useState<string | null>(null)
+  const [orderCustomerBrandCode, setOrderCustomerBrandCode] = useState<string | null>(null)
+  const [orderCustomerDeliveryAddress, setOrderCustomerDeliveryAddress] = useState<string | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [orderStatus, setOrderStatus] = useState<string>(mode === 'new' ? 'draft' : '')
@@ -536,6 +542,24 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
   const initialDraft = initialDraftRef.current
 
   const [customerId, setCustomerId] = useState(initialDraft?.customerId || '')
+  const customerDetail = useAppSelector((s) =>
+    customerId ? s.customers.detail.byId[customerId]?.customer : undefined,
+  )
+  const customerBrandLabel = useMemo(() => {
+    const fromDetail = customerDetail?.brand_name || customerDetail?.brand_code
+    if (fromDetail) return String(fromDetail)
+    return orderCustomerBrandName || orderCustomerBrandCode
+  }, [customerDetail?.brand_name, customerDetail?.brand_code, orderCustomerBrandName, orderCustomerBrandCode])
+  const customerDeliveryAddressDisplay = useMemo(() => {
+    const fromDetail = formatDefaultDeliveryAddress(customerDetail?.delivery_addresses)
+    if (fromDetail) return fromDetail
+    return orderCustomerDeliveryAddress
+  }, [customerDetail?.delivery_addresses, orderCustomerDeliveryAddress])
+  const customerNameDisplay = useMemo(() => {
+    if (customerDisplayName?.trim()) return customerDisplayName.trim()
+    if (customerDetail?.name?.trim()) return customerDetail.name.trim()
+    return null
+  }, [customerDisplayName, customerDetail?.name])
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [customerPoNumber, setCustomerPoNumber] = useState('')
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10))
@@ -902,6 +926,17 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   useEffect(() => {
     const cid = String(customerId || '').trim()
+    if (!cid) {
+      setOrderCustomerBrandName(null)
+      setOrderCustomerBrandCode(null)
+      setOrderCustomerDeliveryAddress(null)
+      return
+    }
+    void dispatch(fetchCustomer(cid))
+  }, [customerId, dispatch])
+
+  useEffect(() => {
+    const cid = String(customerId || '').trim()
     void dispatch(fetchOrdersBootstrap(cid ? { customer_id: cid } : undefined))
   }, [dispatch, customerId])
 
@@ -930,6 +965,21 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
         setOrderGstRate(res?.gst_rate != null && Number.isFinite(Number(res.gst_rate)) ? Number(res.gst_rate) : DEFAULT_GST_RATE)
         setCustomerId(String(res?.customer_id || ''))
         setCustomerDisplayName(res?.customer_name ? String(res.customer_name) : null)
+        setOrderCustomerBrandName(
+          res?.customer_brand_name != null && String(res.customer_brand_name).trim()
+            ? String(res.customer_brand_name)
+            : null,
+        )
+        setOrderCustomerBrandCode(
+          res?.customer_brand_code != null && String(res.customer_brand_code).trim()
+            ? String(res.customer_brand_code)
+            : null,
+        )
+        setOrderCustomerDeliveryAddress(
+          res?.customer_delivery_address != null && String(res.customer_delivery_address).trim()
+            ? String(res.customer_delivery_address)
+            : null,
+        )
         setInvoiceNumber(String(res?.code ?? ''))
         setCustomerPoNumber(String(res?.customer_purchase_order_number ?? ''))
         setOrderDate(res?.order_date ? String(res.order_date).slice(0, 10) : '')
@@ -1615,23 +1665,28 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
   return (
     <Box onChange={() => setDirty(true)}>
-      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h5" sx={{ flex: '1 1 auto' }}>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
+        <Typography variant="h5" sx={{ flex: '1 1 auto', minWidth: 0 }}>
           {title}
         </Typography>
-        {mode === 'edit' && orderId ? (
-          <Button
-            variant="outlined"
-            onClick={() => void exportCurrentOrderToXeroInvoice()}
-            disabled={!canPublish || saving || xeroExporting || !canSaveDraft}
-          >
-            {xeroExporting
-              ? 'Exporting…'
-              : xeroInvoiceId
-                ? `Xero invoice ${xeroInvoiceNumber || 'exported'}`
-                : 'Export to Xero invoice'}
-          </Button>
-        ) : null}
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
+          {customerBrandLabel ? (
+            <Chip color="primary" label={customerBrandLabel} sx={{ fontWeight: 600 }} />
+          ) : null}
+          {mode === 'edit' && orderId ? (
+            <Button
+              variant="outlined"
+              onClick={() => void exportCurrentOrderToXeroInvoice()}
+              disabled={!canPublish || saving || xeroExporting || !canSaveDraft}
+            >
+              {xeroExporting
+                ? 'Exporting…'
+                : xeroInvoiceId
+                  ? `Xero invoice ${xeroInvoiceNumber || 'exported'}`
+                  : 'Export to Xero invoice'}
+            </Button>
+          ) : null}
+        </Stack>
       </Box>
 
       {(err || bootstrapErr || productListErr) && (
@@ -1647,17 +1702,55 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
 
       <Paper variant="outlined" sx={{ p: 2, width: '100%' }}>
         <Stack spacing={2}>
-          <CustomerSearchAutocomplete
-            value={customerId}
-            onChange={(id) => {
-              setCustomerId(id)
-              setDirty(true)
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) minmax(0, 1.2fr)' },
+              gap: 2,
+              alignItems: 'start',
             }}
-            disabled={mode === 'edit'}
-            readOnlyDisplayName={customerDisplayName}
-            required
-            disableClearable
-          />
+          >
+            <CustomerSearchAutocomplete
+              value={customerId}
+              onChange={(id, customer) => {
+                setCustomerId(id)
+                setCustomerDisplayName(customer?.name ? String(customer.name) : null)
+                setOrderCustomerBrandName(null)
+                setOrderCustomerBrandCode(null)
+                setOrderCustomerDeliveryAddress(null)
+                setDirty(true)
+              }}
+              disabled={mode === 'edit'}
+              readOnlyDisplayName={customerDisplayName}
+              required
+              disableClearable
+            />
+            <Paper variant="outlined" sx={{ p: 1.5, minHeight: 56, bgcolor: 'action.hover' }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                Customer & delivery
+              </Typography>
+              {customerId ? (
+                <>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {customerNameDisplay || 'Loading customer…'}
+                  </Typography>
+                  {customerDeliveryAddressDisplay ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, whiteSpace: 'pre-wrap' }}>
+                      {customerDeliveryAddressDisplay}
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                      No delivery address on file.
+                    </Typography>
+                  )}
+                </>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Select a customer to show delivery details.
+                </Typography>
+              )}
+            </Paper>
+          </Box>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
             <Stack spacing={2}>

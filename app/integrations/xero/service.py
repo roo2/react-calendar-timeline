@@ -13,6 +13,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import XERO_SCOPES, settings
+from app.customers.delivery_address import (
+    customer_address_to_xero_addresses,
+    delivery_addresses_from_customer,
+    pick_default_delivery_address,
+)
 from app.db.models.domain import (
     Customer,
     JobSheet,
@@ -578,7 +583,7 @@ def _load_order_for_xero_invoice(db: Session, order_id: str) -> Order:
     order = db.scalars(
         select(Order)
         .where(Order.id == str(order_id))
-        .options(joinedload(Order.customer))
+        .options(joinedload(Order.customer).joinedload(Customer.brand))
         .options(joinedload(Order.items).joinedload(OrderItem.job_sheet).joinedload(JobSheet.product))
         .options(joinedload(Order.items).joinedload(OrderItem.job_sheet).joinedload(JobSheet.version))
         .options(joinedload(Order.items).joinedload(OrderItem.resell_product))
@@ -586,6 +591,59 @@ def _load_order_for_xero_invoice(db: Session, order_id: str) -> Order:
     if order is None:
         raise XeroConfigError("Order not found.")
     return order
+
+
+def _sync_xero_contact_delivery_address(
+    db: Session,
+    *,
+    contact_id: str,
+    delivery_address: dict[str, Any] | None,
+) -> None:
+    """Push the app customer's default delivery address onto the linked Xero contact."""
+    xero_addresses = customer_address_to_xero_addresses(delivery_address or {})
+    if not xero_addresses:
+        return
+    _xero_api_post_json(
+        db,
+        endpoint="/Contacts",
+        body={"Contacts": [{"ContactID": contact_id, "Addresses": xero_addresses}]},
+    )
+
+
+def _resolve_xero_branding_theme_id(
+    db: Session,
+    *,
+    brand_code: str | None,
+    brand_name: str | None,
+) -> str | None:
+    """Match a Xero branding theme to the customer's commercial brand."""
+    code = str(brand_code or "").strip().upper()
+    name = str(brand_name or "").strip()
+    needles: list[str] = []
+    if code == "CROWN_PACK":
+        needles = ["crown pack", "crownpack", "crown"]
+    elif code == "DOLPHIN":
+        needles = ["dolphin"]
+    elif name:
+        needles = [name.casefold()]
+
+    if not needles:
+        return None
+
+    _, _, payload = _xero_api_get_json(db, endpoint="/BrandingThemes")
+    rows = payload.get("BrandingThemes") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return None
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        theme_name = str(raw.get("Name") or "").casefold()
+        if not any(n in theme_name for n in needles):
+            continue
+        theme_id = str(raw.get("BrandingThemeID") or raw.get("BrandingThemeId") or "").strip()
+        if theme_id:
+            return theme_id
+    return None
 
 
 def _extract_xero_invoice(payload: Any) -> dict[str, Any]:
@@ -660,6 +718,23 @@ def export_order_to_xero_invoice(db: Session, *, order_id: str) -> dict[str, Any
     if not line_items:
         raise XeroConfigError("Cannot export an order with no invoiceable lines.")
 
+    delivery_address = pick_default_delivery_address(delivery_addresses_from_customer(customer))
+    try:
+        _sync_xero_contact_delivery_address(
+            db,
+            contact_id=contact_id,
+            delivery_address=delivery_address,
+        )
+    except XeroApiError as e:
+        raise XeroConfigError(f"Could not update Xero contact delivery address: {e}") from e
+
+    brand = getattr(customer, "brand", None)
+    branding_theme_id = _resolve_xero_branding_theme_id(
+        db,
+        brand_code=getattr(brand, "code", None) if brand is not None else None,
+        brand_name=getattr(brand, "name", None) if brand is not None else None,
+    )
+
     invoice_date = getattr(order, "order_date", None) or date.today()
     invoice_number = str(getattr(order, "code", "") or "").strip()
     invoice_date_str = (
@@ -679,6 +754,8 @@ def export_order_to_xero_invoice(db: Session, *, order_id: str) -> dict[str, Any
     reference = str(getattr(order, "customer_purchase_order_number", "") or "").strip()
     if reference:
         body["Reference"] = reference
+    if branding_theme_id:
+        body["BrandingThemeID"] = branding_theme_id
 
     url, status_code, payload = _xero_api_post_json(
         db,
@@ -795,6 +872,7 @@ def _customer_counts(db: Session) -> dict[str, dict[str, int]]:
         (Order, "orders_count"),
         (SavedQuote, "quotes_count"),
         (Product, "products_count"),
+        (JobSheet, "job_sheets_count"),
     )
     for model, key in pairs:
         rows = db.execute(
@@ -817,6 +895,188 @@ def _customer_review_row(cust: Customer, counts: dict[str, dict[str, int]]) -> d
         "orders_count": int(c.get("orders_count", 0)),
         "quotes_count": int(c.get("quotes_count", 0)),
         "products_count": int(c.get("products_count", 0)),
+        "job_sheets_count": int(c.get("job_sheets_count", 0)),
+    }
+
+
+def _customer_deletable_reason(row: dict[str, Any]) -> str | None:
+    """Return a blocking reason when an unlinked customer cannot be deleted."""
+    if int(row.get("orders_count", 0)) > 0:
+        return "has_orders"
+    if int(row.get("quotes_count", 0)) > 0:
+        return "has_quotes"
+    if int(row.get("products_count", 0)) > 0:
+        return "has_products"
+    if int(row.get("job_sheets_count", 0)) > 0:
+        return "has_job_sheets"
+    return None
+
+
+def _xero_contact_summary(raw: dict[str, Any]) -> dict[str, Any]:
+    contact_id = _xero_contact_id(raw)
+    return {
+        "contact_id": contact_id,
+        "name": str(raw.get("Name") or "").strip(),
+        "account_code": _xero_contact_account_code(raw),
+        "tax_number": str(raw.get("TaxNumber") or "").strip() or None,
+    }
+
+
+def search_xero_contacts(
+    db: Session,
+    *,
+    query: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Search Xero contacts for manual customer linking."""
+    q = str(query or "").strip()
+    cap = max(1, min(int(limit), 100))
+    if q:
+        safe = q.replace('"', '\\"')
+        where = f'Name.Contains("{safe}")'
+        endpoint = f"/Contacts?where={quote(where)}&page=1"
+    else:
+        endpoint = "/Contacts?page=1"
+    _, _, payload = _xero_api_get_json(db, endpoint=endpoint)
+    rows = payload.get("Contacts") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        summary = _xero_contact_summary(raw)
+        if summary["contact_id"]:
+            out.append(summary)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def manual_link_xero_customer(db: Session, *, customer_id: str, contact_id: str) -> dict[str, Any]:
+    """Link one app customer to a Xero contact (writes customers.xero_contact_id only)."""
+    cid = str(customer_id or "").strip()
+    xid = str(contact_id or "").strip()
+    if not cid:
+        raise XeroConfigError("customer_id is required.")
+    if not _is_uuid(xid):
+        raise XeroConfigError("contact_id must be a Xero GUID (ContactID).")
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        raise XeroConfigError("Cannot link the internal MYOB draft customer.")
+
+    cust = db.get(Customer, cid)
+    if cust is None:
+        raise XeroConfigError("Customer not found.")
+
+    existing_xero = str(getattr(cust, "xero_contact_id", "") or "").strip()
+    if existing_xero == xid:
+        return {
+            "ok": True,
+            "already_linked": True,
+            "customer_id": cid,
+            "contact_id": xid,
+            "customer_name": cust.name,
+        }
+    if existing_xero and existing_xero != xid:
+        raise XeroConfigError(
+            "Customer is already linked to a different Xero contact. Clear or change it on the customer record first."
+        )
+
+    other = db.scalar(
+        select(Customer).where(Customer.xero_contact_id == xid, Customer.id != cid)
+    )
+    if other is not None:
+        raise XeroConfigError(f"That Xero contact is already linked to customer: {other.name}")
+
+    _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts/{xid}")
+    contacts = payload.get("Contacts") if isinstance(payload, dict) else None
+    contact_raw = contacts[0] if isinstance(contacts, list) and contacts else None
+    if not isinstance(contact_raw, dict):
+        raise XeroConfigError("Xero contact not found.")
+
+    contact = _xero_contact_summary(contact_raw)
+    try:
+        with db.begin_nested():
+            cust.xero_contact_id = xid
+            db.add(cust)
+            db.flush()
+    except IntegrityError:
+        raise XeroConfigError("That Xero contact is already linked to another customer.") from None
+    db.commit()
+
+    return {
+        "ok": True,
+        "already_linked": False,
+        "customer_id": cid,
+        "contact_id": xid,
+        "customer_name": cust.name,
+        "xero_name": contact["name"],
+        "xero_account_code": contact.get("account_code"),
+    }
+
+
+def preview_deletable_unlinked_customers(db: Session) -> dict[str, Any]:
+    """Customers with no Xero link that are safe to delete (no orders, quotes, products, or job sheets)."""
+    counts = _customer_counts(db)
+    rows = list(
+        db.scalars(
+            select(Customer)
+            .where(
+                Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
+                Customer.xero_contact_id.is_(None),
+            )
+            .order_by(Customer.name.asc())
+        ).all()
+    )
+    deletable: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for cust in rows:
+        row = _customer_review_row(cust, counts)
+        reason = _customer_deletable_reason(row)
+        if reason:
+            blocked.append({**row, "blocked_reason": reason})
+        else:
+            deletable.append(row)
+    return {
+        "total_unlinked": len(rows),
+        "deletable_count": len(deletable),
+        "blocked_count": len(blocked),
+        "deletable": deletable,
+        "blocked": blocked,
+    }
+
+
+def delete_deletable_unlinked_customers(db: Session) -> dict[str, Any]:
+    """Delete unlinked customers with no orders, quotes, products, or job sheets."""
+    preview = preview_deletable_unlinked_customers(db)
+    deleted: list[dict[str, str]] = []
+    errors: list[str] = []
+    for row in preview["deletable"]:
+        customer_id = str(row.get("id") or "")
+        cust = db.get(Customer, customer_id)
+        if cust is None:
+            continue
+        if str(getattr(cust, "xero_contact_id", "") or "").strip():
+            errors.append(f"Skipped {cust.name}: linked to Xero since preview.")
+            continue
+        reason = _customer_deletable_reason(_customer_review_row(cust, _customer_counts(db)))
+        if reason:
+            errors.append(f"Skipped {cust.name}: {reason}.")
+            continue
+        try:
+            with db.begin_nested():
+                db.delete(cust)
+                db.flush()
+            deleted.append({"id": customer_id, "name": cust.name})
+        except IntegrityError:
+            errors.append(f"Could not delete {cust.name}: related records still exist.")
+    db.commit()
+    return {
+        "ok": not errors,
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "errors": errors,
+        "preview": preview,
     }
 
 

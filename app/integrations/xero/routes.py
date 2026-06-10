@@ -19,12 +19,16 @@ from app.integrations.xero.service import (
     consume_oauth_state,
     create_draft_quote,
     create_oauth_state,
+    delete_deletable_unlinked_customers,
     disconnect_xero,
     exchange_authorization_code,
     export_order_to_xero_invoice,
     import_xero_customer_links,
+    manual_link_xero_customer,
+    preview_deletable_unlinked_customers,
     preview_xero_customer_links,
     refresh_tokens,
+    search_xero_contacts,
     set_tenant_id,
     unlinked_xero_customer_review,
     xero_configured,
@@ -217,6 +221,62 @@ async def xero_unlinked_customer_review(_identity: SysAdminIdentity):
     del _identity
     with SessionLocal() as db:
         return unlinked_xero_customer_review(db)
+
+
+@router.get("/contacts")
+async def xero_search_contacts(
+    _identity: SysAdminIdentity,
+    q: str | None = None,
+    limit: int = 50,
+):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            items = search_xero_contacts(db, query=q, limit=limit)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+    return {"items": items}
+
+
+class XeroManualCustomerLinkBody(BaseModel):
+    customer_id: str = Field(..., min_length=1)
+    contact_id: str = Field(..., min_length=1, description="Xero ContactID (UUID)")
+
+
+@router.post("/customers/manual-link", dependencies=[Depends(csrf_protect())])
+async def xero_manual_customer_link(_identity: SysAdminIdentity, body: XeroManualCustomerLinkBody):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return manual_link_xero_customer(
+                db,
+                customer_id=body.customer_id,
+                contact_id=body.contact_id,
+            )
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.get("/customers/unlinked/deletable-preview")
+async def xero_deletable_unlinked_customers_preview(_identity: SysAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        return preview_deletable_unlinked_customers(db)
+
+
+@router.post("/customers/unlinked/delete", dependencies=[Depends(csrf_protect())])
+async def xero_delete_deletable_unlinked_customers(_identity: SysAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        return delete_deletable_unlinked_customers(db)
 
 
 @router.post("/orders/{order_id}/invoice", dependencies=[Depends(csrf_protect())])

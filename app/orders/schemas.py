@@ -120,6 +120,9 @@ class OrderDetailDTO(OrderListItemDTO):
     myob_import_lines: list[dict] = []
     myob_source_sales_order_json: dict | None = None
     myob_source_invoices_json: list[dict] = []
+    customer_brand_code: Optional[str] = None
+    customer_brand_name: Optional[str] = None
+    customer_delivery_address: Optional[str] = None
 
 
 class OrderListResponse(BaseModel):

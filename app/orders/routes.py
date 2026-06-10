@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 
 from app.auth.deps import allow_roles_any, csrf_protect, current_identity, require_roles
+from app.customers.delivery_address import customer_default_delivery_address_display
 from app.db.models.domain import (
     Customer,
     JobSheet,
@@ -553,7 +554,12 @@ async def show_order(order_id: str):
         }
     )
     # Add customer_name and product meta
-    dto.customer_name = (o.customer.name if getattr(o, "customer", None) else None)
+    cust = getattr(o, "customer", None)
+    dto.customer_name = cust.name if cust else None
+    brand = getattr(cust, "brand", None) if cust is not None else None
+    dto.customer_brand_code = getattr(brand, "code", None) if brand is not None else None
+    dto.customer_brand_name = getattr(brand, "name", None) if brand is not None else None
+    dto.customer_delivery_address = customer_default_delivery_address_display(cust) if cust is not None else None
     dto.created_at = str(getattr(o, "created_at", None)) if getattr(o, "created_at", None) else None
     dto.order_date = str(getattr(o, "order_date", None)) if getattr(o, "order_date", None) else None
     with SessionLocal() as db:

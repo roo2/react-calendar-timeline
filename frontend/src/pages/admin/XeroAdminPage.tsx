@@ -19,6 +19,8 @@ import {
   Typography,
 } from '@mui/material'
 import { ApiError, apiFetch } from '../../api/client'
+import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
+import { XeroContactSearchAutocomplete } from '../../components/XeroContactSearchAutocomplete'
 import { AdminPageHeader } from './components/AdminPageHeader'
 
 type XeroConnectionRow = {
@@ -90,6 +92,28 @@ type XeroUnlinkedCustomerReview = {
   items: XeroUnlinkedCustomerRow[]
 }
 
+type XeroDeletableCustomerRow = XeroUnlinkedCustomerRow & {
+  blocked_reason?: string
+}
+
+type XeroDeletableCustomersPreview = {
+  total_unlinked: number
+  deletable_count: number
+  blocked_count: number
+  deletable: XeroDeletableCustomerRow[]
+  blocked: XeroDeletableCustomerRow[]
+}
+
+type XeroManualLinkResult = {
+  ok: boolean
+  already_linked?: boolean
+  customer_id: string
+  contact_id: string
+  customer_name?: string
+  xero_name?: string
+  xero_account_code?: string | null
+}
+
 export function XeroAdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -109,6 +133,10 @@ export function XeroAdminPage() {
   const [apiResult, setApiResult] = useState<unknown>(null)
   const [linkPreview, setLinkPreview] = useState<XeroCustomerLinkPreview | null>(null)
   const [unlinkedReview, setUnlinkedReview] = useState<XeroUnlinkedCustomerReview | null>(null)
+  const [manualLinkCustomerId, setManualLinkCustomerId] = useState('')
+  const [manualLinkContactId, setManualLinkContactId] = useState('')
+  const [manualLinkResult, setManualLinkResult] = useState<XeroManualLinkResult | null>(null)
+  const [deletablePreview, setDeletablePreview] = useState<XeroDeletableCustomersPreview | null>(null)
 
   const sortedUnlinkedAppCustomers = useMemo(() => {
     const rows = unlinkedReview?.items || []
@@ -262,6 +290,82 @@ export function XeroAdminPage() {
     } catch (e) {
       if (e instanceof ApiError) setErr(e.message)
       else setErr(e instanceof Error ? e.message : 'Failed to load unlinked customers')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doManualLinkCustomer() {
+    const customerId = manualLinkCustomerId.trim()
+    const contactId = manualLinkContactId.trim()
+    if (!customerId || !contactId) {
+      setErr('Select an app customer and a Xero contact to link.')
+      return
+    }
+    setBusy('xero-manual-link')
+    setErr(null)
+    setManualLinkResult(null)
+    try {
+      const out = await apiFetch<XeroManualLinkResult>('/api/xero/customers/manual-link', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId, contact_id: contactId }),
+      })
+      setManualLinkResult(out)
+      await doLoadUnlinkedCustomers()
+      if (deletablePreview) {
+        const preview = await apiFetch<XeroDeletableCustomersPreview>(
+          '/api/xero/customers/unlinked/deletable-preview',
+        )
+        setDeletablePreview(preview)
+      }
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Manual customer link failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doPreviewDeletableCustomers() {
+    setBusy('xero-deletable-preview')
+    setErr(null)
+    try {
+      const out = await apiFetch<XeroDeletableCustomersPreview>(
+        '/api/xero/customers/unlinked/deletable-preview',
+      )
+      setDeletablePreview(out)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Failed to preview deletable customers')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doDeleteDeletableCustomers() {
+    const count = deletablePreview?.deletable_count ?? 0
+    if (count <= 0) return
+    const msg =
+      `Delete ${count} unlinked customer${count === 1 ? '' : 's'} with no orders, quotes, products, or job sheets? ` +
+      'This cannot be undone.'
+    if (!window.confirm(msg)) return
+    setBusy('xero-deletable-delete')
+    setErr(null)
+    try {
+      const out = await apiFetch<{
+        deleted_count: number
+        deleted: Array<{ id: string; name: string }>
+        errors?: string[]
+        preview: XeroDeletableCustomersPreview
+      }>('/api/xero/customers/unlinked/delete', { method: 'POST' })
+      setDeletablePreview(out.preview)
+      await doLoadUnlinkedCustomers()
+      if (out.errors && out.errors.length > 0) {
+        setErr(out.errors.join('; '))
+      }
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Failed to delete customers')
     } finally {
       setBusy(null)
     }
@@ -440,6 +544,149 @@ export function XeroAdminPage() {
                     Show unlinked app customers
                   </Button>
                 </Stack>
+
+                <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: 'background.paper' }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Manual customer match
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                    Pick an existing app customer and a Xero contact to set <code>xero_contact_id</code>. Use this
+                    when automatic matching did not find a safe link.
+                  </Typography>
+                  <Stack spacing={1.5} sx={{ maxWidth: 640 }}>
+                    <CustomerSearchAutocomplete
+                      label="App customer"
+                      value={manualLinkCustomerId}
+                      onChange={(id) => {
+                        setManualLinkCustomerId(id)
+                        setManualLinkResult(null)
+                      }}
+                      helperText="Search by customer name"
+                    />
+                    <XeroContactSearchAutocomplete
+                      label="Xero contact"
+                      value={manualLinkContactId}
+                      onChange={(id) => {
+                        setManualLinkContactId(id)
+                        setManualLinkResult(null)
+                      }}
+                      helperText="Search Xero contacts by name"
+                    />
+                    <Button
+                      variant="contained"
+                      onClick={() => void doManualLinkCustomer()}
+                      disabled={busy !== null || !manualLinkCustomerId.trim() || !manualLinkContactId.trim()}
+                      sx={{ alignSelf: 'flex-start' }}
+                    >
+                      Link customer to Xero contact
+                    </Button>
+                    {manualLinkResult ? (
+                      <Alert severity="success">
+                        {manualLinkResult.already_linked ? 'Already linked: ' : 'Linked '}
+                        <strong>{manualLinkResult.customer_name}</strong>
+                        {manualLinkResult.xero_name ? (
+                          <>
+                            {' '}
+                            → <strong>{manualLinkResult.xero_name}</strong>
+                          </>
+                        ) : null}
+                      </Alert>
+                    ) : null}
+                  </Stack>
+                </Paper>
+
+                <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: 'background.paper' }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Delete unused unlinked customers
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                    Remove app customers that have no Xero link and no orders, quotes, products, or job sheets.
+                    Customers with any of those records are kept and listed as blocked.
+                  </Typography>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
+                    <Button
+                      variant="outlined"
+                      onClick={() => void doPreviewDeletableCustomers()}
+                      disabled={busy !== null}
+                    >
+                      Preview deletable customers
+                    </Button>
+                    <Button
+                      color="error"
+                      variant="contained"
+                      onClick={() => void doDeleteDeletableCustomers()}
+                      disabled={busy !== null || !deletablePreview || deletablePreview.deletable_count === 0}
+                    >
+                      Delete deletable customers
+                    </Button>
+                  </Stack>
+                  {deletablePreview ? (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        Unlinked: <strong>{deletablePreview.total_unlinked}</strong> · Deletable:{' '}
+                        <strong>{deletablePreview.deletable_count}</strong> · Blocked:{' '}
+                        <strong>{deletablePreview.blocked_count}</strong>
+                      </Typography>
+                      {deletablePreview.deletable.length > 0 ? (
+                        <Paper variant="outlined" sx={{ maxHeight: 280, overflow: 'auto', mb: 2 }}>
+                          <Table size="small" stickyHeader>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Will delete</TableCell>
+                                <TableCell>MYOB display</TableCell>
+                                <TableCell>Status</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {deletablePreview.deletable.map((row) => (
+                                <TableRow key={row.id}>
+                                  <TableCell>{row.name}</TableCell>
+                                  <TableCell>{row.myob_display_id || '—'}</TableCell>
+                                  <TableCell>{row.status || '—'}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </Paper>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                          No deletable unlinked customers found.
+                        </Typography>
+                      )}
+                      {deletablePreview.blocked.length > 0 ? (
+                        <>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Blocked (kept)
+                          </Typography>
+                          <Paper variant="outlined" sx={{ maxHeight: 280, overflow: 'auto' }}>
+                            <Table size="small" stickyHeader>
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Customer</TableCell>
+                                  <TableCell align="right">Orders</TableCell>
+                                  <TableCell align="right">Quotes</TableCell>
+                                  <TableCell align="right">Products</TableCell>
+                                  <TableCell>Reason</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {deletablePreview.blocked.slice(0, 100).map((row) => (
+                                  <TableRow key={row.id}>
+                                    <TableCell>{row.name}</TableCell>
+                                    <TableCell align="right">{row.orders_count}</TableCell>
+                                    <TableCell align="right">{row.quotes_count}</TableCell>
+                                    <TableCell align="right">{row.products_count}</TableCell>
+                                    <TableCell>{row.blocked_reason || '—'}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </Paper>
+                        </>
+                      ) : null}
+                    </Box>
+                  ) : null}
+                </Paper>
 
                 {linkPreview ? (
                   <Box sx={{ mt: 2 }}>
