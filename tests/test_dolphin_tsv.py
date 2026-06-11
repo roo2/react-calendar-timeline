@@ -14,9 +14,11 @@ from app.db.models.domain import Customer, Order, OrderItem
 from app.db.models.enums import OrderStatus
 from app.integrations.dolphin.import_orders import (
     DOLPHIN_IMPORT_SOURCE,
+    _dolphin_line_import_strategy,
     _dolphin_order_status_from_balance,
     _invoice_balance_aud,
     import_dolphin_tsv,
+    order_dolphin_lines_for_import,
     synthetic_dolphin_order_uid,
 )
 
@@ -33,8 +35,154 @@ from app.integrations.dolphin.tsv_parse import (
 from app.integrations.dolphin.import_orders import order_dolphin_lines_for_import
 from app.integrations.myob.order_import_mapping import map_myob_item_to_app_quantity
 from app.str_norm import customer_facing_product_code_from_import_description
+from app.db.myob_import_placeholders import (
+    MYOB_DRAFT_INTERNAL_CUSTOMER_ID,
+    MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID,
+    MYOB_DRAFT_PLACEHOLDER_VERSION_ID,
+    MYOB_DRAFT_SPEC_PAYLOAD,
+)
+from app.db.models.domain import JobSheet, Product, ProductVersion
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _seed_myob_draft_placeholders(db) -> None:
+    if db.get(Customer, MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        return
+    db.add(
+        Customer(
+            id=MYOB_DRAFT_INTERNAL_CUSTOMER_ID,
+            name="Internal (MYOB import placeholder)",
+            status="Active",
+            contacts={},
+            delivery_addresses={},
+            delivery_preferences={},
+        )
+    )
+    p = Product(
+        id=MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID,
+        code="__MYOB_IMPORT__",
+        description="Placeholder for MYOB import draft job sheets",
+        customer_id=MYOB_DRAFT_INTERNAL_CUSTOMER_ID,
+    )
+    db.add(p)
+    pv = ProductVersion(
+        id=MYOB_DRAFT_PLACEHOLDER_VERSION_ID,
+        product_id=MYOB_DRAFT_PLACEHOLDER_PRODUCT_ID,
+        version_number=1,
+        created_by="test",
+        spec_payload=dict(MYOB_DRAFT_SPEC_PAYLOAD),
+    )
+    db.add(pv)
+    p.active_version_id = MYOB_DRAFT_PLACEHOLDER_VERSION_ID
+    db.add(p)
+    db.commit()
+
+
+def test_dolphin_line_import_strategy_matches_myob_style_buckets():
+    manufactured = DolphinLine(
+        client_section="C",
+        invoice_number="1",
+        invoice_date="1 Jan 2020",
+        source=RECEIVABLE_INVOICE,
+        reference="",
+        item_code="T250150Y",
+        description="Manufactured tube",
+        quantity="1",
+        unit_price_ex="1",
+        discount_ex="0",
+        gst="0",
+        gross="1",
+        invoice_total="1",
+        balance="0",
+        contact_account_number="5103",
+        contact_group="",
+        account_code="4030",
+        account_name="Sales - Manufactured Finished Goods",
+    )
+    outsourced = DolphinLine(
+        client_section="C",
+        invoice_number="1",
+        invoice_date="1 Jan 2020",
+        source=RECEIVABLE_INVOICE,
+        reference="",
+        item_code="",
+        description="Stretch wrap",
+        quantity="1",
+        unit_price_ex="1",
+        discount_ex="0",
+        gst="0",
+        gross="1",
+        invoice_total="1",
+        balance="0",
+        contact_account_number="5103",
+        contact_group="",
+        account_code="4040",
+        account_name="Sales - Purchased Finished Goods",
+    )
+    note = DolphinLine(
+        client_section="C",
+        invoice_number="1",
+        invoice_date="1 Jan 2020",
+        source=RECEIVABLE_INVOICE,
+        reference="",
+        item_code="",
+        description="FREIGHT OUTGOING",
+        quantity="1",
+        unit_price_ex="0",
+        discount_ex="0",
+        gst="0",
+        gross="0",
+        invoice_total="0",
+        balance="0",
+        contact_account_number="5103",
+        contact_group="",
+        account_code="",
+        account_name="",
+    )
+    assert _dolphin_line_import_strategy(manufactured) == "manufactured_import"
+    assert _dolphin_line_import_strategy(outsourced) == "outsourced_resell"
+    assert _dolphin_line_import_strategy(note) == "pass_through_import"
+
+
+def test_dolphin_import_creates_resell_and_manufactured_lines_like_myob(tmp_path: Path):
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    cust_id = str(uuid.uuid4())
+    db.add(Customer(id=cust_id, name="ABL - As SIGNET", myob_display_id="5103"))
+    _seed_myob_draft_placeholders(db)
+
+    tsv = textwrap.dedent(
+        """
+        Receivable Invoice Detail
+
+        Invoice Number\tInvoice Date\tSource\tReference\tItem Code\tDescription\tQuantity\tUnit Price (ex) (AUD)\tDiscount (ex) (AUD)\tGST (AUD)\tGross (AUD)\tInvoice Total (AUD)\tBalance (AUD)\tContact Account Number\tContact Group\tAccount Code\tAccount
+
+        ABL - As SIGNET
+        INV-1\t1 Jan 2026\tReceivable Invoice\tPO1\t\tT250150Y tube\t105\t6\t0\t63\t693\t693\t0\t5103\t\t4030\tSales - Manufactured Finished Goods
+        INV-1\t1 Jan 2026\tReceivable Invoice\tPO1\t\tStretch wrap\t3\t90\t0\t27\t297\t693\t0\t5103\t\t4040\tSales - Purchased Finished Goods
+        """
+    ).lstrip()
+    path = tmp_path / "mix.tsv"
+    path.write_text(tsv, encoding="utf-8")
+
+    out = import_dolphin_tsv(db, str(path), dry_run=False)
+    assert out["orders_upserted"] == 1
+    order = db.scalar(select(Order).where(Order.code == "INV-1"))
+    assert order is not None
+    rows = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.line_index)).all())
+    assert len(rows) == 2
+    assert rows[0].line_kind == "myob_import"
+    assert rows[0].import_requires_job_sheet is True
+    assert rows[0].job_sheet_id is not None
+    js = db.get(JobSheet, str(rows[0].job_sheet_id))
+    assert js is not None
+    assert js.is_import_draft is True
+    assert rows[1].line_kind == "resell"
+    assert rows[1].import_requires_job_sheet is False
+    assert rows[1].myob_row_id == 1
+    assert rows[1].resell_product_id is not None
 
 
 def test_iter_dolphin_short_tsv():

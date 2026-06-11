@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.db.models.domain import Customer, Order, OrderItem
+from app.db.models.domain import Customer, Order, OrderItem, ResellProduct
 from app.db.models.enums import OrderStatus
 from app.integrations.dolphin.description_uom import (
     build_synthetic_item_json_for_dolphin_uom,
@@ -28,6 +28,8 @@ from app.job_sheets import service as job_sheets_service
 from app.str_norm import strip_trailing_dash_suffix
 
 DOLPHIN_IMPORT_SOURCE = "DOLPHIN_TSV"
+
+DolphinLineImportStrategy = Literal["manufactured_import", "outsourced_resell", "pass_through_import"]
 
 
 def _parse_invoice_date(s: str | None) -> date | None:
@@ -119,6 +121,97 @@ def _dolphin_line_sort_bucket(line: DolphinLine) -> int:
     if _is_outsourced_dolphin_line(account_name=line.account_name, account_code=line.account_code):
         return 1
     return 2
+
+
+def _dolphin_line_import_strategy(line: DolphinLine) -> DolphinLineImportStrategy:
+    """
+    Mirror MYOB order import classification:
+
+    - in-house manufactured GL → ``myob_import`` draft job sheet (Complete job sheet)
+    - purchased/imported finished goods → outsourced resell (Convert to job sheet)
+    - freight/fees/notes → ``myob_import`` pass-through rows without a job sheet
+    """
+    if _import_requires_job_sheet_for_dolphin(account_name=line.account_name, account_code=line.account_code):
+        return "manufactured_import"
+    if _is_outsourced_dolphin_line(account_name=line.account_name, account_code=line.account_code):
+        return "outsourced_resell"
+    return "pass_through_import"
+
+
+def synthetic_dolphin_resell_item_uid(*, customer_id: str, item_code: str | None, description: str) -> str:
+    key = (
+        f"crownpack:dolphin-resell:{str(customer_id).strip()}:"
+        f"{str(item_code or '').strip()}:{str(description or '').strip()[:500]}"
+    )
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+
+
+def _get_or_create_resell_product_for_dolphin(
+    db: Session,
+    *,
+    customer_id: str,
+    item_code: str | None,
+    description: str,
+    unit_price: float | None,
+    income_account_id: str | None,
+    catalog_kind: str = "outsourced_manufacturing",
+) -> ResellProduct:
+    uid = synthetic_dolphin_resell_item_uid(
+        customer_id=customer_id,
+        item_code=item_code,
+        description=description,
+    )
+    desc = strip_trailing_dash_suffix((description or "").strip()) or f"Dolphin item {uid[:8]}"
+    rate = float(unit_price) if unit_price is not None and float(unit_price) == float(unit_price) else 0.0
+    ck = str(catalog_kind or "outsourced_manufacturing").strip() or "outsourced_manufacturing"
+    if ck not in ("supply", "outsourced_manufacturing"):
+        ck = "outsourced_manufacturing"
+    cust = str(customer_id or "").strip()
+    if ck == "outsourced_manufacturing" and not cust:
+        raise ValueError("Outsourced Dolphin resell products require a customer id")
+
+    if ck == "outsourced_manufacturing":
+        rp = db.scalar(
+            select(ResellProduct).where(
+                ResellProduct.myob_item_uid == uid,
+                ResellProduct.catalog_kind == "outsourced_manufacturing",
+                ResellProduct.customer_id == cust,
+            )
+        )
+    else:
+        rp = db.scalar(
+            select(ResellProduct).where(
+                ResellProduct.myob_item_uid == uid,
+                ResellProduct.catalog_kind == "supply",
+            )
+        )
+    if rp is not None:
+        rp.description = desc[:2000] if desc else rp.description
+        if rate > 0:
+            rp.unit_price = rate
+        if not getattr(rp, "active", True):
+            rp.active = True
+        rp.catalog_kind = ck
+        rp.customer_id = cust if ck == "outsourced_manufacturing" else None
+        if income_account_id:
+            rp.myob_income_account_uid = str(income_account_id)
+        db.add(rp)
+        db.flush()
+        return rp
+
+    rp2 = ResellProduct(
+        id=str(uuid.uuid4()),
+        description=desc[:2000] if desc else f"Dolphin {uid[:8]}",
+        unit_price=rate if rate > 0 else 0.0,
+        active=True,
+        catalog_kind=ck,
+        customer_id=cust if ck == "outsourced_manufacturing" else None,
+        myob_item_uid=uid,
+        myob_income_account_uid=str(income_account_id) if income_account_id else None,
+    )
+    db.add(rp2)
+    db.flush()
+    return rp2
 
 
 def order_dolphin_lines_for_import(lines: list[DolphinLine]) -> list[DolphinLine]:
@@ -299,15 +392,11 @@ def import_dolphin_tsv(
                 account_name=line.account_name or None,
             )
             item_json = _build_item_json(line, income_account_id=inc_id)
-            raw_u = parse_uom_from_dolphin_description(line.description)
-            map_mfg = bool((raw_u or "").strip())
+            strategy = _dolphin_line_import_strategy(line)
+            map_qty_like_manufacturing = strategy in ("manufactured_import", "outsourced_resell")
             qu, qy_t, sales_raw = map_myob_item_to_app_quantity(
                 item_json,
-                requires_job_sheet=map_mfg,
-            )
-            req_js = _import_requires_job_sheet_for_dolphin(
-                account_name=line.account_name,
-                account_code=line.account_code,
+                requires_job_sheet=map_qty_like_manufacturing,
             )
             qf = _float_safe(line.quantity) or 0.0
             upf = _float_safe(line.unit_price_ex)
@@ -316,27 +405,70 @@ def import_dolphin_tsv(
                 totf = round(qf * upf, 6)
             raw_desc = (line.description or "").strip()
             desc = strip_trailing_dash_suffix(raw_desc) or (line.item_code or "Line")
-
-            oi = OrderItem(
-                id=str(uuid.uuid4()),
-                order_id=str(order.id),
-                line_index=idx,
-                line_kind="myob_import",
-                myob_line_type="Transaction",
-                myob_item_uid=None,
-                myob_item_number=(line.item_code or None) or None,
-                myob_item_name=None,
-                import_line_description=desc,
-                myob_row_id=idx,
-                import_ship_quantity=qf,
-                import_unit_price=upf,
-                import_line_total=totf,
-                import_quantity_unit=qu,
-                import_qty_type=qy_t,
-                myob_item_sales_unit_raw=sales_raw,
-                myob_item_json=item_json if item_json else None,
-                import_requires_job_sheet=bool(req_js),
+            resell_uid = synthetic_dolphin_resell_item_uid(
+                customer_id=str(order.customer_id),
+                item_code=line.item_code,
+                description=desc,
             )
+
+            if strategy == "outsourced_resell":
+                rp = _get_or_create_resell_product_for_dolphin(
+                    db,
+                    customer_id=str(order.customer_id),
+                    item_code=line.item_code,
+                    description=desc,
+                    unit_price=upf,
+                    income_account_id=inc_id,
+                    catalog_kind="outsourced_manufacturing",
+                )
+                oi = OrderItem(
+                    id=str(uuid.uuid4()),
+                    order_id=str(order.id),
+                    line_index=idx,
+                    line_kind="resell",
+                    resell_product_id=str(rp.id),
+                    resell_description_snapshot=str(rp.description),
+                    resell_quantity_value=qf,
+                    resell_quantity_unit=str(qu or "ea"),
+                    resell_unit_rate=upf,
+                    resell_line_total=totf,
+                    resell_due_date=None,
+                    myob_line_type="Transaction",
+                    myob_item_uid=resell_uid,
+                    myob_item_number=(line.item_code or None) or None,
+                    myob_item_name=None,
+                    myob_row_id=idx,
+                    import_line_description=desc,
+                    import_ship_quantity=qf,
+                    import_unit_price=upf,
+                    import_line_total=totf,
+                    import_quantity_unit=qu,
+                    import_qty_type=qy_t,
+                    myob_item_sales_unit_raw=sales_raw,
+                    myob_item_json=item_json if item_json else None,
+                    import_requires_job_sheet=False,
+                )
+            else:
+                oi = OrderItem(
+                    id=str(uuid.uuid4()),
+                    order_id=str(order.id),
+                    line_index=idx,
+                    line_kind="myob_import",
+                    myob_line_type="Transaction",
+                    myob_item_uid=resell_uid if strategy == "manufactured_import" else None,
+                    myob_item_number=(line.item_code or None) or None,
+                    myob_item_name=None,
+                    import_line_description=desc,
+                    myob_row_id=idx,
+                    import_ship_quantity=qf,
+                    import_unit_price=upf,
+                    import_line_total=totf,
+                    import_quantity_unit=qu,
+                    import_qty_type=qy_t,
+                    myob_item_sales_unit_raw=sales_raw,
+                    myob_item_json=item_json if item_json else None,
+                    import_requires_job_sheet=strategy == "manufactured_import",
+                )
             db.add(oi)
             out["order_items"] = int(out["order_items"]) + 1
         db.flush()

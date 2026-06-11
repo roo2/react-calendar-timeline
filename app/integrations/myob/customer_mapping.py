@@ -69,12 +69,23 @@ def strip_leading_d_trading_prefix_from_display_name(s: str) -> str:
 
 
 def company_name_from_myob(raw: dict[str, Any]) -> str:
-    """Decoded company name; empty string if MYOB has no usable name (DB still requires a row value)."""
+    """
+    Decoded customer display name for import.
+
+    Prefer company / individual trading name; when ``CompanyName`` is empty, fall back to the
+    first address ``ContactName`` (same source as the primary contact person).
+    """
     trading = individual_trading_as_company_lastname(raw)
     if trading:
         return strip_leading_d_trading_prefix_from_display_name(trading)
     base = decode_myob_text(raw.get("CompanyName"))
-    return strip_leading_d_trading_prefix_from_display_name(base)
+    base = strip_leading_d_trading_prefix_from_display_name(base)
+    if base:
+        return base
+    person = primary_contact_person_name_from_myob(raw)
+    if person:
+        return person
+    return ""
 
 
 def myob_raw_indicates_dolphin_brand(raw: dict[str, Any]) -> bool:
@@ -181,10 +192,21 @@ def _split_street(street: str) -> tuple[str | None, str | None]:
     return (parts[0], "\n".join(parts[1:]))
 
 
-def _address_row_has_content(a: dict[str, Any]) -> bool:
+def _myob_address_row_has_location_content(a: dict[str, Any]) -> bool:
+    """True when MYOB address row has postal/street location data (not email/phone-only slots)."""
     st = a.get("Street")
-    street = st if isinstance(st, str) else ""
-    if street.strip():
+    if isinstance(st, str) and st.strip():
+        return True
+    for key in ("City", "State", "PostCode", "Country"):
+        v = a.get(key)
+        if isinstance(v, str) and v.strip():
+            return True
+    return False
+
+
+def _address_row_has_content(a: dict[str, Any]) -> bool:
+    """True when a MYOB address row has any usable content (used for contact discovery)."""
+    if _myob_address_row_has_location_content(a):
         return True
     for key in ("Phone1", "Phone2", "Phone3", "Email", "ContactName"):
         v = a.get(key)
@@ -193,52 +215,114 @@ def _address_row_has_content(a: dict[str, Any]) -> bool:
     return False
 
 
+def _is_po_box_street(street: str) -> bool:
+    """Heuristic for MYOB postal/bill-to rows stored in the Street field."""
+    s = re.sub(r"[^A-Z0-9]", " ", (street or "").upper())
+    return bool(re.search(r"\bP O BOX\b|\bPO BOX\b|\bPOBOX\b|\bPOST OFFICE BOX\b", s))
+
+
+def _myob_address_location(a: dict[str, Any]) -> int | None:
+    loc = a.get("Location")
+    if isinstance(loc, int) and loc >= 1:
+        return loc
+    if isinstance(loc, str) and loc.strip().isdigit():
+        return int(loc.strip())
+    return None
+
+
+def _myob_address_type(
+    a: dict[str, Any],
+    *,
+    index: int,
+    kept_rows: list[dict[str, Any]],
+) -> str:
+    """
+    Map MYOB AccountRight address slots to app address types.
+
+    Location 1 is the bill-to/postal address; locations 2–5 are ship-to/delivery addresses.
+    When only one filled address exists, treat it as Both unless it is PO Box only.
+    """
+    street = str(a.get("Street") or "")
+
+    if len(kept_rows) == 1:
+        if _is_po_box_street(street):
+            return "Billing"
+        return "Both"
+
+    locations = {_myob_address_location(row) for row in kept_rows}
+    locations.discard(None)
+    loc = _myob_address_location(a)
+
+    if loc is not None:
+        if loc >= 2:
+            return "Delivery"
+        if locations & {2, 3, 4, 5}:
+            return "Billing"
+        if _is_po_box_street(street):
+            return "Billing"
+        return "Both"
+
+    if index == 0:
+        return "Billing"
+    return "Delivery"
+
+
+def _myob_address_can_be_default_delivery(addr_type: str) -> bool:
+    return addr_type in ("Delivery", "Both")
+
+
 def build_delivery_addresses_from_myob(raw: dict[str, Any]) -> dict[str, Any]:
     """
-    Only include address rows that have MYOB data; no placeholder suburbs.
+    Map MYOB customer address rows into app delivery/billing address items.
+
+    Only include address rows with actual location data (street/suburb/state/postcode/country).
+    Email-only or phone-only MYOB slots are skipped; contact fields are still synced via contacts.
     Omitted optional fields are not set on the dict (frontend treats missing as empty).
     """
     items: list[dict[str, Any]] = []
     addrs = raw.get("Addresses")
-    first_kept = True
+    kept_rows: list[dict[str, Any]] = []
     if isinstance(addrs, list):
-        for i, a in enumerate(addrs):
-            if not isinstance(a, dict):
-                continue
-            if not _address_row_has_content(a):
-                continue
-            st = a.get("Street")
-            street = st if isinstance(st, str) else ""
-            street1, street2 = _split_street(street)
-            city = (a.get("City") or "").strip()
-            state = (a.get("State") or "").strip()
-            pc = (a.get("PostCode") or "").strip()
-            country = (a.get("Country") or "").strip()
-            row: dict[str, Any] = {
-                "label": f"MYOB address {i + 1}",
-                "type": "Both",
-                "is_default": first_kept,
-            }
-            if street1:
-                row["street1"] = street1
-            if street2:
-                row["street2"] = street2
-            if city:
-                row["suburb"] = city
-            if state:
-                row["state"] = state
-            if pc:
-                row["postcode"] = pc
-            if country:
-                row["country"] = country
-            cn = (a.get("ContactName") or "").strip()
-            if cn:
-                row["contact_name"] = cn
-            ph = (a.get("Phone1") or "").strip()
-            if ph:
-                row["contact_phone"] = ph[:50]
-            items.append(row)
-            first_kept = False
+        for a in addrs:
+            if isinstance(a, dict) and _myob_address_row_has_location_content(a):
+                kept_rows.append(a)
+
+    default_delivery_set = False
+    for i, a in enumerate(kept_rows):
+        st = a.get("Street")
+        street = st if isinstance(st, str) else ""
+        street1, street2 = _split_street(street)
+        city = (a.get("City") or "").strip()
+        state = (a.get("State") or "").strip()
+        pc = (a.get("PostCode") or "").strip()
+        country = (a.get("Country") or "").strip()
+        addr_type = _myob_address_type(a, index=i, kept_rows=kept_rows)
+        row: dict[str, Any] = {
+            "type": addr_type,
+            "is_default": False,
+        }
+        if _myob_address_can_be_default_delivery(addr_type) and not default_delivery_set:
+            row["is_default"] = True
+            default_delivery_set = True
+        if street1:
+            row["street1"] = street1
+        if street2:
+            row["street2"] = street2
+        if city:
+            row["suburb"] = city
+        if state:
+            row["state"] = state
+        if pc:
+            row["postcode"] = pc
+        if country:
+            row["country"] = country
+        cn = (a.get("ContactName") or "").strip()
+        if cn:
+            row["contact_name"] = cn
+        ph = (a.get("Phone1") or "").strip()
+        if ph:
+            row["contact_phone"] = ph[:50]
+        items.append(row)
 
     return {"items": items}
 

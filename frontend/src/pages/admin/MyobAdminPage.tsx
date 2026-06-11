@@ -129,6 +129,7 @@ export function MyobAdminPage() {
   const [importAllTop, setImportAllTop] = useState(200)
   const [skipCustomers, setSkipCustomers] = useState(false)
   const [skipItemCache, setSkipItemCache] = useState(false)
+  const [customerSyncResult, setCustomerSyncResult] = useState<MyobSyncResult | null>(null)
   const [arbitraryGetUrl, setArbitraryGetUrl] = useState('')
   const [arbitraryGetResult, setArbitraryGetResult] = useState<{ request_url: string; myob: unknown } | null>(null)
   const [itemUomSummary, setItemUomSummary] = useState<MyobItemUomSummary | null>(null)
@@ -274,6 +275,7 @@ export function MyobAdminPage() {
     setItemUomRebuildResult(null)
     setPipelineResult(null)
     setPipelineJob(null)
+    setCustomerSyncResult(null)
     if (pipelinePollRef.current !== null) {
       window.clearInterval(pipelinePollRef.current)
       pipelinePollRef.current = null
@@ -324,6 +326,35 @@ export function MyobAdminPage() {
     }
   }
 
+  async function doCustomerSync() {
+    if (
+      !window.confirm(
+        [
+          'Import / update customers from MYOB into Production Software?',
+          '',
+          'Existing rows with the same MYOB UID will be updated (including addresses and contacts).',
+          'New MYOB customers will be created.',
+          '',
+          'Brand mapping: a leading “D -” on the individual last name or company name maps to Dolphin; otherwise Crown Pack.',
+          'App-only fields such as priority, delivery preferences, and notes are preserved where the sync does not overwrite them.',
+        ].join('\n'),
+      )
+    ) {
+      return
+    }
+    setBusy('customer-sync')
+    setErr(null)
+    setCustomerSyncResult(null)
+    try {
+      const data = await apiFetch<MyobSyncResult>('/api/myob/customers/sync', { method: 'POST' })
+      setCustomerSyncResult(data)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'MYOB customer sync failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function doImportPipeline() {
     const topAll = Number.isFinite(importAllTop)
       ? Math.min(MYOB_SALE_ORDER_LIST_HARD_CAP, Math.max(1, importAllTop))
@@ -347,6 +378,7 @@ export function MyobAdminPage() {
     setErr(null)
     setPipelineResult(null)
     setPipelineJob(null)
+    setCustomerSyncResult(null)
     setItemUomRebuildResult(null)
     const body = {
       orders: 'all' as const,
@@ -430,6 +462,44 @@ export function MyobAdminPage() {
               component="pre"
             >
               {JSON.stringify(pipelineJob.partial, null, 2)}
+            </Paper>
+          ) : null}
+        </Alert>
+      ) : null}
+      {customerSyncResult ? (
+        <Alert
+          severity={customerSyncResult.ok && customerSyncResult.errors.length === 0 ? 'success' : 'warning'}
+          sx={{ mb: 2 }}
+        >
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            Customer sync finished
+          </Typography>
+          <Typography variant="body2">
+            {customerSyncResult.created} created, {customerSyncResult.updated} updated (MYOB rows:{' '}
+            {customerSyncResult.source_count}
+            {customerSyncResult.truncated ? ', truncated fetch' : ''}).
+          </Typography>
+          {customerSyncResult.errors.length > 0 ? (
+            <Typography component="span" variant="body2" display="block" sx={{ mt: 1, fontFamily: 'monospace' }}>
+              {customerSyncResult.errors.slice(0, 8).join(' · ')}
+              {customerSyncResult.errors.length > 8 ? ` … (+${customerSyncResult.errors.length - 8} more)` : ''}
+            </Typography>
+          ) : null}
+          {customerSyncResult.myob_json != null ? (
+            <Paper
+              variant="outlined"
+              sx={{
+                mt: 1,
+                p: 1,
+                maxHeight: 320,
+                overflow: 'auto',
+                bgcolor: 'action.hover',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                fontSize: 11,
+              }}
+              component="pre"
+            >
+              {JSON.stringify(customerSyncResult.myob_json, null, 2)}
             </Paper>
           ) : null}
         </Alert>
@@ -526,6 +596,7 @@ export function MyobAdminPage() {
                 </Typography>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
                   Use the controls below to run this pipeline and optionally skip customer sync or item cache rebuild.
+                  To refresh customer data only (including addresses), use <strong>Sync customers only</strong>.
                 </Typography>
               </Paper>
             ) : null}
@@ -609,6 +680,15 @@ export function MyobAdminPage() {
                   }
                   label="Skip item cache rebuild"
                 />
+                <Button
+                  variant="outlined"
+                  color="secondary"
+                  onClick={() => void doCustomerSync()}
+                  disabled={!status?.connected || busy !== null}
+                  sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}
+                >
+                  {busy === 'customer-sync' ? 'Syncing customers…' : 'Sync customers only'}
+                </Button>
                 <Button
                   variant="contained"
                   color="primary"

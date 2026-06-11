@@ -455,7 +455,9 @@ export function CustomerShowPage() {
         <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Delivery Addresses</h2>
         {addresses.length > 0 ? (
           <div style={{ display: 'grid', gap: 16 }}>
-            {addresses.map((a: any, idx: number) => (
+            {addresses.map((a: any, idx: number) => {
+              const label = (a.label || '').trim()
+              return (
               <div
                 key={idx}
                 style={{
@@ -465,8 +467,17 @@ export function CustomerShowPage() {
                   border: a.is_default ? '2px solid #2563eb' : undefined,
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{a.label}</h3>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: label ? 'space-between' : 'flex-end',
+                    alignItems: 'start',
+                    marginBottom: label ? 8 : 0,
+                  }}
+                >
+                  {label ? (
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{label}</h3>
+                  ) : null}
                   <div style={{ display: 'flex', gap: 8 }}>
                     {a.is_default && (
                       <span style={{ padding: '4px 8px', background: '#2563eb', color: 'white', borderRadius: 4, fontSize: '0.75rem' }}>
@@ -478,7 +489,7 @@ export function CustomerShowPage() {
                     </span>
                   </div>
                 </div>
-                <div style={{ marginTop: 8 }}>
+                <div style={{ marginTop: label ? 8 : 0 }}>
                   <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap' }}>
                     {[a.street1, a.street2].filter(Boolean).join('\n')}
                     {(a.suburb || a.state || a.postcode) && (
@@ -502,7 +513,7 @@ export function CustomerShowPage() {
                   )}
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         ) : (
           <p style={{ color: '#9ca3af' }}>No addresses registered.</p>

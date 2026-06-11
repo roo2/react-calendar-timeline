@@ -75,7 +75,8 @@ def _job_to_dto(j) -> JobDTO:
 
 
 def _myob_all_job_sheets_flag(o) -> bool | None:
-    if getattr(o, "import_source", None) != "MYOB":
+    src = getattr(o, "import_source", None)
+    if src not in ("MYOB", "DOLPHIN_TSV"):
         return None
     items = list(getattr(o, "items", None) or [])
     need = [

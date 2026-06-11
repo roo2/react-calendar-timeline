@@ -35,6 +35,16 @@ def test_format_delivery_address_display_multiline():
     assert "Gympie QLD 4570" in text
 
 
+def test_pick_default_delivery_address_skips_billing_only_postal():
+    addresses = [
+        {"type": "Billing", "street1": "P O BOX 238", "suburb": "Buddina", "is_default": False},
+        {"type": "Delivery", "street1": "11 Bent Street", "suburb": "Gympie", "is_default": True},
+    ]
+    picked = pick_default_delivery_address(addresses)
+    assert picked is not None
+    assert picked["street1"] == "11 Bent Street"
+
+
 def test_customer_address_to_xero_addresses_sets_street_and_pobox():
     rows = customer_address_to_xero_addresses(
         {
