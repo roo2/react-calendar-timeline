@@ -28,6 +28,21 @@ def test_customer_not_deletable_with_products_or_job_sheets():
     assert _customer_deletable_reason({"job_sheets_count": 1}) == "has_job_sheets"
 
 
+def test_xero_primary_address_prefers_street():
+    from app.integrations.xero.service import _xero_primary_address_display
+
+    raw = {
+        "Addresses": [
+            {"AddressType": "POBOX", "AddressLine1": "PO Box 1", "City": "Brisbane"},
+            {"AddressType": "STREET", "AddressLine1": "11 Bent Street", "City": "Gympie", "PostalCode": "4570"},
+        ]
+    }
+    text = _xero_primary_address_display(raw)
+    assert text is not None
+    assert "11 Bent Street" in text
+    assert "Gympie" in text
+
+
 def test_manual_link_rejects_invalid_contact_uuid():
     from app.integrations.xero.service import manual_link_xero_customer
 
@@ -37,3 +52,4 @@ def test_manual_link_rejects_invalid_contact_uuid():
         assert False, "expected XeroConfigError"
     except Exception as e:
         assert "GUID" in str(e)
+

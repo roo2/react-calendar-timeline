@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProductListItem } from '../../../store/slices/productsSlice'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useUnsavedChanges } from '../../../contexts/UnsavedChangesContext'
 import { useAppDispatch, useAppSelector } from '../../../store/hooks'
 import { can } from '../../../auth/permissions'
@@ -21,6 +21,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Link as MuiLink,
   TextField,
   Typography,
 } from '@mui/material'
@@ -1731,9 +1732,14 @@ export function OrderEditor(props: { mode: Mode; orderId?: string }) {
               </Typography>
               {customerId ? (
                 <>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {customerNameDisplay || 'Loading customer…'}
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {customerNameDisplay || 'Loading customer…'}
+                    </Typography>
+                    <MuiLink component={Link} to={`/customers/${encodeURIComponent(customerId)}`} underline="hover" variant="body2">
+                      View customer
+                    </MuiLink>
+                  </Box>
                   {customerDeliveryAddressDisplay ? (
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, whiteSpace: 'pre-wrap' }}>
                       {customerDeliveryAddressDisplay}

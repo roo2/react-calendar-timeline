@@ -24,8 +24,8 @@ def main() -> int:
     p.add_argument(
         "tsv_path",
         nargs="?",
-        default=str(ROOT / "scripts" / "dolphin-orders.tsv"),
-        help="Path to tab-separated export (default: scripts/dolphin-orders.tsv)",
+        default=str(ROOT / "scripts" / "dolphin-orders-2026.tsv"),
+        help="Path to tab-separated export (default: scripts/dolphin-orders-2026.tsv)",
     )
     p.add_argument(
         "--dry-run",

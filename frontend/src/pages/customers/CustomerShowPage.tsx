@@ -9,6 +9,7 @@ import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { Alert, Box, Button, Chip, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 import { describePaymentTerms } from '../../utils/paymentTermsDisplay'
 import { formatDateTimeDMYShort } from '../../utils/dateFormat'
+import { xeroContactViewUrl } from '../../utils/xeroLinks'
 
 const CUSTOMER_SECTION_HASHES = new Set(['quotes', 'orders'])
 
@@ -174,10 +175,20 @@ export function CustomerShowPage() {
           )}
           {customer.xero_contact_id && (
             <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Xero contact id</strong>
-              <p style={{ margin: '4px 0 0', fontFamily: 'ui-monospace, monospace', fontSize: '0.875rem' }}>
-                {customer.xero_contact_id}
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Xero contact</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                <MuiLink
+                  href={xeroContactViewUrl(customer.xero_contact_id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  underline="hover"
+                >
+                  View in Xero
+                </MuiLink>
               </p>
+              <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'ui-monospace, monospace' }}>
+                {customer.xero_contact_id}
+              </Typography>
             </div>
           )}
           {(() => {

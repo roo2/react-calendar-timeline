@@ -19,9 +19,17 @@ import {
   Typography,
 } from '@mui/material'
 import { ApiError, apiFetch } from '../../api/client'
-import { CustomerSearchAutocomplete } from '../../components/CustomerSearchAutocomplete'
-import { XeroContactSearchAutocomplete } from '../../components/XeroContactSearchAutocomplete'
 import { AdminPageHeader } from './components/AdminPageHeader'
+
+function AddressCell(props: { value?: string | null }) {
+  const text = String(props.value || '').trim()
+  if (!text) return <>—</>
+  return (
+    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.8125rem' }}>
+      {text}
+    </Typography>
+  )
+}
 
 type XeroConnectionRow = {
   tenantId?: string
@@ -57,7 +65,17 @@ type XeroUnmatchedContact = {
   name?: string | null
   account_code?: string | null
   tax_number?: string | null
+  primary_address?: string | null
   reason?: string | null
+}
+
+type XeroAppCustomerLinkCandidate = {
+  id: string
+  name: string
+  myob_display_id?: string | null
+  abn?: string | null
+  primary_address?: string | null
+  orders_count: number
 }
 
 type XeroCustomerLinkPreview = {
@@ -133,10 +151,37 @@ export function XeroAdminPage() {
   const [apiResult, setApiResult] = useState<unknown>(null)
   const [linkPreview, setLinkPreview] = useState<XeroCustomerLinkPreview | null>(null)
   const [unlinkedReview, setUnlinkedReview] = useState<XeroUnlinkedCustomerReview | null>(null)
-  const [manualLinkCustomerId, setManualLinkCustomerId] = useState('')
-  const [manualLinkContactId, setManualLinkContactId] = useState('')
+  const [selectedUnmatchedContactId, setSelectedUnmatchedContactId] = useState<string | null>(null)
+  const [appCustomerSearch, setAppCustomerSearch] = useState('')
+  const [appCustomerResults, setAppCustomerResults] = useState<XeroAppCustomerLinkCandidate[]>([])
+  const [appCustomerSearchLoading, setAppCustomerSearchLoading] = useState(false)
+  const [selectedAppCustomerId, setSelectedAppCustomerId] = useState<string | null>(null)
   const [manualLinkResult, setManualLinkResult] = useState<XeroManualLinkResult | null>(null)
   const [deletablePreview, setDeletablePreview] = useState<XeroDeletableCustomersPreview | null>(null)
+
+  const selectedUnmatchedContact = useMemo(() => {
+    if (!selectedUnmatchedContactId || !linkPreview) return null
+    return (
+      linkPreview.unmatched_xero.find(
+        (row) => String(row.contact_id || '').trim() === selectedUnmatchedContactId,
+      ) || null
+    )
+  }, [linkPreview, selectedUnmatchedContactId])
+
+  const selectedAppCustomer = useMemo(
+    () => appCustomerResults.find((row) => row.id === selectedAppCustomerId) || null,
+    [appCustomerResults, selectedAppCustomerId],
+  )
+
+  const sortedAppCustomerResults = useMemo(
+    () =>
+      [...appCustomerResults].sort(
+        (a, b) =>
+          b.orders_count - a.orders_count ||
+          a.name.localeCompare(b.name),
+      ),
+    [appCustomerResults],
+  )
 
   const sortedUnlinkedAppCustomers = useMemo(() => {
     const rows = unlinkedReview?.items || []
@@ -181,6 +226,28 @@ export function XeroAdminPage() {
     const tid = (status?.tenant_id || '').trim()
     if (tid) setTenantPick(tid)
   }, [status?.tenant_id])
+
+  useEffect(() => {
+    if (!selectedUnmatchedContactId) {
+      setAppCustomerResults([])
+      setSelectedAppCustomerId(null)
+      return
+    }
+    const delayMs = appCustomerSearch.trim() ? 300 : 0
+    const t = window.setTimeout(() => {
+      setAppCustomerSearchLoading(true)
+      const qs = new URLSearchParams()
+      if (appCustomerSearch.trim()) qs.set('q', appCustomerSearch.trim())
+      qs.set('limit', '50')
+      void apiFetch<{ items: XeroAppCustomerLinkCandidate[] }>(
+        `/api/xero/customers/search-for-link?${qs.toString()}`,
+      )
+        .then((res) => setAppCustomerResults(res.items || []))
+        .catch(() => setAppCustomerResults([]))
+        .finally(() => setAppCustomerSearchLoading(false))
+    }, delayMs)
+    return () => window.clearTimeout(t)
+  }, [selectedUnmatchedContactId, appCustomerSearch])
 
   async function doRefresh() {
     setBusy('refresh')
@@ -255,6 +322,11 @@ export function XeroAdminPage() {
   async function doPreviewCustomerLinks() {
     setBusy('xero-customer-preview')
     setErr(null)
+    setSelectedUnmatchedContactId(null)
+    setSelectedAppCustomerId(null)
+    setAppCustomerSearch('')
+    setAppCustomerResults([])
+    setManualLinkResult(null)
     try {
       const out = await apiFetch<XeroCustomerLinkPreview>('/api/xero/customers/link-preview')
       setLinkPreview(out)
@@ -296,10 +368,10 @@ export function XeroAdminPage() {
   }
 
   async function doManualLinkCustomer() {
-    const customerId = manualLinkCustomerId.trim()
-    const contactId = manualLinkContactId.trim()
+    const customerId = selectedAppCustomerId?.trim() || ''
+    const contactId = selectedUnmatchedContactId?.trim() || ''
     if (!customerId || !contactId) {
-      setErr('Select an app customer and a Xero contact to link.')
+      setErr('Select an unmatched Xero contact and an app customer to link.')
       return
     }
     setBusy('xero-manual-link')
@@ -311,6 +383,23 @@ export function XeroAdminPage() {
         body: JSON.stringify({ customer_id: customerId, contact_id: contactId }),
       })
       setManualLinkResult(out)
+      setLinkPreview((prev) => {
+        if (!prev) return prev
+        const unmatched_xero = prev.unmatched_xero.filter(
+          (row) => String(row.contact_id || '').trim() !== contactId,
+        )
+        return {
+          ...prev,
+          unmatched_xero,
+          unmatched_xero_count: unmatched_xero.length,
+          matched_count: prev.matched_count + (out.already_linked ? 0 : 1),
+          already_linked_count: prev.already_linked_count + (out.already_linked ? 1 : 0),
+        }
+      })
+      setSelectedUnmatchedContactId(null)
+      setSelectedAppCustomerId(null)
+      setAppCustomerSearch('')
+      setAppCustomerResults([])
       await doLoadUnlinkedCustomers()
       if (deletablePreview) {
         const preview = await apiFetch<XeroDeletableCustomersPreview>(
@@ -547,56 +636,6 @@ export function XeroAdminPage() {
 
                 <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: 'background.paper' }}>
                   <Typography variant="subtitle2" gutterBottom>
-                    Manual customer match
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                    Pick an existing app customer and a Xero contact to set <code>xero_contact_id</code>. Use this
-                    when automatic matching did not find a safe link.
-                  </Typography>
-                  <Stack spacing={1.5} sx={{ maxWidth: 640 }}>
-                    <CustomerSearchAutocomplete
-                      label="App customer"
-                      value={manualLinkCustomerId}
-                      onChange={(id) => {
-                        setManualLinkCustomerId(id)
-                        setManualLinkResult(null)
-                      }}
-                      helperText="Search by customer name"
-                    />
-                    <XeroContactSearchAutocomplete
-                      label="Xero contact"
-                      value={manualLinkContactId}
-                      onChange={(id) => {
-                        setManualLinkContactId(id)
-                        setManualLinkResult(null)
-                      }}
-                      helperText="Search Xero contacts by name"
-                    />
-                    <Button
-                      variant="contained"
-                      onClick={() => void doManualLinkCustomer()}
-                      disabled={busy !== null || !manualLinkCustomerId.trim() || !manualLinkContactId.trim()}
-                      sx={{ alignSelf: 'flex-start' }}
-                    >
-                      Link customer to Xero contact
-                    </Button>
-                    {manualLinkResult ? (
-                      <Alert severity="success">
-                        {manualLinkResult.already_linked ? 'Already linked: ' : 'Linked '}
-                        <strong>{manualLinkResult.customer_name}</strong>
-                        {manualLinkResult.xero_name ? (
-                          <>
-                            {' '}
-                            → <strong>{manualLinkResult.xero_name}</strong>
-                          </>
-                        ) : null}
-                      </Alert>
-                    ) : null}
-                  </Stack>
-                </Paper>
-
-                <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: 'background.paper' }}>
-                  <Typography variant="subtitle2" gutterBottom>
                     Delete unused unlinked customers
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -749,19 +788,32 @@ export function XeroAdminPage() {
                     {linkPreview.unmatched_xero.length > 0 ? (
                       <Box sx={{ mt: 2 }}>
                         <Typography variant="subtitle2" gutterBottom>
-                          Unmatched Xero contacts
+                          Link unmatched Xero contacts
                         </Typography>
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                          These contacts did not have a safe unique match in the app. They are not linked by
-                          “Apply safe links”.
+                          Select an unmatched Xero contact, search for the matching app customer, then link them
+                          together. Primary delivery addresses are shown to help confirm the match.
                         </Typography>
-                        <Paper variant="outlined" sx={{ maxHeight: 320, overflow: 'auto' }}>
+                        {manualLinkResult ? (
+                          <Alert severity="success" sx={{ mb: 1.5 }}>
+                            {manualLinkResult.already_linked ? 'Already linked: ' : 'Linked '}
+                            <strong>{manualLinkResult.customer_name}</strong>
+                            {manualLinkResult.xero_name ? (
+                              <>
+                                {' '}
+                                → <strong>{manualLinkResult.xero_name}</strong>
+                              </>
+                            ) : null}
+                          </Alert>
+                        ) : null}
+                        <Paper variant="outlined" sx={{ maxHeight: 280, overflow: 'auto', mb: 2 }}>
                           <Table size="small" stickyHeader>
                             <TableHead>
                               <TableRow>
                                 <TableCell>Xero contact</TableCell>
                                 <TableCell>Account code</TableCell>
                                 <TableCell>Tax number</TableCell>
+                                <TableCell>Primary address</TableCell>
                                 <TableCell>Reason</TableCell>
                               </TableRow>
                             </TableHead>
@@ -769,8 +821,21 @@ export function XeroAdminPage() {
                               {linkPreview.unmatched_xero.slice(0, 100).map((row, idx) => {
                                 const contactId = String(row.contact_id || '').trim()
                                 const name = String(row.name || '').trim()
+                                const selected = contactId !== '' && selectedUnmatchedContactId === contactId
                                 return (
-                                  <TableRow key={contactId || `${name}-${idx}`} hover>
+                                  <TableRow
+                                    key={contactId || `${name}-${idx}`}
+                                    hover
+                                    selected={selected}
+                                    onClick={() => {
+                                      if (!contactId) return
+                                      setSelectedUnmatchedContactId(contactId)
+                                      setSelectedAppCustomerId(null)
+                                      setAppCustomerSearch('')
+                                      setManualLinkResult(null)
+                                    }}
+                                    sx={{ cursor: contactId ? 'pointer' : 'default' }}
+                                  >
                                     <TableCell>
                                       <Typography variant="body2">{name || '—'}</Typography>
                                       <Typography variant="caption" color="text.secondary">
@@ -779,6 +844,9 @@ export function XeroAdminPage() {
                                     </TableCell>
                                     <TableCell>{row.account_code || '—'}</TableCell>
                                     <TableCell>{row.tax_number || '—'}</TableCell>
+                                    <TableCell sx={{ maxWidth: 240 }}>
+                                      <AddressCell value={row.primary_address} />
+                                    </TableCell>
                                     <TableCell>{row.reason || '—'}</TableCell>
                                   </TableRow>
                                 )
@@ -787,10 +855,169 @@ export function XeroAdminPage() {
                           </Table>
                         </Paper>
                         {linkPreview.unmatched_xero.length > 100 ? (
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
                             Showing first 100 unmatched Xero contacts.
                           </Typography>
                         ) : null}
+
+                        {selectedUnmatchedContact ? (
+                          <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                              Match selected Xero contact
+                            </Typography>
+                            <Box
+                              sx={{
+                                display: 'grid',
+                                gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                                gap: 2,
+                                mb: 2,
+                              }}
+                            >
+                              <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'background.paper' }}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Xero contact
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.5 }}>
+                                  {selectedUnmatchedContact.name || '—'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                  {[selectedUnmatchedContact.account_code, selectedUnmatchedContact.tax_number]
+                                    .filter(Boolean)
+                                    .join(' · ') || selectedUnmatchedContactId}
+                                </Typography>
+                                <Box sx={{ mt: 1 }}>
+                                  <AddressCell value={selectedUnmatchedContact.primary_address} />
+                                </Box>
+                              </Paper>
+                              <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'background.paper' }}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Selected app customer
+                                </Typography>
+                                {selectedAppCustomer ? (
+                                  <>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.5 }}>
+                                      {selectedAppCustomer.name}
+                                    </Typography>
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                      sx={{ display: 'block', mt: 0.5 }}
+                                    >
+                                      {[selectedAppCustomer.myob_display_id, selectedAppCustomer.abn]
+                                        .filter(Boolean)
+                                        .join(' · ') || selectedAppCustomer.id}
+                                    </Typography>
+                                    <Box sx={{ mt: 1 }}>
+                                      <AddressCell value={selectedAppCustomer.primary_address} />
+                                    </Box>
+                                  </>
+                                ) : (
+                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                                    Search below and select an app customer.
+                                  </Typography>
+                                )}
+                              </Paper>
+                            </Box>
+
+                            <TextField
+                              size="small"
+                              label="Search app customers"
+                              value={appCustomerSearch}
+                              onChange={(e) => {
+                                setAppCustomerSearch(e.target.value)
+                                setSelectedAppCustomerId(null)
+                                setManualLinkResult(null)
+                              }}
+                              placeholder="Search by customer name…"
+                              fullWidth
+                              sx={{ mb: 1.5 }}
+                              helperText={
+                                appCustomerSearchLoading
+                                  ? 'Searching…'
+                                  : 'Only unlinked app customers are shown.'
+                              }
+                            />
+
+                            <Paper variant="outlined" sx={{ maxHeight: 260, overflow: 'auto', mb: 1.5 }}>
+                              <Table size="small" stickyHeader>
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>App customer</TableCell>
+                                    <TableCell>MYOB display</TableCell>
+                                    <TableCell align="right">Orders</TableCell>
+                                    <TableCell>Primary address</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {sortedAppCustomerResults.length > 0 ? (
+                                    sortedAppCustomerResults.map((row) => {
+                                      const selected = selectedAppCustomerId === row.id
+                                      return (
+                                        <TableRow
+                                          key={row.id}
+                                          hover
+                                          selected={selected}
+                                          onClick={() => {
+                                            setSelectedAppCustomerId(row.id)
+                                            setManualLinkResult(null)
+                                          }}
+                                          sx={{ cursor: 'pointer' }}
+                                        >
+                                          <TableCell>{row.name}</TableCell>
+                                          <TableCell>{row.myob_display_id || '—'}</TableCell>
+                                          <TableCell align="right">{row.orders_count}</TableCell>
+                                          <TableCell sx={{ maxWidth: 280 }}>
+                                            <AddressCell value={row.primary_address} />
+                                          </TableCell>
+                                        </TableRow>
+                                      )
+                                    })
+                                  ) : (
+                                    <TableRow>
+                                      <TableCell colSpan={4}>
+                                        <Typography variant="body2" color="text.secondary">
+                                          {appCustomerSearchLoading
+                                            ? 'Searching…'
+                                            : appCustomerSearch.trim()
+                                              ? 'No unlinked app customers match.'
+                                              : 'Type to search unlinked app customers.'}
+                                        </Typography>
+                                      </TableCell>
+                                    </TableRow>
+                                  )}
+                                </TableBody>
+                              </Table>
+                            </Paper>
+
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                              <Button
+                                variant="contained"
+                                onClick={() => void doManualLinkCustomer()}
+                                disabled={
+                                  busy !== null || !selectedAppCustomerId || !selectedUnmatchedContactId
+                                }
+                              >
+                                Link selected customer to Xero contact
+                              </Button>
+                              <Button
+                                variant="text"
+                                onClick={() => {
+                                  setSelectedUnmatchedContactId(null)
+                                  setSelectedAppCustomerId(null)
+                                  setAppCustomerSearch('')
+                                  setAppCustomerResults([])
+                                }}
+                                disabled={busy !== null}
+                              >
+                                Clear selection
+                              </Button>
+                            </Stack>
+                          </Paper>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">
+                            Select an unmatched Xero contact above to start manual linking.
+                          </Typography>
+                        )}
                       </Box>
                     ) : null}
                   </Box>

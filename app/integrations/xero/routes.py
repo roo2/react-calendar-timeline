@@ -29,6 +29,7 @@ from app.integrations.xero.service import (
     preview_xero_customer_links,
     refresh_tokens,
     search_xero_contacts,
+    search_app_customers_for_xero_link,
     set_tenant_id,
     unlinked_xero_customer_review,
     xero_configured,
@@ -240,6 +241,17 @@ async def xero_search_contacts(
         except XeroApiError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
     return {"items": items}
+
+
+@router.get("/customers/search-for-link")
+async def xero_search_app_customers_for_link(
+    _identity: SysAdminIdentity,
+    q: str | None = None,
+    limit: int = 50,
+):
+    del _identity
+    with SessionLocal() as db:
+        return {"items": search_app_customers_for_xero_link(db, query=q, limit=limit)}
 
 
 class XeroManualCustomerLinkBody(BaseModel):

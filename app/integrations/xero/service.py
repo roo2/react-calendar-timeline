@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import XERO_SCOPES, settings
 from app.customers.delivery_address import (
     customer_address_to_xero_addresses,
+    customer_default_delivery_address_display,
     delivery_addresses_from_customer,
     pick_default_delivery_address,
 )
@@ -787,8 +788,11 @@ def export_order_to_xero_invoice(db: Session, *, order_id: str) -> dict[str, Any
     }
 
 
-# Legacy imported app customers were stored with names trimmed to 25 characters.
+# Legacy imported app customers were stored with names trimmed to ~25 characters.
 IMPORTED_CUSTOMER_NAME_MAX_LEN = 25
+# Allow a small overrun (e.g. word-boundary trims) when matching truncated app names to full Xero names.
+TRUNCATED_APP_NAME_MAX_LEN = 30
+TRUNCATED_APP_NAME_MIN_LEN = 12
 
 
 def _normalize_match_text(value: Any) -> str:
@@ -798,12 +802,24 @@ def _normalize_match_text(value: Any) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _legacy_truncated_app_name_norm(value: Any) -> str:
+    """
+    Normalized app customer name when it may be a legacy truncated import (MYOB/Dolphin ~25 chars).
+
+    Used to match full Xero contact names that start with the stored app name.
+    """
+    raw = str(value or "").strip()
+    if not raw or len(raw) > TRUNCATED_APP_NAME_MAX_LEN:
+        return ""
+    norm = _normalize_match_text(raw)
+    if len(norm) < TRUNCATED_APP_NAME_MIN_LEN:
+        return ""
+    return norm
+
+
 def _imported_customer_name_key(value: Any) -> str:
     """Normalized key for app customers whose stored name is at most 25 characters."""
-    raw = str(value or "").strip()
-    if not raw or len(raw) > IMPORTED_CUSTOMER_NAME_MAX_LEN:
-        return ""
-    return _normalize_match_text(raw)
+    return _legacy_truncated_app_name_norm(value) if len(str(value or "").strip()) <= IMPORTED_CUSTOMER_NAME_MAX_LEN else ""
 
 
 def _xero_imported_name_lookup_key(value: Any) -> str:
@@ -812,6 +828,36 @@ def _xero_imported_name_lookup_key(value: Any) -> str:
     if not raw:
         return ""
     return _normalize_match_text(raw[:IMPORTED_CUSTOMER_NAME_MAX_LEN])
+
+
+def _unique_truncated_name_prefix_match(
+    customers: list[Customer],
+    xero_name: str,
+    *,
+    truncated_candidates: list[tuple[Customer, str]] | None = None,
+) -> Customer | None:
+    """
+    Match a Xero contact name to a unique app customer whose stored name is a truncated prefix.
+
+    E.g. app ``HINTERLAND COMMERCIAL LAUN`` (26 chars) ↔ Xero ``HINTERLAND COMMERCIAL LAUNDRY``.
+    """
+    xero_norm = _normalize_match_text(xero_name)
+    if not xero_norm:
+        return None
+    candidates = truncated_candidates
+    if candidates is None:
+        candidates = [
+            (cust, norm)
+            for cust in customers
+            if (norm := _legacy_truncated_app_name_norm(cust.name))
+        ]
+    matches: list[Customer] = []
+    for cust, app_norm in candidates:
+        if xero_norm == app_norm or (len(xero_norm) > len(app_norm) and xero_norm.startswith(app_norm)):
+            matches.append(cust)
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _normalize_account_code(value: Any) -> str:
@@ -912,6 +958,66 @@ def _customer_deletable_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _xero_address_has_content(addr: dict[str, Any]) -> bool:
+    return any(
+        str(addr.get(k) or "").strip()
+        for k in (
+            "AddressLine1",
+            "AddressLine2",
+            "AddressLine3",
+            "AddressLine4",
+            "City",
+            "Region",
+            "PostalCode",
+            "Country",
+        )
+    )
+
+
+def _format_xero_address_display(addr: dict[str, Any]) -> str | None:
+    lines: list[str] = []
+    for key in ("AddressLine1", "AddressLine2", "AddressLine3", "AddressLine4"):
+        value = str(addr.get(key) or "").strip()
+        if value:
+            lines.append(value)
+    locality = " ".join(
+        p
+        for p in (
+            str(addr.get("City") or "").strip(),
+            str(addr.get("Region") or "").strip(),
+            str(addr.get("PostalCode") or "").strip(),
+        )
+        if p
+    )
+    if locality:
+        lines.append(locality)
+    country = str(addr.get("Country") or "").strip()
+    if country:
+        lines.append(country)
+    return "\n".join(lines) if lines else None
+
+
+def _xero_primary_address_display(raw: dict[str, Any]) -> str | None:
+    addrs = raw.get("Addresses")
+    if not isinstance(addrs, list):
+        return None
+    by_type: dict[str, dict[str, Any]] = {}
+    for row in addrs:
+        if not isinstance(row, dict):
+            continue
+        addr_type = str(row.get("AddressType") or "").strip().upper()
+        if addr_type:
+            by_type[addr_type] = row
+    for addr_type in ("STREET", "POBOX", "DELIVERY"):
+        addr = by_type.get(addr_type)
+        if addr and _xero_address_has_content(addr):
+            return _format_xero_address_display(addr)
+    for row in addrs:
+        if isinstance(row, dict) and _xero_address_has_content(row):
+            return _format_xero_address_display(row)
+    return None
+
+
 def _xero_contact_summary(raw: dict[str, Any]) -> dict[str, Any]:
     contact_id = _xero_contact_id(raw)
     return {
@@ -919,6 +1025,7 @@ def _xero_contact_summary(raw: dict[str, Any]) -> dict[str, Any]:
         "name": str(raw.get("Name") or "").strip(),
         "account_code": _xero_contact_account_code(raw),
         "tax_number": str(raw.get("TaxNumber") or "").strip() or None,
+        "primary_address": _xero_primary_address_display(raw),
     }
 
 
@@ -951,6 +1058,52 @@ def search_xero_contacts(
         if len(out) >= cap:
             break
     return out
+
+
+def _orders_count_by_customer_ids(db: Session, customer_ids: list[str]) -> dict[str, int]:
+    if not customer_ids:
+        return {}
+    rows = db.execute(
+        select(Order.customer_id, func.count(Order.id))
+        .where(Order.customer_id.in_(customer_ids))
+        .group_by(Order.customer_id)
+    ).all()
+    return {str(customer_id): int(count or 0) for customer_id, count in rows}
+
+
+def search_app_customers_for_xero_link(
+    db: Session,
+    *,
+    query: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Search unlinked app customers for manual Xero linking."""
+    q = str(query or "").strip()
+    cap = max(1, min(int(limit), 100))
+    stmt = (
+        select(Customer)
+        .where(
+            Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
+            Customer.xero_contact_id.is_(None),
+        )
+        .order_by(Customer.name.asc())
+        .limit(cap)
+    )
+    if q:
+        stmt = stmt.where(Customer.name.ilike(f"%{q}%"))
+    rows = list(db.scalars(stmt).all())
+    orders_by_id = _orders_count_by_customer_ids(db, [str(c.id) for c in rows])
+    return [
+        {
+            "id": str(cust.id),
+            "name": cust.name,
+            "myob_display_id": getattr(cust, "myob_display_id", None),
+            "abn": getattr(cust, "abn", None),
+            "primary_address": customer_default_delivery_address_display(cust),
+            "orders_count": orders_by_id.get(str(cust.id), 0),
+        }
+        for cust in rows
+    ]
 
 
 def manual_link_xero_customer(db: Session, *, customer_id: str, contact_id: str) -> dict[str, Any]:
@@ -1086,7 +1239,7 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
 
     The only field the apply step writes is customers.xero_contact_id. Matching is conservative:
     existing links, unique MYOB/Xero account code, unique ABN/tax number, unique exact name,
-    then unique 25-character imported-name prefix match for legacy trimmed app customer names.
+    then unique truncated-name prefix match for legacy trimmed app customer names.
     Ambiguous or unmatched contacts are reported for manual review.
     """
     contacts = _load_xero_contacts_for_customer_linking(db)
@@ -1100,7 +1253,11 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
     by_myob_display = _unique_index(customers, lambda c: _normalize_account_code(c.myob_display_id))
     by_abn = _unique_index(customers, lambda c: _normalize_tax_number(c.abn))
     by_name = _unique_index(customers, lambda c: _normalize_match_text(c.name))
-    by_imported_name = _unique_index(customers, _imported_customer_name_key)
+    truncated_name_candidates = [
+        (cust, norm)
+        for cust in customers
+        if (norm := _legacy_truncated_app_name_norm(cust.name))
+    ]
 
     claimed_customer_ids: set[str] = set()
     matches: list[dict[str, Any]] = []
@@ -1123,7 +1280,14 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
                 ("myob_display_id", by_myob_display.get(_normalize_account_code(account_code))),
                 ("abn", by_abn.get(_normalize_tax_number(tax_number))),
                 ("name", by_name.get(_normalize_match_text(name))),
-                ("name_prefix_25", by_imported_name.get(_xero_imported_name_lookup_key(name))),
+                (
+                    "name_truncated_prefix",
+                    _unique_truncated_name_prefix_match(
+                        customers,
+                        name,
+                        truncated_candidates=truncated_name_candidates,
+                    ),
+                ),
             ):
                 if candidate is not None:
                     match = candidate
@@ -1137,6 +1301,7 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
                     "name": name,
                     "account_code": account_code,
                     "tax_number": tax_number,
+                    "primary_address": _xero_primary_address_display(raw),
                     "reason": "no_unique_app_customer_match",
                 }
             )
