@@ -18,6 +18,7 @@ from app.integrations.xero.service import (
     connection_status,
     consume_oauth_state,
     create_draft_quote,
+    compare_xero_app_customer_match,
     create_oauth_state,
     delete_deletable_unlinked_customers,
     disconnect_xero,
@@ -260,6 +261,28 @@ async def xero_search_app_customers_for_link(
 class XeroManualCustomerLinkBody(BaseModel):
     customer_id: str = Field(..., min_length=1)
     contact_id: str = Field(..., min_length=1, description="Xero ContactID (UUID)")
+
+
+@router.get("/customers/match-compare")
+async def xero_customer_match_compare(
+    _identity: SysAdminIdentity,
+    customer_id: str,
+    contact_id: str | None = None,
+):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return compare_xero_app_customer_match(
+                db,
+                customer_id=customer_id,
+                contact_id=contact_id,
+            )
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
 
 @router.post("/customers/manual-link", dependencies=[Depends(csrf_protect())])

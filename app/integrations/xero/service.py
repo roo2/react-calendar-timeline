@@ -41,6 +41,7 @@ from app.integrations.xero.customer_mapping import (
     customer_to_xero_contact_update_body,
     pick_xero_branding_theme_id_from_list,
     xero_contact_branding_theme_id,
+    xero_contact_match_detail,
 )
 from app.orders.product_line_display import product_code_for_version, product_display_name_for_line
 from app.str_norm import strip_trailing_dash_suffix
@@ -1117,6 +1118,7 @@ def search_app_customers_for_xero_link(
     cap = max(1, min(int(limit), 100))
     stmt = (
         select(Customer)
+        .options(joinedload(Customer.brand))
         .where(
             Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
             Customer.xero_contact_id.is_(None),
@@ -1129,14 +1131,7 @@ def search_app_customers_for_xero_link(
     rows = list(db.scalars(stmt).all())
     orders_by_id = _orders_count_by_customer_ids(db, [str(c.id) for c in rows])
     return [
-        {
-            "id": str(cust.id),
-            "name": cust.name,
-            "myob_display_id": getattr(cust, "myob_display_id", None),
-            "abn": getattr(cust, "abn", None),
-            "primary_address": customer_default_delivery_address_display(cust),
-            "orders_count": orders_by_id.get(str(cust.id), 0),
-        }
+        _app_customer_match_detail(cust, orders_count=orders_by_id.get(str(cust.id), 0))
         for cust in rows
     ]
 
@@ -1225,6 +1220,83 @@ def _app_delivery_address_summaries(customer: Customer) -> list[dict[str, str]]:
     return summaries
 
 
+def _app_customer_match_detail(customer: Customer, *, orders_count: int = 0) -> dict[str, Any]:
+    brand = getattr(customer, "brand", None)
+    return {
+        "id": str(customer.id),
+        "name": customer.name,
+        "myob_display_id": getattr(customer, "myob_display_id", None),
+        "abn": getattr(customer, "abn", None),
+        "brand_name": getattr(brand, "name", None) if brand else None,
+        "brand_code": getattr(brand, "code", None) if brand else None,
+        "branding_theme_id": getattr(brand, "xero_branding_theme_id", None) if brand else None,
+        "contact_first_name": getattr(customer, "contact_first_name", None),
+        "contact_last_name": getattr(customer, "contact_last_name", None),
+        "email_address": getattr(customer, "email_address", None),
+        "contact_phone": getattr(customer, "contact_phone", None),
+        "status": getattr(customer, "status", None),
+        "notes": getattr(customer, "notes", None),
+        "contact_persons": _app_contact_person_names(getattr(customer, "contacts", None)),
+        "addresses": _app_delivery_address_summaries(customer),
+        "xero_contact_id": str(getattr(customer, "xero_contact_id", "") or "").strip() or None,
+        "xero_last_modified": (
+            customer.xero_last_modified.isoformat()
+            if getattr(customer, "xero_last_modified", None) is not None
+            else None
+        ),
+        "xero_synced_at": (
+            customer.xero_synced_at.isoformat()
+            if getattr(customer, "xero_synced_at", None) is not None
+            else None
+        ),
+        "orders_count": orders_count,
+    }
+
+
+def compare_xero_app_customer_match(
+    db: Session,
+    *,
+    customer_id: str,
+    contact_id: str | None = None,
+) -> dict[str, Any]:
+    """Side-by-side app vs Xero contact details for link/sync decisions."""
+    cid = str(customer_id or "").strip()
+    if not cid:
+        raise XeroConfigError("customer_id is required.")
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        raise XeroConfigError("Cannot compare the internal MYOB draft customer.")
+
+    cust = db.scalar(
+        select(Customer)
+        .options(joinedload(Customer.brand))
+        .where(Customer.id == cid)
+    )
+    if cust is None:
+        raise XeroConfigError("Customer not found.")
+
+    orders_count = _orders_count_by_customer_ids(db, [cid]).get(cid, 0)
+    app_detail = _app_customer_match_detail(cust, orders_count=orders_count)
+
+    xid = str(contact_id or getattr(cust, "xero_contact_id", "") or "").strip()
+    xero_detail: dict[str, Any] | None = None
+    if xid:
+        if not _is_uuid(xid):
+            raise XeroConfigError("contact_id must be a Xero GUID (ContactID).")
+        _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts/{xid}")
+        contacts = payload.get("Contacts") if isinstance(payload, dict) else None
+        contact_raw = contacts[0] if isinstance(contacts, list) and contacts else None
+        if not isinstance(contact_raw, dict):
+            raise XeroConfigError("Xero contact not found.")
+        xero_detail = xero_contact_match_detail(contact_raw)
+
+    return {
+        "customer_id": cid,
+        "contact_id": xid or None,
+        "app": app_detail,
+        "xero": xero_detail,
+    }
+
+
 def search_app_customers_for_xero_sync(
     db: Session,
     *,
@@ -1249,24 +1321,7 @@ def search_app_customers_for_xero_sync(
     rows = list(db.scalars(stmt).all())
     orders_by_id = _orders_count_by_customer_ids(db, [str(c.id) for c in rows])
     return [
-        {
-            "id": str(cust.id),
-            "name": cust.name,
-            "myob_display_id": getattr(cust, "myob_display_id", None),
-            "abn": getattr(cust, "abn", None),
-            "brand_name": getattr(getattr(cust, "brand", None), "name", None),
-            "brand_code": getattr(getattr(cust, "brand", None), "code", None),
-            "xero_branding_theme_id": getattr(getattr(cust, "brand", None), "xero_branding_theme_id", None),
-            "email_address": getattr(cust, "email_address", None),
-            "contact_first_name": getattr(cust, "contact_first_name", None),
-            "contact_last_name": getattr(cust, "contact_last_name", None),
-            "contact_phone": getattr(cust, "contact_phone", None),
-            "notes": getattr(cust, "notes", None),
-            "contact_persons": _app_contact_person_names(getattr(cust, "contacts", None)),
-            "addresses": _app_delivery_address_summaries(cust),
-            "xero_contact_id": str(getattr(cust, "xero_contact_id", "") or "").strip(),
-            "orders_count": orders_by_id.get(str(cust.id), 0),
-        }
+        _app_customer_match_detail(cust, orders_count=orders_by_id.get(str(cust.id), 0))
         for cust in rows
     ]
 
@@ -1597,11 +1652,10 @@ def preview_xero_customer_links(db: Session) -> dict[str, Any]:
                     break
 
         if match is None:
+            detail = xero_contact_match_detail(raw)
             unmatched_xero.append(
                 {
-                    "contact_id": contact_id,
-                    "name": name,
-                    "account_code": account_code,
+                    **detail,
                     "tax_number": tax_number,
                     "primary_address": _xero_primary_address_display(raw),
                     "reason": "no_unique_app_customer_match",

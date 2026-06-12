@@ -11,6 +11,7 @@ from typing import Any
 
 from app.customers.contact_address import (
     address_item_to_xero_api_row,
+    format_address_display,
     normalize_contacts,
     normalize_delivery_addresses,
     parse_xero_updated_date_utc,
@@ -220,6 +221,59 @@ def delivery_addresses_from_xero_contact(raw: dict[str, Any]) -> dict[str, Any]:
         seen_signatures.add(signature)
         items.append(_address_item_from_xero(row))
     return {"items": items}
+
+
+def xero_contact_match_detail(raw: dict[str, Any]) -> dict[str, Any]:
+    """Rich Xero contact fields for admin link/sync comparison UI."""
+    theme = raw.get("BrandingTheme")
+    branding_theme_name: str | None = None
+    branding_theme_id: str | None = None
+    if isinstance(theme, dict):
+        branding_theme_name = str(theme.get("Name") or "").strip() or None
+        branding_theme_id = (
+            str(theme.get("BrandingThemeID") or theme.get("BrandingThemeId") or "").strip() or None
+        )
+
+    contact_persons: list[str] = []
+    for item in contacts_from_xero_contact(raw).get("items", []):
+        first = str(item.get("first_name") or "").strip()
+        last = str(item.get("last_name") or "").strip()
+        label = " ".join(part for part in (first, last) if part)
+        email = str(item.get("email_address") or "").strip()
+        if label and email:
+            label = f"{label} ({email})"
+        elif email:
+            label = email
+        if label:
+            contact_persons.append(label)
+
+    addresses: list[dict[str, str]] = []
+    for item in delivery_addresses_from_xero_contact(raw).get("items", []):
+        display = format_address_display(item)
+        if not display:
+            continue
+        addr_type = str(item.get("address_type") or "STREET").strip().upper()
+        addresses.append({"address_type": addr_type, "display": display})
+
+    lm = parse_xero_updated_date_utc(raw.get("UpdatedDateUTC"))
+
+    return {
+        "contact_id": str(raw.get("ContactID") or "").strip() or None,
+        "name": str(raw.get("Name") or "").strip(),
+        "account_code": str(raw.get("AccountNumber") or raw.get("AccountCode") or "").strip() or None,
+        "abn": str(raw.get("TaxNumber") or "").strip() or None,
+        "brand_name": branding_theme_name,
+        "brand_code": brand_code_from_xero_branding_theme(raw),
+        "branding_theme_id": branding_theme_id,
+        "contact_first_name": str(raw.get("FirstName") or "").strip() or None,
+        "contact_last_name": str(raw.get("LastName") or "").strip() or None,
+        "email_address": str(raw.get("EmailAddress") or "").strip() or None,
+        "contact_phone": _pick_xero_phone(raw.get("Phones")),
+        "status": _status_from_xero(raw),
+        "contact_persons": contact_persons,
+        "addresses": addresses,
+        "xero_last_modified": lm.isoformat() if lm is not None else None,
+    }
 
 
 def contacts_from_xero_contact(raw: dict[str, Any]) -> dict[str, Any]:
