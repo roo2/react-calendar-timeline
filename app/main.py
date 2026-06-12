@@ -222,6 +222,12 @@ if customer_pricing_tiers_public_router is not None:
     app.include_router(customer_pricing_tiers_public_router)
 if customer_pricing_tiers_admin_router is not None:
     app.include_router(customer_pricing_tiers_admin_router)
+try:
+    from app.brands.routes import admin_router as brands_admin_router
+except Exception:  # pragma: no cover
+    brands_admin_router = None
+if brands_admin_router is not None:
+    app.include_router(brands_admin_router)
     try:
         print(f"✓ Customers router registered with {len(customers_router.routes)} routes")
         for route in getattr(customers_router, "routes", []):

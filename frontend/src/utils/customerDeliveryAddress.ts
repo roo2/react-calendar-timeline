@@ -1,26 +1,27 @@
 type DeliveryAddressRow = {
-  label?: string | null
-  type?: string | null
-  street1?: string | null
-  street2?: string | null
-  suburb?: string | null
-  state?: string | null
-  postcode?: string | null
+  address_type?: string | null
+  address_line1?: string | null
+  address_line2?: string | null
+  address_line3?: string | null
+  address_line4?: string | null
+  city?: string | null
+  region?: string | null
+  postal_code?: string | null
   country?: string | null
-  contact_name?: string | null
-  contact_phone?: string | null
-  delivery_instructions?: string | null
-  is_default?: boolean | null
+  attention_to?: string | null
 }
 
 function addressHasContent(addr: DeliveryAddressRow): boolean {
   return Boolean(
-    String(addr.street1 || '').trim() ||
-      String(addr.street2 || '').trim() ||
-      String(addr.suburb || '').trim() ||
-      String(addr.state || '').trim() ||
-      String(addr.postcode || '').trim() ||
-      String(addr.country || '').trim(),
+    String(addr.address_line1 || '').trim() ||
+      String(addr.address_line2 || '').trim() ||
+      String(addr.address_line3 || '').trim() ||
+      String(addr.address_line4 || '').trim() ||
+      String(addr.city || '').trim() ||
+      String(addr.region || '').trim() ||
+      String(addr.postal_code || '').trim() ||
+      String(addr.country || '').trim() ||
+      String(addr.attention_to || '').trim(),
   )
 }
 
@@ -28,35 +29,31 @@ export function pickDefaultDeliveryAddress(
   addresses: DeliveryAddressRow[] | null | undefined,
 ): DeliveryAddressRow | null {
   const rows = Array.isArray(addresses) ? addresses : []
-  const candidates = rows.filter((a) => {
-    const t = String(a.type || '').trim()
-    return t === 'Delivery' || t === 'Both' || t === ''
-  })
-  const pool = candidates.length > 0 ? candidates : rows
-  return pool.find((a) => a.is_default && addressHasContent(a)) || pool.find((a) => addressHasContent(a)) || null
+  const usable = rows.filter((a) => addressHasContent(a))
+  if (usable.length === 0) return null
+  for (const preferred of ['STREET', 'DELIVERY', 'POBOX']) {
+    const match = usable.find((a) => String(a.address_type || '').toUpperCase() === preferred)
+    if (match) return match
+  }
+  return usable[0]
 }
 
 export function formatDeliveryAddressDisplay(addr: DeliveryAddressRow | null | undefined): string | null {
   if (!addr || !addressHasContent(addr)) return null
   const lines: string[] = []
-  const street = [addr.street1, addr.street2].map((p) => String(p || '').trim()).filter(Boolean).join('\n')
-  if (street) lines.push(street)
-  const locality = [addr.suburb, addr.state, addr.postcode]
+  for (const key of ['address_line1', 'address_line2', 'address_line3', 'address_line4'] as const) {
+    const value = String(addr[key] || '').trim()
+    if (value) lines.push(value)
+  }
+  const locality = [addr.city, addr.region, addr.postal_code]
     .map((p) => String(p || '').trim())
     .filter(Boolean)
     .join(' ')
   if (locality) lines.push(locality)
   const country = String(addr.country || '').trim()
   if (country) lines.push(country)
-  const contactName = String(addr.contact_name || '').trim()
-  const contactPhone = String(addr.contact_phone || '').trim()
-  if (contactName || contactPhone) {
-    lines.push(`Contact: ${[contactName, contactPhone].filter(Boolean).join(' — ')}`)
-  }
-  const instructions = String(addr.delivery_instructions || '').trim()
-  if (instructions) lines.push(`Instructions: ${instructions}`)
-  const label = String(addr.label || '').trim()
-  if (label && lines.length > 0) return `${label}\n${lines.join('\n')}`
+  const attention = String(addr.attention_to || '').trim()
+  if (attention) lines.push(`Attention: ${attention}`)
   return lines.length > 0 ? lines.join('\n') : null
 }
 

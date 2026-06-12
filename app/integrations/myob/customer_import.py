@@ -29,13 +29,16 @@ from app.integrations.myob.customer_mapping import (
     myob_raw_indicates_dolphin_brand,
     parse_myob_last_modified,
     payment_terms_dict_from_myob,
+    primary_contact_name_parts_from_myob,
     primary_phone_from_myob,
+    primary_email_from_myob,
     status_from_myob,
 )
 from app.integrations.myob.service import MyobConfigError, fetch_customers_readonly_preview
 
 CROWN_PACK_BRAND_CODE = "CROWN_PACK"
 DOLPHIN_BRAND_CODE = "DOLPHIN"
+APPROVED_PACKAGING_BRAND_CODE = "APPROVED_PACKAGING"
 
 
 def crown_pack_brand_id(db: Session) -> str | None:
@@ -50,11 +53,28 @@ def dolphin_brand_id(db: Session) -> str | None:
     return str(bid) if bid else None
 
 
+def approved_packaging_brand_id(db: Session) -> str | None:
+    """Brand row with code APPROVED_PACKAGING (Approved Packaging)."""
+    bid = db.scalar(select(Brand.id).where(Brand.code == APPROVED_PACKAGING_BRAND_CODE))
+    return str(bid) if bid else None
+
+
+def brand_id_for_code(db: Session, code: str | None) -> str | None:
+    normalized = str(code or "").strip().upper()
+    if normalized == CROWN_PACK_BRAND_CODE:
+        return crown_pack_brand_id(db)
+    if normalized == DOLPHIN_BRAND_CODE:
+        return dolphin_brand_id(db)
+    if normalized == APPROVED_PACKAGING_BRAND_CODE:
+        return approved_packaging_brand_id(db)
+    return None
+
+
 def ensure_default_customer_brands(db: Session) -> None:
     """
-    Ensure ``CROWN_PACK`` and ``DOLPHIN`` rows exist so MYOB import can set ``customer.brand_id``.
+    Ensure default brand rows exist so imports/sync can set ``customer.brand_id``.
 
-    Idempotent: no-op when both codes already exist (e.g. after ``0001_initial_schema`` seed).
+    Idempotent: no-op when all codes already exist (e.g. after migrations).
     """
     added = False
     if crown_pack_brand_id(db) is None:
@@ -62,6 +82,15 @@ def ensure_default_customer_brands(db: Session) -> None:
         added = True
     if dolphin_brand_id(db) is None:
         db.add(Brand(id=str(uuid.uuid4()), code=DOLPHIN_BRAND_CODE, name="Dolphin"))
+        added = True
+    if approved_packaging_brand_id(db) is None:
+        db.add(
+            Brand(
+                id=str(uuid.uuid4()),
+                code=APPROVED_PACKAGING_BRAND_CODE,
+                name="Approved Packaging",
+            )
+        )
         added = True
     if added:
         db.commit()
@@ -106,6 +135,8 @@ def upsert_customer_from_myob(db: Session, raw: dict[str, Any]) -> str:
     abn = abn_from_myob(raw)
     status = status_from_myob(raw)
     phone = primary_phone_from_myob(raw)
+    email = primary_email_from_myob(raw)
+    contact_first, contact_last = primary_contact_name_parts_from_myob(raw, company_display_name=name)
     contacts = build_contacts_from_myob(raw, myob_uid=uid, company_display_name=name)
     delivery_addresses = build_delivery_addresses_from_myob(raw)
     brand_id = brand_id_for_myob_upsert(db, raw)
@@ -121,6 +152,9 @@ def upsert_customer_from_myob(db: Session, raw: dict[str, Any]) -> str:
             brand_id=brand_id,
             priority_rank=None,
             abn=abn,
+            contact_first_name=contact_first,
+            contact_last_name=contact_last,
+            email_address=email,
             contact_phone=phone,
             status=status,
             contacts=contacts,
@@ -140,6 +174,9 @@ def upsert_customer_from_myob(db: Session, raw: dict[str, Any]) -> str:
 
     existing.name = name
     existing.abn = abn
+    existing.contact_first_name = contact_first
+    existing.contact_last_name = contact_last
+    existing.email_address = email
     existing.contact_phone = phone
     existing.status = status
     existing.contacts = contacts

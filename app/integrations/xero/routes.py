@@ -30,7 +30,10 @@ from app.integrations.xero.service import (
     refresh_tokens,
     search_xero_contacts,
     search_app_customers_for_xero_link,
+    search_app_customers_for_xero_sync,
     set_tenant_id,
+    sync_customer_from_xero,
+    sync_customer_to_xero,
     unlinked_xero_customer_review,
     xero_configured,
     xero_get_endpoint,
@@ -269,6 +272,53 @@ async def xero_manual_customer_link(_identity: SysAdminIdentity, body: XeroManua
                 customer_id=body.customer_id,
                 contact_id=body.contact_id,
             )
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.get("/customers/search-for-sync")
+async def xero_search_app_customers_for_sync(
+    _identity: SysAdminIdentity,
+    q: str | None = None,
+    limit: int = 50,
+):
+    del _identity
+    with SessionLocal() as db:
+        return {"items": search_app_customers_for_xero_sync(db, query=q, limit=limit)}
+
+
+class XeroSyncCustomerFromXeroBody(BaseModel):
+    customer_id: str = Field(..., min_length=1)
+
+
+@router.post("/customers/sync-from-xero", dependencies=[Depends(csrf_protect())])
+async def xero_sync_customer_from_xero(_identity: SysAdminIdentity, body: XeroSyncCustomerFromXeroBody):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return sync_customer_from_xero(db, customer_id=body.customer_id)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+class XeroSyncCustomerToXeroBody(BaseModel):
+    customer_id: str = Field(..., min_length=1)
+
+
+@router.post("/customers/sync-to-xero", dependencies=[Depends(csrf_protect())])
+async def xero_sync_customer_to_xero(_identity: SysAdminIdentity, body: XeroSyncCustomerToXeroBody):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return sync_customer_to_xero(db, customer_id=body.customer_id)
         except XeroConfigError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
         except XeroOAuthError as e:

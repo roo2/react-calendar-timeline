@@ -101,6 +101,9 @@ async def get_customer(customer_id: str):
         "customer": _customer_summary(c)
         | {
             "abn": c.abn,
+            "contact_first_name": getattr(c, "contact_first_name", None),
+            "contact_last_name": getattr(c, "contact_last_name", None),
+            "email_address": getattr(c, "email_address", None),
             "contact_phone": getattr(c, "contact_phone", None),
             "contacts": c.contacts.get("items", []) if isinstance(c.contacts, dict) else [],
             "delivery_addresses": c.delivery_addresses.get("items", []) if isinstance(c.delivery_addresses, dict) else [],
@@ -116,6 +119,8 @@ async def get_customer(customer_id: str):
             "myob_synced_at": c.myob_synced_at.isoformat() if getattr(c, "myob_synced_at", None) else None,
             "myob_notes": getattr(c, "myob_notes", None),
             "xero_contact_id": getattr(c, "xero_contact_id", None),
+            "xero_last_modified": c.xero_last_modified.isoformat() if getattr(c, "xero_last_modified", None) else None,
+            "xero_synced_at": c.xero_synced_at.isoformat() if getattr(c, "xero_synced_at", None) else None,
             "products_count": products_count,
             "orders_count": orders_count,
             "quotes_count": quotes_count,

@@ -90,12 +90,21 @@ def upgrade() -> None:
     # Default rows for MYOB customer import (`customer_import` looks up by code).
     _crown_brand_id = str(uuid.uuid4())
     _dolphin_brand_id = str(uuid.uuid4())
+    _approved_packaging_brand_id = str(uuid.uuid4())
     op.execute(
         sa.text(
-            "INSERT INTO brands (id, code, name) VALUES (:crown_id, 'CROWN_PACK', 'Crown Pack'), (:dolphin_id, 'DOLPHIN', 'Dolphin')"
+            "INSERT INTO brands (id, code, name) VALUES "
+            "(:crown_id, 'CROWN_PACK', 'Crown Pack'), "
+            "(:dolphin_id, 'DOLPHIN', 'Dolphin'), "
+            "(:approved_packaging_id, 'APPROVED_PACKAGING', 'Approved Packaging')"
         ).bindparams(
             sa.bindparam("crown_id", value=_crown_brand_id, type_=sa.String(36)),
             sa.bindparam("dolphin_id", value=_dolphin_brand_id, type_=sa.String(36)),
+            sa.bindparam(
+                "approved_packaging_id",
+                value=_approved_packaging_brand_id,
+                type_=sa.String(36),
+            ),
         )
     )
 

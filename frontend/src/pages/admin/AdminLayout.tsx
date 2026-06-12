@@ -6,6 +6,7 @@ const items = [
   { to: '/admin/myob', label: 'MYOB' },
   { to: '/admin/myob-data', label: 'MYOB data' },
   { to: '/admin/xero', label: 'Xero' },
+  { to: '/admin/brands', label: 'Brands' },
   { to: '/admin/customer-pricing-tiers', label: 'Customer pricing tiers' },
   { to: '/admin/resell-products', label: 'Resell / supplies' },
   { to: '/admin/resins', label: 'Resins' },

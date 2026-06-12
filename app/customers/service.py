@@ -88,8 +88,8 @@ def get_customer(customer_id: str) -> Optional[Customer]:
 def create_customer(payload: CustomerCreateRequest) -> Customer:
     """Create a new customer."""
     with SessionLocal() as db:  # type: Session
-        contacts_list = [contact.model_dump(exclude_none=True) for contact in payload.contacts]
-        addresses_list = [address.model_dump(exclude_none=True) for address in payload.delivery_addresses]
+        contacts_list = [c.model_dump(exclude_none=True) for c in payload.contacts]
+        addresses_list = [a.model_dump(exclude_none=True) for a in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
         tier_id = _normalize_pricing_tier_id(db, getattr(payload, "pricing_tier_id", None))
@@ -100,6 +100,9 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             brand_id=payload.brand_id,
             priority_rank=payload.priority_rank,
             abn=payload.abn,
+            contact_first_name=payload.contact_first_name or None,
+            contact_last_name=payload.contact_last_name or None,
+            email_address=payload.email_address,
             contact_phone=payload.contact_phone,
             status=payload.status,
             contacts={"items": contacts_list},  # Store as dict with 'items' key for consistency
@@ -136,17 +139,21 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         if not customer:
             raise ValueError(f"Customer with id {customer_id} not found")
 
-        contacts_list = [contact.model_dump(exclude_none=True) for contact in payload.contacts]
-        addresses_list = [address.model_dump(exclude_none=True) for address in payload.delivery_addresses]
+        contacts_list = [c.model_dump(exclude_none=True) for c in payload.contacts]
+        addresses_list = [a.model_dump(exclude_none=True) for a in payload.delivery_addresses]
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
 
         customer.pricing_tier_id = _normalize_pricing_tier_id(db, getattr(payload, "pricing_tier_id", None))
 
         # Update fields
         customer.name = payload.name
-        customer.brand_id = payload.brand_id
+        if not getattr(customer, "xero_contact_id", None):
+            customer.brand_id = payload.brand_id
         customer.priority_rank = payload.priority_rank
         customer.abn = payload.abn
+        customer.contact_first_name = payload.contact_first_name or None
+        customer.contact_last_name = payload.contact_last_name or None
+        customer.email_address = payload.email_address
         customer.contact_phone = payload.contact_phone
         customer.status = payload.status
         customer.contacts = {"items": contacts_list}

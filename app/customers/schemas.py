@@ -52,15 +52,12 @@ class PaymentTermsInput(BaseModel):
 
 
 class ContactInput(BaseModel):
-    type: str = Field(..., description="Contact type: Primary Contact, Accounts, Purchasing, Operations, Other")
-    name: str = Field(..., min_length=1, description="Full name")
-    title: Optional[str] = Field(None, description="Job title/position")
-    email: Optional[_EmailType] = Field(None, description="Email address (optional)")
-    phone: Optional[str] = Field(None, description="Phone number (optional)")
-    phone_alt: Optional[str] = Field(None, description="Alternate phone number (optional)")
-    notes: Optional[str] = Field(None, description="Additional notes about this contact")
+    first_name: str = Field(default="", description="Contact person first name (Xero ContactPerson)")
+    last_name: str = Field(default="", description="Contact person last name (Xero ContactPerson)")
+    email_address: Optional[_EmailType] = Field(None, description="Contact person email (Xero ContactPerson)")
+    include_in_emails: bool = Field(True, description="Include this person on Xero emails")
 
-    @field_validator("email", mode="before")
+    @field_validator("email_address", mode="before")
     @classmethod
     def empty_email_to_none(cls, v: Any) -> Any:
         if v is None:
@@ -69,7 +66,7 @@ class ContactInput(BaseModel):
             return None
         return v
 
-    @field_validator("email")
+    @field_validator("email_address")
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -78,27 +75,31 @@ class ContactInput(BaseModel):
             raise ValueError("Invalid email address")
         return v
 
+    @field_validator("first_name", "last_name", mode="before")
+    @classmethod
+    def strip_name_parts(cls, v: Any) -> str:
+        return str(v or "").strip()
+
 
 class AddressInput(BaseModel):
-    label: str = Field(default="", description="Address label/name (optional)")
-    type: str = Field(..., description="Address type: Billing, Delivery, or Both")
-    street1: str = Field(default="", description="Street address line 1 (optional)")
-    street2: Optional[str] = Field(None, description="Street address line 2")
-    suburb: str = Field(default="", description="Suburb/City (optional)")
-    state: str = Field(default="", description="State/Province (optional)")
-    postcode: str = Field(default="", description="Postcode/ZIP (optional)")
-    country: str = Field(default="", description="Country (optional)")
-    contact_name: Optional[str] = Field(None, description="Contact name at this address")
-    contact_phone: Optional[str] = Field(None, description="Contact phone at this address")
-    delivery_instructions: Optional[str] = Field(None, description="Delivery instructions")
-    is_default: bool = Field(False, description="Whether this is the default delivery address")
+    address_type: str = Field(..., description="Xero address type: STREET, POBOX, or DELIVERY")
+    address_line1: str = Field(default="", description="Address line 1")
+    address_line2: Optional[str] = Field(None, description="Address line 2")
+    address_line3: Optional[str] = Field(None, description="Address line 3")
+    address_line4: Optional[str] = Field(None, description="Address line 4")
+    city: str = Field(default="", description="City/suburb")
+    region: str = Field(default="", description="State/region")
+    postal_code: str = Field(default="", description="Postcode")
+    country: str = Field(default="", description="Country")
+    attention_to: Optional[str] = Field(None, description="Attention to (Xero AttentionTo)")
 
-    @field_validator("type")
+    @field_validator("address_type")
     @classmethod
     def validate_address_type(cls, v: str) -> str:
-        if v not in ["Billing", "Delivery", "Both"]:
-            raise ValueError("Address type must be 'Billing', 'Delivery', or 'Both'")
-        return v
+        s = str(v or "").strip().upper()
+        if s not in ["STREET", "POBOX", "DELIVERY"]:
+            raise ValueError("Address type must be 'STREET', 'POBOX', or 'DELIVERY'")
+        return s
 
 
 class DeliveryPreferencesInput(BaseModel):
@@ -129,7 +130,10 @@ class CustomerCreateRequest(BaseModel):
     brand_id: Optional[str] = Field(None, description="Optional brand (brands.id)")
     priority_rank: Optional[int] = Field(None, description="Optional sales priority (lower = higher priority)")
     abn: Optional[str] = Field(None, description="Business Registration/ABN")
-    contact_phone: Optional[str] = Field(None, description="Main contact phone number (optional)")
+    contact_first_name: str = Field(default="", description="Primary contact first name (Xero Contact FirstName)")
+    contact_last_name: str = Field(default="", description="Primary contact last name (Xero Contact LastName)")
+    email_address: Optional[_EmailType] = Field(None, description="Primary contact email (Xero EmailAddress)")
+    contact_phone: Optional[str] = Field(None, description="Main contact phone number (Xero Phones)")
     status: str = Field("Active", description="Status: Active, Inactive, or Archived")
     contacts: List[ContactInput] = Field(default_factory=list, description="List of contacts")
     delivery_addresses: List[AddressInput] = Field(default_factory=list, description="List of delivery addresses")
@@ -161,15 +165,23 @@ class CustomerCreateRequest(BaseModel):
             raise ValueError("Status must be 'Active', 'Inactive', or 'Archived'")
         return v
 
+    @field_validator("email_address", mode="before")
+    @classmethod
+    def empty_customer_email_to_none(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("contact_first_name", "contact_last_name", mode="before")
+    @classmethod
+    def strip_primary_contact_names(cls, v: Any) -> str:
+        return str(v or "").strip()
+
     @field_validator("delivery_addresses")
     @classmethod
     def validate_addresses(cls, v: List[AddressInput]) -> List[AddressInput]:
-        default_count = sum(1 for addr in v if addr.is_default)
-        if default_count > 1:
-            raise ValueError("Only one address can be marked as default")
-        if default_count == 0 and len(v) > 0:
-            # Auto-set first address as default if none is set
-            v[0].is_default = True
         return v
 
     @field_validator("contacts")
@@ -193,6 +205,9 @@ class CustomerResponse(BaseModel):
     brand_name: Optional[str] = None
     priority_rank: Optional[int] = None
     abn: Optional[str] = None
+    contact_first_name: Optional[str] = None
+    contact_last_name: Optional[str] = None
+    email_address: Optional[str] = None
     contact_phone: Optional[str] = None
     status: str
     contacts: List[dict]
@@ -207,5 +222,7 @@ class CustomerResponse(BaseModel):
     myob_synced_at: Optional[str] = None
     myob_notes: Optional[str] = None
     xero_contact_id: Optional[str] = None
+    xero_last_modified: Optional[str] = None
+    xero_synced_at: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

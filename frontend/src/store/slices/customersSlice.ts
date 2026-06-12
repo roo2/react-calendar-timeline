@@ -32,6 +32,9 @@ export type CustomerDetail = {
   priority_rank?: number | null
   abn?: string | null
   contact_phone?: string | null
+  contact_first_name?: string | null
+  contact_last_name?: string | null
+  email_address?: string | null
   payment_terms?: Record<string, unknown> | null
   payment_terms_summary?: string | null
   notes?: string | null

@@ -54,6 +54,7 @@ class Brand(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    xero_branding_theme_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
 
     customers: Mapped[list["Customer"]] = relationship(back_populates="brand")
 
@@ -85,6 +86,9 @@ class Customer(Base):
     # Lower number = higher priority (e.g. from sales spreadsheet); optional.
     priority_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     abn: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    contact_first_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    contact_last_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    email_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="Active")
     contacts: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -103,6 +107,8 @@ class Customer(Base):
     myob_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Xero Accounting API Contact GUID (links quotes/invoices to the Xero contact).
     xero_contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, unique=True)
+    xero_last_modified: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    xero_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     brand: Mapped[Optional["Brand"]] = relationship(back_populates="customers")
     pricing_tier: Mapped[Optional["CustomerPricingTier"]] = relationship(back_populates="customers")

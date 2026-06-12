@@ -267,8 +267,16 @@ def _myob_address_type(
     return "Delivery"
 
 
-def _myob_address_can_be_default_delivery(addr_type: str) -> bool:
-    return addr_type in ("Delivery", "Both")
+def _myob_address_type_xero(
+    a: dict[str, Any],
+    *,
+    index: int,
+    kept_rows: list[dict[str, Any]],
+) -> str:
+    app_type = _myob_address_type(a, index=index, kept_rows=kept_rows)
+    if app_type == "Billing":
+        return "POBOX"
+    return "STREET"
 
 
 def build_delivery_addresses_from_myob(raw: dict[str, Any]) -> dict[str, Any]:
@@ -287,7 +295,6 @@ def build_delivery_addresses_from_myob(raw: dict[str, Any]) -> dict[str, Any]:
             if isinstance(a, dict) and _myob_address_row_has_location_content(a):
                 kept_rows.append(a)
 
-    default_delivery_set = False
     for i, a in enumerate(kept_rows):
         st = a.get("Street")
         street = st if isinstance(st, str) else ""
@@ -296,32 +303,25 @@ def build_delivery_addresses_from_myob(raw: dict[str, Any]) -> dict[str, Any]:
         state = (a.get("State") or "").strip()
         pc = (a.get("PostCode") or "").strip()
         country = (a.get("Country") or "").strip()
-        addr_type = _myob_address_type(a, index=i, kept_rows=kept_rows)
+        addr_type = _myob_address_type_xero(a, index=i, kept_rows=kept_rows)
         row: dict[str, Any] = {
-            "type": addr_type,
-            "is_default": False,
+            "address_type": addr_type,
         }
-        if _myob_address_can_be_default_delivery(addr_type) and not default_delivery_set:
-            row["is_default"] = True
-            default_delivery_set = True
         if street1:
-            row["street1"] = street1
+            row["address_line1"] = street1
         if street2:
-            row["street2"] = street2
+            row["address_line2"] = street2
         if city:
-            row["suburb"] = city
+            row["city"] = city
         if state:
-            row["state"] = state
+            row["region"] = state
         if pc:
-            row["postcode"] = pc
+            row["postal_code"] = pc
         if country:
             row["country"] = country
         cn = (a.get("ContactName") or "").strip()
         if cn:
-            row["contact_name"] = cn
-        ph = (a.get("Phone1") or "").strip()
-        if ph:
-            row["contact_phone"] = ph[:50]
+            row["attention_to"] = cn
         items.append(row)
 
     return {"items": items}
@@ -329,11 +329,19 @@ def build_delivery_addresses_from_myob(raw: dict[str, Any]) -> dict[str, Any]:
 
 def build_contacts_from_myob(raw: dict[str, Any], *, myob_uid: str, company_display_name: str) -> dict[str, Any]:
     """
-    Primary contact: person name from MYOB ContactName when present, else company name.
+    Additional contact people from MYOB (Xero ContactPerson-compatible shape).
 
-    For individuals with ``LastName`` in the ``D - <company>`` convention, the primary
-    contact name is taken from ``FirstName`` when set (see module docstring).
+    MYOB cards do not expose a separate additional-contacts list; primary name parts
+    are stored on ``customers.contact_first_name`` / ``contact_last_name`` instead.
     """
+    _ = raw, myob_uid, company_display_name
+    return {"items": []}
+
+
+def primary_contact_name_parts_from_myob(
+    raw: dict[str, Any], *, company_display_name: str
+) -> tuple[str | None, str | None]:
+    """Primary contact first/last name from a MYOB customer card."""
     person: str | None = None
     if individual_trading_as_company_lastname(raw) is not None:
         fn = decode_myob_text(raw.get("FirstName"))
@@ -341,20 +349,16 @@ def build_contacts_from_myob(raw: dict[str, Any], *, myob_uid: str, company_disp
             person = fn[:255]
     if person is None:
         person = primary_contact_person_name_from_myob(raw)
-    display_name = person or company_display_name
-    contact: dict[str, Any] = {
-        "type": "Primary Contact",
-        "name": display_name,
-    }
-    em = first_email_from_myob_addresses(raw)
-    if em:
-        contact["email"] = em
-    ph = primary_phone_from_myob(raw)
-    if ph:
-        contact["phone"] = ph
-    # myob_uid unused for synthetic email anymore — keep param for API stability / future use
-    _ = myob_uid
-    return {"items": [contact]}
+    if not person or person == company_display_name:
+        return None, None
+    parts = person.split(None, 1)
+    first = parts[0] if parts else person
+    last = parts[1] if len(parts) > 1 else None
+    return first, last
+
+
+def primary_email_from_myob(raw: dict[str, Any]) -> str | None:
+    return first_email_from_myob_addresses(raw)
 
 
 def abn_from_myob(raw: dict[str, Any]) -> str | None:

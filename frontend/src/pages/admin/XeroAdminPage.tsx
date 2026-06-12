@@ -31,6 +31,38 @@ function AddressCell(props: { value?: string | null }) {
   )
 }
 
+type SyncAddressSummary = {
+  address_type: string
+  display: string
+}
+
+function AddressesCell(props: { addresses?: SyncAddressSummary[] | null }) {
+  const rows = props.addresses || []
+  if (rows.length === 0) return <>—</>
+  return (
+    <Stack spacing={1}>
+      {rows.map((row, index) => (
+        <Box key={`${row.address_type}-${index}`}>
+          <Typography variant="caption" color="text.secondary" display="block">
+            {row.address_type}
+          </Typography>
+          <AddressCell value={row.display} />
+        </Box>
+      ))}
+    </Stack>
+  )
+}
+
+function ContactPersonsCell(props: { names?: string[] | null }) {
+  const names = (props.names || []).map((n) => String(n || '').trim()).filter(Boolean)
+  if (names.length === 0) return <>—</>
+  return (
+    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.8125rem' }}>
+      {names.join('\n')}
+    </Typography>
+  )
+}
+
 type XeroConnectionRow = {
   tenantId?: string
   tenantName?: string
@@ -132,6 +164,50 @@ type XeroManualLinkResult = {
   xero_account_code?: string | null
 }
 
+type XeroLinkedCustomerSyncCandidate = {
+  id: string
+  name: string
+  myob_display_id?: string | null
+  abn?: string | null
+  brand_name?: string | null
+  brand_code?: string | null
+  xero_branding_theme_id?: string | null
+  email_address?: string | null
+  contact_phone?: string | null
+  notes?: string | null
+  contact_persons?: string[]
+  addresses?: SyncAddressSummary[]
+  xero_contact_id: string
+  orders_count: number
+}
+
+type XeroSyncFromXeroResult = {
+  ok: boolean
+  customer_id: string
+  contact_id: string
+  customer_name?: string
+  xero_name?: string
+  xero_account_code?: string | null
+  brand_code?: string | null
+  contacts_count: number
+  addresses_count: number
+  updated_fields: string[]
+}
+
+type XeroSyncToXeroResult = {
+  ok: boolean
+  direction?: string
+  customer_id: string
+  contact_id: string
+  customer_name?: string
+  xero_name?: string
+  xero_account_code?: string | null
+  contacts_count: number
+  addresses_count: number
+  sent_fields: string[]
+  xero_last_modified?: string | null
+}
+
 export function XeroAdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -158,6 +234,12 @@ export function XeroAdminPage() {
   const [selectedAppCustomerId, setSelectedAppCustomerId] = useState<string | null>(null)
   const [manualLinkResult, setManualLinkResult] = useState<XeroManualLinkResult | null>(null)
   const [deletablePreview, setDeletablePreview] = useState<XeroDeletableCustomersPreview | null>(null)
+  const [syncCustomerSearch, setSyncCustomerSearch] = useState('')
+  const [syncCustomerResults, setSyncCustomerResults] = useState<XeroLinkedCustomerSyncCandidate[]>([])
+  const [syncCustomerSearchLoading, setSyncCustomerSearchLoading] = useState(false)
+  const [selectedSyncCustomerId, setSelectedSyncCustomerId] = useState<string | null>(null)
+  const [syncFromXeroResult, setSyncFromXeroResult] = useState<XeroSyncFromXeroResult | null>(null)
+  const [syncToXeroResult, setSyncToXeroResult] = useState<XeroSyncToXeroResult | null>(null)
 
   const selectedUnmatchedContact = useMemo(() => {
     if (!selectedUnmatchedContactId || !linkPreview) return null
@@ -171,6 +253,21 @@ export function XeroAdminPage() {
   const selectedAppCustomer = useMemo(
     () => appCustomerResults.find((row) => row.id === selectedAppCustomerId) || null,
     [appCustomerResults, selectedAppCustomerId],
+  )
+
+  const selectedSyncCustomer = useMemo(
+    () => syncCustomerResults.find((row) => row.id === selectedSyncCustomerId) || null,
+    [syncCustomerResults, selectedSyncCustomerId],
+  )
+
+  const sortedSyncCustomerResults = useMemo(
+    () =>
+      [...syncCustomerResults].sort(
+        (a, b) =>
+          b.orders_count - a.orders_count ||
+          a.name.localeCompare(b.name),
+      ),
+    [syncCustomerResults],
   )
 
   const sortedAppCustomerResults = useMemo(
@@ -248,6 +345,23 @@ export function XeroAdminPage() {
     }, delayMs)
     return () => window.clearTimeout(t)
   }, [selectedUnmatchedContactId, appCustomerSearch])
+
+  useEffect(() => {
+    const delayMs = syncCustomerSearch.trim() ? 300 : 0
+    const t = window.setTimeout(() => {
+      setSyncCustomerSearchLoading(true)
+      const qs = new URLSearchParams()
+      if (syncCustomerSearch.trim()) qs.set('q', syncCustomerSearch.trim())
+      qs.set('limit', '50')
+      void apiFetch<{ items: XeroLinkedCustomerSyncCandidate[] }>(
+        `/api/xero/customers/search-for-sync?${qs.toString()}`,
+      )
+        .then((res) => setSyncCustomerResults(res.items || []))
+        .catch(() => setSyncCustomerResults([]))
+        .finally(() => setSyncCustomerSearchLoading(false))
+    }, delayMs)
+    return () => window.clearTimeout(t)
+  }, [syncCustomerSearch])
 
   async function doRefresh() {
     setBusy('refresh')
@@ -348,6 +462,63 @@ export function XeroAdminPage() {
     } catch (e) {
       if (e instanceof ApiError) setErr(e.message)
       else setErr(e instanceof Error ? e.message : 'Xero customer link import failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doSyncCustomerToXero() {
+    const customerId = selectedSyncCustomerId?.trim() || ''
+    if (!customerId) {
+      setErr('Select a linked app customer to sync to Xero.')
+      return
+    }
+    setBusy('xero-sync-to')
+    setErr(null)
+    setSyncToXeroResult(null)
+    try {
+      const out = await apiFetch<XeroSyncToXeroResult>('/api/xero/customers/sync-to-xero', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId }),
+      })
+      setSyncToXeroResult(out)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Sync to Xero failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doSyncCustomerFromXero() {
+    const customerId = selectedSyncCustomerId?.trim() || ''
+    if (!customerId) {
+      setErr('Select a linked app customer to sync from Xero.')
+      return
+    }
+    setBusy('xero-sync-from')
+    setErr(null)
+    setSyncFromXeroResult(null)
+    setSyncToXeroResult(null)
+    try {
+      const out = await apiFetch<XeroSyncFromXeroResult>('/api/xero/customers/sync-from-xero', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId }),
+      })
+      setSyncFromXeroResult(out)
+      setSyncCustomerResults((prev) =>
+        prev.map((row) =>
+          row.id === customerId
+            ? {
+                ...row,
+                name: out.customer_name || row.name,
+              }
+            : row,
+        ),
+      )
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Sync from Xero failed')
     } finally {
       setBusy(null)
     }
@@ -612,7 +783,7 @@ export function XeroAdminPage() {
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                   Matches all Xero contacts to existing app customers and only writes{' '}
-                  <code>xero_contact_id</code>. App customer details are not synced from Xero.
+                  <code>xero_contact_id</code>. Use sync from Xero below to pull contact details into the app.
                 </Typography>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
                   <Button
@@ -1058,6 +1229,245 @@ export function XeroAdminPage() {
                     </Paper>
                   </Box>
                 ) : null}
+              </Paper>
+            ) : null}
+
+            {status?.connected ? (
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Sync linked customer with Xero
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                  For app customers already linked to Xero, pull from Xero into the app or push app changes to the Xero
+                  contact. Pull overwrites app fields (name, ABN, phone, email, status, brand, contacts, addresses).
+                  Brand is read-only in the app and only updated by pull from Xero. Push updates the Xero contact (name,
+                  ABN, email, phone, status, contact persons, addresses). App notes and contact branding theme are not
+                  synced.
+                </Typography>
+                {syncFromXeroResult ? (
+                  <Alert severity="success" sx={{ mb: 1.5 }}>
+                    Pulled into app: <strong>{syncFromXeroResult.customer_name || syncFromXeroResult.customer_id}</strong>
+                    {syncFromXeroResult.xero_name ? (
+                      <>
+                        {' '}
+                        from Xero contact <strong>{syncFromXeroResult.xero_name}</strong>
+                      </>
+                    ) : null}
+                    {' — '}
+                    {syncFromXeroResult.contacts_count} contact
+                    {syncFromXeroResult.contacts_count === 1 ? '' : 's'},{' '}
+                    {syncFromXeroResult.addresses_count} address
+                    {syncFromXeroResult.addresses_count === 1 ? '' : 'es'} updated
+                    {syncFromXeroResult.brand_code ? (
+                      <>
+                        {' '}
+                        (brand: <strong>{syncFromXeroResult.brand_code}</strong>)
+                      </>
+                    ) : null}
+                    .
+                  </Alert>
+                ) : null}
+                {syncToXeroResult ? (
+                  <Alert severity="success" sx={{ mb: 1.5 }}>
+                    Pushed to Xero: <strong>{syncToXeroResult.customer_name || syncToXeroResult.customer_id}</strong>
+                    {syncToXeroResult.xero_name ? (
+                      <>
+                        {' '}
+                        → Xero contact <strong>{syncToXeroResult.xero_name}</strong>
+                      </>
+                    ) : null}
+                    {' — '}
+                    {syncToXeroResult.contacts_count} contact person
+                    {syncToXeroResult.contacts_count === 1 ? '' : 's'},{' '}
+                    {syncToXeroResult.addresses_count} address
+                    {syncToXeroResult.addresses_count === 1 ? '' : 'es'} sent.
+                  </Alert>
+                ) : null}
+                <TextField
+                  size="small"
+                  label="Search linked app customers"
+                  value={syncCustomerSearch}
+                  onChange={(e) => {
+                    setSyncCustomerSearch(e.target.value)
+                    setSelectedSyncCustomerId(null)
+                    setSyncFromXeroResult(null)
+                    setSyncToXeroResult(null)
+                  }}
+                  placeholder="Search by customer name…"
+                  fullWidth
+                  sx={{ mb: 1.5 }}
+                  helperText={
+                    syncCustomerSearchLoading
+                      ? 'Searching…'
+                      : 'Only app customers with a Xero contact link are shown.'
+                  }
+                />
+                <Paper variant="outlined" sx={{ maxHeight: 420, overflow: 'auto', mb: 1.5 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>App customer</TableCell>
+                        <TableCell>Brand</TableCell>
+                        <TableCell>Email</TableCell>
+                        <TableCell>Phone</TableCell>
+                        <TableCell>Notes (app only)</TableCell>
+                        <TableCell>Contact persons</TableCell>
+                        <TableCell>Addresses</TableCell>
+                        <TableCell align="right">Orders</TableCell>
+                        <TableCell>Xero contact id</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {sortedSyncCustomerResults.length > 0 ? (
+                        sortedSyncCustomerResults.map((row) => {
+                          const selected = selectedSyncCustomerId === row.id
+                          return (
+                            <TableRow
+                              key={row.id}
+                              hover
+                              selected={selected}
+                              onClick={() => {
+                                setSelectedSyncCustomerId(row.id)
+                                setSyncFromXeroResult(null)
+                                setSyncToXeroResult(null)
+                              }}
+                              sx={{ cursor: 'pointer', verticalAlign: 'top' }}
+                            >
+                              <TableCell>
+                                <Typography variant="body2">{row.name}</Typography>
+                                {row.abn ? (
+                                  <Typography variant="caption" color="text.secondary" display="block">
+                                    ABN {row.abn}
+                                  </Typography>
+                                ) : null}
+                                {row.myob_display_id ? (
+                                  <Typography variant="caption" color="text.secondary" display="block">
+                                    MYOB {row.myob_display_id}
+                                  </Typography>
+                                ) : null}
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 140 }}>
+                                {row.brand_name?.trim() ? (
+                                  <>
+                                    <Typography variant="body2">{row.brand_name}</Typography>
+                                    {row.brand_code?.trim() ? (
+                                      <Typography variant="caption" color="text.secondary" display="block">
+                                        {row.brand_code}
+                                      </Typography>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  '—'
+                                )}
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 180 }}>
+                                {row.email_address?.trim() ? row.email_address : '—'}
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 140, whiteSpace: 'nowrap' }}>
+                                {row.contact_phone?.trim() ? row.contact_phone : '—'}
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 220 }}>
+                                <AddressCell value={row.notes} />
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 160 }}>
+                                <ContactPersonsCell names={row.contact_persons} />
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 280 }}>
+                                <AddressesCell addresses={row.addresses} />
+                              </TableCell>
+                              <TableCell align="right">{row.orders_count}</TableCell>
+                              <TableCell sx={{ maxWidth: 120 }}>
+                                <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, monospace' }}>
+                                  {row.xero_contact_id}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={9}>
+                            <Typography variant="body2" color="text.secondary">
+                              {syncCustomerSearchLoading
+                                ? 'Searching…'
+                                : syncCustomerSearch.trim()
+                                  ? 'No linked app customers match.'
+                                  : 'Type to search linked app customers, or pick from the list.'}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </Paper>
+                {selectedSyncCustomer ? (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Selected: <strong>{selectedSyncCustomer.name}</strong>
+                      {selectedSyncCustomer.abn ? ` · ABN ${selectedSyncCustomer.abn}` : ''}
+                      {selectedSyncCustomer.brand_name
+                        ? ` · Brand ${selectedSyncCustomer.brand_name}`
+                        : ''}
+                    </Typography>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 1 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Email: {selectedSyncCustomer.email_address?.trim() || '—'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Phone: {selectedSyncCustomer.contact_phone?.trim() || '—'}
+                      </Typography>
+                    </Stack>
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                          Notes (app only, not synced to Xero)
+                        </Typography>
+                        <AddressCell value={selectedSyncCustomer.notes} />
+                      </Box>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                          Contact persons
+                        </Typography>
+                        <ContactPersonsCell names={selectedSyncCustomer.contact_persons} />
+                      </Box>
+                      <Box sx={{ flex: 2 }}>
+                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                          Addresses
+                        </Typography>
+                        <AddressesCell addresses={selectedSyncCustomer.addresses} />
+                      </Box>
+                    </Stack>
+                  </Box>
+                ) : null}
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                  <Button
+                    variant="contained"
+                    onClick={() => void doSyncCustomerFromXero()}
+                    disabled={busy !== null || !selectedSyncCustomerId}
+                  >
+                    Pull from Xero → app
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => void doSyncCustomerToXero()}
+                    disabled={busy !== null || !selectedSyncCustomerId}
+                  >
+                    Push app → Xero
+                  </Button>
+                  <Button
+                    variant="text"
+                    onClick={() => {
+                      setSelectedSyncCustomerId(null)
+                      setSyncCustomerSearch('')
+                      setSyncCustomerResults([])
+                      setSyncFromXeroResult(null)
+                      setSyncToXeroResult(null)
+                    }}
+                    disabled={busy !== null}
+                  >
+                    Clear selection
+                  </Button>
+                </Stack>
               </Paper>
             ) : null}
 

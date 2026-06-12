@@ -11,6 +11,7 @@ import {
   Checkbox,
   Divider,
   FormControlLabel,
+  Link as MuiLink,
   MenuItem,
   Paper,
   Stack,
@@ -18,6 +19,7 @@ import {
   Typography,
 } from '@mui/material'
 import { apiFetch } from '../../api/client'
+import { xeroContactViewUrl } from '../../utils/xeroLinks'
 import {
   PAYMENT_IS_DUE_OPTIONS,
   PAYMENT_IS_DUE_LABELS,
@@ -57,28 +59,23 @@ function paymentTermsToPayload(form: PaymentTermsForm): Record<string, unknown> 
 }
 
 type Contact = {
-  type: string
-  name: string
-  title?: string | null
-  email: string
-  phone?: string | null
-  phone_alt?: string | null
-  notes?: string | null
+  first_name: string
+  last_name: string
+  email_address: string
+  include_in_emails: boolean
 }
 
 type Address = {
-  label: string
-  type: string
-  street1: string
-  street2?: string | null
-  suburb: string
-  state: string
-  postcode: string
+  address_type: string
+  address_line1: string
+  address_line2?: string | null
+  address_line3?: string | null
+  address_line4?: string | null
+  city: string
+  region: string
+  postal_code: string
   country: string
-  contact_name?: string | null
-  contact_phone?: string | null
-  delivery_instructions?: string | null
-  is_default: boolean
+  attention_to?: string | null
 }
 
 type DeliveryPrefs = {
@@ -97,6 +94,9 @@ type CustomerDetail = {
   status: string
   abn?: string | null
   contact_phone?: string | null
+  contact_first_name?: string | null
+  contact_last_name?: string | null
+  email_address?: string | null
   payment_terms?: Record<string, unknown> | string | null
   credit_limit?: number | null
   notes?: string | null
@@ -119,32 +119,27 @@ type PricingTierOption = {
   discount_percent: number
 }
 
-function coerceContact(x: any): Contact {
+function mapContact(x: any): Contact {
   return {
-    type: String(x?.type ?? 'Other'),
-    name: String(x?.name ?? ''),
-    title: x?.title ?? '',
-    email: String(x?.email ?? ''),
-    phone: x?.phone ?? '',
-    phone_alt: x?.phone_alt ?? '',
-    notes: x?.notes ?? '',
+    first_name: String(x?.first_name ?? ''),
+    last_name: String(x?.last_name ?? ''),
+    email_address: String(x?.email_address ?? ''),
+    include_in_emails: x?.include_in_emails !== false,
   }
 }
 
-function coerceAddress(x: any, fallbackLabel: string): Address {
+function mapAddress(x: any): Address {
   return {
-    label: String(x?.label ?? fallbackLabel),
-    type: String(x?.type ?? 'Delivery'),
-    street1: String(x?.street1 ?? ''),
-    street2: x?.street2 ?? '',
-    suburb: String(x?.suburb ?? ''),
-    state: String(x?.state ?? 'NSW'),
-    postcode: String(x?.postcode ?? ''),
+    address_type: String(x?.address_type ?? 'STREET').toUpperCase() as Address['address_type'],
+    address_line1: String(x?.address_line1 ?? ''),
+    address_line2: x?.address_line2 ?? '',
+    address_line3: x?.address_line3 ?? '',
+    address_line4: x?.address_line4 ?? '',
+    city: String(x?.city ?? ''),
+    region: String(x?.region ?? 'NSW'),
+    postal_code: String(x?.postal_code ?? ''),
     country: String(x?.country ?? 'Australia'),
-    contact_name: x?.contact_name ?? '',
-    contact_phone: x?.contact_phone ?? '',
-    delivery_instructions: x?.delivery_instructions ?? '',
-    is_default: Boolean(x?.is_default ?? false),
+    attention_to: x?.attention_to ?? '',
   }
 }
 
@@ -163,36 +158,27 @@ export function CustomerUpsertPage() {
   const [brandId, setBrandId] = useState('')
   const [priorityRank, setPriorityRank] = useState('')
   const [contactPhone, setContactPhone] = useState('')
+  const [contactFirstName, setContactFirstName] = useState('')
+  const [contactLastName, setContactLastName] = useState('')
+  const [emailAddress, setEmailAddress] = useState('')
   const [status, setStatus] = useState<'Active' | 'Inactive' | 'Archived'>('Active')
   const [brandOptions, setBrandOptions] = useState<BrandOption[]>([])
   const [pricingTierOptions, setPricingTierOptions] = useState<PricingTierOption[]>([])
   const [pricingTierId, setPricingTierId] = useState('')
 
-  const [contacts, setContacts] = useState<Contact[]>([
-    {
-      type: 'Primary Contact',
-      name: '',
-      title: '',
-      email: '',
-      phone: '',
-      phone_alt: '',
-      notes: '',
-    },
-  ])
+  const [contacts, setContacts] = useState<Contact[]>([])
   const [addresses, setAddresses] = useState<Address[]>([
     {
-      label: 'Head Office',
-      type: 'Delivery',
-      street1: '',
-      street2: '',
-      suburb: '',
-      state: 'NSW',
-      postcode: '',
+      address_type: 'STREET',
+      address_line1: '',
+      address_line2: '',
+      address_line3: '',
+      address_line4: '',
+      city: '',
+      region: 'NSW',
+      postal_code: '',
       country: 'Australia',
-      contact_name: '',
-      contact_phone: '',
-      delivery_instructions: '',
-      is_default: true,
+      attention_to: '',
     },
   ])
 
@@ -217,6 +203,8 @@ export function CustomerUpsertPage() {
     [paymentTerms.payment_is_due],
   )
 
+  const brandLockedToXero = Boolean(xeroContactId.trim())
+
   const paymentTermsPreview = useMemo(() => {
     const payload = paymentTermsToPayload(paymentTerms)
     return describePaymentTerms(payload as Record<string, unknown> | null)
@@ -224,10 +212,6 @@ export function CustomerUpsertPage() {
 
   function clearFieldError(key: string) {
     dispatch(clearUpsertFieldError(key))
-  }
-
-  function setDefaultAddress(i: number) {
-    setAddresses((prev) => prev.map((a, idx) => ({ ...a, is_default: idx === i })))
   }
 
   // Load initial values in edit mode.
@@ -286,19 +270,18 @@ export function CustomerUpsertPage() {
     setPriorityRank(c.priority_rank != null ? String(c.priority_rank) : '')
     setAbn(c.abn || '')
     setContactPhone(c.contact_phone || '')
+    setContactFirstName(String(c.contact_first_name ?? ''))
+    setContactLastName(String(c.contact_last_name ?? ''))
+    setEmailAddress(c.email_address || '')
     setStatus((c.status as any) || 'Active')
 
-    const loadedContacts = Array.isArray(c.contacts) ? c.contacts.map(coerceContact) : []
-    setContacts(loadedContacts.length > 0 ? loadedContacts : contacts)
+    const loadedContacts = Array.isArray(c.contacts) ? c.contacts.map(mapContact) : []
+    setContacts(loadedContacts)
 
     const loadedAddresses = Array.isArray(c.delivery_addresses)
-      ? c.delivery_addresses.map((a, idx) => coerceAddress(a, `Address ${idx + 1}`))
+      ? c.delivery_addresses.map((a) => mapAddress(a))
       : []
-    const normalizedAddresses = loadedAddresses.length > 0 ? loadedAddresses : addresses
-    if (normalizedAddresses.length > 0 && !normalizedAddresses.some((a) => a.is_default)) {
-      normalizedAddresses[0] = { ...normalizedAddresses[0], is_default: true }
-    }
-    setAddresses(normalizedAddresses)
+    setAddresses(loadedAddresses.length > 0 ? loadedAddresses : addresses)
 
     const p = c.delivery_preferences || {}
     setPreferredPalletType(String(p.preferred_pallet_type ?? 'Plain'))
@@ -322,22 +305,28 @@ export function CustomerUpsertPage() {
         brand_id: brandId || null,
         priority_rank: priorityRank ? Number(priorityRank) : null,
         abn: abn || null,
+        contact_first_name: contactFirstName.trim(),
+        contact_last_name: contactLastName.trim(),
+        email_address: emailAddress.trim() || null,
         contact_phone: contactPhone || null,
         status,
         contacts: contacts.map((c) => ({
-          ...c,
-          title: c.title || null,
-          email: c.email?.trim() || null,
-          phone: c.phone || null,
-          phone_alt: c.phone_alt || null,
-          notes: c.notes || null,
+          first_name: c.first_name,
+          last_name: c.last_name,
+          email_address: c.email_address?.trim() || null,
+          include_in_emails: c.include_in_emails,
         })),
         delivery_addresses: addresses.map((a) => ({
-          ...a,
-          street2: a.street2 || null,
-          contact_name: a.contact_name || null,
-          contact_phone: a.contact_phone || null,
-          delivery_instructions: a.delivery_instructions || null,
+          address_type: a.address_type,
+          address_line1: a.address_line1,
+          address_line2: a.address_line2 || null,
+          address_line3: a.address_line3 || null,
+          address_line4: a.address_line4 || null,
+          city: a.city,
+          region: a.region,
+          postal_code: a.postal_code,
+          country: a.country,
+          attention_to: a.attention_to || null,
         })),
         delivery_preferences: {
           preferred_pallet_type: preferredPalletType,
@@ -394,24 +383,44 @@ export function CustomerUpsertPage() {
               error={!!fieldErrors['name']}
               helperText={fieldErrors['name'] || ''}
             />
-            <TextField
-              select
-              label="Brand"
-              value={brandId}
-              onChange={(e) => {
-                setBrandId(e.target.value)
-                clearFieldError('brand_id')
-              }}
-              required
-              error={!!fieldErrors['brand_id']}
-              helperText={fieldErrors['brand_id'] || 'Required'}
-            >
-              {brandOptions.map((b) => (
-                <MenuItem key={b.id} value={b.id}>
-                  {b.name}
-                </MenuItem>
-              ))}
-            </TextField>
+            <Box>
+              <TextField
+                select
+                label="Brand"
+                value={brandId}
+                onChange={(e) => {
+                  setBrandId(e.target.value)
+                  clearFieldError('brand_id')
+                }}
+                required
+                disabled={brandLockedToXero}
+                error={!!fieldErrors['brand_id']}
+                helperText={
+                  fieldErrors['brand_id'] ||
+                  (brandLockedToXero
+                    ? 'Synced from Xero (read-only). Use Sync from Xero or edit in Xero.'
+                    : 'Required')
+                }
+                fullWidth
+              >
+                {brandOptions.map((b) => (
+                  <MenuItem key={b.id} value={b.id}>
+                    {b.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+              {brandLockedToXero ? (
+                <MuiLink
+                  href={xeroContactViewUrl(xeroContactId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  underline="hover"
+                  sx={{ display: 'inline-block', mt: 0.5, fontSize: '0.875rem' }}
+                >
+                  Edit in Xero
+                </MuiLink>
+              ) : null}
+            </Box>
             <TextField
               select
               label="Quote pricing tier"
@@ -463,11 +472,52 @@ export function CustomerUpsertPage() {
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="h6" sx={{ mb: 0.5 }}>
+            Primary contact
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Main contact person for this customer (Xero Contact first name, last name, and email).
+          </Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 2 }}>
+            <TextField
+              label="First Name"
+              value={contactFirstName}
+              onChange={(e) => {
+                setContactFirstName(e.target.value)
+                clearFieldError('contact_first_name')
+              }}
+              error={!!fieldErrors['contact_first_name']}
+              helperText={fieldErrors['contact_first_name'] || ''}
+            />
+            <TextField
+              label="Last Name"
+              value={contactLastName}
+              onChange={(e) => {
+                setContactLastName(e.target.value)
+                clearFieldError('contact_last_name')
+              }}
+              error={!!fieldErrors['contact_last_name']}
+              helperText={fieldErrors['contact_last_name'] || ''}
+            />
+            <TextField
+              label="Email"
+              value={emailAddress}
+              onChange={(e) => {
+                setEmailAddress(e.target.value)
+                clearFieldError('email_address')
+              }}
+              error={!!fieldErrors['email_address']}
+              helperText={fieldErrors['email_address'] || ''}
+            />
+          </Box>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <Box>
-              <Typography variant="h6">Contacts</Typography>
+              <Typography variant="h6">Additional contacts</Typography>
               <Typography variant="body2" color="text.secondary">
-                Contacts are optional; add as needed.
+                Extra contact people synced to Xero ContactPersons.
               </Typography>
             </Box>
             <Button
@@ -476,7 +526,7 @@ export function CustomerUpsertPage() {
               onClick={() =>
                 setContacts((prev) => [
                   ...prev,
-                  { type: 'Other', name: '', email: '', phone: '', phone_alt: '', title: '', notes: '' },
+                  { first_name: '', last_name: '', email_address: '', include_in_emails: true },
                 ])
               }
             >
@@ -485,6 +535,11 @@ export function CustomerUpsertPage() {
           </Box>
 
           <Stack spacing={2} sx={{ mt: 2 }}>
+            {contacts.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No additional contact people.
+              </Typography>
+            ) : null}
             {contacts.map((c, idx) => (
               <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -506,58 +561,40 @@ export function CustomerUpsertPage() {
 
                 <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
                   <TextField
-                    select
-                    label="Contact Type"
-                    value={c.type}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, type: e.target.value } : x)))}
-                  >
-                    {['Primary Contact', 'Accounts', 'Purchasing', 'Operations', 'Other'].map((t) => (
-                      <MenuItem key={t} value={t}>
-                        {t}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                  <TextField
-                    label="Full Name"
-                    value={c.name}
+                    label="First Name"
+                    value={c.first_name}
                     onChange={(e) => {
-                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))
-                      clearFieldError(`contacts[${idx}].name`)
+                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, first_name: e.target.value } : x)))
+                      clearFieldError(`contacts[${idx}].first_name`)
                     }}
-                    error={!!fieldErrors[`contacts[${idx}].name`]}
-                    helperText={fieldErrors[`contacts[${idx}].name`] || ''}
+                    error={!!fieldErrors[`contacts[${idx}].first_name`]}
+                    helperText={fieldErrors[`contacts[${idx}].first_name`] || ''}
                   />
                   <TextField
-                    label="Job Title"
-                    value={c.title || ''}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, title: e.target.value } : x)))}
+                    label="Last Name"
+                    value={c.last_name}
+                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, last_name: e.target.value } : x)))}
                   />
                   <TextField
                     label="Email"
-                    value={c.email}
+                    value={c.email_address}
                     onChange={(e) => {
-                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, email: e.target.value } : x)))
-                      clearFieldError(`contacts[${idx}].email`)
+                      setContacts((p) => p.map((x, i) => (i === idx ? { ...x, email_address: e.target.value } : x)))
+                      clearFieldError(`contacts[${idx}].email_address`)
                     }}
-                    error={!!fieldErrors[`contacts[${idx}].email`]}
-                    helperText={fieldErrors[`contacts[${idx}].email`] || ''}
+                    error={!!fieldErrors[`contacts[${idx}].email_address`]}
+                    helperText={fieldErrors[`contacts[${idx}].email_address`] || ''}
                   />
-                  <TextField
-                    label="Phone"
-                    value={c.phone || ''}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone: e.target.value } : x)))}
-                  />
-                  <TextField
-                    label="Alt Phone"
-                    value={c.phone_alt || ''}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, phone_alt: e.target.value } : x)))}
-                  />
-                  <TextField
-                    label="Notes"
-                    value={c.notes || ''}
-                    onChange={(e) => setContacts((p) => p.map((x, i) => (i === idx ? { ...x, notes: e.target.value } : x)))}
-                    multiline
-                    minRows={2}
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={c.include_in_emails}
+                        onChange={(e) =>
+                          setContacts((p) => p.map((x, i) => (i === idx ? { ...x, include_in_emails: e.target.checked } : x)))
+                        }
+                      />
+                    }
+                    label="Include in emails"
                   />
                 </Box>
               </Paper>
@@ -568,9 +605,9 @@ export function CustomerUpsertPage() {
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <Box>
-              <Typography variant="h6">Delivery Addresses</Typography>
+              <Typography variant="h6">Addresses</Typography>
               <Typography variant="body2" color="text.secondary">
-                Addresses are optional; mark one as default when you add more than one.
+                Xero-compatible addresses (STREET, POBOX, DELIVERY).
               </Typography>
             </Box>
             <Button
@@ -578,20 +615,18 @@ export function CustomerUpsertPage() {
               type="button"
               onClick={() =>
                 setAddresses((prev) => [
-                  ...prev.map((x) => ({ ...x, is_default: false })),
+                  ...prev,
                   {
-                    label: `Address ${prev.length + 1}`,
-                    type: 'Delivery',
-                    street1: '',
-                    street2: '',
-                    suburb: '',
-                    state: 'NSW',
-                    postcode: '',
+                    address_type: 'STREET',
+                    address_line1: '',
+                    address_line2: '',
+                    address_line3: '',
+                    address_line4: '',
+                    city: '',
+                    region: 'NSW',
+                    postal_code: '',
                     country: 'Australia',
-                    contact_name: '',
-                    contact_phone: '',
-                    delivery_instructions: '',
-                    is_default: true,
+                    attention_to: '',
                   },
                 ])
               }
@@ -605,76 +640,74 @@ export function CustomerUpsertPage() {
               <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
                   <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                    {a.label || `Address ${idx + 1}`}
+                    Address {idx + 1}
                   </Typography>
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <FormControlLabel
-                      control={<Checkbox checked={a.is_default} onChange={() => setDefaultAddress(idx)} />}
-                      label="Default"
-                    />
-                    <Button
-                      variant="outlined"
-                      color="error"
-                      size="small"
-                      type="button"
-                      onClick={() => {
-                        setAddresses((prev) => prev.filter((_, i) => i !== idx))
-                        setTimeout(() => setDefaultAddress(0), 0)
-                      }}
-                    >
-                      Remove
-                    </Button>
-                  </Box>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    type="button"
+                    onClick={() => {
+                      setAddresses((prev) => prev.filter((_, i) => i !== idx))
+                    }}
+                  >
+                    Remove
+                  </Button>
                 </Box>
 
                 <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 2 }}>
                   <TextField
-                    label="Address Label/Name"
-                    value={a.label}
-                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))}
-                  />
-                  <TextField
                     select
                     label="Address Type"
-                    value={a.type}
-                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, type: e.target.value } : x)))}
+                    value={a.address_type}
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, address_type: e.target.value } : x)))}
                   >
-                    {['Billing', 'Delivery', 'Both'].map((t) => (
+                    {['STREET', 'POBOX', 'DELIVERY'].map((t) => (
                       <MenuItem key={t} value={t}>
                         {t}
                       </MenuItem>
                     ))}
                   </TextField>
                   <TextField
-                    label="Street Address"
-                    value={a.street1}
+                    label="Address Line 1"
+                    value={a.address_line1}
                     onChange={(e) => {
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, street1: e.target.value } : x)))
-                      clearFieldError(`delivery_addresses[${idx}].street1`)
+                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, address_line1: e.target.value } : x)))
+                      clearFieldError(`delivery_addresses[${idx}].address_line1`)
                     }}
-                    error={!!fieldErrors[`delivery_addresses[${idx}].street1`]}
-                    helperText={fieldErrors[`delivery_addresses[${idx}].street1`] || ''}
+                    error={!!fieldErrors[`delivery_addresses[${idx}].address_line1`]}
+                    helperText={fieldErrors[`delivery_addresses[${idx}].address_line1`] || ''}
                   />
                   <TextField
-                    label="Street Address Line 2"
-                    value={a.street2 || ''}
-                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, street2: e.target.value } : x)))}
+                    label="Address Line 2"
+                    value={a.address_line2 || ''}
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, address_line2: e.target.value } : x)))}
                   />
                   <TextField
-                    label="Suburb"
-                    value={a.suburb}
+                    label="Address Line 3"
+                    value={a.address_line3 || ''}
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, address_line3: e.target.value } : x)))}
+                  />
+                  <TextField
+                    label="Address Line 4"
+                    value={a.address_line4 || ''}
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, address_line4: e.target.value } : x)))}
+                  />
+                  <TextField
+                    label="City"
+                    value={a.city}
                     onChange={(e) => {
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, suburb: e.target.value } : x)))
-                      clearFieldError(`delivery_addresses[${idx}].suburb`)
+                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, city: e.target.value } : x)))
+                      clearFieldError(`delivery_addresses[${idx}].city`)
                     }}
-                    error={!!fieldErrors[`delivery_addresses[${idx}].suburb`]}
-                    helperText={fieldErrors[`delivery_addresses[${idx}].suburb`] || ''}
+                    error={!!fieldErrors[`delivery_addresses[${idx}].city`]}
+                    helperText={fieldErrors[`delivery_addresses[${idx}].city`] || ''}
                   />
                   <TextField
                     select
-                    label="State"
-                    value={a.state}
-                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, state: e.target.value } : x)))}
+                    label="Region"
+                    value={a.region}
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, region: e.target.value } : x)))}
                   >
                     {['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'].map((s) => (
                       <MenuItem key={s} value={s}>
@@ -684,13 +717,13 @@ export function CustomerUpsertPage() {
                   </TextField>
                   <TextField
                     label="Postcode"
-                    value={a.postcode}
+                    value={a.postal_code}
                     onChange={(e) => {
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, postcode: e.target.value } : x)))
-                      clearFieldError(`delivery_addresses[${idx}].postcode`)
+                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, postal_code: e.target.value } : x)))
+                      clearFieldError(`delivery_addresses[${idx}].postal_code`)
                     }}
-                    error={!!fieldErrors[`delivery_addresses[${idx}].postcode`]}
-                    helperText={fieldErrors[`delivery_addresses[${idx}].postcode`] || ''}
+                    error={!!fieldErrors[`delivery_addresses[${idx}].postal_code`]}
+                    helperText={fieldErrors[`delivery_addresses[${idx}].postal_code`] || ''}
                   />
                   <TextField
                     label="Country"
@@ -698,23 +731,9 @@ export function CustomerUpsertPage() {
                     onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, country: e.target.value } : x)))}
                   />
                   <TextField
-                    label="Contact Name"
-                    value={a.contact_name || ''}
-                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, contact_name: e.target.value } : x)))}
-                  />
-                  <TextField
-                    label="Contact Phone"
-                    value={a.contact_phone || ''}
-                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, contact_phone: e.target.value } : x)))}
-                  />
-                  <TextField
-                    label="Delivery Instructions"
-                    value={a.delivery_instructions || ''}
-                    onChange={(e) =>
-                      setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, delivery_instructions: e.target.value } : x)))
-                    }
-                    multiline
-                    minRows={2}
+                    label="Attention To"
+                    value={a.attention_to || ''}
+                    onChange={(e) => setAddresses((p) => p.map((x, i) => (i === idx ? { ...x, attention_to: e.target.value } : x)))}
                   />
                 </Box>
               </Paper>
@@ -822,6 +841,7 @@ export function CustomerUpsertPage() {
               multiline
               minRows={3}
               fullWidth
+              helperText="App notes only — not synced to Xero."
             />
           </Box>
         </Paper>

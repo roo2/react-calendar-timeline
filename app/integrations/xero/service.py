@@ -13,10 +13,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import XERO_SCOPES, settings
+from app.customers.contact_address import normalize_contacts, parse_xero_updated_date_utc
 from app.customers.delivery_address import (
     customer_address_to_xero_addresses,
     customer_default_delivery_address_display,
     delivery_addresses_from_customer,
+    format_address_display,
     pick_default_delivery_address,
 )
 from app.db.models.domain import (
@@ -32,6 +34,14 @@ from app.db.models.domain import (
     XeroOAuthState,
 )
 from app.db.myob_import_placeholders import MYOB_DRAFT_INTERNAL_CUSTOMER_ID
+from app.integrations.myob.customer_import import brand_id_for_code, ensure_default_customer_brands
+from app.brands.service import brand_id_for_xero_branding_theme_id
+from app.integrations.xero.customer_mapping import (
+    customer_fields_from_xero_contact,
+    customer_to_xero_contact_update_body,
+    pick_xero_branding_theme_id_from_list,
+    xero_contact_branding_theme_id,
+)
 from app.orders.product_line_display import product_code_for_version, product_display_name_for_line
 from app.str_norm import strip_trailing_dash_suffix
 
@@ -428,6 +438,39 @@ def _xero_api_post_json(
     return url, resp.status_code, payload
 
 
+def _xero_api_put_json(
+    db: Session,
+    *,
+    endpoint: str,
+    body: dict[str, Any],
+) -> tuple[str, int, Any]:
+    access = ensure_xero_access_token_for_api(db)
+    row = _singleton(db)
+    tenant = (row.tenant_id or "").strip()
+    if not tenant:
+        raise XeroConfigError("Xero tenant_id is missing.")
+
+    url = _accounting_api_url(endpoint)
+    headers = {
+        "Authorization": f"Bearer {access}",
+        "xero-tenant-id": tenant,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.put(url, headers=headers, json=body)
+
+    try:
+        payload: Any = resp.json()
+    except Exception:
+        payload = resp.text
+
+    if resp.status_code >= 400:
+        raise XeroApiError(f"Xero PUT error {resp.status_code}: {payload}")
+
+    return url, resp.status_code, payload
+
+
 def _as_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -616,35 +659,31 @@ def _resolve_xero_branding_theme_id(
     *,
     brand_code: str | None,
     brand_name: str | None,
+    stored_xero_branding_theme_id: str | None = None,
 ) -> str | None:
-    """Match a Xero branding theme to the customer's commercial brand."""
-    code = str(brand_code or "").strip().upper()
-    name = str(brand_name or "").strip()
-    needles: list[str] = []
-    if code == "CROWN_PACK":
-        needles = ["crown pack", "crownpack", "crown"]
-    elif code == "DOLPHIN":
-        needles = ["dolphin"]
-    elif name:
-        needles = [name.casefold()]
-
-    if not needles:
-        return None
+    """Resolve Xero BrandingThemeID for an app brand (stored mapping first, then name match)."""
+    stored = str(stored_xero_branding_theme_id or "").strip()
+    if stored:
+        return stored
 
     _, _, payload = _xero_api_get_json(db, endpoint="/BrandingThemes")
     rows = payload.get("BrandingThemes") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
+    return pick_xero_branding_theme_id_from_list(
+        rows,
+        brand_code=brand_code,
+        brand_name=brand_name,
+    )
+
+
+def _xero_branding_theme_id_for_brand(db: Session, brand: Any | None) -> str | None:
+    if brand is None:
         return None
-    for raw in rows:
-        if not isinstance(raw, dict):
-            continue
-        theme_name = str(raw.get("Name") or "").casefold()
-        if not any(n in theme_name for n in needles):
-            continue
-        theme_id = str(raw.get("BrandingThemeID") or raw.get("BrandingThemeId") or "").strip()
-        if theme_id:
-            return theme_id
-    return None
+    return _resolve_xero_branding_theme_id(
+        db,
+        brand_code=getattr(brand, "code", None),
+        brand_name=getattr(brand, "name", None),
+        stored_xero_branding_theme_id=getattr(brand, "xero_branding_theme_id", None),
+    )
 
 
 def _extract_xero_invoice(payload: Any) -> dict[str, Any]:
@@ -730,11 +769,7 @@ def export_order_to_xero_invoice(db: Session, *, order_id: str) -> dict[str, Any
         raise XeroConfigError(f"Could not update Xero contact delivery address: {e}") from e
 
     brand = getattr(customer, "brand", None)
-    branding_theme_id = _resolve_xero_branding_theme_id(
-        db,
-        brand_code=getattr(brand, "code", None) if brand is not None else None,
-        brand_name=getattr(brand, "name", None) if brand is not None else None,
-    )
+    branding_theme_id = _xero_branding_theme_id_for_brand(db, brand)
 
     invoice_date = getattr(order, "order_date", None) or date.today()
     invoice_number = str(getattr(order, "code", "") or "").strip()
@@ -1165,6 +1200,273 @@ def manual_link_xero_customer(db: Session, *, customer_id: str, contact_id: str)
         "customer_name": cust.name,
         "xero_name": contact["name"],
         "xero_account_code": contact.get("account_code"),
+    }
+
+
+def _app_contact_person_names(contacts_raw: Any) -> list[str]:
+    names: list[str] = []
+    for item in normalize_contacts(contacts_raw)["items"]:
+        first = str(item.get("first_name") or "").strip()
+        last = str(item.get("last_name") or "").strip()
+        name = " ".join(part for part in (first, last) if part)
+        if name:
+            names.append(name)
+    return names
+
+
+def _app_delivery_address_summaries(customer: Customer) -> list[dict[str, str]]:
+    summaries: list[dict[str, str]] = []
+    for addr in delivery_addresses_from_customer(customer):
+        display = format_address_display(addr)
+        if not display:
+            continue
+        addr_type = str(addr.get("address_type") or "STREET").strip().upper()
+        summaries.append({"address_type": addr_type, "display": display})
+    return summaries
+
+
+def search_app_customers_for_xero_sync(
+    db: Session,
+    *,
+    query: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Search app customers already linked to Xero for manual sync-from-Xero."""
+    q = str(query or "").strip()
+    cap = max(1, min(int(limit), 100))
+    stmt = (
+        select(Customer)
+        .options(joinedload(Customer.brand))
+        .where(
+            Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
+            Customer.xero_contact_id.isnot(None),
+        )
+        .order_by(Customer.name.asc())
+        .limit(cap)
+    )
+    if q:
+        stmt = stmt.where(Customer.name.ilike(f"%{q}%"))
+    rows = list(db.scalars(stmt).all())
+    orders_by_id = _orders_count_by_customer_ids(db, [str(c.id) for c in rows])
+    return [
+        {
+            "id": str(cust.id),
+            "name": cust.name,
+            "myob_display_id": getattr(cust, "myob_display_id", None),
+            "abn": getattr(cust, "abn", None),
+            "brand_name": getattr(getattr(cust, "brand", None), "name", None),
+            "brand_code": getattr(getattr(cust, "brand", None), "code", None),
+            "xero_branding_theme_id": getattr(getattr(cust, "brand", None), "xero_branding_theme_id", None),
+            "email_address": getattr(cust, "email_address", None),
+            "contact_first_name": getattr(cust, "contact_first_name", None),
+            "contact_last_name": getattr(cust, "contact_last_name", None),
+            "contact_phone": getattr(cust, "contact_phone", None),
+            "notes": getattr(cust, "notes", None),
+            "contact_persons": _app_contact_person_names(getattr(cust, "contacts", None)),
+            "addresses": _app_delivery_address_summaries(cust),
+            "xero_contact_id": str(getattr(cust, "xero_contact_id", "") or "").strip(),
+            "orders_count": orders_by_id.get(str(cust.id), 0),
+        }
+        for cust in rows
+    ]
+
+
+def _extract_xero_contact_from_post_response(payload: Any) -> dict[str, Any]:
+    rows = payload.get("Contacts") if isinstance(payload, dict) else None
+    contact_raw = rows[0] if isinstance(rows, list) and rows else None
+    if not isinstance(contact_raw, dict):
+        raise XeroApiError(f"Xero Contacts response did not include a contact: {payload}")
+    if contact_raw.get("HasValidationErrors"):
+        errors = contact_raw.get("ValidationErrors")
+        if isinstance(errors, list) and errors:
+            detail = "; ".join(
+                str(e.get("Message") or e) if isinstance(e, dict) else str(e) for e in errors
+            )
+            raise XeroApiError(f"Xero contact validation failed: {detail}")
+        raise XeroApiError("Xero contact validation failed.")
+    return contact_raw
+
+
+def sync_customer_to_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
+    """Push app customer contact details to an already-linked Xero contact."""
+    cid = str(customer_id or "").strip()
+    if not cid:
+        raise XeroConfigError("customer_id is required.")
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        raise XeroConfigError("Cannot sync the internal MYOB draft customer.")
+
+    cust = db.scalar(
+        select(Customer)
+        .options(joinedload(Customer.brand))
+        .where(Customer.id == cid)
+    )
+    if cust is None:
+        raise XeroConfigError("Customer not found.")
+
+    xid = str(getattr(cust, "xero_contact_id", "") or "").strip()
+    if not xid:
+        raise XeroConfigError(
+            "Customer is not linked to a Xero contact. Link the customer first, then sync."
+        )
+    if not _is_uuid(xid):
+        raise XeroConfigError("Customer xero_contact_id is not a valid Xero GUID.")
+
+    try:
+        contact_body = customer_to_xero_contact_update_body(
+            contact_id=xid,
+            name=cust.name,
+            abn=getattr(cust, "abn", None),
+            contact_first_name=getattr(cust, "contact_first_name", None),
+            contact_last_name=getattr(cust, "contact_last_name", None),
+            email_address=getattr(cust, "email_address", None),
+            contact_phone=getattr(cust, "contact_phone", None),
+            status=getattr(cust, "status", None),
+            contacts=getattr(cust, "contacts", None),
+            delivery_addresses=getattr(cust, "delivery_addresses", None),
+        )
+    except ValueError as e:
+        raise XeroConfigError(str(e)) from e
+
+    url, _status_code, payload = _xero_api_post_json(
+        db,
+        endpoint="/Contacts",
+        body={"Contacts": [contact_body]},
+    )
+    contact_raw = _extract_xero_contact_from_post_response(payload)
+    contact_id_from_xero = _xero_contact_id(contact_raw)
+    if contact_id_from_xero and contact_id_from_xero != xid:
+        raise XeroConfigError("Xero contact ID mismatch.")
+
+    cust.xero_last_modified = parse_xero_updated_date_utc(contact_raw.get("UpdatedDateUTC"))
+    cust.xero_synced_at = datetime.now(UTC)
+    db.add(cust)
+    db.commit()
+
+    summary = _xero_contact_summary(contact_raw)
+    sent_fields = [
+        "name",
+        "abn",
+        "contact_first_name",
+        "contact_last_name",
+        "email_address",
+        "contact_phone",
+        "status",
+        "contacts",
+        "delivery_addresses",
+    ]
+    contacts_items = contact_body.get("ContactPersons")
+    address_items = contact_body.get("Addresses")
+    return {
+        "ok": True,
+        "direction": "to_xero",
+        "customer_id": cid,
+        "contact_id": xid,
+        "customer_name": cust.name,
+        "xero_name": summary.get("name") or cust.name,
+        "xero_account_code": summary.get("account_code"),
+        "contacts_count": len(contacts_items) if isinstance(contacts_items, list) else 0,
+        "addresses_count": len(address_items) if isinstance(address_items, list) else 0,
+        "sent_fields": sent_fields,
+        "request_url": url,
+        "xero_last_modified": (
+            cust.xero_last_modified.isoformat() if cust.xero_last_modified is not None else None
+        ),
+    }
+
+
+def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
+    """Pull contact details from Xero into an already-linked app customer."""
+    cid = str(customer_id or "").strip()
+    if not cid:
+        raise XeroConfigError("customer_id is required.")
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        raise XeroConfigError("Cannot sync the internal MYOB draft customer.")
+
+    cust = db.get(Customer, cid)
+    if cust is None:
+        raise XeroConfigError("Customer not found.")
+
+    xid = str(getattr(cust, "xero_contact_id", "") or "").strip()
+    if not xid:
+        raise XeroConfigError(
+            "Customer is not linked to a Xero contact. Link the customer first, then sync."
+        )
+    if not _is_uuid(xid):
+        raise XeroConfigError("Customer xero_contact_id is not a valid Xero GUID.")
+
+    _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts/{xid}")
+    contacts = payload.get("Contacts") if isinstance(payload, dict) else None
+    contact_raw = contacts[0] if isinstance(contacts, list) and contacts else None
+    if not isinstance(contact_raw, dict):
+        raise XeroConfigError("Xero contact not found.")
+
+    try:
+        mapped = customer_fields_from_xero_contact(contact_raw)
+    except ValueError as e:
+        raise XeroConfigError(str(e)) from e
+
+    ensure_default_customer_brands(db)
+
+    contact_id_from_xero = _xero_contact_id(contact_raw)
+    if contact_id_from_xero and contact_id_from_xero != xid:
+        raise XeroConfigError("Xero contact ID mismatch.")
+
+    contacts_items = mapped["contacts"].get("items") if isinstance(mapped.get("contacts"), dict) else []
+    address_items = (
+        mapped["delivery_addresses"].get("items")
+        if isinstance(mapped.get("delivery_addresses"), dict)
+        else []
+    )
+
+    cust.name = mapped["name"]
+    cust.abn = mapped.get("abn")
+    cust.contact_first_name = mapped.get("contact_first_name")
+    cust.contact_last_name = mapped.get("contact_last_name")
+    cust.email_address = mapped.get("email_address")
+    cust.contact_phone = mapped.get("contact_phone")
+    cust.status = mapped.get("status") or cust.status
+    cust.contacts = mapped["contacts"]
+    cust.delivery_addresses = mapped["delivery_addresses"]
+    cust.xero_last_modified = mapped.get("xero_last_modified")
+    cust.xero_synced_at = datetime.now(UTC)
+    brand_code = mapped.get("brand_code")
+    xero_theme_id = xero_contact_branding_theme_id(contact_raw)
+    brand_id = brand_id_for_xero_branding_theme_id(db, xero_theme_id) if xero_theme_id else None
+    if not brand_id and brand_code:
+        brand_id = brand_id_for_code(db, brand_code)
+    if brand_id:
+        cust.brand_id = brand_id
+
+    db.add(cust)
+    db.commit()
+
+    summary = _xero_contact_summary(contact_raw)
+    updated_fields = [
+        "name",
+        "abn",
+        "contact_first_name",
+        "contact_last_name",
+        "email_address",
+        "contact_phone",
+        "status",
+        "contacts",
+        "delivery_addresses",
+        "xero_last_modified",
+        "xero_synced_at",
+    ]
+    if brand_id:
+        updated_fields.append("brand_id")
+    return {
+        "ok": True,
+        "customer_id": cid,
+        "contact_id": xid,
+        "customer_name": cust.name,
+        "xero_name": summary.get("name") or mapped["name"],
+        "xero_account_code": summary.get("account_code"),
+        "brand_code": brand_code,
+        "contacts_count": len(contacts_items) if isinstance(contacts_items, list) else 0,
+        "addresses_count": len(address_items) if isinstance(address_items, list) else 0,
+        "updated_fields": updated_fields,
     }
 
 

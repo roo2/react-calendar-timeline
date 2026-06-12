@@ -66,6 +66,9 @@ const MyobDataAdminPage = lazy(async () => ({
 const CustomerPricingTiersAdminPage = lazy(async () => ({
   default: (await import('./pages/admin/CustomerPricingTiersAdminPage')).CustomerPricingTiersAdminPage,
 }))
+const BrandsAdminPage = lazy(async () => ({
+  default: (await import('./pages/admin/BrandsAdminPage')).BrandsAdminPage,
+}))
 
 function PageLoading() {
   return (
@@ -297,6 +300,14 @@ function App() {
                   element={
                     <Suspense fallback={<PageLoading />}>
                       <MyobDataAdminPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="brands"
+                  element={
+                    <Suspense fallback={<PageLoading />}>
+                      <BrandsAdminPage />
                     </Suspense>
                   }
                 />

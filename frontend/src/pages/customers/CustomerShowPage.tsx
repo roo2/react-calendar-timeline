@@ -9,7 +9,19 @@ import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { Alert, Box, Button, Chip, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 import { describePaymentTerms } from '../../utils/paymentTermsDisplay'
 import { formatDateTimeDMYShort } from '../../utils/dateFormat'
+import { formatDeliveryAddressDisplay } from '../../utils/customerDeliveryAddress'
 import { xeroContactViewUrl } from '../../utils/xeroLinks'
+
+function contactPersonName(c: any): string {
+  const first = String(c?.first_name || '').trim()
+  const last = String(c?.last_name || '').trim()
+  if (first || last) return [first, last].filter(Boolean).join(' ')
+  return String(c?.name || '').trim() || '—'
+}
+
+function contactPersonEmail(c: any): string {
+  return String(c?.email_address || c?.email || '').trim()
+}
 
 const CUSTOMER_SECTION_HASHES = new Set(['quotes', 'orders'])
 
@@ -135,6 +147,19 @@ export function CustomerShowPage() {
             Brand
           </h3>
           <span>{customer.brand_name || customer.brand_code || 'Unassigned'}</span>
+          {customer.xero_contact_id ? (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+              Synced from Xero —{' '}
+              <MuiLink
+                href={xeroContactViewUrl(customer.xero_contact_id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                underline="hover"
+              >
+                Edit in Xero
+              </MuiLink>
+            </Typography>
+          ) : null}
         </Paper>
         <Paper variant="outlined" sx={{ p: 2 }}>
           <h3 style={{ margin: '0 0 12px', fontSize: '0.875rem', color: '#6b7280', textTransform: 'uppercase' }}>
@@ -219,6 +244,22 @@ export function CustomerShowPage() {
               </p>
             </div>
           )}
+          {(customer as any).xero_last_modified && (
+            <div>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Last modified in Xero</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                {formatDateTimeDMYShort((customer as any).xero_last_modified)}
+              </p>
+            </div>
+          )}
+          {(customer as any).xero_synced_at && (
+            <div>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Last synced from Xero</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                {formatDateTimeDMYShort((customer as any).xero_synced_at)}
+              </p>
+            </div>
+          )}
         </div>
         {customer.myob_notes && (
           <div style={{ marginTop: 16 }}>
@@ -229,50 +270,66 @@ export function CustomerShowPage() {
         {customer.notes && (
           <div style={{ marginTop: 16 }}>
             <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Notes</strong>
+            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+              (not synced to Xero)
+            </Typography>
             <p style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{customer.notes}</p>
           </div>
         )}
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Contacts</h2>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Primary contact</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          {(customer.contact_first_name || customer.contact_last_name) && (
+            <div>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Name</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                {[customer.contact_first_name, customer.contact_last_name].filter(Boolean).join(' ') || '—'}
+              </p>
+            </div>
+          )}
+          {customer.email_address && (
+            <div>
+              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Email</strong>
+              <p style={{ margin: '4px 0 0' }}>
+                <MuiLink href={`mailto:${customer.email_address}`} underline="hover">
+                  {customer.email_address}
+                </MuiLink>
+              </p>
+            </div>
+          )}
+        </div>
+        {!customer.contact_first_name &&
+        !customer.contact_last_name &&
+        !customer.email_address ? (
+          <p style={{ color: '#9ca3af', margin: 0 }}>No primary contact details.</p>
+        ) : null}
+      </section>
+
+      <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Additional contacts</h2>
         {contacts.length > 0 ? (
           <div style={{ display: 'grid', gap: 16 }}>
             {contacts.map((c: any, idx: number) => (
               <div key={idx} style={{ padding: 16, background: '#f9fafb', borderRadius: 6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{c.name}</h3>
-                  <span style={{ padding: '4px 8px', background: '#e5e7eb', borderRadius: 4, fontSize: '0.75rem' }}>
-                    {c.type}
-                  </span>
-                </div>
-                {c.title && <p style={{ margin: '4px 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.title}</p>}
-                <div style={{ marginTop: 8 }}>
-                  {c.email ? (
-                    <p style={{ margin: '4px 0' }}>
-                      <strong>Email:</strong>{' '}
-                      <MuiLink href={`mailto:${c.email}`} underline="hover">
-                        {c.email}
-                      </MuiLink>
-                    </p>
-                  ) : null}
-                  {c.phone && (
-                    <p style={{ margin: '4px 0' }}>
-                      <strong>Phone:</strong> {c.phone}
-                    </p>
-                  )}
-                  {c.phone_alt && (
-                    <p style={{ margin: '4px 0' }}>
-                      <strong>Alt Phone:</strong> {c.phone_alt}
-                    </p>
-                  )}
-                  {c.notes && <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: '0.875rem' }}>{c.notes}</p>}
-                </div>
+                <h3 style={{ margin: '0 0 8px', fontSize: '1rem', fontWeight: 600 }}>{contactPersonName(c)}</h3>
+                {contactPersonEmail(c) ? (
+                  <p style={{ margin: '4px 0' }}>
+                    <strong>Email:</strong>{' '}
+                    <MuiLink href={`mailto:${contactPersonEmail(c)}`} underline="hover">
+                      {contactPersonEmail(c)}
+                    </MuiLink>
+                  </p>
+                ) : null}
+                {c.include_in_emails === false ? (
+                  <p style={{ margin: '4px 0', color: '#6b7280', fontSize: '0.875rem' }}>Not included in emails</p>
+                ) : null}
               </div>
             ))}
           </div>
         ) : (
-          <p style={{ color: '#9ca3af' }}>No contacts registered.</p>
+          <p style={{ color: '#9ca3af' }}>No additional contacts.</p>
         )}
       </section>
 
@@ -452,68 +509,30 @@ export function CustomerShowPage() {
       </section>
 
       <section style={{ marginBottom: 24, padding: 20, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Delivery Addresses</h2>
+        <h2 style={{ margin: '0 0 16px', fontSize: '1.25rem', fontWeight: 600 }}>Addresses</h2>
         {addresses.length > 0 ? (
           <div style={{ display: 'grid', gap: 16 }}>
-            {addresses.map((a: any, idx: number) => {
-              const label = (a.label || '').trim()
-              return (
+            {addresses.map((a: any, idx: number) => (
               <div
                 key={idx}
                 style={{
                   padding: 16,
                   background: '#f9fafb',
                   borderRadius: 6,
-                  border: a.is_default ? '2px solid #2563eb' : undefined,
                 }}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: label ? 'space-between' : 'flex-end',
-                    alignItems: 'start',
-                    marginBottom: label ? 8 : 0,
-                  }}
-                >
-                  {label ? (
-                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{label}</h3>
-                  ) : null}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {a.is_default && (
-                      <span style={{ padding: '4px 8px', background: '#2563eb', color: 'white', borderRadius: 4, fontSize: '0.75rem' }}>
-                        Default
-                      </span>
-                    )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{formatDeliveryAddressDisplay(a)}</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                     <span style={{ padding: '4px 8px', background: '#e5e7eb', borderRadius: 4, fontSize: '0.75rem' }}>
-                      {a.type}
+                      {String(a.address_type || a.type || 'STREET').toUpperCase()}
                     </span>
                   </div>
                 </div>
-                <div style={{ marginTop: label ? 8 : 0 }}>
-                  <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap' }}>
-                    {[a.street1, a.street2].filter(Boolean).join('\n')}
-                    {(a.suburb || a.state || a.postcode) && (
-                      <>
-                        {'\n'}
-                        {[a.suburb, a.state, a.postcode].filter(Boolean).join(' ')}
-                      </>
-                    )}
-                    {a.country ? `\n${a.country}` : ''}
-                  </p>
-                  {(a.contact_name || a.contact_phone) && (
-                    <p style={{ margin: '8px 0 4px', color: '#6b7280', fontSize: '0.875rem' }}>
-                      <strong>Contact:</strong> {a.contact_name || ''}
-                      {a.contact_phone ? ` - ${a.contact_phone}` : ''}
-                    </p>
-                  )}
-                  {a.delivery_instructions && (
-                    <p style={{ margin: '8px 0 0', color: '#6b7280', fontSize: '0.875rem', whiteSpace: 'pre-wrap' }}>
-                      <strong>Instructions:</strong> {a.delivery_instructions}
-                    </p>
-                  )}
-                </div>
               </div>
-            )})}
+            ))}
           </div>
         ) : (
           <p style={{ color: '#9ca3af' }}>No addresses registered.</p>

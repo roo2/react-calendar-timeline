@@ -16,6 +16,7 @@ from app.integrations.myob.customer_mapping import (
     myob_notes_from_raw,
     parse_myob_last_modified,
     payment_terms_dict_from_myob,
+    primary_contact_name_parts_from_myob,
     primary_contact_person_name_from_myob,
     status_from_myob,
 )
@@ -92,7 +93,7 @@ def test_company_name_falls_back_to_primary_contact_when_company_blank():
     }
     assert company_name_from_myob(raw) == "PETER BEAN"
     contacts = build_contacts_from_myob(raw, myob_uid="uid", company_display_name="PETER BEAN")
-    assert contacts["items"][0]["name"] == "PETER BEAN"
+    assert contacts["items"] == []
 
 
 def test_company_name_prefers_company_over_contact_when_both_present():
@@ -185,8 +186,10 @@ def test_build_contacts_individual_d_prefix_uses_first_name_not_address_contact(
     company = company_name_from_myob(raw)
     assert company == "DANIEL ST FISH MARKET"
     out = build_contacts_from_myob(raw, myob_uid=raw["UID"], company_display_name=company)
-    assert out["items"][0]["name"] == "JANINE"
-    assert out["items"][0]["phone"] == "0400 000 000"
+    assert out == {"items": []}
+    first, last = primary_contact_name_parts_from_myob(raw, company_display_name=company)
+    assert first == "JANINE"
+    assert last is None
 
 
 def test_primary_contact_name_from_address_contact_name():
@@ -293,25 +296,24 @@ def test_build_contacts_primary_name_is_person_not_company():
         myob_uid=SAMPLE_MYOB_CUSTOMER["UID"],
         company_display_name=company,
     )
-    assert out == {"items": [{"type": "Primary Contact", "name": "JASON", "phone": "5438 2100"}]}
-    assert "email" not in out["items"][0]
+    assert out == {"items": []}
+    first, last = primary_contact_name_parts_from_myob(SAMPLE_MYOB_CUSTOMER, company_display_name=company)
+    assert first == "JASON"
+    assert last is None
 
 
 def test_build_delivery_addresses_two_rows_with_street_only():
     out = build_delivery_addresses_from_myob(SAMPLE_MYOB_CUSTOMER)
     items = out["items"]
     assert len(items) == 2
-    assert items[0]["type"] == "Billing"
-    assert items[0]["is_default"] is False
+    assert items[0]["address_type"] == "POBOX"
     assert "label" not in items[0]
-    assert items[0]["street1"] == "P O BOX 238"
-    assert "BUDDINA" in (items[0].get("street2") or "")
-    assert items[0]["contact_name"] == "JASON"
-    assert items[0]["contact_phone"] == "5438 2100"
-    assert items[1]["type"] == "Delivery"
-    assert items[1]["is_default"] is True
+    assert items[0]["address_line1"] == "P O BOX 238"
+    assert "BUDDINA" in (items[0].get("address_line2") or "")
+    assert items[0]["attention_to"] == "JASON"
+    assert items[1]["address_type"] == "STREET"
     assert "label" not in items[1]
-    assert items[1]["street1"] == "11 BENT STREET"
+    assert items[1]["address_line1"] == "11 BENT STREET"
 
 
 def test_build_delivery_addresses_single_street_location_one_is_both():
@@ -329,8 +331,7 @@ def test_build_delivery_addresses_single_street_location_one_is_both():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 1
-    assert items[0]["type"] == "Both"
-    assert items[0]["is_default"] is True
+    assert items[0]["address_type"] == "STREET"
     assert "label" not in items[0]
 
 
@@ -345,8 +346,7 @@ def test_build_delivery_addresses_single_po_box_is_billing_not_default():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 1
-    assert items[0]["type"] == "Billing"
-    assert items[0]["is_default"] is False
+    assert items[0]["address_type"] == "POBOX"
 
 
 def test_build_delivery_addresses_skips_email_only_slots():
@@ -364,11 +364,9 @@ def test_build_delivery_addresses_skips_email_only_slots():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 1
-    assert items[0]["type"] == "Both"
-    assert items[0]["is_default"] is True
-    assert items[0]["street1"] == "11 BENT STREET"
-    assert items[0]["contact_name"] == "JASON"
-    assert items[0]["contact_phone"] == "5438 2100"
+    assert items[0]["address_type"] == "STREET"
+    assert items[0]["address_line1"] == "11 BENT STREET"
+    assert items[0]["attention_to"] == "JASON"
 
 
 def test_build_delivery_addresses_skips_phone_only_slots():
@@ -380,9 +378,9 @@ def test_build_delivery_addresses_skips_phone_only_slots():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 1
-    assert items[0]["type"] == "Both"
-    assert items[0]["street1"] == "22 MAIN ST"
-    assert items[0]["suburb"] == "Brisbane"
+    assert items[0]["address_type"] == "STREET"
+    assert items[0]["address_line1"] == "22 MAIN ST"
+    assert items[0]["city"] == "Brisbane"
 
 
 def _empty_myob_slots() -> list[dict]:
@@ -401,11 +399,10 @@ def test_real_myob_a_and_b_powdercoaters_address_pattern():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 2
-    assert items[0]["type"] == "Billing"
-    assert items[0]["street1"] == "P O BOX 238"
-    assert items[1]["type"] == "Delivery"
-    assert items[1]["is_default"] is True
-    assert items[1]["street1"] == "11 BENT STREET"
+    assert items[0]["address_type"] == "POBOX"
+    assert items[0]["address_line1"] == "P O BOX 238"
+    assert items[1]["address_type"] == "STREET"
+    assert items[1]["address_line1"] == "11 BENT STREET"
 
 
 def test_real_myob_amm_qld_skips_email_only_extra_slots():
@@ -440,11 +437,10 @@ def test_real_myob_amm_qld_skips_email_only_extra_slots():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 3
-    assert [i["type"] for i in items] == ["Billing", "Delivery", "Delivery"]
-    assert items[0]["suburb"] == "YANDINA"
-    assert items[0]["postcode"] == "4561"
-    assert items[1]["is_default"] is True
-    assert items[2]["street1"] == "MAPAL CHAIR"
+    assert [i["address_type"] for i in items] == ["POBOX", "STREET", "STREET"]
+    assert items[0]["city"] == "YANDINA"
+    assert items[0]["postal_code"] == "4561"
+    assert items[2]["address_line1"] == "MAPAL CHAIR"
 
 
 def test_real_myob_abl_distribution_duplicate_street_billing_delivery():
@@ -475,10 +471,9 @@ def test_real_myob_abl_distribution_duplicate_street_billing_delivery():
     }
     items = build_delivery_addresses_from_myob(raw)["items"]
     assert len(items) == 2
-    assert items[0]["type"] == "Billing"
-    assert items[0]["contact_name"] == "MICHELLE-ORDERS"
-    assert items[1]["type"] == "Delivery"
-    assert items[1]["is_default"] is True
+    assert items[0]["address_type"] == "POBOX"
+    assert items[0]["attention_to"] == "MICHELLE-ORDERS"
+    assert items[1]["address_type"] == "STREET"
     assert primary_contact_person_name_from_myob(raw) == "MICHELLE-ORDERS"
 
 
@@ -488,16 +483,15 @@ def test_upsert_customer_from_myob_replaces_delivery_addresses_on_update():
     db = MagicMock()
     existing = MagicMock()
     existing.delivery_addresses = {
-        "items": [{"label": "MYOB address 1", "type": "Both", "is_default": True, "street1": "OLD"}]
+        "items": [{"label": "MYOB address 1", "address_type": "STREET", "is_default": True, "address_line1": "OLD"}]
     }
     db.scalar.return_value = existing
 
     raw = dict(SAMPLE_MYOB_CUSTOMER)
     assert upsert_customer_from_myob(db, raw) == "updated"
     updated = existing.delivery_addresses["items"]
-    assert updated[0]["type"] == "Billing"
-    assert updated[1]["type"] == "Delivery"
-    assert updated[1]["is_default"] is True
+    assert updated[0]["address_type"] == "POBOX"
+    assert updated[1]["address_type"] == "STREET"
     db.commit.assert_called()
 
 

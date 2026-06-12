@@ -1,0 +1,155 @@
+"""Unit tests for sync_customer_from_xero service."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.integrations.xero.service import XeroConfigError, sync_customer_from_xero, sync_customer_to_xero
+
+
+def test_sync_customer_from_xero_requires_link():
+    db = MagicMock()
+    cust = MagicMock()
+    cust.id = "cust-1"
+    cust.xero_contact_id = None
+    db.get.return_value = cust
+    with pytest.raises(XeroConfigError, match="not linked"):
+        sync_customer_from_xero(db, customer_id="cust-1")
+
+
+@patch("app.integrations.xero.service.brand_id_for_code", return_value="brand-dolphin")
+@patch("app.integrations.xero.service.ensure_default_customer_brands")
+@patch("app.integrations.xero.service._xero_api_get_json")
+def test_sync_customer_from_xero_updates_customer(mock_get, _mock_ensure, mock_brand_id):
+    db = MagicMock()
+    cust = MagicMock()
+    cust.id = "cust-1"
+    cust.xero_contact_id = "550e8400-e29b-41d4-a716-446655440000"
+    cust.name = "Old Name"
+    cust.status = "Active"
+    cust.notes = "Existing app note"
+    db.get.return_value = cust
+
+    mock_get.return_value = (
+        200,
+        {},
+        {
+            "Contacts": [
+                {
+                    "ContactID": "550e8400-e29b-41d4-a716-446655440000",
+                    "Name": "New Name",
+                    "FirstName": "Sam",
+                    "LastName": "Taylor",
+                    "TaxNumber": "99887766554",
+                    "ContactStatus": "ACTIVE",
+                    "EmailAddress": "info@new.example",
+                    "BrandingTheme": {"Name": "Dolphin Plastics"},
+                    "Phones": [{"PhoneType": "DEFAULT", "PhoneNumber": "0712345678"}],
+                    "Addresses": [
+                        {
+                            "AddressType": "STREET",
+                            "AddressLine1": "9 Test Road",
+                            "City": "Townsville",
+                            "Region": "QLD",
+                            "PostalCode": "4810",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    out = sync_customer_from_xero(db, customer_id="cust-1")
+    assert out["ok"] is True
+    assert out["customer_name"] == "New Name"
+    assert out["contacts_count"] == 0
+    assert out["addresses_count"] == 1
+    assert cust.name == "New Name"
+    assert cust.contact_first_name == "Sam"
+    assert cust.contact_last_name == "Taylor"
+    assert cust.abn == "99887766554"
+    assert cust.email_address == "info@new.example"
+    assert cust.contact_phone == "0712345678"
+    assert cust.notes == "Existing app note"
+    assert cust.xero_synced_at is not None
+    assert cust.brand_id == "brand-dolphin"
+    assert "notes" not in out["updated_fields"]
+    assert "brand_id" in out["updated_fields"]
+    mock_get.assert_called_once()
+    mock_brand_id.assert_called_once()
+    db.add.assert_called_once_with(cust)
+    db.commit.assert_called_once()
+
+
+def test_sync_customer_to_xero_requires_link():
+    db = MagicMock()
+    cust = MagicMock()
+    cust.id = "cust-1"
+    cust.xero_contact_id = None
+    db.scalar.return_value = cust
+    with pytest.raises(XeroConfigError, match="not linked"):
+        sync_customer_to_xero(db, customer_id="cust-1")
+
+
+@patch("app.integrations.xero.service._xero_api_post_json")
+def test_sync_customer_to_xero_posts_contact_only(mock_post):
+    db = MagicMock()
+    cust = MagicMock()
+    cust.id = "cust-1"
+    cust.xero_contact_id = "550e8400-e29b-41d4-a716-446655440000"
+    cust.name = "Acme Pty Ltd"
+    cust.abn = "12345678901"
+    cust.contact_first_name = "Jane"
+    cust.contact_last_name = "Doe"
+    cust.email_address = "accounts@acme.example"
+    cust.contact_phone = "07 1234 5678"
+    cust.status = "Active"
+    cust.contacts = {"items": []}
+    cust.delivery_addresses = {
+        "items": [
+            {
+                "address_type": "STREET",
+                "address_line1": "1 Main St",
+                "city": "Sydney",
+                "region": "NSW",
+                "postal_code": "2000",
+            }
+        ]
+    }
+    cust.notes = "Updated customer note"
+    db.scalar.return_value = cust
+
+    mock_post.return_value = (
+        "https://api.xero.com/api.xro/2.0/Contacts",
+        200,
+        {
+            "Contacts": [
+                {
+                    "ContactID": "550e8400-e29b-41d4-a716-446655440000",
+                    "Name": "Acme Pty Ltd",
+                    "UpdatedDateUTC": "/Date(1779930270423+0000)/",
+                }
+            ]
+        },
+    )
+
+    out = sync_customer_to_xero(db, customer_id="cust-1")
+    assert out["ok"] is True
+    assert out["direction"] == "to_xero"
+    assert out["customer_name"] == "Acme Pty Ltd"
+    assert out["contacts_count"] == 0
+    assert out["addresses_count"] == 1
+    assert "notes" not in out["sent_fields"]
+    assert "branding_theme" not in out["sent_fields"]
+    mock_post.assert_called_once()
+    posted = mock_post.call_args.kwargs["body"]["Contacts"][0]
+    assert posted["ContactID"] == "550e8400-e29b-41d4-a716-446655440000"
+    assert posted["Name"] == "Acme Pty Ltd"
+    assert posted["FirstName"] == "Jane"
+    assert posted["LastName"] == "Doe"
+    assert "BrandingTheme" not in posted
+    assert cust.xero_synced_at is not None
+    db.add.assert_called_once_with(cust)
+    db.commit.assert_called_once()
