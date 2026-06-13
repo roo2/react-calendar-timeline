@@ -1,8 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
-import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
+import { deleteSavedQuote, fetchSavedQuotesList } from '../../store/slices/quotesSlice'
 import { can } from '../../auth/permissions'
+import { isRejectedWithValue } from '@reduxjs/toolkit'
+import { ApiError } from '../../api/client'
 import { buildSpecFromQuotePayload, type QuotePayload } from '../../utils/quoteToSpec'
 import { computeProductDescriptionFromSpec } from '../../utils/productDescription'
 import {
@@ -104,10 +106,34 @@ export function QuotesListPage() {
   const canCreate = can(roles, 'SALES', 'PROD_MANAGER')
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const loading = status === 'loading'
+  const [deletingQuoteId, setDeletingQuoteId] = useState<string | null>(null)
+  const [deleteErr, setDeleteErr] = useState<string | null>(null)
 
   useEffect(() => {
     void dispatch(fetchSavedQuotesList(undefined))
   }, [dispatch])
+
+  async function onDeleteQuote(quoteId: string) {
+    if (!canEdit || deletingQuoteId) return
+    const ok = window.confirm('Delete this quote permanently? This cannot be undone.')
+    if (!ok) return
+    setDeleteErr(null)
+    setDeletingQuoteId(quoteId)
+    try {
+      await dispatch(deleteSavedQuote(quoteId)).unwrap()
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as { message?: string }
+        setDeleteErr(p.message || 'Failed to delete quote')
+      } else if (e instanceof ApiError) {
+        setDeleteErr(e.message || 'Failed to delete quote')
+      } else {
+        setDeleteErr(e instanceof Error ? e.message : 'Failed to delete quote')
+      }
+    } finally {
+      setDeletingQuoteId(null)
+    }
+  }
 
   return (
     <Box>
@@ -126,6 +152,11 @@ export function QuotesListPage() {
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {deleteErr && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDeleteErr(null)}>
+          {deleteErr}
+        </Alert>
+      )}
 
       <Paper variant="outlined">
         {loading && items.length === 0 ? (
@@ -203,6 +234,17 @@ export function QuotesListPage() {
                         {canEdit && (
                           <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
                             Edit
+                          </Button>
+                        )}
+                        {canEdit && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="error"
+                            disabled={deletingQuoteId === q.id}
+                            onClick={() => void onDeleteQuote(q.id)}
+                          >
+                            {deletingQuoteId === q.id ? 'Deleting…' : 'Delete'}
                           </Button>
                         )}
                       </Box>

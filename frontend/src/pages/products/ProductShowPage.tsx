@@ -216,7 +216,7 @@ export function ProductShowPage() {
                       '—'
                     )}
                   </TableCell>
-                  <TableCell>{js.order_date ? formatDateDMYShort(js.order_date) : '—'}</TableCell>
+                  <TableCell>{formatDateDMYShort(js.order_date, '—')}</TableCell>
                   <TableCell>{js.due_date ? formatDateDMYShort(js.due_date) : '—'}</TableCell>
                   <TableCell align="right">
                     {Number(js.quantity_value).toLocaleString()} {js.quantity_unit}

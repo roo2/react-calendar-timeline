@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import inspect as sa_inspect
 
 from app.auth.deps import allow_roles_any, csrf_protect
@@ -97,6 +97,7 @@ async def get_customer(customer_id: str):
     products_count = service.get_customer_products_count(customer_id)
     orders_count = service.get_customer_orders_count(customer_id)
     quotes_count = service.get_customer_quotes_count(customer_id)
+    can_delete = service.customer_can_delete(customer_id)
     return {
         "customer": _customer_summary(c)
         | {
@@ -124,8 +125,26 @@ async def get_customer(customer_id: str):
             "products_count": products_count,
             "orders_count": orders_count,
             "quotes_count": quotes_count,
+            "can_delete": can_delete,
         }
     }
+
+
+@router.delete(
+    "/{customer_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def delete_customer(customer_id: str):
+    try:
+        service.delete_customer(customer_id)
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from e
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{customer_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())])

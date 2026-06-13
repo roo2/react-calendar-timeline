@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 
 from app.auth.deps import allow_roles_any, csrf_protect, require_roles
@@ -197,3 +197,17 @@ async def update_saved_quote(quote_id: str, payload: SavedQuoteUpdateRequest):
         db.refresh(q)
         out = _saved_quote_to_response(q)
     return out
+
+
+@router.delete(
+    "/saved/{quote_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER")), Depends(csrf_protect())],
+)
+async def delete_saved_quote(quote_id: str):
+    with SessionLocal.begin() as db:
+        q = db.get(SavedQuote, quote_id)
+        if not q:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+        db.delete(q)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

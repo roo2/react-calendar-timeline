@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
-import { apiFetch } from '../../api/client'
+import { ApiError, apiFetch } from '../../api/client'
 import type { QuoteRatebook } from '../../utils/quoteCalculator'
 
 export type QuotesBootstrap = {
@@ -157,6 +157,21 @@ export const updateSavedQuote = createAsyncThunk(
   },
 )
 
+export const deleteSavedQuote = createAsyncThunk(
+  'quotes/delete',
+  async (quoteId: string, { rejectWithValue }) => {
+    try {
+      await apiFetch<void>(`/api/quotes/saved/${encodeURIComponent(quoteId)}`, { method: 'DELETE' })
+      return { quoteId }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        return rejectWithValue({ message: e.message || 'Failed to delete quote' })
+      }
+      throw e
+    }
+  },
+)
+
 const slice = createSlice({
   name: 'quotes',
   initialState,
@@ -271,6 +286,12 @@ const slice = createSlice({
       s.quoteResinBlends.status = 'failed'
       s.quoteResinBlends.error = a.error.message || 'Failed to load resin blends'
       s.quoteResinBlends.items = []
+    })
+
+    b.addCase(deleteSavedQuote.fulfilled, (s, a) => {
+      const qid = a.payload.quoteId
+      delete s.detail.byId[qid]
+      s.savedList.items = s.savedList.items.filter((q) => q.id !== qid)
     })
   },
 })

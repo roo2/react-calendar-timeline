@@ -5,7 +5,7 @@ import copy
 import uuid
 from typing import Optional, Tuple, List, Dict, Any
 
-from sqlalchemy import delete, desc, select, func, or_
+from sqlalchemy import delete, desc, func, nulls_last, or_, select
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 
@@ -905,8 +905,17 @@ def append_printing_artwork_file_to_product_version(
         db.add(v)
 
 
+def _iso_date_only(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())[:10]
+    s = str(value).strip()
+    return s[:10] if s else None
+
+
 def recent_job_sheets_for_product(product_id: str, *, limit: int = 10) -> List[Dict[str, Any]]:
-    """Most recent job sheets using this product (for product detail page)."""
+    """Most recent job sheets on orders using this product (for product detail page)."""
     try:
         pid = str(uuid.UUID(str(product_id)))
     except Exception as e:
@@ -915,53 +924,36 @@ def recent_job_sheets_for_product(product_id: str, *, limit: int = 10) -> List[D
         return []
     lim = max(1, min(int(limit), 50))
     with SessionLocal() as db:
-        rows = list(
-            db.scalars(
-                select(JobSheet)
-                .where(JobSheet.product_id == pid)
-                .order_by(JobSheet.created_at.desc())
-                .limit(lim)
-            ).all()
-        )
-        if not rows:
-            return []
-        js_ids = [str(r.id) for r in rows]
-        order_by_js: Dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
-        order_rows = (
-            db.query(OrderItem.job_sheet_id, Order.id, Order.code, Order.order_date, Order.status)
+        rows = db.execute(
+            select(JobSheet, Order.id, Order.code, Order.order_date, Order.status)
+            .join(OrderItem, OrderItem.job_sheet_id == JobSheet.id)
             .join(Order, Order.id == OrderItem.order_id)
-            .filter(OrderItem.job_sheet_id.in_(js_ids))
-            .order_by(Order.created_at.desc())
-            .all()
-        )
-        for jid, oid, code, order_date, ost in order_rows:
-            jid_s = str(jid)
-            if jid_s in order_by_js:
-                continue
+            .where(JobSheet.product_id == pid)
+            .order_by(
+                nulls_last(Order.order_date.desc()),
+                Order.created_at.desc(),
+                JobSheet.created_at.desc(),
+            )
+            .limit(lim)
+        ).all()
+        out: List[Dict[str, Any]] = []
+        for js, oid, code, order_date, ost in rows:
             st_s: str | None = None
             if ost is not None:
                 st_s = str(getattr(ost, "value", ost))
-            order_by_js[jid_s] = (
-                str(oid),
-                str(code) if code is not None else None,
-                str(order_date) if order_date is not None else None,
-                st_s,
-            )
-        out: List[Dict[str, Any]] = []
-        for js in rows:
-            jid = str(js.id)
-            oid, inv, od, ost = order_by_js.get(jid, (None, None, None, None))
             out.append(
                 {
-                    "id": jid,
+                    "id": str(js.id),
                     "job_no": str(getattr(js, "job_no", "") or ""),
-                    "order_id": oid,
-                    "invoice_no": inv,
-                    "order_date": od,
-                    "order_status": ost,
+                    "order_id": str(oid),
+                    "invoice_no": str(code) if code is not None else None,
+                    "order_date": _iso_date_only(order_date),
+                    "order_status": st_s,
                     "quantity_value": float(getattr(js, "quantity_value", 0) or 0),
                     "quantity_unit": str(getattr(js, "quantity_unit", "") or ""),
-                    "due_date": str(js.due_date.date()) if getattr(js, "due_date", None) is not None else None,
+                    "due_date": _iso_date_only(
+                        js.due_date.date() if getattr(js, "due_date", None) is not None else None
+                    ),
                 }
             )
         return out

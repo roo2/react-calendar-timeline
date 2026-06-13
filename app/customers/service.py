@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import SessionLocal
 from app.db.models.domain import Brand, Customer, CustomerPricingTier, Order, SavedQuote
+from app.db.myob_import_placeholders import MYOB_DRAFT_INTERNAL_CUSTOMER_ID
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
 
 
@@ -219,3 +220,41 @@ def get_orders_and_quotes_counts_by_customer_ids(customer_ids: List[str]) -> Tup
         orders_map = {str(r[0]): int(r[1]) for r in o_rows}
         quotes_map = {str(r[0]): int(r[1]) for r in q_rows}
         return orders_map, quotes_map
+
+
+def customer_delete_block_reason(customer_id: str) -> str | None:
+    """Return a blocking reason when a customer cannot be permanently deleted."""
+    cid = str(customer_id)
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        return "system_placeholder"
+    if get_customer_orders_count(cid) > 0:
+        return "has_orders"
+    if get_customer_quotes_count(cid) > 0:
+        return "has_quotes"
+    return None
+
+
+def customer_can_delete(customer_id: str) -> bool:
+    return customer_delete_block_reason(customer_id) is None
+
+
+def delete_customer(customer_id: str) -> None:
+    """Permanently delete a customer when they have no orders or saved quotes."""
+    cid = str(customer_id)
+    reason = customer_delete_block_reason(cid)
+    if reason == "system_placeholder":
+        raise ValueError("This customer cannot be deleted.")
+    if reason == "has_orders":
+        raise ValueError("Cannot delete customer: customer has orders.")
+    if reason == "has_quotes":
+        raise ValueError("Cannot delete customer: customer has quotes.")
+    with SessionLocal() as db:  # type: Session
+        customer = db.get(Customer, cid)
+        if not customer:
+            raise ValueError(f"Customer with id {customer_id} not found")
+        try:
+            db.delete(customer)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise ValueError("Cannot delete customer: related records still exist.") from None

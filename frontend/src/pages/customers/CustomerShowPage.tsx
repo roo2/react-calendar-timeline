@@ -1,14 +1,16 @@
-import { useEffect, useMemo } from 'react'
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { can } from '../../auth/permissions'
-import { fetchCustomer } from '../../store/slices/customersSlice'
+import { deleteCustomer, fetchCustomer } from '../../store/slices/customersSlice'
 import { fetchOrders } from '../../store/slices/ordersSlice'
 import { fetchProducts } from '../../store/slices/productsSlice'
-import { fetchSavedQuotesList } from '../../store/slices/quotesSlice'
+import { deleteSavedQuote, fetchSavedQuotesList } from '../../store/slices/quotesSlice'
+import { isRejectedWithValue } from '@reduxjs/toolkit'
+import { ApiError } from '../../api/client'
 import { Alert, Box, Button, Chip, Paper, Typography, Link as MuiLink, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material'
 import { describePaymentTerms } from '../../utils/paymentTermsDisplay'
-import { formatDateTimeDMYShort } from '../../utils/dateFormat'
+import { formatDateDMYShort, formatDateTimeDMYShort } from '../../utils/dateFormat'
 import { formatDeliveryAddressDisplay } from '../../utils/customerDeliveryAddress'
 import { xeroContactViewUrl } from '../../utils/xeroLinks'
 
@@ -29,9 +31,15 @@ export function CustomerShowPage() {
   const { customerId } = useParams()
   const location = useLocation()
   const dispatch = useAppDispatch()
+  const nav = useNavigate()
   const roles = useAppSelector((s) => s.auth.identity?.roles || [])
   const canEdit = can(roles, 'SALES', 'PROD_MANAGER')
   const canEditOrders = canEdit
+
+  const [deleteCustomerErr, setDeleteCustomerErr] = useState<string | null>(null)
+  const [deletingCustomer, setDeletingCustomer] = useState(false)
+  const [deletingQuoteId, setDeletingQuoteId] = useState<string | null>(null)
+  const [deleteQuoteErr, setDeleteQuoteErr] = useState<string | null>(null)
 
   const entry = useAppSelector((s) => (customerId ? s.customers.detail.byId[customerId] : undefined))
   const customer = entry?.customer || null
@@ -110,6 +118,64 @@ export function CustomerShowPage() {
   }
 
   if (!customer) return <p>Loading…</p>
+
+  const canDeleteCustomer = Boolean(
+    canEdit &&
+      customerId &&
+      (customer.can_delete ??
+        ((Number(customer.orders_count ?? 0) === 0 && Number(customer.quotes_count ?? 0) === 0))),
+  )
+
+  async function onDeleteCustomer() {
+    if (!customerId || !canDeleteCustomer || deletingCustomer) return
+    const ok = window.confirm(
+      `Delete customer "${customer.name}" permanently? This cannot be undone.`,
+    )
+    if (!ok) return
+    setDeleteCustomerErr(null)
+    setDeletingCustomer(true)
+    try {
+      await dispatch(deleteCustomer(customerId)).unwrap()
+      nav('/customers')
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as { message?: string }
+        setDeleteCustomerErr(p.message || 'Failed to delete customer')
+      } else if (e instanceof ApiError) {
+        setDeleteCustomerErr(e.message || 'Failed to delete customer')
+      } else {
+        setDeleteCustomerErr(e instanceof Error ? e.message : 'Failed to delete customer')
+      }
+    } finally {
+      setDeletingCustomer(false)
+    }
+  }
+
+  async function onDeleteQuote(quoteId: string) {
+    if (!canEdit || deletingQuoteId) return
+    const ok = window.confirm('Delete this quote permanently? This cannot be undone.')
+    if (!ok) return
+    setDeleteQuoteErr(null)
+    setDeletingQuoteId(quoteId)
+    try {
+      await dispatch(deleteSavedQuote(quoteId)).unwrap()
+      if (customerId) {
+        await dispatch(fetchCustomer(customerId))
+        await dispatch(fetchSavedQuotesList({ customer_id: customerId }))
+      }
+    } catch (e: unknown) {
+      if (isRejectedWithValue(e)) {
+        const p = e.payload as { message?: string }
+        setDeleteQuoteErr(p.message || 'Failed to delete quote')
+      } else if (e instanceof ApiError) {
+        setDeleteQuoteErr(e.message || 'Failed to delete quote')
+      } else {
+        setDeleteQuoteErr(e instanceof Error ? e.message : 'Failed to delete quote')
+      }
+    } finally {
+      setDeletingQuoteId(null)
+    }
+  }
 
   const contacts = customer.contacts || []
   const addresses = customer.delivery_addresses || []
@@ -410,7 +476,7 @@ export function CustomerShowPage() {
                 <TableCell>Code</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Product</TableCell>
-                <TableCell>Created</TableCell>
+                <TableCell>Order date</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -428,7 +494,7 @@ export function CustomerShowPage() {
                       ? `${o.product_code}${o.version_number != null ? ` v${o.version_number}` : ''}${o.item_count && o.item_count > 1 ? ` (+${o.item_count - 1})` : ''}`
                       : '-'}
                   </TableCell>
-                  <TableCell>{o.created_at || ''}</TableCell>
+                  <TableCell>{formatDateDMYShort(o.order_date, '—')}</TableCell>
                   <TableCell align="right">
                     {canEditOrders && o.status === 'draft' ? (
                       <Button size="small" variant="outlined" component={Link} to={`/orders/${encodeURIComponent(o.id)}/edit`}>
@@ -467,6 +533,11 @@ export function CustomerShowPage() {
             {relErr}
           </Alert>
         )}
+        {deleteQuoteErr ? (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDeleteQuoteErr(null)}>
+            {deleteQuoteErr}
+          </Alert>
+        ) : null}
         <Paper variant="outlined">
           <Table size="small">
             <TableHead>
@@ -489,9 +560,20 @@ export function CustomerShowPage() {
                   </TableCell>
                   <TableCell align="right">
                     {canEdit ? (
-                      <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
-                        Edit
-                      </Button>
+                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <Button size="small" variant="outlined" component={Link} to={`/quotes/${encodeURIComponent(q.id)}/edit`}>
+                          Edit
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="error"
+                          disabled={deletingQuoteId === q.id}
+                          onClick={() => void onDeleteQuote(q.id)}
+                        >
+                          {deletingQuoteId === q.id ? 'Deleting…' : 'Delete'}
+                        </Button>
+                      </Box>
                     ) : null}
                   </TableCell>
                 </TableRow>
@@ -565,10 +647,48 @@ export function CustomerShowPage() {
         </section>
       )}
 
-      <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid', borderColor: 'divider' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 2,
+          mt: 3,
+          pt: 3,
+          borderTop: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
         <Button component={Link} to="/customers" variant="text" color="primary">
           Back to Customers
         </Button>
+        {canEdit && deleteCustomerErr ? (
+          <Typography variant="caption" color="error" sx={{ textAlign: 'right', maxWidth: 480 }}>
+            {deleteCustomerErr}
+          </Typography>
+        ) : canEdit && !canDeleteCustomer ? (
+          <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right', maxWidth: 480 }}>
+            This customer cannot be deleted because they have
+            {Number(customer.orders_count || 0) > 0
+              ? ` ${customer.orders_count} order${Number(customer.orders_count) !== 1 ? 's' : ''}`
+              : ''}
+            {Number(customer.orders_count || 0) > 0 && Number(customer.quotes_count || 0) > 0 ? ' and' : ''}
+            {Number(customer.quotes_count || 0) > 0
+              ? ` ${customer.quotes_count} quote${Number(customer.quotes_count) !== 1 ? 's' : ''}`
+              : ''}
+            .
+          </Typography>
+        ) : canEdit && canDeleteCustomer ? (
+          <Button
+            variant="outlined"
+            color="error"
+            disabled={deletingCustomer}
+            onClick={() => void onDeleteCustomer()}
+          >
+            {deletingCustomer ? 'Deleting…' : 'Delete customer'}
+          </Button>
+        ) : null}
       </Box>
     </Box>
   )

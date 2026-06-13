@@ -50,6 +50,7 @@ export type CustomerDetail = {
   products_count?: number
   orders_count?: number
   quotes_count?: number
+  can_delete?: boolean
 }
 
 export type CustomerUpsertPayload = {
@@ -198,6 +199,20 @@ export const updateCustomer = createAsyncThunk(
   },
 )
 
+export const deleteCustomer = createAsyncThunk(
+  'customers/delete',
+  async (customerId: string, { rejectWithValue }) => {
+    try {
+      await apiFetch<void>(`/api/customers/${encodeURIComponent(customerId)}`, { method: 'DELETE' })
+      return { customerId }
+    } catch (e) {
+      const err = toUpsertError(e)
+      if (err) return rejectWithValue(err)
+      throw e
+    }
+  },
+)
+
 const slice = createSlice({
   name: 'customers',
   initialState,
@@ -290,6 +305,13 @@ const slice = createSlice({
       s.upsert.error = v?.message || a.error.message || 'Failed to update customer'
       s.upsert.fieldErrors = v?.fieldErrors || {}
       s.upsert.messages = v?.messages || []
+    })
+
+    b.addCase(deleteCustomer.fulfilled, (s, a) => {
+      const cid = a.payload.customerId
+      delete s.detail.byId[cid]
+      s.list.items = s.list.items.filter((c) => c.id !== cid)
+      if (s.list.total > 0) s.list.total -= 1
     })
   },
 })
