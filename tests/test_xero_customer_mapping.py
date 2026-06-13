@@ -15,6 +15,7 @@ from app.integrations.xero.customer_mapping import (
     branding_theme_match_needles,
     contacts_from_xero_contact,
     customer_fields_from_xero_contact,
+    customer_to_xero_contact_create_body,
     customer_to_xero_contact_update_body,
     delivery_addresses_from_xero_contact,
     phone_to_xero_phones,
@@ -199,6 +200,40 @@ def test_customer_to_xero_contact_update_body():
     assert body["EmailAddress"] == "accounts@acme.example"
     assert body["ContactStatus"] == "ACTIVE"
     assert "BrandingTheme" not in body
+    assert body["Phones"][0]["PhoneAreaCode"] == "07"
+    assert len(body["Addresses"]) == 1
+    assert len(body["ContactPersons"]) == 1
+
+
+def test_customer_to_xero_contact_create_body():
+    body = customer_to_xero_contact_create_body(
+        name="Acme Pty Ltd",
+        abn="12345678901",
+        contact_first_name="Jane",
+        contact_last_name="Smith",
+        email_address="accounts@acme.example",
+        contact_phone="07 1234 5678",
+        status="Active",
+        contacts={"items": [{"first_name": "Jane", "last_name": "Doe", "include_in_emails": True}]},
+        delivery_addresses={
+            "items": [
+                {
+                    "address_type": "STREET",
+                    "address_line1": "1 Main St",
+                    "city": "Sydney",
+                    "region": "NSW",
+                    "postal_code": "2000",
+                }
+            ]
+        },
+    )
+    assert "ContactID" not in body
+    assert body["Name"] == "Acme Pty Ltd"
+    assert body["FirstName"] == "Jane"
+    assert body["LastName"] == "Smith"
+    assert body["TaxNumber"] == "12345678901"
+    assert body["EmailAddress"] == "accounts@acme.example"
+    assert body["ContactStatus"] == "ACTIVE"
     assert body["Phones"][0]["PhoneAreaCode"] == "07"
     assert len(body["Addresses"]) == 1
     assert len(body["ContactPersons"]) == 1

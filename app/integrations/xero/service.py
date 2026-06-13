@@ -39,6 +39,7 @@ from app.integrations.myob.customer_import import brand_id_for_code, ensure_defa
 from app.brands.service import brand_id_for_xero_branding_theme_id
 from app.integrations.xero.customer_mapping import (
     customer_fields_from_xero_contact,
+    customer_to_xero_contact_create_body,
     customer_to_xero_contact_update_body,
     pick_xero_branding_theme_id_from_list,
     xero_contact_branding_theme_id,
@@ -1365,6 +1366,86 @@ def _extract_xero_contact_from_post_response(payload: Any) -> dict[str, Any]:
     return contact_raw
 
 
+def create_xero_contact_for_customer(db: Session, *, customer_id: str) -> dict[str, Any]:
+    """Create a new Xero contact from app customer fields and link customers.xero_contact_id."""
+    cid = str(customer_id or "").strip()
+    if not cid:
+        raise XeroConfigError("customer_id is required.")
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        raise XeroConfigError("Cannot create a Xero contact for the internal MYOB draft customer.")
+
+    cust = db.scalar(
+        select(Customer)
+        .options(joinedload(Customer.brand))
+        .where(Customer.id == cid)
+    )
+    if cust is None:
+        raise XeroConfigError("Customer not found.")
+
+    existing_xero = str(getattr(cust, "xero_contact_id", "") or "").strip()
+    if existing_xero:
+        raise XeroConfigError("Customer is already linked to a Xero contact.")
+
+    try:
+        contact_body = customer_to_xero_contact_create_body(
+            name=cust.name,
+            abn=getattr(cust, "abn", None),
+            contact_first_name=getattr(cust, "contact_first_name", None),
+            contact_last_name=getattr(cust, "contact_last_name", None),
+            email_address=getattr(cust, "email_address", None),
+            contact_phone=getattr(cust, "contact_phone", None),
+            status=getattr(cust, "status", None),
+            contacts=getattr(cust, "contacts", None),
+            delivery_addresses=getattr(cust, "delivery_addresses", None),
+        )
+    except ValueError as e:
+        raise XeroConfigError(str(e)) from e
+
+    _, _, payload = _xero_api_post_json(
+        db,
+        endpoint="/Contacts",
+        body={"Contacts": [contact_body]},
+    )
+    contact_raw = _extract_xero_contact_from_post_response(payload)
+    contact_id = _xero_contact_id(contact_raw)
+    if not contact_id or not _is_uuid(contact_id):
+        raise XeroApiError("Xero did not return a valid ContactID.")
+
+    other = db.scalar(
+        select(Customer).where(Customer.xero_contact_id == contact_id, Customer.id != cid)
+    )
+    if other is not None:
+        raise XeroConfigError(
+            f"Xero returned a contact already linked to customer: {other.name}"
+        )
+
+    try:
+        with db.begin_nested():
+            cust.xero_contact_id = contact_id
+            cust.xero_last_modified = parse_xero_updated_date_utc(contact_raw.get("UpdatedDateUTC"))
+            cust.xero_synced_at = datetime.now(UTC)
+            db.add(cust)
+            db.flush()
+    except IntegrityError:
+        raise XeroConfigError("That Xero contact is already linked to another customer.") from None
+    db.commit()
+
+    summary = _xero_contact_summary(contact_raw)
+    contacts_items = contact_body.get("ContactPersons")
+    address_items = contact_body.get("Addresses")
+    return {
+        "ok": True,
+        "created": True,
+        "customer_id": cid,
+        "contact_id": contact_id,
+        "customer_name": cust.name,
+        "xero_name": summary.get("name") or cust.name,
+        "xero_account_code": summary.get("account_code"),
+        "contacts_count": len(contacts_items) if isinstance(contacts_items, list) else 0,
+        "addresses_count": len(address_items) if isinstance(address_items, list) else 0,
+    }
+
+
 def sync_customer_to_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
     """Push app customer contact details to an already-linked Xero contact."""
     cid = str(customer_id or "").strip()
@@ -1757,6 +1838,7 @@ def unlinked_xero_customer_review(db: Session) -> dict[str, Any]:
     rows = list(
         db.scalars(
             select(Customer)
+            .options(joinedload(Customer.brand))
             .where(
                 Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
                 Customer.xero_contact_id.is_(None),
@@ -1764,7 +1846,18 @@ def unlinked_xero_customer_review(db: Session) -> dict[str, Any]:
             .order_by(Customer.name.asc())
         ).all()
     )
-    items = [_customer_review_row(c, counts) for c in rows]
+    items: list[dict[str, Any]] = []
+    for c in rows:
+        ccounts = counts.get(str(c.id), {})
+        detail = _app_customer_match_detail(
+            c,
+            orders_count=int(ccounts.get("orders_count", 0)),
+        )
+        detail["quotes_count"] = int(ccounts.get("quotes_count", 0))
+        detail["products_count"] = int(ccounts.get("products_count", 0))
+        detail["job_sheets_count"] = int(ccounts.get("job_sheets_count", 0))
+        detail["plates_count"] = int(ccounts.get("plates_count", 0))
+        items.append(detail)
     items.sort(
         key=lambda r: (
             -int(r["orders_count"]),

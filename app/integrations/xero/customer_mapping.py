@@ -359,6 +359,47 @@ def app_contacts_to_xero_contact_persons(contacts: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def customer_to_xero_contact_create_body(
+    *,
+    name: str,
+    abn: str | None = None,
+    contact_first_name: str | None = None,
+    contact_last_name: str | None = None,
+    email_address: str | None = None,
+    contact_phone: str | None = None,
+    status: str | None = None,
+    contacts: Any = None,
+    delivery_addresses: Any = None,
+) -> dict[str, Any]:
+    """Build a Xero Contacts API create payload from app customer fields."""
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        raise ValueError("Customer name is required to create a Xero contact.")
+
+    body: dict[str, Any] = {
+        "Name": clean_name,
+        "ContactStatus": status_to_xero(status),
+        "Addresses": app_delivery_addresses_to_xero_addresses(delivery_addresses),
+        "ContactPersons": app_contacts_to_xero_contact_persons(contacts),
+    }
+    first = str(contact_first_name or "").strip()
+    last = str(contact_last_name or "").strip()
+    if first:
+        body["FirstName"] = first
+    if last:
+        body["LastName"] = last
+    tax = str(abn or "").strip()
+    if tax:
+        body["TaxNumber"] = tax
+    email = str(email_address or "").strip()
+    if email:
+        body["EmailAddress"] = email
+    phones = phone_to_xero_phones(contact_phone)
+    if phones:
+        body["Phones"] = phones
+    return body
+
+
 def customer_to_xero_contact_update_body(
     *,
     contact_id: str,

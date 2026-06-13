@@ -18,6 +18,7 @@ from app.integrations.xero.service import (
     connection_status,
     consume_oauth_state,
     create_draft_quote,
+    create_xero_contact_for_customer,
     compare_xero_app_customer_match,
     create_oauth_state,
     delete_deletable_unlinked_customers,
@@ -226,6 +227,24 @@ async def xero_unlinked_customer_review(_identity: SysAdminIdentity):
     del _identity
     with SessionLocal() as db:
         return unlinked_xero_customer_review(db)
+
+
+class XeroCreateContactBody(BaseModel):
+    customer_id: str = Field(..., min_length=1)
+
+
+@router.post("/customers/create-contact", dependencies=[Depends(csrf_protect())])
+async def xero_create_contact_for_customer(_identity: SysAdminIdentity, body: XeroCreateContactBody):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return create_xero_contact_for_customer(db, customer_id=body.customer_id)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
 
 @router.get("/contacts")

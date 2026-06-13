@@ -4,7 +4,9 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   FormControl,
+  FormControlLabel,
   InputLabel,
   MenuItem,
   Paper,
@@ -284,15 +286,28 @@ type XeroCustomerLinkPreview = {
   conflicts: Array<Record<string, unknown>>
 }
 
-type XeroUnlinkedCustomerRow = {
+type XeroUnlinkedCustomerRow = CustomerMatchDetail & {
   id: string
   name: string
-  status?: string | null
   myob_display_id?: string | null
   myob_customer_uid?: string | null
   orders_count: number
   quotes_count: number
   products_count: number
+  job_sheets_count?: number
+  plates_count?: number
+}
+
+type XeroCreateContactResult = {
+  ok: boolean
+  created: boolean
+  customer_id: string
+  contact_id: string
+  customer_name?: string
+  xero_name?: string
+  xero_account_code?: string | null
+  contacts_count?: number
+  addresses_count?: number
 }
 
 type XeroUnlinkedCustomerReview = {
@@ -376,6 +391,9 @@ export function XeroAdminPage() {
   const [apiResult, setApiResult] = useState<unknown>(null)
   const [linkPreview, setLinkPreview] = useState<XeroCustomerLinkPreview | null>(null)
   const [unlinkedReview, setUnlinkedReview] = useState<XeroUnlinkedCustomerReview | null>(null)
+  const [unlinkedWithOrdersOnly, setUnlinkedWithOrdersOnly] = useState(true)
+  const [selectedUnlinkedCustomerId, setSelectedUnlinkedCustomerId] = useState<string | null>(null)
+  const [createContactResult, setCreateContactResult] = useState<XeroCreateContactResult | null>(null)
   const [selectedUnmatchedContactId, setSelectedUnmatchedContactId] = useState<string | null>(null)
   const [appCustomerSearch, setAppCustomerSearch] = useState('')
   const [appCustomerResults, setAppCustomerResults] = useState<XeroAppCustomerLinkCandidate[]>([])
@@ -439,13 +457,21 @@ export function XeroAdminPage() {
 
   const sortedUnlinkedAppCustomers = useMemo(() => {
     const rows = unlinkedReview?.items || []
-    return [...rows].sort(
+    const filtered = unlinkedWithOrdersOnly
+      ? rows.filter((row) => row.orders_count > 0)
+      : rows
+    return [...filtered].sort(
       (a, b) =>
         b.orders_count - a.orders_count ||
         b.quotes_count - a.quotes_count ||
         a.name.localeCompare(b.name),
     )
-  }, [unlinkedReview?.items])
+  }, [unlinkedReview?.items, unlinkedWithOrdersOnly])
+
+  const selectedUnlinkedCustomer = useMemo(
+    () => sortedUnlinkedAppCustomers.find((row) => row.id === selectedUnlinkedCustomerId) || null,
+    [sortedUnlinkedAppCustomers, selectedUnlinkedCustomerId],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -753,12 +779,37 @@ export function XeroAdminPage() {
   async function doLoadUnlinkedCustomers() {
     setBusy('xero-unlinked')
     setErr(null)
+    setSelectedUnlinkedCustomerId(null)
+    setCreateContactResult(null)
     try {
       const out = await apiFetch<XeroUnlinkedCustomerReview>('/api/xero/customers/unlinked')
       setUnlinkedReview(out)
     } catch (e) {
       if (e instanceof ApiError) setErr(e.message)
       else setErr(e instanceof Error ? e.message : 'Failed to load unlinked customers')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doCreateXeroContact() {
+    const customerId = selectedUnlinkedCustomerId?.trim() || ''
+    if (!customerId) return
+    setBusy('xero-create-contact')
+    setErr(null)
+    setCreateContactResult(null)
+    try {
+      const out = await apiFetch<XeroCreateContactResult>('/api/xero/customers/create-contact', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId }),
+      })
+      setCreateContactResult(out)
+      setSelectedUnlinkedCustomerId(null)
+      const refreshed = await apiFetch<XeroUnlinkedCustomerReview>('/api/xero/customers/unlinked')
+      setUnlinkedReview(refreshed)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Failed to create Xero contact')
     } finally {
       setBusy(null)
     }
@@ -1486,37 +1537,147 @@ export function XeroAdminPage() {
 
                 {unlinkedReview ? (
                   <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Unlinked app customers with orders
+                    </Typography>
                     <Typography variant="body2" sx={{ mb: 1 }}>
                       Unlinked app customers: <strong>{unlinkedReview.total}</strong> · With orders:{' '}
                       <strong>{unlinkedReview.with_orders_count}</strong> · Without orders:{' '}
                       <strong>{unlinkedReview.without_orders_count}</strong>
                     </Typography>
-                    <Paper variant="outlined" sx={{ maxHeight: 360, overflow: 'auto' }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                      Select a customer to review contact details, then create a new Xero contact and link it in the
+                      app. Use this for app customers who have orders but no matching Xero contact yet.
+                    </Typography>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={unlinkedWithOrdersOnly}
+                          onChange={(e) => {
+                            setUnlinkedWithOrdersOnly(e.target.checked)
+                            setSelectedUnlinkedCustomerId(null)
+                            setCreateContactResult(null)
+                          }}
+                        />
+                      }
+                      label="Show only customers with orders"
+                      sx={{ mb: 1.5, display: 'block' }}
+                    />
+                    {createContactResult ? (
+                      <Alert severity="success" sx={{ mb: 1.5 }}>
+                        Created Xero contact <strong>{createContactResult.xero_name}</strong>
+                        {createContactResult.xero_account_code ? (
+                          <> ({createContactResult.xero_account_code})</>
+                        ) : null}{' '}
+                        and linked to app customer <strong>{createContactResult.customer_name}</strong>.
+                        {typeof createContactResult.contacts_count === 'number' ? (
+                          <>
+                            {' '}
+                            {createContactResult.contacts_count} contact
+                            {createContactResult.contacts_count === 1 ? '' : 's'},{' '}
+                            {createContactResult.addresses_count ?? 0} address
+                            {(createContactResult.addresses_count ?? 0) === 1 ? '' : 'es'} sent.
+                          </>
+                        ) : null}
+                      </Alert>
+                    ) : null}
+                    <Paper variant="outlined" sx={{ maxHeight: 360, overflow: 'auto', mb: 1.5 }}>
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
                             <TableCell>Customer</TableCell>
-                            <TableCell>MYOB display</TableCell>
+                            <TableCell>Brand</TableCell>
+                            <TableCell>Primary contact</TableCell>
+                            <TableCell>Phone</TableCell>
                             <TableCell align="right">Orders</TableCell>
                             <TableCell align="right">Quotes</TableCell>
-                            <TableCell align="right">Products</TableCell>
-                            <TableCell>Status</TableCell>
+                            <TableCell>Addresses</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {sortedUnlinkedAppCustomers.map((row) => (
-                            <TableRow key={row.id} hover>
-                              <TableCell>{row.name}</TableCell>
-                              <TableCell>{row.myob_display_id || '—'}</TableCell>
-                              <TableCell align="right">{row.orders_count}</TableCell>
-                              <TableCell align="right">{row.quotes_count}</TableCell>
-                              <TableCell align="right">{row.products_count}</TableCell>
-                              <TableCell>{row.status || '—'}</TableCell>
+                          {sortedUnlinkedAppCustomers.length > 0 ? (
+                            sortedUnlinkedAppCustomers.map((row) => {
+                              const selected = selectedUnlinkedCustomerId === row.id
+                              return (
+                                <TableRow
+                                  key={row.id}
+                                  hover
+                                  selected={selected}
+                                  onClick={() => {
+                                    setSelectedUnlinkedCustomerId(row.id)
+                                    setCreateContactResult(null)
+                                  }}
+                                  sx={{ cursor: 'pointer' }}
+                                >
+                                  <TableCell>
+                                    <Typography variant="body2">{row.name}</Typography>
+                                    {row.myob_display_id ? (
+                                      <Typography variant="caption" color="text.secondary" display="block">
+                                        MYOB {row.myob_display_id}
+                                      </Typography>
+                                    ) : null}
+                                  </TableCell>
+                                  <TableCell sx={{ maxWidth: 120 }}>{brandLabel(row)}</TableCell>
+                                  <TableCell sx={{ maxWidth: 120 }}>{primaryContactLabel(row)}</TableCell>
+                                  <TableCell sx={{ maxWidth: 120 }}>{row.contact_phone?.trim() || '—'}</TableCell>
+                                  <TableCell align="right">{row.orders_count}</TableCell>
+                                  <TableCell align="right">{row.quotes_count}</TableCell>
+                                  <TableCell sx={{ maxWidth: 220 }}>
+                                    <AddressesCell addresses={row.addresses} />
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })
+                          ) : (
+                            <TableRow>
+                              <TableCell colSpan={7}>
+                                <Typography variant="body2" color="text.secondary">
+                                  {unlinkedWithOrdersOnly
+                                    ? 'No unlinked app customers with orders.'
+                                    : 'No unlinked app customers.'}
+                                </Typography>
+                              </TableCell>
                             </TableRow>
-                          ))}
+                          )}
                         </TableBody>
                       </Table>
                     </Paper>
+                    {selectedUnlinkedCustomer ? (
+                      <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.paper' }}>
+                        <Stack
+                          direction={{ xs: 'column', md: 'row' }}
+                          spacing={2}
+                          alignItems={{ xs: 'stretch', md: 'flex-start' }}
+                        >
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <MatchDetailCard title="App customer" row={selectedUnlinkedCustomer} />
+                          </Box>
+                          <Stack spacing={1} sx={{ minWidth: { md: 220 } }}>
+                            <Button
+                              variant="contained"
+                              onClick={() => void doCreateXeroContact()}
+                              disabled={busy !== null}
+                            >
+                              Create Xero contact &amp; link
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              onClick={() => {
+                                setSelectedUnlinkedCustomerId(null)
+                                setCreateContactResult(null)
+                              }}
+                              disabled={busy !== null}
+                            >
+                              Clear selection
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        Select an unlinked app customer above to review details and create a Xero contact.
+                      </Typography>
+                    )}
                   </Box>
                 ) : null}
               </Paper>
