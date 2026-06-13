@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -33,6 +33,7 @@ from app.db.models.domain import (
     XeroConnection,
     XeroOAuthState,
 )
+from app.db.models.rate_cards import Plate
 from app.db.myob_import_placeholders import MYOB_DRAFT_INTERNAL_CUSTOMER_ID
 from app.integrations.myob.customer_import import brand_id_for_code, ensure_default_customer_brands
 from app.brands.service import brand_id_for_xero_branding_theme_id
@@ -948,6 +949,23 @@ def _unique_index(rows: list[Customer], key_fn) -> dict[str, Customer]:
     return {key: matches[0] for key, matches in buckets.items() if len(matches) == 1}
 
 
+def _deletable_unlinked_customers_select():
+    """Customer ids with no Xero link and no blocking related records."""
+    draft_id = str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID)
+    return (
+        select(Customer.id)
+        .where(
+            Customer.id != draft_id,
+            Customer.xero_contact_id.is_(None),
+            ~exists(select(1).where(Order.customer_id == Customer.id)),
+            ~exists(select(1).where(SavedQuote.customer_id == Customer.id)),
+            ~exists(select(1).where(Product.customer_id == Customer.id)),
+            ~exists(select(1).where(JobSheet.customer_id == Customer.id)),
+            ~exists(select(1).where(Plate.customer_id == Customer.id)),
+        )
+    )
+
+
 def _customer_counts(db: Session) -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     pairs = (
@@ -955,10 +973,12 @@ def _customer_counts(db: Session) -> dict[str, dict[str, int]]:
         (SavedQuote, "quotes_count"),
         (Product, "products_count"),
         (JobSheet, "job_sheets_count"),
+        (Plate, "plates_count"),
     )
     for model, key in pairs:
+        count_expr = func.count(Plate.plate_code) if model is Plate else func.count(model.id)
         rows = db.execute(
-            select(model.customer_id, func.count(model.id)).group_by(model.customer_id)
+            select(model.customer_id, count_expr).group_by(model.customer_id)
         ).all()
         for customer_id, count in rows:
             out.setdefault(str(customer_id), {})[key] = int(count or 0)
@@ -978,6 +998,7 @@ def _customer_review_row(cust: Customer, counts: dict[str, dict[str, int]]) -> d
         "quotes_count": int(c.get("quotes_count", 0)),
         "products_count": int(c.get("products_count", 0)),
         "job_sheets_count": int(c.get("job_sheets_count", 0)),
+        "plates_count": int(c.get("plates_count", 0)),
     }
 
 
@@ -991,6 +1012,8 @@ def _customer_deletable_reason(row: dict[str, Any]) -> str | None:
         return "has_products"
     if int(row.get("job_sheets_count", 0)) > 0:
         return "has_job_sheets"
+    if int(row.get("plates_count", 0)) > 0:
+        return "has_plates"
     return None
 
 
@@ -1526,7 +1549,7 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
 
 
 def preview_deletable_unlinked_customers(db: Session) -> dict[str, Any]:
-    """Customers with no Xero link that are safe to delete (no orders, quotes, products, or job sheets)."""
+    """Customers with no Xero link that are safe to delete (no orders, quotes, products, job sheets, or plates)."""
     counts = _customer_counts(db)
     rows = list(
         db.scalars(
@@ -1557,36 +1580,22 @@ def preview_deletable_unlinked_customers(db: Session) -> dict[str, Any]:
 
 
 def delete_deletable_unlinked_customers(db: Session) -> dict[str, Any]:
-    """Delete unlinked customers with no orders, quotes, products, or job sheets."""
-    preview = preview_deletable_unlinked_customers(db)
-    deleted: list[dict[str, str]] = []
-    errors: list[str] = []
-    for row in preview["deletable"]:
-        customer_id = str(row.get("id") or "")
-        cust = db.get(Customer, customer_id)
-        if cust is None:
-            continue
-        if str(getattr(cust, "xero_contact_id", "") or "").strip():
-            errors.append(f"Skipped {cust.name}: linked to Xero since preview.")
-            continue
-        reason = _customer_deletable_reason(_customer_review_row(cust, _customer_counts(db)))
-        if reason:
-            errors.append(f"Skipped {cust.name}: {reason}.")
-            continue
-        try:
-            with db.begin_nested():
-                db.delete(cust)
-                db.flush()
-            deleted.append({"id": customer_id, "name": cust.name})
-        except IntegrityError:
-            errors.append(f"Could not delete {cust.name}: related records still exist.")
-    db.commit()
+    """Delete unlinked customers with no orders, quotes, products, job sheets, or plates."""
+    deletable_ids = _deletable_unlinked_customers_select()
+    try:
+        result = db.execute(delete(Customer).where(Customer.id.in_(deletable_ids)))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return {
+            "ok": False,
+            "deleted_count": 0,
+            "errors": ["Bulk delete failed: related records still exist."],
+        }
     return {
-        "ok": not errors,
-        "deleted_count": len(deleted),
-        "deleted": deleted,
-        "errors": errors,
-        "preview": preview,
+        "ok": True,
+        "deleted_count": int(result.rowcount or 0),
+        "errors": [],
     }
 
 

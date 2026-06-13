@@ -831,7 +831,7 @@ export function XeroAdminPage() {
     const count = deletablePreview?.deletable_count ?? 0
     if (count <= 0) return
     const msg =
-      `Delete ${count} unlinked customer${count === 1 ? '' : 's'} with no orders, quotes, products, or job sheets? ` +
+      `Delete ${count} unlinked customer${count === 1 ? '' : 's'} with no orders, quotes, products, job sheets, or plates? ` +
       'This cannot be undone.'
     if (!window.confirm(msg)) return
     setBusy('xero-deletable-delete')
@@ -839,11 +839,12 @@ export function XeroAdminPage() {
     try {
       const out = await apiFetch<{
         deleted_count: number
-        deleted: Array<{ id: string; name: string }>
         errors?: string[]
-        preview: XeroDeletableCustomersPreview
       }>('/api/xero/customers/unlinked/delete', { method: 'POST' })
-      setDeletablePreview(out.preview)
+      const preview = await apiFetch<XeroDeletableCustomersPreview>(
+        '/api/xero/customers/unlinked/deletable-preview',
+      )
+      setDeletablePreview(preview)
       await doLoadUnlinkedCustomers()
       if (out.errors && out.errors.length > 0) {
         setErr(out.errors.join('; '))

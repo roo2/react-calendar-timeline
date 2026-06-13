@@ -14,6 +14,7 @@ def test_customer_deletable_when_no_activity():
             "quotes_count": 0,
             "products_count": 0,
             "job_sheets_count": 0,
+            "plates_count": 0,
         }
     ) is None
 
@@ -26,6 +27,7 @@ def test_customer_not_deletable_with_orders_or_quotes():
 def test_customer_not_deletable_with_products_or_job_sheets():
     assert _customer_deletable_reason({"products_count": 1}) == "has_products"
     assert _customer_deletable_reason({"job_sheets_count": 1}) == "has_job_sheets"
+    assert _customer_deletable_reason({"plates_count": 1}) == "has_plates"
 
 
 def test_xero_primary_address_prefers_street():
