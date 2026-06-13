@@ -119,6 +119,7 @@ export function CustomerShowPage() {
 
   if (!customer) return <p>Loading…</p>
 
+  const customerName = customer.name
   const canDeleteCustomer = Boolean(
     canEdit &&
       customerId &&
@@ -129,7 +130,7 @@ export function CustomerShowPage() {
   async function onDeleteCustomer() {
     if (!customerId || !canDeleteCustomer || deletingCustomer) return
     const ok = window.confirm(
-      `Delete customer "${customer.name}" permanently? This cannot be undone.`,
+      `Delete customer "${customerName}" permanently? This cannot be undone.`,
     )
     if (!ok) return
     setDeleteCustomerErr(null)
