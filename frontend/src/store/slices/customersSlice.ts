@@ -9,9 +9,26 @@ export type CustomerSummary = {
   brand_id?: string | null
   brand_code?: string | null
   brand_name?: string | null
+  contact_first_name?: string | null
   priority_rank?: number | null
   orders_count?: number
   quotes_count?: number
+}
+
+export type CustomersListQuery = {
+  search?: string
+  q?: string
+  brand_code?: string
+  status?: string
+  contact?: string
+  email?: string
+  phone?: string
+  abn?: string
+  myob_display_id?: string
+  sort_by?: string
+  sort_dir?: string
+  page?: number
+  page_size?: number
 }
 
 export type CustomerPricingTierBrief = {
@@ -130,12 +147,21 @@ export const CUSTOMER_PICKER_PAGE_SIZE = 500
 
 export const fetchCustomers = createAsyncThunk(
   'customers/list',
-  async (payload: { q?: string; page?: number; page_size?: number } | undefined) => {
-    const q = payload?.q?.trim() || ''
+  async (payload: CustomersListQuery | undefined) => {
     const page = payload?.page ?? 1
     const page_size = payload?.page_size ?? 100
     const qs = new URLSearchParams()
-    if (q) qs.set('q', q)
+    const search = payload?.search?.trim() || payload?.q?.trim() || ''
+    if (search) qs.set('search', search)
+    if (payload?.brand_code?.trim()) qs.set('brand_code', payload.brand_code.trim())
+    if (payload?.status?.trim()) qs.set('status', payload.status.trim())
+    if (payload?.contact?.trim()) qs.set('contact', payload.contact.trim())
+    if (payload?.email?.trim()) qs.set('email', payload.email.trim())
+    if (payload?.phone?.trim()) qs.set('phone', payload.phone.trim())
+    if (payload?.abn?.trim()) qs.set('abn', payload.abn.trim())
+    if (payload?.myob_display_id?.trim()) qs.set('myob_display_id', payload.myob_display_id.trim())
+    if (payload?.sort_by?.trim()) qs.set('sort_by', payload.sort_by.trim())
+    if (payload?.sort_dir?.trim()) qs.set('sort_dir', payload.sort_dir.trim())
     qs.set('page', String(page))
     qs.set('page_size', String(page_size))
     const res = await apiFetch<{
@@ -145,7 +171,7 @@ export const fetchCustomers = createAsyncThunk(
       page_size: number
     }>(`/api/customers?${qs.toString()}`)
     return {
-      q,
+      q: search,
       items: res.items,
       total: res.total,
       page: res.page,
@@ -235,7 +261,7 @@ const slice = createSlice({
     b.addCase(fetchCustomers.pending, (s, a) => {
       s.list.status = 'loading'
       s.list.error = null
-      s.list.lastQuery = a.meta.arg?.q?.trim() || ''
+      s.list.lastQuery = a.meta.arg?.search?.trim() || a.meta.arg?.q?.trim() || ''
     })
     b.addCase(fetchCustomers.fulfilled, (s, a) => {
       s.list.status = 'succeeded'

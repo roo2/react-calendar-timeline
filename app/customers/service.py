@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -32,14 +32,65 @@ def _payment_terms_to_store(payload: CustomerCreateRequest) -> dict | None:
     return payload.payment_terms.model_dump(exclude_none=True)
 
 
+def _customer_list_orders_count_expr():
+    return (
+        select(func.count(Order.id))
+        .where(Order.customer_id == Customer.id)
+        .correlate(Customer)
+        .scalar_subquery()
+    )
+
+
+def _customer_list_quotes_count_expr():
+    return (
+        select(func.count(SavedQuote.id))
+        .where(SavedQuote.customer_id == Customer.id)
+        .correlate(Customer)
+        .scalar_subquery()
+    )
+
+
+def _apply_customer_list_sort(stmt, *, sort_by: Optional[str], sort_dir: Optional[str]):
+    desc = str(sort_dir or "").strip().casefold() == "desc"
+    key = str(sort_by or "").strip().casefold()
+    if key == "brand":
+        stmt = stmt.outerjoin(Brand, Customer.brand_id == Brand.id)
+        col = Brand.name
+    elif key == "contact":
+        col = Customer.contact_first_name
+    elif key == "status":
+        col = Customer.status
+    elif key == "orders":
+        col = _customer_list_orders_count_expr()
+    elif key == "quotes":
+        col = _customer_list_quotes_count_expr()
+    elif key == "name":
+        col = Customer.name
+    else:
+        return stmt.order_by(Customer.priority_rank.asc().nulls_last(), Customer.name.asc())
+
+    order = col.desc().nulls_last() if desc else col.asc().nulls_last()
+    return stmt.order_by(order, Customer.name.asc())
+
+
 def list_customers(
     query: Optional[str] = None,
     *,
+    search: Optional[str] = None,
+    brand_code: Optional[str] = None,
+    status: Optional[str] = None,
+    contact: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    abn: Optional[str] = None,
+    myob_display_id: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: Optional[str] = None,
     page: int = 1,
     page_size: int = 25,
 ) -> tuple[List[Customer], int]:
     """
-    List customers with optional name search, ordered by priority then name.
+    List customers with search and filters, ordered by priority/name or sort_by.
     Returns (rows_for_page, total_matching_filters).
     """
     page = max(1, page)
@@ -47,22 +98,68 @@ def list_customers(
 
     with SessionLocal() as db:  # type: Session
         filters = []
-        if query:
-            search_term = f"%{query}%"
-            filters.append(Customer.name.ilike(search_term))
+
+        s_bcode = str(brand_code or "").strip()
+        if s_bcode:
+            brand = db.scalar(select(Brand).where(func.lower(Brand.code) == s_bcode.casefold()))
+            if brand is None:
+                return [], 0
+            filters.append(Customer.brand_id == str(brand.id))
+
+        s_status = str(status or "").strip()
+        if s_status:
+            filters.append(func.lower(Customer.status) == s_status.casefold())
+
+        s_contact = str(contact or "").strip()
+        if s_contact:
+            term = f"%{s_contact}%"
+            filters.append(
+                or_(
+                    Customer.contact_first_name.ilike(term),
+                    Customer.contact_last_name.ilike(term),
+                )
+            )
+
+        s_email = str(email or "").strip()
+        if s_email:
+            filters.append(Customer.email_address.ilike(f"%{s_email}%"))
+
+        s_phone = str(phone or "").strip()
+        if s_phone:
+            filters.append(Customer.contact_phone.ilike(f"%{s_phone}%"))
+
+        s_abn = str(abn or "").strip()
+        if s_abn:
+            filters.append(Customer.abn.ilike(f"%{s_abn}%"))
+
+        s_myob = str(myob_display_id or "").strip()
+        if s_myob:
+            filters.append(Customer.myob_display_id.ilike(f"%{s_myob}%"))
+
+        all_search = str(search or query or "").strip()
+        if all_search:
+            term = f"%{all_search}%"
+            filters.append(
+                or_(
+                    Customer.name.ilike(term),
+                    Customer.contact_first_name.ilike(term),
+                    Customer.contact_last_name.ilike(term),
+                    Customer.email_address.ilike(term),
+                    Customer.contact_phone.ilike(term),
+                    Customer.abn.ilike(term),
+                    Customer.myob_display_id.ilike(term),
+                )
+            )
 
         count_stmt = select(func.count()).select_from(Customer)
         for f in filters:
             count_stmt = count_stmt.where(f)
         total = int(db.scalar(count_stmt) or 0)
 
-        stmt = (
-            select(Customer)
-            .options(joinedload(Customer.brand))
-            .order_by(Customer.priority_rank.asc().nulls_last(), Customer.name.asc())
-        )
+        stmt = select(Customer).options(joinedload(Customer.brand))
         for f in filters:
             stmt = stmt.where(f)
+        stmt = _apply_customer_list_sort(stmt, sort_by=sort_by, sort_dir=sort_dir)
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
         return list(db.scalars(stmt).all()), total

@@ -407,6 +407,11 @@ export function XeroAdminPage() {
   const [selectedSyncCustomerId, setSelectedSyncCustomerId] = useState<string | null>(null)
   const [syncFromXeroResult, setSyncFromXeroResult] = useState<XeroSyncFromXeroResult | null>(null)
   const [syncToXeroResult, setSyncToXeroResult] = useState<XeroSyncToXeroResult | null>(null)
+  const [syncMatchCompareLoading, setSyncMatchCompareLoading] = useState(false)
+  const [syncMatchCompare, setSyncMatchCompare] = useState<{
+    app: CustomerMatchDetail | null
+    xero: CustomerMatchDetail | null
+  } | null>(null)
   const [matchCompareLoading, setMatchCompareLoading] = useState(false)
   const [matchCompare, setMatchCompare] = useState<{
     app: CustomerMatchDetail | null
@@ -545,6 +550,26 @@ export function XeroAdminPage() {
     }, delayMs)
     return () => window.clearTimeout(t)
   }, [syncCustomerSearch])
+
+  async function loadSyncMatchCompare(customerId: string) {
+    const compare = await apiFetch<{ app: CustomerMatchDetail; xero: CustomerMatchDetail | null }>(
+      `/api/xero/customers/match-compare?customer_id=${encodeURIComponent(customerId)}`,
+    )
+    setSyncMatchCompare({ app: compare.app, xero: compare.xero })
+    return compare
+  }
+
+  useEffect(() => {
+    const customerId = selectedSyncCustomerId?.trim() || ''
+    if (!customerId) {
+      setSyncMatchCompare(null)
+      return
+    }
+    setSyncMatchCompareLoading(true)
+    void loadSyncMatchCompare(customerId)
+      .catch(() => setSyncMatchCompare(null))
+      .finally(() => setSyncMatchCompareLoading(false))
+  }, [selectedSyncCustomerId])
 
   const compareCustomerId = linkedForSyncId || selectedAppCustomerId
   const compareContactId = selectedUnmatchedContactId
@@ -686,6 +711,7 @@ export function XeroAdminPage() {
         body: JSON.stringify({ customer_id: customerId }),
       })
       setSyncToXeroResult(out)
+      await loadSyncMatchCompare(customerId)
     } catch (e) {
       if (e instanceof ApiError) setErr(e.message)
       else setErr(e instanceof Error ? e.message : 'Sync to Xero failed')
@@ -720,6 +746,7 @@ export function XeroAdminPage() {
             : row,
         ),
       )
+      await loadSyncMatchCompare(customerId)
     } catch (e) {
       if (e instanceof ApiError) setErr(e.message)
       else setErr(e instanceof Error ? e.message : 'Sync from Xero failed')
@@ -1853,41 +1880,23 @@ export function XeroAdminPage() {
                 </Paper>
                 {selectedSyncCustomer ? (
                   <Box sx={{ mb: 1.5 }}>
-                    <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Selected: <strong>{selectedSyncCustomer.name}</strong>
-                      {selectedSyncCustomer.abn ? ` · ABN ${selectedSyncCustomer.abn}` : ''}
-                      {selectedSyncCustomer.brand_name
-                        ? ` · Brand ${selectedSyncCustomer.brand_name}`
-                        : ''}
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                      Compare app customer and linked Xero contact before choosing pull or push.
                     </Typography>
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 1 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        Email: {selectedSyncCustomer.email_address?.trim() || '—'}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Phone: {selectedSyncCustomer.contact_phone?.trim() || '—'}
-                      </Typography>
-                    </Stack>
-                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                          Notes (app only, not synced to Xero)
+                    <MatchComparePanel
+                      loading={syncMatchCompareLoading}
+                      app={syncMatchCompare?.app ?? (selectedSyncCustomer as CustomerMatchDetail)}
+                      xero={syncMatchCompare?.xero ?? null}
+                    />
+                    {!syncMatchCompareLoading && selectedSyncCustomer && !syncMatchCompare?.xero ? (
+                      <Alert severity="warning" sx={{ mb: 1.5 }}>
+                        Could not load the linked Xero contact. Check the connection and Xero contact id{' '}
+                        <Typography component="span" variant="body2" sx={{ fontFamily: 'ui-monospace, monospace' }}>
+                          {selectedSyncCustomer.xero_contact_id}
                         </Typography>
-                        <AddressCell value={selectedSyncCustomer.notes} />
-                      </Box>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                          Contact persons
-                        </Typography>
-                        <ContactPersonsCell names={selectedSyncCustomer.contact_persons} />
-                      </Box>
-                      <Box sx={{ flex: 2 }}>
-                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                          Addresses
-                        </Typography>
-                        <AddressesCell addresses={selectedSyncCustomer.addresses} />
-                      </Box>
-                    </Stack>
+                        .
+                      </Alert>
+                    ) : null}
                   </Box>
                 ) : null}
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
@@ -1913,6 +1922,7 @@ export function XeroAdminPage() {
                       setSyncCustomerResults([])
                       setSyncFromXeroResult(null)
                       setSyncToXeroResult(null)
+                      setSyncMatchCompare(null)
                     }}
                     disabled={busy !== null}
                   >

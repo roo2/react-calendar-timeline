@@ -38,6 +38,7 @@ def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int |
         "brand_id": getattr(c, "brand_id", None),
         "brand_code": b.code if b else None,
         "brand_name": b.name if b else None,
+        "contact_first_name": getattr(c, "contact_first_name", None),
         "priority_rank": getattr(c, "priority_rank", None),
     }
     brief = _pricing_tier_brief_for_customer(c)
@@ -52,11 +53,38 @@ def _customer_summary(c, *, orders_count: int | None = None, quotes_count: int |
 
 @router.get("", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
 async def list_customers(
-    q: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, description="Legacy search alias for search"),
+    search: Optional[str] = Query(default=None),
+    brand_code: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    contact: Optional[str] = Query(default=None),
+    email: Optional[str] = Query(default=None),
+    phone: Optional[str] = Query(default=None),
+    abn: Optional[str] = Query(default=None),
+    myob_display_id: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(
+        default=None,
+        description="Sort field: name, brand, contact, status, quotes, orders",
+    ),
+    sort_dir: Optional[str] = Query(default=None, description="asc or desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=500),
 ):
-    customers, total = service.list_customers(query=q, page=page, page_size=page_size)
+    effective_search = (search or q or "").strip() or None
+    customers, total = service.list_customers(
+        query=effective_search,
+        brand_code=brand_code,
+        status=status,
+        contact=contact,
+        email=email,
+        phone=phone,
+        abn=abn,
+        myob_display_id=myob_display_id,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        page=page,
+        page_size=page_size,
+    )
     ids = [str(c.id) for c in customers]
     orders_by_c, quotes_by_c = service.get_orders_and_quotes_counts_by_customer_ids(ids)
     return {
