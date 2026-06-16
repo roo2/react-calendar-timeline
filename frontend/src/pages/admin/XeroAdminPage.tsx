@@ -1902,10 +1902,9 @@ export function XeroAdminPage() {
                   For app customers already linked to Xero, pull from Xero into the app, push app changes to the Xero
                   contact, or merge field-by-field. Pull overwrites app fields. Push overwrites Xero fields. Merge
                   prefers the app value when both sides have a field; otherwise it fills gaps from whichever side has
-                  data. Lists (phones, contact persons) use the longer side; when lengths match, the app
-                  list is used. Addresses combine STREET, POBOX, and DELIVERY from both sides (app wins
-                  when both have the same type). Merge saves to the app and replaces all Xero address
-                  slots. App notes are not synced.
+                  data. Lists (phones, contact persons, addresses) use the longer side; when lengths match, the app
+                  list is used — never combining rows from both sides. Merge saves to the app and replaces all Xero
+                  address slots. App notes are not synced.
                 </Typography>
                 <Paper variant="outlined" sx={{ p: 1.5, mb: 1.5, bgcolor: 'background.paper' }}>
                   <Typography variant="subtitle2" gutterBottom>

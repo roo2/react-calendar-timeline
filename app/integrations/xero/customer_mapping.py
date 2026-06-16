@@ -331,6 +331,25 @@ def phone_to_xero_phones(phone: str | None, *, phones: Any = None) -> list[dict[
     return app_phones_to_xero_phones(phones, contact_phone=phone)
 
 
+def _addresses_by_type(items: Any) -> dict[str, dict[str, Any]]:
+    """Index normalized address rows by Xero address type (first row wins per type)."""
+    by_type: dict[str, dict[str, Any]] = {}
+    if not isinstance(items, list):
+        return by_type
+    for addr in items:
+        if not isinstance(addr, dict):
+            continue
+        normalized = normalize_address_item(addr)
+        if not address_has_content(normalized):
+            continue
+        addr_type = str(normalized.get("address_type") or "STREET").strip().upper()
+        if addr_type not in XERO_ADDRESS_TYPES_ORDER:
+            addr_type = "STREET"
+        if addr_type not in by_type:
+            by_type[addr_type] = normalized
+    return by_type
+
+
 def app_delivery_addresses_to_xero_addresses(
     delivery_addresses: Any,
     *,
@@ -519,56 +538,6 @@ def _pick_merged_phones(
     return _pick_merged_list_by_length(app_norm, xero_norm)
 
 
-def _addresses_by_type(items: Any) -> dict[str, dict[str, Any]]:
-    """Index normalized address rows by Xero address type (first row wins per type)."""
-    by_type: dict[str, dict[str, Any]] = {}
-    if not isinstance(items, list):
-        return by_type
-    for addr in items:
-        if not isinstance(addr, dict):
-            continue
-        normalized = normalize_address_item(addr)
-        if not address_has_content(normalized):
-            continue
-        addr_type = str(normalized.get("address_type") or "STREET").strip().upper()
-        if addr_type not in XERO_ADDRESS_TYPES_ORDER:
-            addr_type = "STREET"
-        if addr_type not in by_type:
-            by_type[addr_type] = normalized
-    return by_type
-
-
-def _pick_merged_delivery_addresses(
-    app_json: Any,
-    xero_json: Any,
-) -> tuple[dict[str, Any], str]:
-    """
-    Combine STREET/POBOX/DELIVERY into one list.
-
-    For each address type, prefer the app row when present; otherwise use Xero.
-    """
-    app_by_type = _addresses_by_type(normalize_delivery_addresses(app_json).get("items", []))
-    xero_by_type = _addresses_by_type(normalize_delivery_addresses(xero_json).get("items", []))
-
-    merged_items: list[dict[str, Any]] = []
-    sources: list[str] = []
-    for addr_type in XERO_ADDRESS_TYPES_ORDER:
-        if addr_type in app_by_type:
-            merged_items.append(app_by_type[addr_type])
-            sources.append("app")
-        elif addr_type in xero_by_type:
-            merged_items.append(xero_by_type[addr_type])
-            sources.append("xero")
-
-    if not merged_items:
-        return {"items": []}, "none"
-    if all(source == "app" for source in sources):
-        return {"items": merged_items}, "app"
-    if all(source == "xero" for source in sources):
-        return {"items": merged_items}, "xero"
-    return {"items": merged_items}, "mixed"
-
-
 def _pick_merged_brand_code(
     *,
     app_brand_id: Any,
@@ -592,9 +561,8 @@ def merge_customer_fields_from_app_and_xero(
     """
     Field-by-field merge for linked customer sync.
 
-    Scalars prefer the app when both sides have a value. Phones and contact persons use the
-    longer side; when lengths match, use the app list. Addresses combine STREET/POBOX/DELIVERY
-    into one list, preferring the app row per type when both sides have that type.
+    Scalars prefer the app when both sides have a value. Phones, contact persons, and addresses
+    use the longer side; when lengths match, use the app list (never combine rows from both sides).
     """
     field_sources: dict[str, str] = {}
 
@@ -633,9 +601,10 @@ def merge_customer_fields_from_app_and_xero(
         xero_fields.get("contacts"),
         normalize_fn=normalize_contacts,
     )
-    delivery_addresses, field_sources["delivery_addresses"] = _pick_merged_delivery_addresses(
+    delivery_addresses, field_sources["delivery_addresses"] = _pick_merged_json_list(
         app_fields.get("delivery_addresses"),
         xero_fields.get("delivery_addresses"),
+        normalize_fn=normalize_delivery_addresses,
     )
     brand_code, field_sources["brand_code"] = _pick_merged_brand_code(
         app_brand_id=app_fields.get("brand_id"),

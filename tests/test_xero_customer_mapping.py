@@ -235,7 +235,7 @@ def test_app_delivery_addresses_to_xero_addresses_can_clear_missing_types():
     ]
 
 
-def test_merge_delivery_addresses_combines_street_and_pobox_by_type():
+def test_merge_delivery_addresses_uses_one_side_not_both():
     xero_fields = customer_fields_from_xero_contact(
         {
             "Name": "Acme Pty Ltd",
@@ -287,10 +287,59 @@ def test_merge_delivery_addresses_combines_street_and_pobox_by_type():
     )
     items = out["merged"]["delivery_addresses"]["items"]
     assert len(items) == 2
-    by_type = {item["address_type"]: item for item in items}
-    assert by_type["STREET"]["address_line1"] == "1 App Street"
-    assert by_type["POBOX"]["address_line1"] == "PO Box 99"
-    assert out["field_sources"]["delivery_addresses"] == "mixed"
+    assert {item["address_type"] for item in items} == {"POBOX", "STREET"}
+    assert items[0]["address_line1"] == "PO Box 99"
+    assert out["field_sources"]["delivery_addresses"] == "xero"
+
+
+def test_merge_delivery_addresses_prefers_app_when_same_length():
+    xero_fields = customer_fields_from_xero_contact(
+        {
+            "Name": "Acme Pty Ltd",
+            "ContactStatus": "ACTIVE",
+            "Addresses": [
+                {
+                    "AddressType": "POBOX",
+                    "AddressLine1": "PO Box 99",
+                    "City": "Brisbane",
+                    "Region": "QLD",
+                    "PostalCode": "4000",
+                }
+            ],
+        }
+    )
+    out = merge_customer_fields_from_app_and_xero(
+        app_fields={
+            "name": "Acme Pty Ltd",
+            "abn": None,
+            "contact_first_name": None,
+            "contact_last_name": None,
+            "email_address": None,
+            "contact_phone": None,
+            "phones": {"items": []},
+            "status": "Active",
+            "contacts": {"items": []},
+            "delivery_addresses": {
+                "items": [
+                    {
+                        "address_type": "STREET",
+                        "address_line1": "1 App Street",
+                        "city": "Brisbane",
+                        "region": "QLD",
+                        "postal_code": "4000",
+                    }
+                ]
+            },
+            "brand_id": None,
+            "brand_code": None,
+        },
+        xero_fields=xero_fields,
+    )
+    items = out["merged"]["delivery_addresses"]["items"]
+    assert len(items) == 1
+    assert items[0]["address_type"] == "STREET"
+    assert items[0]["address_line1"] == "1 App Street"
+    assert out["field_sources"]["delivery_addresses"] == "app"
 
 
 def test_customer_to_xero_contact_create_body():
