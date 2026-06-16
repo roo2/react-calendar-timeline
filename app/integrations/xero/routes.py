@@ -27,6 +27,8 @@ from app.integrations.xero.service import (
     export_order_to_xero_invoice,
     import_xero_customer_links,
     manual_link_xero_customer,
+    merge_customer_with_xero,
+    list_linked_customers_for_merge,
     preview_deletable_unlinked_customers,
     preview_xero_customer_links,
     refresh_tokens,
@@ -367,6 +369,31 @@ async def xero_sync_customer_to_xero(_identity: SysAdminIdentity, body: XeroSync
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
         except XeroApiError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+class XeroMergeCustomerBody(BaseModel):
+    customer_id: str = Field(..., min_length=1)
+
+
+@router.post("/customers/merge", dependencies=[Depends(csrf_protect())])
+async def xero_merge_customer(_identity: SysAdminIdentity, body: XeroMergeCustomerBody):
+    del _identity
+    with SessionLocal() as db:
+        try:
+            return merge_customer_with_xero(db, customer_id=body.customer_id)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+
+@router.get("/customers/merge-all/preview")
+async def xero_merge_all_linked_customers_preview(_identity: SysAdminIdentity):
+    del _identity
+    with SessionLocal() as db:
+        return list_linked_customers_for_merge(db)
 
 
 @router.get("/customers/unlinked/deletable-preview")

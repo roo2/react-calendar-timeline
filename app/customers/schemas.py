@@ -51,6 +51,33 @@ class PaymentTermsInput(BaseModel):
         return int(v)
 
 
+class PhoneInput(BaseModel):
+    phone_type: str = Field("DEFAULT", description="Xero phone type: DEFAULT, MOBILE, DDI, or FAX")
+    phone_country_code: Optional[str] = Field(None, description="Xero PhoneCountryCode")
+    phone_area_code: Optional[str] = Field(None, description="Xero PhoneAreaCode")
+    phone_number: str = Field(default="", description="Xero PhoneNumber")
+
+    @field_validator("phone_type")
+    @classmethod
+    def validate_phone_type(cls, v: str) -> str:
+        s = str(v or "").strip().upper()
+        if s not in ["DEFAULT", "MOBILE", "DDI", "FAX"]:
+            raise ValueError("Phone type must be 'DEFAULT', 'MOBILE', 'DDI', or 'FAX'")
+        return s
+
+    @field_validator("phone_country_code", "phone_area_code", mode="before")
+    @classmethod
+    def strip_optional_phone_parts(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return str(v).strip()
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def strip_phone_number(cls, v: Any) -> str:
+        return str(v or "").strip()
+
+
 class ContactInput(BaseModel):
     first_name: str = Field(default="", description="Contact person first name (Xero ContactPerson)")
     last_name: str = Field(default="", description="Contact person last name (Xero ContactPerson)")
@@ -133,7 +160,8 @@ class CustomerCreateRequest(BaseModel):
     contact_first_name: str = Field(default="", description="Primary contact first name (Xero Contact FirstName)")
     contact_last_name: str = Field(default="", description="Primary contact last name (Xero Contact LastName)")
     email_address: Optional[_EmailType] = Field(None, description="Primary contact email (Xero EmailAddress)")
-    contact_phone: Optional[str] = Field(None, description="Main contact phone number (Xero Phones)")
+    contact_phone: Optional[str] = Field(None, description="Primary phone display (derived from phones)")
+    phones: List[PhoneInput] = Field(default_factory=list, description="Phone numbers (Xero Phones)")
     status: str = Field("Active", description="Status: Active, Inactive, or Archived")
     contacts: List[ContactInput] = Field(default_factory=list, description="List of contacts")
     delivery_addresses: List[AddressInput] = Field(default_factory=list, description="List of delivery addresses")
@@ -189,6 +217,11 @@ class CustomerCreateRequest(BaseModel):
     def validate_contacts(cls, v: List[ContactInput]) -> List[ContactInput]:
         return v
 
+    @field_validator("phones")
+    @classmethod
+    def validate_phones(cls, v: List[PhoneInput]) -> List[PhoneInput]:
+        return v
+
 
 class CustomerUpdateRequest(CustomerCreateRequest):
     """Same as CustomerCreateRequest but allows partial updates"""
@@ -209,6 +242,7 @@ class CustomerResponse(BaseModel):
     contact_last_name: Optional[str] = None
     email_address: Optional[str] = None
     contact_phone: Optional[str] = None
+    phones: List[dict] = Field(default_factory=list)
     status: str
     contacts: List[dict]
     delivery_addresses: List[dict]

@@ -8,6 +8,7 @@ import {
   FormControl,
   FormControlLabel,
   InputLabel,
+  LinearProgress,
   MenuItem,
   Paper,
   Select,
@@ -35,6 +36,11 @@ function AddressCell(props: { value?: string | null }) {
 
 type SyncAddressSummary = {
   address_type: string
+  display: string
+}
+
+type SyncPhoneSummary = {
+  phone_type: string
   display: string
 }
 
@@ -80,6 +86,7 @@ type CustomerMatchDetail = {
   contact_last_name?: string | null
   email_address?: string | null
   contact_phone?: string | null
+  phones?: SyncPhoneSummary[]
   status?: string | null
   notes?: string | null
   contact_persons?: string[]
@@ -105,6 +112,33 @@ function brandLabel(row: CustomerMatchDetail | null | undefined): string {
   const code = String(row.brand_code || '').trim()
   if (name && code) return `${name} (${code})`
   return name || code || '—'
+}
+
+function PhonesCell(props: { phones?: SyncPhoneSummary[] | null; fallback?: string | null }) {
+  const rows = props.phones || []
+  if (rows.length > 0) {
+    return (
+      <Stack spacing={1}>
+        {rows.map((row, index) => (
+          <Box key={`${row.phone_type}-${index}`}>
+            <Typography variant="caption" color="text.secondary" display="block">
+              {row.phone_type}
+            </Typography>
+            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+              {row.display}
+            </Typography>
+          </Box>
+        ))}
+      </Stack>
+    )
+  }
+  const text = String(props.fallback || '').trim()
+  if (!text) return <>—</>
+  return (
+    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+      {text}
+    </Typography>
+  )
 }
 
 function MatchDetailCard(props: { title: string; row: CustomerMatchDetail | null | undefined }) {
@@ -139,9 +173,12 @@ function MatchDetailCard(props: { title: string; row: CustomerMatchDetail | null
         <Typography variant="body2">
           <strong>Email:</strong> {row.email_address?.trim() || '—'}
         </Typography>
-        <Typography variant="body2">
-          <strong>Phone:</strong> {row.contact_phone?.trim() || '—'}
-        </Typography>
+        <Box>
+          <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+            Phone numbers
+          </Typography>
+          <PhonesCell phones={row.phones} fallback={row.contact_phone} />
+        </Box>
         <Typography variant="body2">
           <strong>ABN:</strong> {(row.abn || row.tax_number || '').trim() || '—'}
         </Typography>
@@ -372,6 +409,42 @@ type XeroSyncToXeroResult = {
   xero_last_modified?: string | null
 }
 
+type XeroMergeCustomerResult = {
+  ok: boolean
+  direction?: string
+  customer_id: string
+  contact_id: string
+  customer_name?: string
+  xero_name?: string
+  xero_account_code?: string | null
+  brand_code?: string | null
+  contacts_count: number
+  addresses_count: number
+  phones_count: number
+  merged_fields: string[]
+  field_sources: Record<string, string>
+  xero_last_modified?: string | null
+}
+
+type XeroMergeAllPreview = {
+  total: number
+  items: Array<{
+    customer_id: string
+    customer_name: string
+    contact_id: string
+  }>
+}
+
+type XeroMergeAllResult = {
+  merged_count: number
+  error_count: number
+  errors: Array<{
+    customer_id: string
+    customer_name: string
+    message: string
+  }>
+}
+
 export function XeroAdminPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -407,6 +480,13 @@ export function XeroAdminPage() {
   const [selectedSyncCustomerId, setSelectedSyncCustomerId] = useState<string | null>(null)
   const [syncFromXeroResult, setSyncFromXeroResult] = useState<XeroSyncFromXeroResult | null>(null)
   const [syncToXeroResult, setSyncToXeroResult] = useState<XeroSyncToXeroResult | null>(null)
+  const [syncMergeResult, setSyncMergeResult] = useState<XeroMergeCustomerResult | null>(null)
+  const [mergeAllProgress, setMergeAllProgress] = useState<{
+    total: number
+    completed: number
+    currentName: string | null
+  } | null>(null)
+  const [mergeAllResult, setMergeAllResult] = useState<XeroMergeAllResult | null>(null)
   const [syncMatchCompareLoading, setSyncMatchCompareLoading] = useState(false)
   const [syncMatchCompare, setSyncMatchCompare] = useState<{
     app: CustomerMatchDetail | null
@@ -704,7 +784,9 @@ export function XeroAdminPage() {
     }
     setBusy('xero-sync-to')
     setErr(null)
+    setSyncFromXeroResult(null)
     setSyncToXeroResult(null)
+    setSyncMergeResult(null)
     try {
       const out = await apiFetch<XeroSyncToXeroResult>('/api/xero/customers/sync-to-xero', {
         method: 'POST',
@@ -730,6 +812,7 @@ export function XeroAdminPage() {
     setErr(null)
     setSyncFromXeroResult(null)
     setSyncToXeroResult(null)
+    setSyncMergeResult(null)
     try {
       const out = await apiFetch<XeroSyncFromXeroResult>('/api/xero/customers/sync-from-xero', {
         method: 'POST',
@@ -800,6 +883,106 @@ export function XeroAdminPage() {
       else setErr(e instanceof Error ? e.message : 'Sync to Xero failed')
     } finally {
       setBusy(null)
+    }
+  }
+
+  async function doMergeCustomerWithXero() {
+    const customerId = selectedSyncCustomerId?.trim() || ''
+    if (!customerId) {
+      setErr('Select a linked app customer to merge with Xero.')
+      return
+    }
+    setBusy('xero-merge')
+    setErr(null)
+    setSyncFromXeroResult(null)
+    setSyncToXeroResult(null)
+    setSyncMergeResult(null)
+    try {
+      const out = await apiFetch<XeroMergeCustomerResult>('/api/xero/customers/merge', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId }),
+      })
+      setSyncMergeResult(out)
+      setSyncCustomerResults((prev) =>
+        prev.map((row) =>
+          row.id === customerId
+            ? {
+                ...row,
+                name: out.customer_name || row.name,
+              }
+            : row,
+        ),
+      )
+      await loadSyncMatchCompare(customerId)
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Merge with Xero failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function doMergeAllLinkedCustomers() {
+    setErr(null)
+    setMergeAllResult(null)
+    setMergeAllProgress(null)
+    setBusy('xero-merge-all-preview')
+    try {
+      const preview = await apiFetch<XeroMergeAllPreview>('/api/xero/customers/merge-all/preview')
+      if (preview.total <= 0) {
+        setErr('No linked customers to merge.')
+        return
+      }
+      const msg =
+        `Merge app + Xero for all ${preview.total} linked customer${preview.total === 1 ? '' : 's'}? ` +
+        'Each customer is updated in the app and pushed to Xero. This may take several minutes.'
+      if (!window.confirm(msg)) return
+
+      setBusy('xero-merge-all')
+      const errors: XeroMergeAllResult['errors'] = []
+      let mergedCount = 0
+
+      for (let index = 0; index < preview.items.length; index += 1) {
+        const row = preview.items[index]
+        setMergeAllProgress({
+          total: preview.total,
+          completed: index + 1,
+          currentName: row.customer_name,
+        })
+        try {
+          await apiFetch<XeroMergeCustomerResult>('/api/xero/customers/merge', {
+            method: 'POST',
+            body: JSON.stringify({ customer_id: row.customer_id }),
+          })
+          mergedCount += 1
+        } catch (e) {
+          errors.push({
+            customer_id: row.customer_id,
+            customer_name: row.customer_name,
+            message:
+              e instanceof ApiError
+                ? e.message
+                : e instanceof Error
+                  ? e.message
+                  : 'Merge failed',
+          })
+        }
+      }
+
+      setMergeAllResult({
+        merged_count: mergedCount,
+        error_count: errors.length,
+        errors,
+      })
+      if (selectedSyncCustomerId) {
+        await loadSyncMatchCompare(selectedSyncCustomerId)
+      }
+    } catch (e) {
+      if (e instanceof ApiError) setErr(e.message)
+      else setErr(e instanceof Error ? e.message : 'Bulk merge failed')
+    } finally {
+      setBusy(null)
+      setMergeAllProgress(null)
     }
   }
 
@@ -1716,12 +1899,77 @@ export function XeroAdminPage() {
                   Sync linked customer with Xero
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  For app customers already linked to Xero, pull from Xero into the app or push app changes to the Xero
-                  contact. Pull overwrites app fields (name, ABN, phone, email, status, brand, contacts, addresses).
-                  Brand is read-only in the app and only updated by pull from Xero. Push updates the Xero contact (name,
-                  ABN, email, phone, status, contact persons, addresses). App notes and contact branding theme are not
-                  synced.
+                  For app customers already linked to Xero, pull from Xero into the app, push app changes to the Xero
+                  contact, or merge field-by-field. Pull overwrites app fields. Push overwrites Xero fields. Merge
+                  prefers the app value when both sides have a field; otherwise it fills gaps from whichever side has
+                  data. Lists (phones, contact persons) use the longer side; when lengths match, the app
+                  list is used. Addresses combine STREET, POBOX, and DELIVERY from both sides (app wins
+                  when both have the same type). Merge saves to the app and replaces all Xero address
+                  slots. App notes are not synced.
                 </Typography>
+                <Paper variant="outlined" sx={{ p: 1.5, mb: 1.5, bgcolor: 'background.paper' }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Bulk merge all linked customers
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Run the same merge for every app customer already linked to Xero. Customers are
+                    processed one at a time; keep this page open until finished.
+                  </Typography>
+                  <Button
+                    variant="contained"
+                    color="secondary"
+                    onClick={() => void doMergeAllLinkedCustomers()}
+                    disabled={busy !== null}
+                    sx={{ mb: mergeAllProgress || mergeAllResult ? 1.5 : 0 }}
+                  >
+                    Merge all linked customers
+                  </Button>
+                  {mergeAllProgress ? (
+                    <Box sx={{ mb: mergeAllResult ? 1.5 : 0 }}>
+                      <LinearProgress
+                        variant="determinate"
+                        value={
+                          mergeAllProgress.total > 0
+                            ? (mergeAllProgress.completed / mergeAllProgress.total) * 100
+                            : 0
+                        }
+                        sx={{ mb: 0.75 }}
+                      />
+                      <Typography variant="body2" color="text.secondary">
+                        {mergeAllProgress.completed} / {mergeAllProgress.total} merged
+                        {mergeAllProgress.currentName ? (
+                          <>
+                            {' '}
+                            — <strong>{mergeAllProgress.currentName}</strong>
+                          </>
+                        ) : null}
+                      </Typography>
+                    </Box>
+                  ) : null}
+                  {mergeAllResult ? (
+                    <Alert severity={mergeAllResult.error_count > 0 ? 'warning' : 'success'}>
+                      Bulk merge finished: <strong>{mergeAllResult.merged_count}</strong> merged
+                      {mergeAllResult.error_count > 0 ? (
+                        <>
+                          , <strong>{mergeAllResult.error_count}</strong> failed
+                        </>
+                      ) : null}
+                      .
+                      {mergeAllResult.errors.length > 0 ? (
+                        <Box component="ul" sx={{ mt: 1, mb: 0, pl: 2.5 }}>
+                          {mergeAllResult.errors.slice(0, 10).map((row) => (
+                            <li key={row.customer_id}>
+                              <strong>{row.customer_name}</strong>: {row.message}
+                            </li>
+                          ))}
+                          {mergeAllResult.errors.length > 10 ? (
+                            <li>…and {mergeAllResult.errors.length - 10} more</li>
+                          ) : null}
+                        </Box>
+                      ) : null}
+                    </Alert>
+                  ) : null}
+                </Paper>
                 {syncFromXeroResult ? (
                   <Alert severity="success" sx={{ mb: 1.5 }}>
                     Pulled into app: <strong>{syncFromXeroResult.customer_name || syncFromXeroResult.customer_id}</strong>
@@ -1761,6 +2009,36 @@ export function XeroAdminPage() {
                     {syncToXeroResult.addresses_count === 1 ? '' : 'es'} sent.
                   </Alert>
                 ) : null}
+                {syncMergeResult ? (
+                  <Alert severity="success" sx={{ mb: 1.5 }}>
+                    Merged app + Xero:{' '}
+                    <strong>{syncMergeResult.customer_name || syncMergeResult.customer_id}</strong>
+                    {syncMergeResult.xero_name ? (
+                      <>
+                        {' '}
+                        ↔ Xero contact <strong>{syncMergeResult.xero_name}</strong>
+                      </>
+                    ) : null}
+                    {' — '}
+                    {syncMergeResult.contacts_count} contact person
+                    {syncMergeResult.contacts_count === 1 ? '' : 's'},{' '}
+                    {syncMergeResult.addresses_count} address
+                    {syncMergeResult.addresses_count === 1 ? '' : 'es'},{' '}
+                    {syncMergeResult.phones_count} phone
+                    {syncMergeResult.phones_count === 1 ? '' : 's'} saved to app and pushed to Xero.
+                    {Object.entries(syncMergeResult.field_sources || {}).some(([, source]) => source === 'xero') ? (
+                      <>
+                        {' '}
+                        Fields filled from Xero:{' '}
+                        {Object.entries(syncMergeResult.field_sources)
+                          .filter(([, source]) => source === 'xero')
+                          .map(([field]) => field)
+                          .join(', ')}
+                        .
+                      </>
+                    ) : null}
+                  </Alert>
+                ) : null}
                 <TextField
                   size="small"
                   label="Search linked app customers"
@@ -1770,6 +2048,7 @@ export function XeroAdminPage() {
                     setSelectedSyncCustomerId(null)
                     setSyncFromXeroResult(null)
                     setSyncToXeroResult(null)
+                    setSyncMergeResult(null)
                   }}
                   placeholder="Search by customer name…"
                   fullWidth
@@ -1808,6 +2087,7 @@ export function XeroAdminPage() {
                                 setSelectedSyncCustomerId(row.id)
                                 setSyncFromXeroResult(null)
                                 setSyncToXeroResult(null)
+                                setSyncMergeResult(null)
                               }}
                               sx={{ cursor: 'pointer', verticalAlign: 'top' }}
                             >
@@ -1881,7 +2161,7 @@ export function XeroAdminPage() {
                 {selectedSyncCustomer ? (
                   <Box sx={{ mb: 1.5 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                      Compare app customer and linked Xero contact before choosing pull or push.
+                      Compare app customer and linked Xero contact before choosing pull, push, or merge.
                     </Typography>
                     <MatchComparePanel
                       loading={syncMatchCompareLoading}
@@ -1915,6 +2195,14 @@ export function XeroAdminPage() {
                     Push app → Xero
                   </Button>
                   <Button
+                    variant="outlined"
+                    color="secondary"
+                    onClick={() => void doMergeCustomerWithXero()}
+                    disabled={busy !== null || !selectedSyncCustomerId}
+                  >
+                    Merge app + Xero
+                  </Button>
+                  <Button
                     variant="text"
                     onClick={() => {
                       setSelectedSyncCustomerId(null)
@@ -1922,6 +2210,7 @@ export function XeroAdminPage() {
                       setSyncCustomerResults([])
                       setSyncFromXeroResult(null)
                       setSyncToXeroResult(null)
+                      setSyncMergeResult(null)
                       setSyncMatchCompare(null)
                     }}
                     disabled={busy !== null}

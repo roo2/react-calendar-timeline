@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import XERO_SCOPES, settings
-from app.customers.contact_address import normalize_contacts, parse_xero_updated_date_utc
+from app.customers.contact_address import normalize_contacts, parse_xero_updated_date_utc, phone_summaries
 from app.customers.delivery_address import (
     customer_address_to_xero_addresses,
     customer_default_delivery_address_display,
@@ -41,6 +41,7 @@ from app.integrations.xero.customer_mapping import (
     customer_fields_from_xero_contact,
     customer_to_xero_contact_create_body,
     customer_to_xero_contact_update_body,
+    merge_customer_fields_from_app_and_xero,
     pick_xero_branding_theme_id_from_list,
     xero_contact_branding_theme_id,
     xero_contact_match_detail,
@@ -1258,6 +1259,10 @@ def _app_customer_match_detail(customer: Customer, *, orders_count: int = 0) -> 
         "contact_last_name": getattr(customer, "contact_last_name", None),
         "email_address": getattr(customer, "email_address", None),
         "contact_phone": getattr(customer, "contact_phone", None),
+        "phones": phone_summaries(
+            getattr(customer, "phones", None),
+            contact_phone=getattr(customer, "contact_phone", None),
+        ),
         "status": getattr(customer, "status", None),
         "notes": getattr(customer, "notes", None),
         "contact_persons": _app_contact_person_names(getattr(customer, "contacts", None)),
@@ -1394,6 +1399,7 @@ def create_xero_contact_for_customer(db: Session, *, customer_id: str) -> dict[s
             contact_last_name=getattr(cust, "contact_last_name", None),
             email_address=getattr(cust, "email_address", None),
             contact_phone=getattr(cust, "contact_phone", None),
+            phones=getattr(cust, "phones", None),
             status=getattr(cust, "status", None),
             contacts=getattr(cust, "contacts", None),
             delivery_addresses=getattr(cust, "delivery_addresses", None),
@@ -1479,6 +1485,7 @@ def sync_customer_to_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
             contact_last_name=getattr(cust, "contact_last_name", None),
             email_address=getattr(cust, "email_address", None),
             contact_phone=getattr(cust, "contact_phone", None),
+            phones=getattr(cust, "phones", None),
             status=getattr(cust, "status", None),
             contacts=getattr(cust, "contacts", None),
             delivery_addresses=getattr(cust, "delivery_addresses", None),
@@ -1509,12 +1516,14 @@ def sync_customer_to_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         "contact_last_name",
         "email_address",
         "contact_phone",
+        "phones",
         "status",
         "contacts",
         "delivery_addresses",
     ]
     contacts_items = contact_body.get("ContactPersons")
     address_items = contact_body.get("Addresses")
+    phone_items = contact_body.get("Phones")
     return {
         "ok": True,
         "direction": "to_xero",
@@ -1525,6 +1534,7 @@ def sync_customer_to_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         "xero_account_code": summary.get("account_code"),
         "contacts_count": len(contacts_items) if isinstance(contacts_items, list) else 0,
         "addresses_count": len(address_items) if isinstance(address_items, list) else 0,
+        "phones_count": len(phone_items) if isinstance(phone_items, list) else 0,
         "sent_fields": sent_fields,
         "request_url": url,
         "xero_last_modified": (
@@ -1576,6 +1586,7 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         if isinstance(mapped.get("delivery_addresses"), dict)
         else []
     )
+    phone_items = mapped["phones"].get("items") if isinstance(mapped.get("phones"), dict) else []
 
     cust.name = mapped["name"]
     cust.abn = mapped.get("abn")
@@ -1583,6 +1594,7 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
     cust.contact_last_name = mapped.get("contact_last_name")
     cust.email_address = mapped.get("email_address")
     cust.contact_phone = mapped.get("contact_phone")
+    cust.phones = mapped["phones"]
     cust.status = mapped.get("status") or cust.status
     cust.contacts = mapped["contacts"]
     cust.delivery_addresses = mapped["delivery_addresses"]
@@ -1607,6 +1619,7 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         "contact_last_name",
         "email_address",
         "contact_phone",
+        "phones",
         "status",
         "contacts",
         "delivery_addresses",
@@ -1625,8 +1638,223 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         "brand_code": brand_code,
         "contacts_count": len(contacts_items) if isinstance(contacts_items, list) else 0,
         "addresses_count": len(address_items) if isinstance(address_items, list) else 0,
+        "phones_count": len(phone_items) if isinstance(phone_items, list) else 0,
         "updated_fields": updated_fields,
     }
+
+
+def _app_customer_fields_for_merge(customer: Customer) -> dict[str, Any]:
+    brand = getattr(customer, "brand", None)
+    return {
+        "name": customer.name,
+        "abn": getattr(customer, "abn", None),
+        "contact_first_name": getattr(customer, "contact_first_name", None),
+        "contact_last_name": getattr(customer, "contact_last_name", None),
+        "email_address": getattr(customer, "email_address", None),
+        "contact_phone": getattr(customer, "contact_phone", None),
+        "phones": getattr(customer, "phones", None),
+        "status": getattr(customer, "status", None),
+        "contacts": getattr(customer, "contacts", None),
+        "delivery_addresses": getattr(customer, "delivery_addresses", None),
+        "brand_id": getattr(customer, "brand_id", None),
+        "brand_code": getattr(brand, "code", None) if brand else None,
+    }
+
+
+def _apply_merged_customer_fields_to_model(
+    db: Session,
+    cust: Customer,
+    merged: dict[str, Any],
+    *,
+    contact_raw: dict[str, Any],
+) -> str | None:
+    """Write merged fields onto the app customer; return brand_id if updated."""
+    ensure_default_customer_brands(db)
+
+    cust.name = merged["name"]
+    cust.abn = merged.get("abn")
+    cust.contact_first_name = merged.get("contact_first_name")
+    cust.contact_last_name = merged.get("contact_last_name")
+    cust.email_address = merged.get("email_address")
+    cust.contact_phone = merged.get("contact_phone")
+    cust.phones = merged["phones"]
+    cust.status = merged.get("status") or cust.status
+    cust.contacts = merged["contacts"]
+    cust.delivery_addresses = merged["delivery_addresses"]
+    cust.xero_last_modified = merged.get("xero_last_modified")
+    cust.xero_synced_at = datetime.now(UTC)
+
+    brand_id: str | None = getattr(cust, "brand_id", None)
+    if not brand_id:
+        brand_code = merged.get("brand_code")
+        xero_theme_id = xero_contact_branding_theme_id(contact_raw)
+        brand_id = brand_id_for_xero_branding_theme_id(db, xero_theme_id) if xero_theme_id else None
+        if not brand_id and brand_code:
+            brand_id = brand_id_for_code(db, brand_code)
+        if brand_id:
+            cust.brand_id = brand_id
+    return brand_id
+
+
+def merge_customer_with_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
+    """Merge linked app and Xero customer fields, save to the app, and push to Xero."""
+    cid = str(customer_id or "").strip()
+    if not cid:
+        raise XeroConfigError("customer_id is required.")
+    if cid == str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID):
+        raise XeroConfigError("Cannot merge the internal MYOB draft customer.")
+
+    cust = db.scalar(
+        select(Customer)
+        .options(joinedload(Customer.brand))
+        .where(Customer.id == cid)
+    )
+    if cust is None:
+        raise XeroConfigError("Customer not found.")
+
+    xid = str(getattr(cust, "xero_contact_id", "") or "").strip()
+    if not xid:
+        raise XeroConfigError(
+            "Customer is not linked to a Xero contact. Link the customer first, then merge."
+        )
+    if not _is_uuid(xid):
+        raise XeroConfigError("Customer xero_contact_id is not a valid Xero GUID.")
+
+    _, _, payload = _xero_api_get_json(db, endpoint=f"/Contacts/{xid}")
+    contacts = payload.get("Contacts") if isinstance(payload, dict) else None
+    contact_raw = contacts[0] if isinstance(contacts, list) and contacts else None
+    if not isinstance(contact_raw, dict):
+        raise XeroConfigError("Xero contact not found.")
+
+    try:
+        xero_fields = customer_fields_from_xero_contact(contact_raw)
+    except ValueError as e:
+        raise XeroConfigError(str(e)) from e
+
+    contact_id_from_xero = _xero_contact_id(contact_raw)
+    if contact_id_from_xero and contact_id_from_xero != xid:
+        raise XeroConfigError("Xero contact ID mismatch.")
+
+    try:
+        merge_out = merge_customer_fields_from_app_and_xero(
+            app_fields=_app_customer_fields_for_merge(cust),
+            xero_fields=xero_fields,
+        )
+    except ValueError as e:
+        raise XeroConfigError(str(e)) from e
+
+    merged = merge_out["merged"]
+    field_sources = merge_out["field_sources"]
+
+    brand_id = _apply_merged_customer_fields_to_model(
+        db,
+        cust,
+        merged,
+        contact_raw=contact_raw,
+    )
+
+    try:
+        contact_body = customer_to_xero_contact_update_body(
+            contact_id=xid,
+            name=merged["name"],
+            abn=merged.get("abn"),
+            contact_first_name=merged.get("contact_first_name"),
+            contact_last_name=merged.get("contact_last_name"),
+            email_address=merged.get("email_address"),
+            contact_phone=merged.get("contact_phone"),
+            phones=merged.get("phones"),
+            status=merged.get("status"),
+            contacts=merged.get("contacts"),
+            delivery_addresses=merged.get("delivery_addresses"),
+            replace_all_xero_address_types=True,
+        )
+    except ValueError as e:
+        raise XeroConfigError(str(e)) from e
+
+    url, _status_code, post_payload = _xero_api_post_json(
+        db,
+        endpoint="/Contacts",
+        body={"Contacts": [contact_body]},
+    )
+    contact_raw_after = _extract_xero_contact_from_post_response(post_payload)
+    contact_id_after = _xero_contact_id(contact_raw_after)
+    if contact_id_after and contact_id_after != xid:
+        raise XeroConfigError("Xero contact ID mismatch.")
+
+    cust.xero_last_modified = parse_xero_updated_date_utc(contact_raw_after.get("UpdatedDateUTC"))
+    cust.xero_synced_at = datetime.now(UTC)
+    db.add(cust)
+    db.commit()
+
+    summary = _xero_contact_summary(contact_raw_after)
+    contacts_items = merged["contacts"].get("items") if isinstance(merged.get("contacts"), dict) else []
+    address_items = (
+        merged["delivery_addresses"].get("items")
+        if isinstance(merged.get("delivery_addresses"), dict)
+        else []
+    )
+    phone_items = merged["phones"].get("items") if isinstance(merged.get("phones"), dict) else []
+    merged_fields = [
+        "name",
+        "abn",
+        "contact_first_name",
+        "contact_last_name",
+        "email_address",
+        "contact_phone",
+        "phones",
+        "status",
+        "contacts",
+        "delivery_addresses",
+    ]
+    if brand_id:
+        merged_fields.append("brand_id")
+
+    return {
+        "ok": True,
+        "direction": "merge",
+        "customer_id": cid,
+        "contact_id": xid,
+        "customer_name": cust.name,
+        "xero_name": summary.get("name") or merged["name"],
+        "xero_account_code": summary.get("account_code"),
+        "brand_code": merged.get("brand_code"),
+        "contacts_count": len(contacts_items) if isinstance(contacts_items, list) else 0,
+        "addresses_count": len(address_items) if isinstance(address_items, list) else 0,
+        "phones_count": len(phone_items) if isinstance(phone_items, list) else 0,
+        "merged_fields": merged_fields,
+        "field_sources": field_sources,
+        "request_url": url,
+        "xero_last_modified": (
+            cust.xero_last_modified.isoformat() if cust.xero_last_modified is not None else None
+        ),
+    }
+
+
+def list_linked_customers_for_merge(db: Session) -> dict[str, Any]:
+    """All app customers linked to Xero, for bulk merge preview and batch runs."""
+    rows = list(
+        db.scalars(
+            select(Customer)
+            .where(
+                Customer.id != str(MYOB_DRAFT_INTERNAL_CUSTOMER_ID),
+                Customer.xero_contact_id.isnot(None),
+            )
+            .order_by(Customer.name.asc())
+        ).all()
+    )
+    items: list[dict[str, str]] = []
+    for cust in rows:
+        contact_id = str(getattr(cust, "xero_contact_id", "") or "").strip()
+        if not contact_id:
+            continue
+        items.append(
+            {
+                "customer_id": str(cust.id),
+                "customer_name": cust.name,
+                "contact_id": contact_id,
+            }
+        )
+    return {"total": len(items), "items": items}
 
 
 def preview_deletable_unlinked_customers(db: Session) -> dict[str, Any]:

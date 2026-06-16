@@ -259,12 +259,39 @@ export function CustomerShowPage() {
               <p style={{ margin: '4px 0 0' }}>{customer.abn}</p>
             </div>
           )}
-          {customer.contact_phone && (
-            <div>
-              <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Contact Phone</strong>
-              <p style={{ margin: '4px 0 0' }}>{customer.contact_phone}</p>
-            </div>
-          )}
+          {(() => {
+            const phoneRows = Array.isArray((customer as { phones?: any[] }).phones)
+              ? (customer as { phones?: any[] }).phones!.filter(
+                  (p) => String(p?.display || p?.phone_number || '').trim(),
+                )
+              : []
+            if (phoneRows.length > 0) {
+              return (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Phone numbers</strong>
+                  <div style={{ marginTop: 4, display: 'grid', gap: 8 }}>
+                    {phoneRows.map((p, idx) => (
+                      <div key={`${p.phone_type || 'phone'}-${idx}`}>
+                        <span style={{ color: '#6b7280', fontSize: '0.8125rem' }}>
+                          {String(p.phone_type || 'DEFAULT').replace(/_/g, ' ')}:{' '}
+                        </span>
+                        {String(p.display || [p.phone_country_code, p.phone_area_code, p.phone_number].filter(Boolean).join(' ')).trim()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            }
+            if (customer.contact_phone) {
+              return (
+                <div>
+                  <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Contact Phone</strong>
+                  <p style={{ margin: '4px 0 0' }}>{customer.contact_phone}</p>
+                </div>
+              )
+            }
+            return null
+          })()}
           {customer.xero_contact_id && (
             <div>
               <strong style={{ color: '#6b7280', fontSize: '0.875rem' }}>Xero contact</strong>

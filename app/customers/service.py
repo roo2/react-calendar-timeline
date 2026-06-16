@@ -11,7 +11,15 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.session import SessionLocal
 from app.db.models.domain import Brand, Customer, CustomerPricingTier, Order, SavedQuote
 from app.db.myob_import_placeholders import MYOB_DRAFT_INTERNAL_CUSTOMER_ID
+from app.customers.contact_address import normalize_phones, primary_phone_display
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
+
+
+def _phones_to_store(payload: CustomerCreateRequest | CustomerUpdateRequest) -> tuple[dict, str | None]:
+    phones_list = [p.model_dump(exclude_none=True) for p in payload.phones]
+    phones_json = normalize_phones({"items": phones_list}, contact_phone=payload.contact_phone)
+    primary = primary_phone_display(phones_json, contact_phone=payload.contact_phone)
+    return phones_json, primary
 
 
 def _normalize_pricing_tier_id(db: Session, raw: str | None) -> str | None:
@@ -191,6 +199,7 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
         
         tier_id = _normalize_pricing_tier_id(db, getattr(payload, "pricing_tier_id", None))
+        phones_json, primary_phone = _phones_to_store(payload)
 
         customer = Customer(
             name=payload.name,
@@ -201,7 +210,8 @@ def create_customer(payload: CustomerCreateRequest) -> Customer:
             contact_first_name=payload.contact_first_name or None,
             contact_last_name=payload.contact_last_name or None,
             email_address=payload.email_address,
-            contact_phone=payload.contact_phone,
+            contact_phone=primary_phone,
+            phones=phones_json,
             status=payload.status,
             contacts={"items": contacts_list},  # Store as dict with 'items' key for consistency
             delivery_addresses={"items": addresses_list},  # Store as dict with 'items' key
@@ -242,6 +252,7 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         delivery_prefs = payload.delivery_preferences.model_dump() if payload.delivery_preferences else {}
 
         customer.pricing_tier_id = _normalize_pricing_tier_id(db, getattr(payload, "pricing_tier_id", None))
+        phones_json, primary_phone = _phones_to_store(payload)
 
         # Update fields
         customer.name = payload.name
@@ -252,7 +263,8 @@ def update_customer(customer_id: str, payload: CustomerUpdateRequest) -> Custome
         customer.contact_first_name = payload.contact_first_name or None
         customer.contact_last_name = payload.contact_last_name or None
         customer.email_address = payload.email_address
-        customer.contact_phone = payload.contact_phone
+        customer.contact_phone = primary_phone
+        customer.phones = phones_json
         customer.status = payload.status
         customer.contacts = {"items": contacts_list}
         customer.delivery_addresses = {"items": addresses_list}

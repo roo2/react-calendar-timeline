@@ -52,6 +52,13 @@ export type CustomerDetail = {
   contact_first_name?: string | null
   contact_last_name?: string | null
   email_address?: string | null
+  phones?: Array<{
+    phone_type?: string
+    phone_country_code?: string | null
+    phone_area_code?: string | null
+    phone_number?: string
+    display?: string
+  }>
   payment_terms?: Record<string, unknown> | null
   payment_terms_summary?: string | null
   notes?: string | null
@@ -76,7 +83,8 @@ export type CustomerUpsertPayload = {
   brand_id: string | null
   priority_rank: number | null
   abn: string | null
-  contact_phone: string | null
+  contact_phone?: string | null
+  phones: any[]
   status: string
   contacts: any[]
   delivery_addresses: any[]

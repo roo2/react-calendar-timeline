@@ -3,7 +3,7 @@ Xero-compatible customer contact person and address JSON shapes.
 
 Primary contact first/last name and email live on the customer row (Xero Contact fields).
 ``contacts`` JSON holds additional contact people only (Xero ContactPersons).
-Addresses map to Xero Addresses; ``contact_phone`` maps to Xero Phones.
+Addresses map to Xero Addresses; ``phones`` JSON maps to Xero Phones (``contact_phone`` is the primary display phone).
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 XERO_ADDRESS_TYPES = frozenset({"STREET", "POBOX", "DELIVERY"})
+XERO_PHONE_TYPES = frozenset({"DEFAULT", "MOBILE", "DDI", "FAX"})
 
 _XERO_DATE_RE = re.compile(r"^/Date\((?P<ms>-?\d+)(?P<offset>[+-]\d{4})?\)/$")
 
@@ -319,3 +320,159 @@ def address_to_xero_api_addresses(addr: dict[str, Any]) -> list[dict[str, str]]:
     street = address_item_to_xero_api_row(row, address_type="STREET")
     pobox = address_item_to_xero_api_row(row, address_type="POBOX")
     return [street, pobox]
+
+
+def _phones_items_raw(raw: Any) -> list[Any]:
+    if isinstance(raw, dict):
+        items = raw.get("items")
+        return items if isinstance(items, list) else []
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def normalize_phone_item(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize app or Xero phone rows to the stored JSON shape."""
+    phone_type = str(raw.get("phone_type") or raw.get("PhoneType") or "DEFAULT").strip().upper()
+    if phone_type not in XERO_PHONE_TYPES:
+        phone_type = "DEFAULT"
+    country = str(raw.get("phone_country_code") or raw.get("PhoneCountryCode") or "").strip()
+    area = str(raw.get("phone_area_code") or raw.get("PhoneAreaCode") or "").strip()
+    number = str(raw.get("phone_number") or raw.get("PhoneNumber") or "").strip()
+    if not number and not area and not country:
+        legacy = str(raw.get("phone") or raw.get("number") or "").strip()
+        if legacy:
+            tokens = legacy.split()
+            if len(tokens) >= 2 and tokens[0].isdigit() and len(tokens[0]) <= 4:
+                area = tokens[0]
+                number = " ".join(tokens[1:])
+            else:
+                number = legacy
+    out: dict[str, Any] = {"phone_type": phone_type}
+    if country:
+        out["phone_country_code"] = country
+    if area:
+        out["phone_area_code"] = area
+    if number:
+        out["phone_number"] = number
+    return out
+
+
+def phone_has_content(item: dict[str, Any]) -> bool:
+    row = normalize_phone_item(item)
+    return any(
+        str(row.get(k) or "").strip()
+        for k in ("phone_country_code", "phone_area_code", "phone_number")
+    )
+
+
+def format_phone_display(item: dict[str, Any] | None) -> str | None:
+    if not item:
+        return None
+    row = normalize_phone_item(item)
+    if not phone_has_content(row):
+        return None
+    parts = [
+        str(row.get("phone_country_code") or "").strip(),
+        str(row.get("phone_area_code") or "").strip(),
+        str(row.get("phone_number") or "").strip(),
+    ]
+    text = " ".join(p for p in parts if p)
+    return text or None
+
+
+def primary_phone_display(raw: Any, *, contact_phone: str | None = None) -> str | None:
+    """Pick the best display phone (DEFAULT, then MOBILE, DDI, FAX)."""
+    items = [
+        normalize_phone_item(item)
+        for item in _phones_items_raw(raw)
+        if isinstance(item, dict) and phone_has_content(item)
+    ]
+    by_type: dict[str, str] = {}
+    for row in items:
+        phone_type = str(row.get("phone_type") or "DEFAULT").strip().upper()
+        display = format_phone_display(row)
+        if phone_type and display:
+            by_type[phone_type] = display
+    for phone_type in ("DEFAULT", "MOBILE", "DDI", "FAX"):
+        value = by_type.get(phone_type)
+        if value:
+            return value
+    for row in items:
+        display = format_phone_display(row)
+        if display:
+            return display
+    legacy = str(contact_phone or "").strip()
+    return legacy or None
+
+
+def normalize_phones(raw: Any, *, contact_phone: str | None = None) -> dict[str, Any]:
+    """Normalize phones JSON; backfill from legacy ``contact_phone`` when empty."""
+    items = [
+        normalize_phone_item(item)
+        for item in _phones_items_raw(raw)
+        if isinstance(item, dict) and phone_has_content(item)
+    ]
+    if not items:
+        legacy = str(contact_phone or "").strip()
+        if legacy:
+            items = [normalize_phone_item({"phone_type": "DEFAULT", "phone": legacy})]
+    return {"items": items}
+
+
+def phones_from_xero_list(raw: Any) -> dict[str, Any]:
+    """Map Xero Phones[] to app phones JSON."""
+    if not isinstance(raw, list):
+        return {"items": []}
+    items: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        normalized = normalize_phone_item(row)
+        if phone_has_content(normalized):
+            items.append(normalized)
+    return {"items": items}
+
+
+def phone_item_to_xero_api_row(item: dict[str, Any]) -> dict[str, str]:
+    row = normalize_phone_item(item)
+    out: dict[str, str] = {
+        "PhoneType": str(row.get("phone_type") or "DEFAULT").strip().upper() or "DEFAULT",
+    }
+    country = str(row.get("phone_country_code") or "").strip()
+    area = str(row.get("phone_area_code") or "").strip()
+    number = str(row.get("phone_number") or "").strip()
+    if country:
+        out["PhoneCountryCode"] = country[:20]
+    if area:
+        out["PhoneAreaCode"] = area[:10]
+    if number:
+        out["PhoneNumber"] = number[:50]
+    return out
+
+
+def app_phones_to_xero_phones(raw: Any, *, contact_phone: str | None = None) -> list[dict[str, str]]:
+    """Map app phones JSON to Xero Phones[]."""
+    items = normalize_phones(raw, contact_phone=contact_phone).get("items", [])
+    rows: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row = phone_item_to_xero_api_row(item)
+        if any(row.get(k) for k in ("PhoneCountryCode", "PhoneAreaCode", "PhoneNumber")):
+            rows.append(row)
+    return rows
+
+
+def phone_summaries(raw: Any, *, contact_phone: str | None = None) -> list[dict[str, str]]:
+    """Summaries for API/admin display: phone_type + formatted display."""
+    summaries: list[dict[str, str]] = []
+    for item in normalize_phones(raw, contact_phone=contact_phone).get("items", []):
+        if not isinstance(item, dict):
+            continue
+        display = format_phone_display(item)
+        if not display:
+            continue
+        phone_type = str(item.get("phone_type") or "DEFAULT").strip().upper()
+        summaries.append({"phone_type": phone_type, "display": display})
+    return summaries

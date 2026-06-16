@@ -6,7 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.integrations.xero.service import XeroConfigError, sync_customer_from_xero, sync_customer_to_xero
+from app.integrations.xero.service import (
+    XeroConfigError,
+    list_linked_customers_for_merge,
+    merge_customer_with_xero,
+    sync_customer_from_xero,
+    sync_customer_to_xero,
+)
 
 
 def test_sync_customer_from_xero_requires_link():
@@ -153,3 +159,96 @@ def test_sync_customer_to_xero_posts_contact_only(mock_post):
     assert cust.xero_synced_at is not None
     db.add.assert_called_once_with(cust)
     db.commit.assert_called_once()
+
+
+@patch("app.integrations.xero.service._xero_api_post_json")
+@patch("app.integrations.xero.service._xero_api_get_json")
+def test_merge_customer_with_xero_updates_both_sides(mock_get, mock_post):
+    db = MagicMock()
+    cust = MagicMock()
+    cust.id = "cust-1"
+    cust.xero_contact_id = "550e8400-e29b-41d4-a716-446655440000"
+    cust.name = "App Name"
+    cust.abn = "12345678901"
+    cust.contact_first_name = None
+    cust.contact_last_name = None
+    cust.email_address = "app@example.com"
+    cust.contact_phone = None
+    cust.phones = {"items": []}
+    cust.status = "Active"
+    cust.contacts = {"items": []}
+    cust.delivery_addresses = {"items": []}
+    cust.brand_id = None
+    cust.brand = None
+    db.scalar.return_value = cust
+
+    mock_get.return_value = (
+        200,
+        {},
+        {
+            "Contacts": [
+                {
+                    "ContactID": "550e8400-e29b-41d4-a716-446655440000",
+                    "Name": "Xero Name",
+                    "TaxNumber": "99887766554",
+                    "ContactStatus": "ACTIVE",
+                    "EmailAddress": "xero@example.com",
+                    "Phones": [{"PhoneType": "DEFAULT", "PhoneNumber": "0712345678"}],
+                    "UpdatedDateUTC": "/Date(1779930270423+0000)/",
+                }
+            ]
+        },
+    )
+    mock_post.return_value = (
+        "https://api.xero.com/api.xro/2.0/Contacts",
+        200,
+        {
+            "Contacts": [
+                {
+                    "ContactID": "550e8400-e29b-41d4-a716-446655440000",
+                    "Name": "App Name",
+                    "UpdatedDateUTC": "/Date(1779930270423+0000)/",
+                }
+            ]
+        },
+    )
+
+    out = merge_customer_with_xero(db, customer_id="cust-1")
+    assert out["ok"] is True
+    assert out["direction"] == "merge"
+    assert out["customer_name"] == "App Name"
+    assert out["field_sources"]["name"] == "app"
+    assert out["field_sources"]["abn"] == "app"
+    assert out["field_sources"]["email_address"] == "app"
+    assert out["field_sources"]["phones"] == "xero"
+    assert cust.name == "App Name"
+    assert cust.abn == "12345678901"
+    assert cust.email_address == "app@example.com"
+    assert cust.contact_phone == "0712345678"
+    mock_get.assert_called_once()
+    mock_post.assert_called_once()
+    posted = mock_post.call_args.kwargs["body"]["Contacts"][0]
+    assert posted["Name"] == "App Name"
+    assert posted["TaxNumber"] == "12345678901"
+    assert posted["EmailAddress"] == "app@example.com"
+    assert posted["Phones"][0]["PhoneNumber"] == "0712345678"
+    db.commit.assert_called_once()
+
+
+def test_list_linked_customers_for_merge_excludes_unlinked_and_draft():
+    db = MagicMock()
+    linked = MagicMock()
+    linked.id = "cust-linked"
+    linked.name = "Linked Co"
+    linked.xero_contact_id = "550e8400-e29b-41d4-a716-446655440000"
+    db.scalars.return_value.all.return_value = [linked]
+
+    out = list_linked_customers_for_merge(db)
+    assert out["total"] == 1
+    assert out["items"] == [
+        {
+            "customer_id": "cust-linked",
+            "customer_name": "Linked Co",
+            "contact_id": "550e8400-e29b-41d4-a716-446655440000",
+        }
+    ]

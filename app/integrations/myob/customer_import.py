@@ -19,6 +19,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.customers.contact_address import normalize_phones, primary_phone_display
 from app.db.models.domain import Brand, Customer
 from app.integrations.myob.customer_mapping import (
     abn_from_myob,
@@ -136,6 +137,8 @@ def upsert_customer_from_myob(db: Session, raw: dict[str, Any]) -> str:
     status = status_from_myob(raw)
     phone = primary_phone_from_myob(raw)
     email = primary_email_from_myob(raw)
+    phones_json = normalize_phones(None, contact_phone=phone)
+    primary_phone = primary_phone_display(phones_json, contact_phone=phone)
     contact_first, contact_last = primary_contact_name_parts_from_myob(raw, company_display_name=name)
     contacts = build_contacts_from_myob(raw, myob_uid=uid, company_display_name=name)
     delivery_addresses = build_delivery_addresses_from_myob(raw)
@@ -155,7 +158,8 @@ def upsert_customer_from_myob(db: Session, raw: dict[str, Any]) -> str:
             contact_first_name=contact_first,
             contact_last_name=contact_last,
             email_address=email,
-            contact_phone=phone,
+            contact_phone=primary_phone,
+            phones=phones_json,
             status=status,
             contacts=contacts,
             delivery_addresses=delivery_addresses,
@@ -177,7 +181,8 @@ def upsert_customer_from_myob(db: Session, raw: dict[str, Any]) -> str:
     existing.contact_first_name = contact_first
     existing.contact_last_name = contact_last
     existing.email_address = email
-    existing.contact_phone = phone
+    existing.contact_phone = primary_phone
+    existing.phones = phones_json
     existing.status = status
     existing.contacts = contacts
     existing.delivery_addresses = delivery_addresses

@@ -65,6 +65,20 @@ type Contact = {
   include_in_emails: boolean
 }
 
+type Phone = {
+  phone_type: string
+  phone_country_code: string
+  phone_area_code: string
+  phone_number: string
+}
+
+const PHONE_TYPES = [
+  { value: 'DEFAULT', label: 'Default' },
+  { value: 'MOBILE', label: 'Mobile' },
+  { value: 'DDI', label: 'Direct (DDI)' },
+  { value: 'FAX', label: 'Fax' },
+] as const
+
 type Address = {
   address_type: string
   address_line1: string
@@ -94,6 +108,7 @@ type CustomerDetail = {
   status: string
   abn?: string | null
   contact_phone?: string | null
+  phones?: any[]
   contact_first_name?: string | null
   contact_last_name?: string | null
   email_address?: string | null
@@ -117,6 +132,24 @@ type PricingTierOption = {
   id: string
   name: string
   discount_percent: number
+}
+
+function mapPhone(x: any): Phone {
+  return {
+    phone_type: String(x?.phone_type ?? 'DEFAULT').toUpperCase(),
+    phone_country_code: String(x?.phone_country_code ?? ''),
+    phone_area_code: String(x?.phone_area_code ?? ''),
+    phone_number: String(x?.phone_number ?? ''),
+  }
+}
+
+function emptyPhone(phoneType = 'DEFAULT'): Phone {
+  return {
+    phone_type: phoneType,
+    phone_country_code: '',
+    phone_area_code: '',
+    phone_number: '',
+  }
 }
 
 function mapContact(x: any): Contact {
@@ -157,7 +190,7 @@ export function CustomerUpsertPage() {
   const [abn, setAbn] = useState('')
   const [brandId, setBrandId] = useState('')
   const [priorityRank, setPriorityRank] = useState('')
-  const [contactPhone, setContactPhone] = useState('')
+  const [contactPhones, setContactPhones] = useState<Phone[]>([])
   const [contactFirstName, setContactFirstName] = useState('')
   const [contactLastName, setContactLastName] = useState('')
   const [emailAddress, setEmailAddress] = useState('')
@@ -269,7 +302,16 @@ export function CustomerUpsertPage() {
     setBrandId(c.brand_id ?? '')
     setPriorityRank(c.priority_rank != null ? String(c.priority_rank) : '')
     setAbn(c.abn || '')
-    setContactPhone(c.contact_phone || '')
+    const loadedPhones = Array.isArray((c as CustomerDetail).phones)
+      ? (c as CustomerDetail).phones!.map(mapPhone).filter((p) => p.phone_number.trim() || p.phone_area_code.trim())
+      : []
+    if (loadedPhones.length > 0) {
+      setContactPhones(loadedPhones)
+    } else if (c.contact_phone?.trim()) {
+      setContactPhones([mapPhone({ phone_type: 'DEFAULT', phone_number: c.contact_phone.trim() })])
+    } else {
+      setContactPhones([])
+    }
     setContactFirstName(String(c.contact_first_name ?? ''))
     setContactLastName(String(c.contact_last_name ?? ''))
     setEmailAddress(c.email_address || '')
@@ -308,7 +350,14 @@ export function CustomerUpsertPage() {
         contact_first_name: contactFirstName.trim(),
         contact_last_name: contactLastName.trim(),
         email_address: emailAddress.trim() || null,
-        contact_phone: contactPhone || null,
+        phones: contactPhones
+          .filter((p) => p.phone_number.trim() || p.phone_area_code.trim() || p.phone_country_code.trim())
+          .map((p) => ({
+            phone_type: p.phone_type,
+            phone_country_code: p.phone_country_code.trim() || null,
+            phone_area_code: p.phone_area_code.trim() || null,
+            phone_number: p.phone_number.trim(),
+          })),
         status,
         contacts: contacts.map((c) => ({
           first_name: c.first_name,
@@ -462,7 +511,6 @@ export function CustomerUpsertPage() {
               error={!!fieldErrors['priority_rank']}
             />
             <TextField label="ABN" value={abn} onChange={(e) => setAbn(e.target.value)} />
-            <TextField label="Contact Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
             <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
               <MenuItem value="Active">Active</MenuItem>
               <MenuItem value="Inactive">Inactive</MenuItem>
@@ -510,6 +558,102 @@ export function CustomerUpsertPage() {
               helperText={fieldErrors['email_address'] || ''}
             />
           </Box>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <Box>
+              <Typography variant="h6">Phone numbers</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Xero phone types: default, mobile, direct (DDI), and fax.
+              </Typography>
+            </Box>
+            <Button
+              variant="contained"
+              type="button"
+              onClick={() => setContactPhones((prev) => [...prev, emptyPhone()])}
+            >
+              Add phone
+            </Button>
+          </Box>
+
+          <Stack spacing={2} sx={{ mt: 2 }}>
+            {contactPhones.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No phone numbers.
+              </Typography>
+            ) : null}
+            {contactPhones.map((p, idx) => (
+              <Paper key={idx} variant="outlined" sx={{ p: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                    Phone {idx + 1}
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    type="button"
+                    onClick={() => setContactPhones((prev) => prev.filter((_, i) => i !== idx))}
+                  >
+                    Remove
+                  </Button>
+                </Box>
+                <Box
+                  sx={{
+                    mt: 2,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                    gap: 2,
+                  }}
+                >
+                  <TextField
+                    select
+                    label="Type"
+                    value={p.phone_type}
+                    onChange={(e) =>
+                      setContactPhones((prev) =>
+                        prev.map((row, i) => (i === idx ? { ...row, phone_type: e.target.value } : row)),
+                      )
+                    }
+                  >
+                    {PHONE_TYPES.map((t) => (
+                      <MenuItem key={t.value} value={t.value}>
+                        {t.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
+                    label="Country code"
+                    value={p.phone_country_code}
+                    onChange={(e) =>
+                      setContactPhones((prev) =>
+                        prev.map((row, i) => (i === idx ? { ...row, phone_country_code: e.target.value } : row)),
+                      )
+                    }
+                  />
+                  <TextField
+                    label="Area code"
+                    value={p.phone_area_code}
+                    onChange={(e) =>
+                      setContactPhones((prev) =>
+                        prev.map((row, i) => (i === idx ? { ...row, phone_area_code: e.target.value } : row)),
+                      )
+                    }
+                  />
+                  <TextField
+                    label="Number"
+                    value={p.phone_number}
+                    onChange={(e) =>
+                      setContactPhones((prev) =>
+                        prev.map((row, i) => (i === idx ? { ...row, phone_number: e.target.value } : row)),
+                      )
+                    }
+                  />
+                </Box>
+              </Paper>
+            ))}
+          </Stack>
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>

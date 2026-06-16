@@ -134,6 +134,11 @@ async def get_customer(customer_id: str):
             "contact_last_name": getattr(c, "contact_last_name", None),
             "email_address": getattr(c, "email_address", None),
             "contact_phone": getattr(c, "contact_phone", None),
+            "phones": (
+                c.phones.get("items", [])
+                if isinstance(getattr(c, "phones", None), dict)
+                else []
+            ),
             "contacts": c.contacts.get("items", []) if isinstance(c.contacts, dict) else [],
             "delivery_addresses": c.delivery_addresses.get("items", []) if isinstance(c.delivery_addresses, dict) else [],
             "delivery_preferences": c.delivery_preferences if isinstance(c.delivery_preferences, dict) else {},

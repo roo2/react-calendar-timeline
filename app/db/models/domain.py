@@ -90,6 +90,7 @@ class Customer(Base):
     contact_last_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     email_address: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     contact_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    phones: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(50), default="Active")
     contacts: Mapped[dict] = mapped_column(JSON, default=dict)
     delivery_addresses: Mapped[dict] = mapped_column(JSON, default=dict)
