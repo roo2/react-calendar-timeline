@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from app.integrations.xero.service import (
@@ -241,14 +242,73 @@ def test_list_linked_customers_for_merge_excludes_unlinked_and_draft():
     linked.id = "cust-linked"
     linked.name = "Linked Co"
     linked.xero_contact_id = "550e8400-e29b-41d4-a716-446655440000"
+    linked.xero_synced_at = None
     db.scalars.return_value.all.return_value = [linked]
 
     out = list_linked_customers_for_merge(db)
-    assert out["total"] == 1
+    assert out["total_linked"] == 1
+    assert out["merge_count"] == 1
+    assert out["skipped_recent_count"] == 0
     assert out["items"] == [
         {
             "customer_id": "cust-linked",
             "customer_name": "Linked Co",
             "contact_id": "550e8400-e29b-41d4-a716-446655440000",
+            "xero_synced_at": None,
         }
     ]
+
+
+def test_list_linked_customers_for_merge_skips_recently_synced():
+    from datetime import UTC, datetime, timedelta
+
+    db = MagicMock()
+    recent = MagicMock()
+    recent.id = "cust-recent"
+    recent.name = "Recent Co"
+    recent.xero_contact_id = "550e8400-e29b-41d4-a716-446655440001"
+    recent.xero_synced_at = datetime.now(UTC) - timedelta(minutes=10)
+    stale = MagicMock()
+    stale.id = "cust-stale"
+    stale.name = "Stale Co"
+    stale.xero_contact_id = "550e8400-e29b-41d4-a716-446655440002"
+    stale.xero_synced_at = datetime.now(UTC) - timedelta(hours=2)
+    db.scalars.return_value.all.return_value = [recent, stale]
+
+    out = list_linked_customers_for_merge(db, skip_synced_within=timedelta(hours=1))
+    assert out["merge_count"] == 1
+    assert out["skipped_recent_count"] == 1
+    assert out["items"][0]["customer_id"] == "cust-stale"
+    assert out["skipped_recent"][0]["customer_id"] == "cust-recent"
+
+
+def test_xero_http_response_retries_on_rate_limit():
+    from app.integrations.xero.service import _xero_http_response
+
+    responses = [
+        httpx.Response(429, headers={"Retry-After": "0"}, request=httpx.Request("GET", "https://example.com")),
+        httpx.Response(200, json={"ok": True}, request=httpx.Request("GET", "https://example.com")),
+    ]
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            return responses.pop(0)
+
+    with patch("app.integrations.xero.service.httpx.Client", FakeClient):
+        with patch("app.integrations.xero.service.time.sleep") as mock_sleep:
+            resp = _xero_http_response(
+                method="GET",
+                url="https://example.com/contacts",
+                headers={"Authorization": "Bearer test"},
+            )
+    assert resp.status_code == 200
+    mock_sleep.assert_called_once()

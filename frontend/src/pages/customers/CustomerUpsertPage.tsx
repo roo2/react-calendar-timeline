@@ -388,13 +388,13 @@ export function CustomerUpsertPage() {
       }
 
       if (isEdit) {
-        await dispatch(updateCustomer({ customerId: customerId!, data: payload })).unwrap()
+        const res = await dispatch(updateCustomer({ customerId: customerId!, data: payload })).unwrap()
         setDirty(false)
-        nav(`/customers/${customerId}`)
+        nav(`/customers/${customerId}`, { state: { xeroSync: res.xero_sync } })
       } else {
         const res = await dispatch(createCustomer({ data: payload })).unwrap()
         setDirty(false)
-        nav(`/customers/${res.id}`)
+        nav(`/customers/${res.id}`, { state: { xeroSync: res.xero_sync } })
       }
     } catch {
       // Errors are stored in the slice (including field-level validation).

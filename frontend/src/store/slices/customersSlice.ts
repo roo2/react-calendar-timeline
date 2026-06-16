@@ -37,6 +37,15 @@ export type CustomerPricingTierBrief = {
   discount_percent: number
 }
 
+export type XeroSaveSyncResult = {
+  status: 'created' | 'synced' | 'skipped' | 'failed'
+  reason?: string
+  error?: string
+  contact_id?: string
+  customer_id?: string
+  customer_name?: string
+}
+
 export type CustomerDetail = {
   id: string
   name: string
@@ -200,11 +209,15 @@ export const createCustomer = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      const res = await apiFetch<{ ok: boolean; customer: { id: string } }>('/api/customers', {
+      const res = await apiFetch<{
+        ok: boolean
+        customer: { id: string }
+        xero_sync?: XeroSaveSyncResult
+      }>('/api/customers', {
         method: 'POST',
         body: JSON.stringify(payload.data),
       })
-      return res.customer
+      return { ...res.customer, xero_sync: res.xero_sync }
     } catch (e) {
       const err = toUpsertError(e)
       if (err) return rejectWithValue(err)
@@ -220,11 +233,15 @@ export const updateCustomer = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      await apiFetch(`/api/customers/${payload.customerId}`, {
+      const res = await apiFetch<{
+        ok: boolean
+        customer: { id: string }
+        xero_sync?: XeroSaveSyncResult
+      }>(`/api/customers/${payload.customerId}`, {
         method: 'PUT',
         body: JSON.stringify(payload.data),
       })
-      return { customerId: payload.customerId }
+      return { customerId: payload.customerId, xero_sync: res.xero_sync }
     } catch (e) {
       const err = toUpsertError(e)
       if (err) return rejectWithValue(err)

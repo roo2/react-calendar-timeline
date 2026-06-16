@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import secrets
 import sys
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
@@ -55,6 +56,10 @@ XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
 XERO_API_BASE = "https://api.xero.com/api.xro/2.0"
 
 STATE_TTL = timedelta(minutes=10)
+_XERO_HTTP_TIMEOUT_SECONDS = 120.0
+_XERO_MAX_RATE_LIMIT_RETRIES = 5
+_XERO_RATE_LIMIT_BASE_DELAY_SECONDS = 30.0
+MERGE_ALL_SKIP_SYNCED_WITHIN = timedelta(hours=1)
 
 
 def _as_utc_aware(dt: datetime) -> datetime:
@@ -371,6 +376,42 @@ def _accounting_api_url(endpoint: str) -> str:
     return f"{XERO_API_BASE}{urlunsplit(('', '', path, parsed.query, ''))}"
 
 
+def _xero_rate_limit_delay_seconds(resp: httpx.Response, attempt: int) -> float:
+    retry_after = str(resp.headers.get("Retry-After") or "").strip()
+    if retry_after:
+        try:
+            return max(float(retry_after), 1.0)
+        except ValueError:
+            pass
+    return min(_XERO_RATE_LIMIT_BASE_DELAY_SECONDS * (attempt + 1), 120.0)
+
+
+def _xero_http_response(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: dict[str, Any] | None = None,
+) -> httpx.Response:
+    with httpx.Client(timeout=_XERO_HTTP_TIMEOUT_SECONDS) as client:
+        for attempt in range(_XERO_MAX_RATE_LIMIT_RETRIES + 1):
+            if method == "GET":
+                resp = client.get(url, headers=headers)
+            elif method == "POST":
+                resp = client.post(url, headers=headers, json=json_body)
+            elif method == "PUT":
+                resp = client.put(url, headers=headers, json=json_body)
+            else:
+                raise ValueError(f"Unsupported Xero HTTP method: {method}")
+
+            if resp.status_code != 429 or attempt >= _XERO_MAX_RATE_LIMIT_RETRIES:
+                return resp
+
+            time.sleep(_xero_rate_limit_delay_seconds(resp, attempt))
+
+    raise XeroApiError("Xero rate limit retries exhausted.")
+
+
 def _xero_api_get_json(db: Session, *, endpoint: str) -> tuple[str, int, Any]:
     access = ensure_xero_access_token_for_api(db)
     row = _singleton(db)
@@ -384,8 +425,7 @@ def _xero_api_get_json(db: Session, *, endpoint: str) -> tuple[str, int, Any]:
         "xero-tenant-id": tenant,
         "Accept": "application/json",
     }
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.get(url, headers=headers)
+    resp = _xero_http_response(method="GET", url=url, headers=headers)
 
     try:
         payload: Any = resp.json()
@@ -428,8 +468,7 @@ def _xero_api_post_json(
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.post(url, headers=headers, json=body)
+    resp = _xero_http_response(method="POST", url=url, headers=headers, json_body=body)
 
     try:
         payload: Any = resp.json()
@@ -461,8 +500,7 @@ def _xero_api_put_json(
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.put(url, headers=headers, json=body)
+    resp = _xero_http_response(method="PUT", url=url, headers=headers, json_body=body)
 
     try:
         payload: Any = resp.json()
@@ -1830,8 +1868,12 @@ def merge_customer_with_xero(db: Session, *, customer_id: str) -> dict[str, Any]
     }
 
 
-def list_linked_customers_for_merge(db: Session) -> dict[str, Any]:
-    """All app customers linked to Xero, for bulk merge preview and batch runs."""
+def list_linked_customers_for_merge(
+    db: Session,
+    *,
+    skip_synced_within: timedelta | None = MERGE_ALL_SKIP_SYNCED_WITHIN,
+) -> dict[str, Any]:
+    """Linked customers eligible for bulk merge, excluding recently synced rows."""
     rows = list(
         db.scalars(
             select(Customer)
@@ -1842,19 +1884,50 @@ def list_linked_customers_for_merge(db: Session) -> dict[str, Any]:
             .order_by(Customer.name.asc())
         ).all()
     )
-    items: list[dict[str, str]] = []
+    now = datetime.now(UTC)
+    cutoff = now - skip_synced_within if skip_synced_within is not None else None
+    items: list[dict[str, Any]] = []
+    skipped_recent: list[dict[str, Any]] = []
     for cust in rows:
         contact_id = str(getattr(cust, "xero_contact_id", "") or "").strip()
         if not contact_id:
             continue
+        synced_at = getattr(cust, "xero_synced_at", None)
+        if cutoff is not None and synced_at is not None:
+            synced_at_utc = _as_utc_aware(synced_at)
+            if synced_at_utc >= cutoff:
+                skipped_recent.append(
+                    {
+                        "customer_id": str(cust.id),
+                        "customer_name": cust.name,
+                        "contact_id": contact_id,
+                        "xero_synced_at": synced_at_utc.isoformat(),
+                    }
+                )
+                continue
         items.append(
             {
                 "customer_id": str(cust.id),
                 "customer_name": cust.name,
                 "contact_id": contact_id,
+                "xero_synced_at": (
+                    _as_utc_aware(synced_at).isoformat()
+                    if synced_at is not None
+                    else None
+                ),
             }
         )
-    return {"total": len(items), "items": items}
+    skip_hours = skip_synced_within.total_seconds() / 3600 if skip_synced_within is not None else None
+    return {
+        "total_linked": len(rows),
+        "merge_count": len(items),
+        "skipped_recent_count": len(skipped_recent),
+        "skip_synced_within_hours": skip_hours,
+        "items": items,
+        "skipped_recent": skipped_recent,
+        # Legacy alias used by older frontend code.
+        "total": len(items),
+    }
 
 
 def preview_deletable_unlinked_customers(db: Session) -> dict[str, Any]:

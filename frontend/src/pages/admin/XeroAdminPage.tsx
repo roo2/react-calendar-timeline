@@ -427,22 +427,42 @@ type XeroMergeCustomerResult = {
 }
 
 type XeroMergeAllPreview = {
+  total_linked: number
+  merge_count: number
+  skipped_recent_count: number
+  skip_synced_within_hours?: number | null
   total: number
   items: Array<{
     customer_id: string
     customer_name: string
     contact_id: string
+    xero_synced_at?: string | null
+  }>
+  skipped_recent: Array<{
+    customer_id: string
+    customer_name: string
+    contact_id: string
+    xero_synced_at?: string | null
   }>
 }
 
 type XeroMergeAllResult = {
   merged_count: number
+  skipped_recent_count: number
   error_count: number
   errors: Array<{
     customer_id: string
     customer_name: string
     message: string
   }>
+}
+
+const MERGE_ALL_DELAY_MS = 2500
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
 }
 
 export function XeroAdminPage() {
@@ -928,14 +948,26 @@ export function XeroAdminPage() {
     setMergeAllProgress(null)
     setBusy('xero-merge-all-preview')
     try {
-      const preview = await apiFetch<XeroMergeAllPreview>('/api/xero/customers/merge-all/preview')
-      if (preview.total <= 0) {
-        setErr('No linked customers to merge.')
+      const preview = await apiFetch<XeroMergeAllPreview>(
+        '/api/xero/customers/merge-all/preview?skip_synced_within_hours=1',
+      )
+      if (preview.merge_count <= 0) {
+        if (preview.skipped_recent_count > 0) {
+          setErr(
+            `No linked customers need merging. ${preview.skipped_recent_count} were synced from Xero within the last hour.`,
+          )
+        } else {
+          setErr('No linked customers to merge.')
+        }
         return
       }
+      const skipNote =
+        preview.skipped_recent_count > 0
+          ? ` ${preview.skipped_recent_count} customer${preview.skipped_recent_count === 1 ? '' : 's'} synced within the last hour will be skipped.`
+          : ''
       const msg =
-        `Merge app + Xero for all ${preview.total} linked customer${preview.total === 1 ? '' : 's'}? ` +
-        'Each customer is updated in the app and pushed to Xero. This may take several minutes.'
+        `Merge app + Xero for ${preview.merge_count} linked customer${preview.merge_count === 1 ? '' : 's'}?` +
+        `${skipNote} Each customer is updated in the app and pushed to Xero with a short pause between requests to avoid Xero rate limits. This may take a long time — keep this page open until finished.`
       if (!window.confirm(msg)) return
 
       setBusy('xero-merge-all')
@@ -944,9 +976,12 @@ export function XeroAdminPage() {
 
       for (let index = 0; index < preview.items.length; index += 1) {
         const row = preview.items[index]
+        if (index > 0) {
+          await sleep(MERGE_ALL_DELAY_MS)
+        }
         setMergeAllProgress({
-          total: preview.total,
-          completed: index + 1,
+          total: preview.merge_count,
+          completed: index,
           currentName: row.customer_name,
         })
         try {
@@ -967,10 +1002,16 @@ export function XeroAdminPage() {
                   : 'Merge failed',
           })
         }
+        setMergeAllProgress({
+          total: preview.merge_count,
+          completed: index + 1,
+          currentName: row.customer_name,
+        })
       }
 
       setMergeAllResult({
         merged_count: mergedCount,
+        skipped_recent_count: preview.skipped_recent_count,
         error_count: errors.length,
         errors,
       })
@@ -1911,8 +1952,9 @@ export function XeroAdminPage() {
                     Bulk merge all linked customers
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    Run the same merge for every app customer already linked to Xero. Customers are
-                    processed one at a time; keep this page open until finished.
+                    Run the same merge for every linked app customer already linked to Xero. Customers
+                    synced from Xero within the last hour are skipped. Requests are paced to reduce Xero
+                    rate-limit errors; keep this page open until finished.
                   </Typography>
                   <Button
                     variant="contained"
@@ -1948,6 +1990,12 @@ export function XeroAdminPage() {
                   {mergeAllResult ? (
                     <Alert severity={mergeAllResult.error_count > 0 ? 'warning' : 'success'}>
                       Bulk merge finished: <strong>{mergeAllResult.merged_count}</strong> merged
+                      {mergeAllResult.skipped_recent_count > 0 ? (
+                        <>
+                          , <strong>{mergeAllResult.skipped_recent_count}</strong> skipped (synced within the
+                          last hour)
+                        </>
+                      ) : null}
                       {mergeAllResult.error_count > 0 ? (
                         <>
                           , <strong>{mergeAllResult.error_count}</strong> failed

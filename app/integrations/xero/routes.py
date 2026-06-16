@@ -390,10 +390,15 @@ async def xero_merge_customer(_identity: SysAdminIdentity, body: XeroMergeCustom
 
 
 @router.get("/customers/merge-all/preview")
-async def xero_merge_all_linked_customers_preview(_identity: SysAdminIdentity):
+async def xero_merge_all_linked_customers_preview(
+    _identity: SysAdminIdentity,
+    skip_synced_within_hours: float = 1.0,
+):
     del _identity
+    hours = max(0.0, float(skip_synced_within_hours))
+    skip_within = timedelta(hours=hours) if hours > 0 else None
     with SessionLocal() as db:
-        return list_linked_customers_for_merge(db)
+        return list_linked_customers_for_merge(db, skip_synced_within=skip_within)
 
 
 @router.get("/customers/unlinked/deletable-preview")

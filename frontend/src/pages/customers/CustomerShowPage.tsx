@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { can } from '../../auth/permissions'
-import { deleteCustomer, fetchCustomer } from '../../store/slices/customersSlice'
+import { deleteCustomer, fetchCustomer, type XeroSaveSyncResult } from '../../store/slices/customersSlice'
 import { fetchOrders } from '../../store/slices/ordersSlice'
 import { fetchProducts } from '../../store/slices/productsSlice'
 import { deleteSavedQuote, fetchSavedQuotesList } from '../../store/slices/quotesSlice'
@@ -181,9 +181,26 @@ export function CustomerShowPage() {
   const contacts = customer.contacts || []
   const addresses = customer.delivery_addresses || []
   const prefs = customer.delivery_preferences || {}
+  const xeroSync = (location.state as { xeroSync?: XeroSaveSyncResult } | null)?.xeroSync
 
   return (
     <Box>
+      {xeroSync?.status === 'failed' ? (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Customer saved, but Xero sync failed: {xeroSync.error || 'Unknown error'}
+        </Alert>
+      ) : null}
+      {xeroSync?.status === 'created' ? (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          Xero contact created and linked
+          {xeroSync.contact_id ? ` (${xeroSync.contact_id})` : ''}.
+        </Alert>
+      ) : null}
+      {xeroSync?.status === 'synced' ? (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          Customer synced to Xero.
+        </Alert>
+      ) : null}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 2, flexWrap: 'wrap', mb: 3 }}>
         <Box>
           <Typography variant="h5">

@@ -9,6 +9,7 @@ from app.auth.deps import allow_roles_any, csrf_protect
 from app.customers import service
 from app.customers.payment_terms_display import describe_payment_terms
 from app.customers.schemas import CustomerCreateRequest, CustomerUpdateRequest
+from app.integrations.xero.customer_save_sync import sync_customer_to_xero_after_save
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -114,7 +115,8 @@ async def create_customer(payload: CustomerCreateRequest):
         c = service.create_customer(payload)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    return {"ok": True, "customer": _customer_summary(c)}
+    xero_sync = sync_customer_to_xero_after_save(customer_id=str(c.id))
+    return {"ok": True, "customer": _customer_summary(c), "xero_sync": xero_sync}
 
 
 @router.get("/{customer_id}", dependencies=[Depends(allow_roles_any("SALES", "PROD_MANAGER"))])
@@ -192,4 +194,5 @@ async def update_customer(customer_id: str, payload: CustomerUpdateRequest):
         if "not found" in msg.lower():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg) from e
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from e
-    return {"ok": True, "customer": _customer_summary(c)}
+    xero_sync = sync_customer_to_xero_after_save(customer_id=str(c.id))
+    return {"ok": True, "customer": _customer_summary(c), "xero_sync": xero_sync}
