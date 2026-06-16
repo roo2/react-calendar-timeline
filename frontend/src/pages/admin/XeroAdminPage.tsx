@@ -457,12 +457,17 @@ type XeroMergeAllResult = {
   }>
 }
 
-const MERGE_ALL_DELAY_MS = 2500
+const MERGE_ALL_DELAY_MS = 4000
+const MERGE_ALL_RATE_LIMIT_BACKOFF_MS = 45000
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms)
   })
+}
+
+function isXeroRateLimitError(message: string): boolean {
+  return /\b429\b|rate limit|too many requests/i.test(message)
 }
 
 export function XeroAdminPage() {
@@ -991,16 +996,20 @@ export function XeroAdminPage() {
           })
           mergedCount += 1
         } catch (e) {
+          const message =
+            e instanceof ApiError
+              ? e.message
+              : e instanceof Error
+                ? e.message
+                : 'Merge failed'
           errors.push({
             customer_id: row.customer_id,
             customer_name: row.customer_name,
-            message:
-              e instanceof ApiError
-                ? e.message
-                : e instanceof Error
-                  ? e.message
-                  : 'Merge failed',
+            message,
           })
+          if (isXeroRateLimitError(message)) {
+            await sleep(MERGE_ALL_RATE_LIMIT_BACKOFF_MS)
+          }
         }
         setMergeAllProgress({
           total: preview.merge_count,

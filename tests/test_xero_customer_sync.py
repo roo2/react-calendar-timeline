@@ -312,3 +312,44 @@ def test_xero_http_response_retries_on_rate_limit():
             )
     assert resp.status_code == 200
     mock_sleep.assert_called_once()
+
+
+def test_xero_http_response_stops_retrying_when_sleep_budget_exceeded():
+    from app.integrations.xero.service import (
+        _XERO_RATE_LIMIT_MAX_TOTAL_SLEEP_SECONDS,
+        _xero_http_response,
+    )
+
+    responses = [
+        httpx.Response(429, request=httpx.Request("GET", "https://example.com")),
+        httpx.Response(429, request=httpx.Request("GET", "https://example.com")),
+    ]
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            return responses.pop(0) if responses else httpx.Response(
+                429, request=httpx.Request("GET", url)
+            )
+
+    with patch("app.integrations.xero.service.httpx.Client", FakeClient):
+        with patch("app.integrations.xero.service.time.sleep") as mock_sleep:
+            with patch(
+                "app.integrations.xero.service._xero_rate_limit_delay_seconds",
+                return_value=_XERO_RATE_LIMIT_MAX_TOTAL_SLEEP_SECONDS + 1,
+            ):
+                resp = _xero_http_response(
+                    method="GET",
+                    url="https://example.com/contacts",
+                    headers={"Authorization": "Bearer test"},
+                )
+    assert resp.status_code == 429
+    mock_sleep.assert_not_called()

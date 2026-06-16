@@ -57,8 +57,11 @@ XERO_API_BASE = "https://api.xero.com/api.xro/2.0"
 
 STATE_TTL = timedelta(minutes=10)
 _XERO_HTTP_TIMEOUT_SECONDS = 120.0
-_XERO_MAX_RATE_LIMIT_RETRIES = 5
-_XERO_RATE_LIMIT_BASE_DELAY_SECONDS = 30.0
+_XERO_MAX_RATE_LIMIT_RETRIES = 3
+_XERO_RATE_LIMIT_BASE_DELAY_SECONDS = 5.0
+_XERO_RATE_LIMIT_MAX_PER_SLEEP_SECONDS = 12.0
+# Heroku router times out HTTP requests at 30s; cap retry sleep so merge can finish in one request.
+_XERO_RATE_LIMIT_MAX_TOTAL_SLEEP_SECONDS = 18.0
 MERGE_ALL_SKIP_SYNCED_WITHIN = timedelta(hours=1)
 
 
@@ -380,10 +383,14 @@ def _xero_rate_limit_delay_seconds(resp: httpx.Response, attempt: int) -> float:
     retry_after = str(resp.headers.get("Retry-After") or "").strip()
     if retry_after:
         try:
-            return max(float(retry_after), 1.0)
+            delay = max(float(retry_after), 1.0)
+            return min(delay, _XERO_RATE_LIMIT_MAX_PER_SLEEP_SECONDS)
         except ValueError:
             pass
-    return min(_XERO_RATE_LIMIT_BASE_DELAY_SECONDS * (attempt + 1), 120.0)
+    return min(
+        _XERO_RATE_LIMIT_BASE_DELAY_SECONDS * (attempt + 1),
+        _XERO_RATE_LIMIT_MAX_PER_SLEEP_SECONDS,
+    )
 
 
 def _xero_http_response(
@@ -393,6 +400,7 @@ def _xero_http_response(
     headers: dict[str, str],
     json_body: dict[str, Any] | None = None,
 ) -> httpx.Response:
+    total_slept = 0.0
     with httpx.Client(timeout=_XERO_HTTP_TIMEOUT_SECONDS) as client:
         for attempt in range(_XERO_MAX_RATE_LIMIT_RETRIES + 1):
             if method == "GET":
@@ -404,10 +412,17 @@ def _xero_http_response(
             else:
                 raise ValueError(f"Unsupported Xero HTTP method: {method}")
 
-            if resp.status_code != 429 or attempt >= _XERO_MAX_RATE_LIMIT_RETRIES:
+            if resp.status_code != 429:
+                return resp
+            if attempt >= _XERO_MAX_RATE_LIMIT_RETRIES:
                 return resp
 
-            time.sleep(_xero_rate_limit_delay_seconds(resp, attempt))
+            delay = _xero_rate_limit_delay_seconds(resp, attempt)
+            if total_slept + delay > _XERO_RATE_LIMIT_MAX_TOTAL_SLEEP_SECONDS:
+                return resp
+
+            time.sleep(delay)
+            total_slept += delay
 
     raise XeroApiError("Xero rate limit retries exhausted.")
 
