@@ -5,7 +5,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.auth.deps import allow_roles_any, csrf_protect, require_roles
@@ -42,6 +42,13 @@ from app.integrations.xero.service import (
     unlinked_xero_customer_review,
     xero_configured,
     xero_get_endpoint,
+)
+from app.integrations.xero.webhooks import (
+    compute_xero_webhook_intent_hash,
+    parse_xero_webhook_body,
+    process_xero_webhook_payload,
+    verify_xero_webhook_signature,
+    xero_webhook_configured,
 )
 
 router = APIRouter(prefix="/api/xero", tags=["xero"])
@@ -130,6 +137,53 @@ async def xero_oauth_callback(
         error=error,
         error_description=error_description,
     )
+
+
+@router.post("/webhooks")
+async def xero_webhooks(request: Request):
+    """
+    Xero webhook receiver (no session auth / CSRF).
+
+    Handles Intent-to-receive validation and CONTACT update events for linked customers.
+    Inbound updates use skip_if_not_newer to ignore echoes from app-originated pushes.
+    """
+    if not xero_webhook_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Xero webhooks not configured (set XERO_WEBHOOK_KEY).",
+        )
+
+    body = await request.body()
+    signature = request.headers.get("x-xero-signature", "")
+
+    try:
+        payload = parse_xero_webhook_body(body)
+    except XeroConfigError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    key = str(settings.XERO_WEBHOOK_KEY or "").strip()
+
+    if isinstance(payload, dict) and "text" in payload and "events" not in payload:
+        intent_hash = compute_xero_webhook_intent_hash(body=body, webhook_key=key)
+        return PlainTextResponse(content=intent_hash, status_code=status.HTTP_200_OK)
+
+    if not verify_xero_webhook_signature(body=body, signature=signature, webhook_key=key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Xero webhook signature.",
+        )
+
+    with SessionLocal() as db:
+        try:
+            out = process_xero_webhook_payload(db, body=body, payload=payload)
+        except XeroConfigError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        except XeroOAuthError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        except XeroApiError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+    return {"ok": True, **out}
 
 
 class XeroTenantBody(BaseModel):

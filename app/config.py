@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     XERO_CLIENT_SECRET: str | None = None
     # Must match the redirect URI registered with Xero exactly (Vite proxies /api to the backend).
     XERO_REDIRECT_URI: str = "http://localhost:5173/api/xero/oauth/callback"
+    # Webhook signing key from the Xero developer portal (Webhooks section).
+    XERO_WEBHOOK_KEY: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -1596,7 +1596,13 @@ def sync_customer_to_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
     }
 
 
-def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
+def sync_customer_from_xero(
+    db: Session,
+    *,
+    customer_id: str,
+    skip_if_not_newer: bool = False,
+    sync_source: str = "manual",
+) -> dict[str, Any]:
     """Pull contact details from Xero into an already-linked app customer."""
     cid = str(customer_id or "").strip()
     if not cid:
@@ -1626,6 +1632,21 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         mapped = customer_fields_from_xero_contact(contact_raw)
     except ValueError as e:
         raise XeroConfigError(str(e)) from e
+
+    xero_updated = mapped.get("xero_last_modified")
+    stored_modified = getattr(cust, "xero_last_modified", None)
+    if skip_if_not_newer and xero_updated is not None and stored_modified is not None:
+        if _as_utc_aware(xero_updated) <= _as_utc_aware(stored_modified):
+            return {
+                "ok": True,
+                "skipped": True,
+                "skip_reason": "not_newer_than_stored",
+                "sync_source": sync_source,
+                "customer_id": cid,
+                "contact_id": xid,
+                "customer_name": cust.name,
+                "xero_last_modified": stored_modified.isoformat(),
+            }
 
     ensure_default_customer_brands(db)
 
@@ -1683,6 +1704,7 @@ def sync_customer_from_xero(db: Session, *, customer_id: str) -> dict[str, Any]:
         updated_fields.append("brand_id")
     return {
         "ok": True,
+        "sync_source": sync_source,
         "customer_id": cid,
         "contact_id": xid,
         "customer_name": cust.name,
